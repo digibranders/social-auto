@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test src/*.test.ts",
     "autopilot": "node src/autopilot.ts",
-    "monthly": "node src/monthly.ts"
+    "clients": "node src/run-clients.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

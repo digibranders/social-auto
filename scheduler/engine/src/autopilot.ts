@@ -3,17 +3,19 @@
  *
  *   node src/autopilot.ts --site example.com --channel their_insta [--days 7] [--time 10:00]
  *                         [--start YYYY-MM-DD] [--utc-offset +05:30] [--image-model zimage]
- *                         [--refresh-brand] [--dry-run]
+ *                         [--refresh-brand] [--dry-run] [--target scheduler|publisher]
  *
  * First run for a site builds brands/<slug>/brand.json from the website. Every run writes the
- * next week-NN.json with new pain points (history.json prevents repeats), renders the posters
- * and, unless --dry-run, schedules them in Scheduler.
+ * next week-NN.json with new pain points (history.json prevents repeats) and renders the posters.
+ * Unless --dry-run, posts then go to the target: "scheduler" queues them in the local scheduler
+ * app (needs --channel); "publisher" exports them to the Vercel publisher folder.
  */
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseBrand, parseWeekPlan, readJson } from './content.ts';
+import { exportToPublisher } from './export-publisher.ts';
 import { planWeek } from './planner.ts';
 import { DEFAULT_IMAGE_MODEL, renderPlan } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
@@ -99,10 +101,16 @@ async function main(): Promise<void> {
       'scheduler-url': { type: 'string', default: DEFAULT_SCHEDULER_URL },
       'refresh-brand': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
+      target: { type: 'string', default: 'scheduler' },
+      publisher: { type: 'string', default: '../../publisher' },
     },
   });
   if (!values.site) throw new Error('Usage: --site <website> --channel <instagram username> [--days 7] [--dry-run]');
-  if (!values.channel && !values['dry-run']) throw new Error('--channel is required unless --dry-run is set');
+  const target = values.target;
+  if (target !== 'scheduler' && target !== 'publisher') throw new Error('--target must be "scheduler" or "publisher"');
+  if (target === 'scheduler' && !values.channel && !values['dry-run']) {
+    throw new Error('--channel is required for --target scheduler unless --dry-run is set');
+  }
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
 
@@ -154,10 +162,17 @@ async function main(): Promise<void> {
     log: (m) => console.log(`    ${m}`),
   });
 
-  if (values['dry-run'] || !values.channel) {
+  if (values['dry-run']) {
     console.log(`4/4 Dry run: nothing scheduled. Preview: ${join(outDir, 'preview.html')}`);
     return;
   }
+  if (target === 'publisher') {
+    console.log('4/4 Exporting to the Vercel publisher…');
+    const exported = await exportToPublisher(brandDir, resolve(values.publisher));
+    console.log(`Done: ${exported.length} upcoming posts in the publisher (last ${exported.at(-1)?.date ?? '-'}).`);
+    return;
+  }
+  if (!values.channel) throw new Error('--channel is required for --target scheduler');
   console.log(`4/4 Scheduling on ${values.channel}…`);
   const count = await schedulePlan({
     brandDir,

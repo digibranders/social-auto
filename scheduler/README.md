@@ -21,7 +21,8 @@ Docker Desktop's credential helper is not on the Homebrew PATH, so prefix once p
 ## Content engine (inside `engine/`)
 
     npm run autopilot -- --site example.com --channel insta_handle [--days 7] [--dry-run]
-    npm run monthly                                   # every client in clients.json
+    npm run clients                                   # every client in clients.json
+    scripts/weekly.sh                                 # weekly job: generate, commit, push main
     node src/export-publisher.ts --brand brands/<slug>   # copy posts to ../../publisher
 
 `brands/<slug>/` holds the brand profile, weekly plans and history (no repeated pain points).
