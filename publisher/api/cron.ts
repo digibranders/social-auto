@@ -5,8 +5,7 @@
  * GET /api/cron?dryRun=1   prepares the Instagram container without publishing it
  * GET /api/cron?dryRun=1&post=<id>   same, for a named post regardless of its date
  */
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { schedule as scheduleData } from '../data/schedule.js';
 import {
   createImageContainer,
   permalink,
@@ -39,8 +38,8 @@ export async function GET(request: Request): Promise<Response> {
     const origin = process.env['PUBLIC_ORIGIN'] ?? url.origin;
     const dryRun = url.searchParams.get('dryRun') === '1';
 
-    // Bundled with the function (vercel.json includeFiles); not served publicly.
-    const schedule = parseSchedule(JSON.parse(await readFile(join(process.cwd(), 'data', 'schedule.json'), 'utf8')));
+    // Imported module: bundled with the function, not served publicly.
+    const schedule = parseSchedule(scheduleData);
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
     const testPostId = dryRun ? url.searchParams.get('post') : null;
     const post = testPostId ? (schedule.find((p) => p.id === testPostId) ?? null) : duePost(schedule, Date.now());
