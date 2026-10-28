@@ -1,13 +1,13 @@
-# Local test overrides for the official Postiz compose file.
+# Local overrides for the scheduler compose file.
 # Compose loads this automatically next to docker-compose.yaml.
 # Secrets and the public URL come from .env (generated locally, never committed).
 services:
   postiz:
     environment:
-      JWT_SECRET: ${POSTIZ_JWT_SECRET:?POSTIZ_JWT_SECRET must be set in .env}
+      JWT_SECRET: ${SCHEDULER_JWT_SECRET:?SCHEDULER_JWT_SECRET must be set in .env}
       # The test account already exists; block new sign-ups while the tunnel is public.
       DISABLE_REGISTRATION: 'true'
-      # Temporary, for the trycloudflare.com test only: Postiz sets its auth cookie on the
+      # Temporary, for the trycloudflare.com test only: The scheduler sets its auth cookie on the
       # parent domain (.trycloudflare.com), which browsers reject as a public suffix.
       # NOT_SECURED makes the browser store a host-only cookie instead. Remove on a real domain.
       NOT_SECURED: 'true'
@@ -16,9 +16,9 @@ services:
 
       # Public HTTPS address (Cloudflare Tunnel). Meta/LinkedIn redirect back here,
       # and Instagram downloads media from here. Falls back to localhost.
-      MAIN_URL: ${POSTIZ_PUBLIC_URL:-http://localhost:4007}
-      FRONTEND_URL: ${POSTIZ_PUBLIC_URL:-http://localhost:4007}
-      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_PUBLIC_URL:-http://localhost:4007}/api
+      MAIN_URL: ${SCHEDULER_PUBLIC_URL:-http://localhost:4007}
+      FRONTEND_URL: ${SCHEDULER_PUBLIC_URL:-http://localhost:4007}
+      NEXT_PUBLIC_BACKEND_URL: ${SCHEDULER_PUBLIC_URL:-http://localhost:4007}/api
 
       # Facebook Page + Instagram (Facebook Business) share one Meta app.
       FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
