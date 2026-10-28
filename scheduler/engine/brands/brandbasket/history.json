@@ -48,6 +48,19 @@
         "A local business serving a defined area may receive enquiries from people who are too far away to visit.",
         "A business known mainly by its name may not be easy to distinguish from other businesses with similar names."
       ]
+    },
+    {
+      "file": "week-03.json",
+      "createdAt": "2026-10-28T14:22:27.025Z",
+      "painPoints": [
+        "Customers may hesitate to visit when they cannot check the business’s prices beforehand.",
+        "Potential customers cannot judge whether a business’s style suits them without seeing examples of its work.",
+        "A first-time visitor may feel unsure about what will happen during their first appointment.",
+        "People interested in a coaching institute may not know when its next course intake begins.",
+        "Customers may arrive without knowing which payment methods a business accepts.",
+        "Customers may be surprised by a cancellation or rescheduling policy they only learn about after booking.",
+        "Customers may forget how to care for a product after buying it from a neighbourhood shop."
+      ]
     }
   ]
 }
