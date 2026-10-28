@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { posterFileName } from './export-publisher.ts';
+import { parseScheduleModule, posterFileName, scheduleModule } from './export-publisher.ts';
+
+test('the schedule module round-trips and rejects hand-written files', () => {
+  const posts = [{ brand: 'b', id: 'b-w01-d1', date: '2026-10-29T10:00:00+05:30', caption: 'Hi\n\n#a', image: '/posts/b/x.jpg' }];
+  assert.deepEqual(parseScheduleModule(scheduleModule(posts)), posts);
+  assert.throws(() => parseScheduleModule('export const schedule = {"posts": []};\n'), /not generated/);
+});
 
 test('posterFileName is stable for the same image and different for others', () => {
   const a = Buffer.from('image-a');
