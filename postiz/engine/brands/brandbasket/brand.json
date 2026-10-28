@@ -1,0 +1,39 @@
+{
+  "name": "Brandbasket",
+  "website": "https://www.brandbasket.in",
+  "handleUrl": "brandbasket.in",
+  "offer": "Professional websites for local businesses in India, built free (₹0) and live in 7 working days, then hosted, secured and updated for ₹2,999 a month incl. GST. Add-on plans: Social Media and Ads (₹9,999/month), Local SEO + AEO (₹24,999/month).",
+  "audience": "Owners of local businesses in India with no website or a neglected one: clinics and dentists, restaurants and cafes, salons, gyms, coaching institutes, small shops.",
+  "proofPoints": [
+    "₹0 to build, up to 10 pages",
+    "Live in 7 working days",
+    "₹2,999 a month incl. GST covers hosting, SSL, backups, security updates, uptime monitoring",
+    "2 edits a month (15 minutes each) and a monthly health report",
+    "No lock-ins, cancel anytime",
+    "Domain stays in your name",
+    "Human support; DPDP Act readiness support",
+    "Click-to-call, WhatsApp and enquiry forms"
+  ],
+  "tone": "Plain, honest, calm and practical. Short sentences, no hype, no jargon. Speaks to a busy shop owner. Never promises rankings, leads or revenue.",
+  "callToAction": "Start your free website at brandbasket.in (link in bio)",
+  "colors": {
+    "background": "#F6F5F2",
+    "ink": "#15161A",
+    "accent": "#C48A47",
+    "tile": "#2A2B31"
+  },
+  "font": "Red Hat Display",
+  "logo": "assets/brandbasket-logo-horizontal-light.svg",
+  "features": [
+    { "icon": "monitor", "title": "Free website", "detail": "Up to 10 pages" },
+    { "icon": "gear", "title": "Fully managed", "detail": "₹2,999/month incl. GST" },
+    { "icon": "person", "title": "No lock-ins", "detail": "Cancel anytime" }
+  ],
+  "mark": "assets/brandbasket-mark.svg",
+  "rules": [
+    "No invented statistics or customer numbers",
+    "No guarantees of Google rankings, leads or sales",
+    "Prices exactly as on the website: ₹0 build, ₹2,999/month incl. GST",
+    "For clinic content: no treatment claims or patient testimonials"
+  ]
+}

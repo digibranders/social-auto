@@ -1,0 +1,121 @@
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+
+const REQUEST_TIMEOUT_MS = 60_000;
+
+export class PostizApiError extends Error {
+  readonly endpoint: string;
+  readonly status: number;
+
+  constructor(endpoint: string, status: number, body: string) {
+    super(`Postiz ${endpoint} failed with ${status}: ${body.slice(0, 300)}`);
+    this.name = 'PostizApiError';
+    this.endpoint = endpoint;
+    this.status = status;
+  }
+}
+
+export interface PostizIntegration {
+  id: string;
+  identifier: string;
+  profile: string;
+  disabled: boolean;
+}
+
+export interface PostizMedia {
+  id: string;
+  path: string;
+}
+
+export interface SchedulePostInput {
+  integrationId: string;
+  providerIdentifier: string;
+  /** ISO 8601 date-time with offset. */
+  date: string;
+  caption: string;
+  image: PostizMedia;
+}
+
+export interface CreatedPost {
+  postId: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Postiz stores post bodies as HTML; one paragraph per line keeps Instagram's line breaks. */
+export function captionToHtml(caption: string): string {
+  return caption
+    .split('\n')
+    .map((line) => `<p>${line.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}</p>`)
+    .join('');
+}
+
+export class PostizClient {
+  private readonly baseUrl: string;
+  private readonly apiKey: string;
+
+  constructor(baseUrl: string, apiKey: string) {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+  }
+
+  private async request(endpoint: string, init: RequestInit = {}): Promise<unknown> {
+    const response = await fetch(`${this.baseUrl}/public/v1${endpoint}`, {
+      ...init,
+      headers: { Authorization: this.apiKey, ...(init.headers ?? {}) },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new PostizApiError(endpoint, response.status, text);
+    return text ? (JSON.parse(text) as unknown) : null;
+  }
+
+  async listIntegrations(): Promise<PostizIntegration[]> {
+    const data = await this.request('/integrations');
+    if (!Array.isArray(data)) throw new PostizApiError('/integrations', 200, 'expected an array');
+    return data.filter(isRecord).map((i) => ({
+      id: String(i['id']),
+      identifier: String(i['identifier'] ?? i['providerIdentifier'] ?? ''),
+      profile: String(i['profile'] ?? i['name'] ?? ''),
+      disabled: i['disabled'] === true,
+    }));
+  }
+
+  async uploadImage(filePath: string): Promise<PostizMedia> {
+    const form = new FormData();
+    form.append('file', new Blob([await readFile(filePath)], { type: 'image/jpeg' }), basename(filePath));
+    const data = await this.request('/upload', { method: 'POST', body: form });
+    if (!isRecord(data) || typeof data['id'] !== 'string' || typeof data['path'] !== 'string') {
+      throw new PostizApiError('/upload', 200, `unexpected response ${JSON.stringify(data)}`);
+    }
+    return { id: data['id'], path: data['path'] };
+  }
+
+  async schedulePost(input: SchedulePostInput): Promise<CreatedPost> {
+    const body = {
+      type: 'schedule',
+      shortLink: false,
+      date: input.date,
+      tags: [],
+      posts: [
+        {
+          integration: { id: input.integrationId },
+          value: [{ content: captionToHtml(input.caption), image: [input.image] }],
+          settings: { __type: input.providerIdentifier, post_type: 'post', collaborators: [] },
+        },
+      ],
+    };
+    const data = await this.request('/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const first: unknown = Array.isArray(data) ? data[0] : data;
+    if (!isRecord(first) || typeof first['postId'] !== 'string') {
+      throw new PostizApiError('/posts', 200, `unexpected response ${JSON.stringify(data)}`);
+    }
+    return { postId: first['postId'] };
+  }
+}

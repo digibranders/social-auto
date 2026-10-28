@@ -1,0 +1,14 @@
+# Secrets: never commit
+.env
+.env.*
+**/test-login.txt
+
+# Dependencies and tool state
+node_modules/
+.vercel/
+.DS_Store
+
+# Rendering scratch files (final JPGs and plans are kept)
+postiz/engine/out/**/*.png
+postiz/engine/out/**/*.html
+!postiz/engine/out/**/preview.html

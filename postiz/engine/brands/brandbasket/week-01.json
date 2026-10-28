@@ -1,0 +1,133 @@
+{
+  "brand": "brandbasket",
+  "timezone": "Asia/Kolkata",
+  "posts": [
+    {
+      "id": "w01-d1",
+      "date": "2026-10-29T10:00:00+05:30",
+      "painPoint": "Customers search for a business before visiting, and find nothing official.",
+      "mode": "ai",
+      "headline": "They searched for you. |What did they find?|",
+      "subline": "Before they visit you, they visit your website.",
+      "imagePrompt": "A confused young Indian man holding a smartphone and frowning at it, standing beside a small shop whose metal shutter is pulled down and closed, he cannot find the shop's opening hours online, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere",
+      "caption": "Your next customer is standing outside a shop right now, phone in hand, searching for you.\n\nThey want three things: are you open, where exactly are you, and how do they reach you.\n\nIf the answer is an old listing or nothing at all, they move on to someone who has a page.\n\nWe build your business website for ₹0. Live in 7 working days. We keep it running for ₹2,999 a month, GST included.\n\nStart yours at brandbasket.in (link in bio).",
+      "hashtags": [
+        "#SmallBusinessIndia",
+        "#LocalBusiness",
+        "#BusinessWebsite",
+        "#FreeWebsite",
+        "#DigitalIndia",
+        "#ShopOwner",
+        "#Brandbasket"
+      ]
+    },
+    {
+      "id": "w01-d2",
+      "date": "2026-10-30T10:00:00+05:30",
+      "painPoint": "Instagram feels like a website, but posts rarely show up on Google and the useful details scroll away.",
+      "mode": "ai",
+      "headline": "Your Instagram is |not on Google.|",
+      "subline": "Instagram is a shop window. A website is the address.",
+      "imagePrompt": "A hand holding a smartphone showing a colourful square photo grid social media feed, next to it a small magnifying glass lying on a warm wooden table, illustrating that social media posts cannot be found in search, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere",
+      "caption": "Instagram is great for showing what you do. It is rented space, though.\n\nYour timings, address and services get buried under new posts. Google rarely shows them. And customers who are not on Instagram cannot see much at all.\n\nKeep posting. Then give customers one page that answers everything in a few seconds.\n\nFree build, live in 7 working days, ₹2,999 a month to keep it running.\n\nbrandbasket.in (link in bio)",
+      "hashtags": [
+        "#InstagramForBusiness",
+        "#SmallBusinessIndia",
+        "#LocalSEO",
+        "#BusinessWebsite",
+        "#GoogleSearch",
+        "#Brandbasket"
+      ]
+    },
+    {
+      "id": "w01-d3",
+      "date": "2026-10-31T10:00:00+05:30",
+      "painPoint": "Website quotes ask for a big amount upfront, which a small business does not want to risk.",
+      "mode": "ai",
+      "headline": "₹0 to build |your website.|",
+      "subline": "No design fee. No build fee. Live in 7 working days.",
+      "imagePrompt": "A happy Indian shop owner in an apron holding up an open laptop that shows a modern business website made only of photos, coloured blocks and rounded buttons, next to it a small piggy bank with a zero-rupee feel, cheerful mood, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere",
+      "caption": "Most website quotes start with a big number before you have seen anything.\n\nWe do it the other way round.\n\nWe build your website for ₹0: up to 10 pages, made for phones, with click-to-call, WhatsApp and an enquiry form.\n\nYou pay ₹2,999 a month, GST included, and we keep it hosted, secure and up to date. No lock-ins. Cancel anytime.\n\nStart at brandbasket.in (link in bio).",
+      "hashtags": [
+        "#FreeWebsite",
+        "#SmallBusinessIndia",
+        "#WebsiteDesign",
+        "#StartupIndia",
+        "#LocalBusiness",
+        "#Brandbasket"
+      ]
+    },
+    {
+      "id": "w01-d4",
+      "date": "2026-11-01T10:00:00+05:30",
+      "painPoint": "A freelancer built the site and disappeared; now it is slow, broken or hacked and nobody fixes it.",
+      "mode": "ai",
+      "headline": "Built once. |Then forgotten.|",
+      "subline": "A website needs looking after every month.",
+      "imagePrompt": "A stressed Indian shop owner with his hand on his forehead looking at a laptop whose screen shows a large red warning triangle, a dusty cobweb on the corner of the laptop, feeling of a neglected broken website, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere",
+      "caption": "Your website was made. The freelancer moved on. Now it loads slowly, the contact form does nothing, or worse, it got hacked.\n\nA website is not a one-time job. It needs hosting, SSL, backups, updates and someone watching it.\n\nThat is exactly what our monthly plan covers, plus 2 small edits a month and a health report, with a real person to talk to.\n\nbrandbasket.in (link in bio)",
+      "hashtags": [
+        "#WebsiteMaintenance",
+        "#SmallBusinessIndia",
+        "#WebsiteSecurity",
+        "#BusinessWebsite",
+        "#LocalBusiness",
+        "#Brandbasket"
+      ]
+    },
+    {
+      "id": "w01-d5",
+      "date": "2026-11-02T10:00:00+05:30",
+      "painPoint": "WhatsApp Business works for existing customers, but strangers cannot discover the business through it.",
+      "mode": "ai",
+      "imagePrompt": "A smartphone showing green and white chat message bubbles standing next to an open laptop showing a business website made only of photos and coloured blocks, both on a wooden shop counter, the two devices connected by a soft glowing line, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere",
+      "headline": "WhatsApp talks to customers. |A website finds new ones.|",
+      "subline": "Join them with click-to-chat.",
+      "caption": "WhatsApp Business is brilliant once someone has your number.\n\nBut a new customer cannot browse WhatsApp to find a shop like yours. They search on Google, and land on a website.\n\nThe best setup uses both: a website people can find, with a WhatsApp button that starts the chat in one tap.\n\nWe build it free and run it for ₹2,999 a month, GST included.\n\nbrandbasket.in (link in bio)",
+      "hashtags": [
+        "#WhatsAppBusiness",
+        "#SmallBusinessIndia",
+        "#ShopOwner",
+        "#BusinessWebsite",
+        "#LocalBusiness",
+        "#Brandbasket"
+      ]
+    },
+    {
+      "id": "w01-d6",
+      "date": "2026-11-03T10:00:00+05:30",
+      "painPoint": "Restaurants depend only on delivery-app listings they do not control.",
+      "mode": "ai",
+      "headline": "Your listing is theirs. |Your website is yours.|",
+      "subline": "Menu, timings and your own phone number.",
+      "imagePrompt": "A smiling Indian cafe owner in an apron holding up a tablet that shows her cafe's own website made only of food photos and coloured blocks, a steaming cup of chai beside her, cosy cafe feel, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere",
+      "caption": "Delivery apps bring orders from people already on them. Keep them.\n\nBut the listing, the photos and the rules belong to the app.\n\nYour own website is the place you control: your menu, your timings, your map and your own phone number, whatever happens to a listing.\n\nWe build restaurant and cafe websites for ₹0, live in 7 working days.\n\nbrandbasket.in (link in bio)",
+      "hashtags": [
+        "#RestaurantIndia",
+        "#CafeOwner",
+        "#RestaurantMarketing",
+        "#SmallBusinessIndia",
+        "#BusinessWebsite",
+        "#Brandbasket"
+      ]
+    },
+    {
+      "id": "w01-d7",
+      "date": "2026-11-04T10:00:00+05:30",
+      "painPoint": "Owners do not have time for hosting, SSL, backups, updates and security.",
+      "mode": "ai",
+      "imagePrompt": "Three stacked wooden blocks engraved with simple icons of a padlock, a cloud and a shield with checkmark, sitting on a warm wooden table, a relaxed Indian shop owner's hand resting beside them holding a cup of chai, feeling of peace of mind, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere",
+      "headline": "Hosting. SSL. Backups. |Not your job.|",
+      "subline": "One plan. ₹2,999 a month, GST included.",
+      "caption": "You run a business. You should not be renewing SSL certificates or fixing a plugin at midnight.\n\nOur monthly plan covers hosting, SSL, backups, security updates and uptime monitoring, plus 2 edits a month and a monthly health report.\n\nOne clear price: ₹2,999 a month, GST included. The build is free. No lock-ins.\n\nbrandbasket.in (link in bio)",
+      "hashtags": [
+        "#SmallBusinessIndia",
+        "#WebsiteMaintenance",
+        "#ManagedWebsite",
+        "#LocalBusiness",
+        "#BusinessOwner",
+        "#Brandbasket"
+      ]
+    }
+  ]
+}

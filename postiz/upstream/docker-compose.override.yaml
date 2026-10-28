@@ -1,0 +1,37 @@
+# Local test overrides for the official Postiz compose file.
+# Compose loads this automatically next to docker-compose.yaml.
+# Secrets and the public URL come from .env (generated locally, never committed).
+services:
+  postiz:
+    environment:
+      JWT_SECRET: ${POSTIZ_JWT_SECRET:?POSTIZ_JWT_SECRET must be set in .env}
+      # The test account already exists; block new sign-ups while the tunnel is public.
+      DISABLE_REGISTRATION: 'true'
+      # Temporary, for the trycloudflare.com test only: Postiz sets its auth cookie on the
+      # parent domain (.trycloudflare.com), which browsers reject as a public suffix.
+      # NOT_SECURED makes the browser store a host-only cookie instead. Remove on a real domain.
+      NOT_SECURED: 'true'
+      # Public API requests per hour. A monthly batch needs ~2 per post (upload + create).
+      API_LIMIT: 300
+
+      # Public HTTPS address (Cloudflare Tunnel). Meta/LinkedIn redirect back here,
+      # and Instagram downloads media from here. Falls back to localhost.
+      MAIN_URL: ${POSTIZ_PUBLIC_URL:-http://localhost:4007}
+      FRONTEND_URL: ${POSTIZ_PUBLIC_URL:-http://localhost:4007}
+      NEXT_PUBLIC_BACKEND_URL: ${POSTIZ_PUBLIC_URL:-http://localhost:4007}/api
+
+      # Facebook Page + Instagram (Facebook Business) share one Meta app.
+      FACEBOOK_APP_ID: ${FACEBOOK_APP_ID:-}
+      FACEBOOK_APP_SECRET: ${FACEBOOK_APP_SECRET:-}
+      # Instagram (Standalone) uses the "Instagram API with Instagram Login" product.
+      INSTAGRAM_APP_ID: ${INSTAGRAM_APP_ID:-}
+      INSTAGRAM_APP_SECRET: ${INSTAGRAM_APP_SECRET:-}
+      # LinkedIn profile + LinkedIn Page share one LinkedIn app.
+      LINKEDIN_CLIENT_ID: ${LINKEDIN_CLIENT_ID:-}
+      LINKEDIN_CLIENT_SECRET: ${LINKEDIN_CLIENT_SECRET:-}
+
+      # AI captions / images.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    # Reachable from this Mac only; the tunnel reaches it via localhost.
+    ports: !override
+      - "127.0.0.1:4007:5000"

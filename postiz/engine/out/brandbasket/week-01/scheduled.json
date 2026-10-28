@@ -1,0 +1,37 @@
+{
+  "w01-d1": {
+    "postId": "cmvs4szxg0005mt7uklj7bbht",
+    "date": "2026-10-29T10:00:00+05:30",
+    "scheduledAt": "2026-10-28T13:09:46.897Z"
+  },
+  "w01-d2": {
+    "postId": "cmvs4szzy0006mt7ud9bimmuv",
+    "date": "2026-10-30T10:00:00+05:30",
+    "scheduledAt": "2026-10-28T13:09:46.952Z"
+  },
+  "w01-d3": {
+    "postId": "cmvs4t0230007mt7unqdimm6o",
+    "date": "2026-10-31T10:00:00+05:30",
+    "scheduledAt": "2026-10-28T13:09:47.027Z"
+  },
+  "w01-d4": {
+    "postId": "cmvs4t03f0008mt7uanqbt2a5",
+    "date": "2026-11-01T10:00:00+05:30",
+    "scheduledAt": "2026-10-28T13:09:47.075Z"
+  },
+  "w01-d5": {
+    "postId": "cmvs4t0500009mt7ut063iz90",
+    "date": "2026-11-02T10:00:00+05:30",
+    "scheduledAt": "2026-10-28T13:09:47.129Z"
+  },
+  "w01-d6": {
+    "postId": "cmvs4t06g000amt7uuwr2jdr6",
+    "date": "2026-11-03T10:00:00+05:30",
+    "scheduledAt": "2026-10-28T13:09:47.184Z"
+  },
+  "w01-d7": {
+    "postId": "cmvs4t07w000bmt7ul4ywjpmq",
+    "date": "2026-11-04T10:00:00+05:30",
+    "scheduledAt": "2026-10-28T13:09:47.233Z"
+  }
+}

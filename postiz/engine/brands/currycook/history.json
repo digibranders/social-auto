@@ -1,0 +1,13 @@
+{
+  "weeks": [
+    {
+      "file": "week-01.json",
+      "createdAt": "2026-10-28T13:16:35.434Z",
+      "painPoints": [
+        "You want curry but aren't sure what to choose for your meal.",
+        "You’re hosting a family gathering or wedding and don’t want to handle every meal detail yourself.",
+        "You’re organizing a corporate lunch and need a food option that feels considered without building the menu from scratch."
+      ]
+    }
+  ]
+}

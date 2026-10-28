@@ -1,0 +1,53 @@
+{
+  "weeks": [
+    {
+      "file": "week-01.json",
+      "createdAt": "2026-10-28T13:10:00.000Z",
+      "painPoints": [
+        "Customers search for a business before visiting, and find nothing official.",
+        "Instagram feels like a website, but posts rarely show up on Google and the useful details scroll away.",
+        "Website quotes ask for a big amount upfront, which a small business does not want to risk.",
+        "A freelancer built the site and disappeared; now it is slow, broken or hacked and nobody fixes it.",
+        "WhatsApp Business works for existing customers, but strangers cannot discover the business through it.",
+        "Restaurants depend only on delivery-app listings they do not control.",
+        "Owners do not have time for hosting, SSL, backups, updates and security."
+      ]
+    },
+    {
+      "file": "week-02.json",
+      "createdAt": "2026-10-28T13:24:17.405Z",
+      "painPoints": [
+        "Customers struggle to use the business website on a phone.",
+        "Customers keep calling to ask for basic business details that could be easy to find online.",
+        "A busy owner wants help managing social media and ads but has little time for another task.",
+        "Making small website changes feels difficult when the owner has to handle every detail alone.",
+        "Customers have no simple way to contact the business when the owner is busy serving someone else.",
+        "The business owner is unsure whether the website domain will remain theirs if they change providers.",
+        "A business owner wants a website but is wary of signing up for a long-term contract.",
+        "The website project keeps getting postponed, leaving the owner unsure when it will be ready.",
+        "The owner has several services but finds it difficult to give each one clear space on the website.",
+        "A business owner is unsure what to consider when collecting customer enquiries online.",
+        "The website’s dated look no longer reflects the business as it is today.",
+        "A browser’s security warning on the current website can make visitors hesitate.",
+        "The owner has no clear way to recover website content if it is accidentally lost.",
+        "The owner may only find out the website is offline after someone mentions it.",
+        "The owner wants a regular, understandable update on the website’s health.",
+        "Separate charges for website essentials make it hard to understand the ongoing cost.",
+        "The owner has a website question but does not know who they can ask for help.",
+        "The business owner is unsure how to prepare their website for AI-generated answers.",
+        "A business owner wants to understand the website service without being left to decode technical jargon.",
+        "A local business wants support to keep its online presence in mind as search tools evolve.",
+        "Parents considering a coaching institute cannot tell which course level is right for their child before speaking to the owner.",
+        "People new to a gym may feel unsure whether the training environment is suitable for beginners.",
+        "A salon’s potential clients may not know what its different services involve before deciding what to book.",
+        "A neighbourhood shop’s online presence may not give people a sense of the kinds of products they can find there.",
+        "People looking for a clinic may not know whether its stated services match the kind of care they are seeking.",
+        "Diners with dietary preferences may find it difficult to work out whether a restaurant’s menu suits them before arriving.",
+        "People interested in a cafe may not know whether it offers the atmosphere they want for a catch-up or a quiet break.",
+        "Parents considering a coaching institute may want to understand how its classes are organised before enrolling.",
+        "A local business serving a defined area may receive enquiries from people who are too far away to visit.",
+        "A business known mainly by its name may not be easy to distinguish from other businesses with similar names."
+      ]
+    }
+  ]
+}

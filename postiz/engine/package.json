@@ -1,0 +1,21 @@
+{
+  "name": "social-content-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "render": "node src/render.ts",
+    "schedule": "node src/schedule.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/*.test.ts",
+    "autopilot": "node src/autopilot.ts",
+    "monthly": "node src/monthly.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

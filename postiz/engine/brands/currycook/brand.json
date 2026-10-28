@@ -1,0 +1,51 @@
+{
+  "name": "Curry Cook",
+  "website": "https://currycook.com",
+  "handleUrl": "currycook.com",
+  "offer": "Curry Cook offers popular curry menu items and a “Build Your Own Curry” option. It also caters corporate lunches, family gatherings and weddings with custom menu packages; the site states the kitchen operates daily from 11:00 AM to 10:00 PM, and lists no prices.",
+  "audience": "People looking for curry meals, plus organizers planning corporate lunches, family gatherings or weddings.",
+  "tone": "Inviting and upbeat, with appetizing language about curry and food for every mood. Keep the wording friendly and direct.",
+  "proofPoints": [
+    "Build Your Own Curry option",
+    "Popular menu items",
+    "Catering for corporate lunches",
+    "Catering for family gatherings and weddings",
+    "Custom menu packages",
+    "Kitchen operates daily from 11:00 AM to 10:00 PM",
+    "In-person pickup at 25958 South Knollwood, Chesterfield, MI 48051",
+    "Email support lists an average response time of < 2 hours"
+  ],
+  "callToAction": "Explore the menu and order at currycook.com (link in bio)",
+  "rules": [
+    "Do not invent menu items, prices, offers or availability.",
+    "Copy any stated hours and terms exactly; do not resolve conflicting hours by guessing.",
+    "Do not make unsubstantiated health, nutrition or food-safety claims.",
+    "Do not present response times as a guarantee."
+  ],
+  "colors": {
+    "background": "#FFFFFF",
+    "ink": "#3B332D",
+    "accent": "#CE2E64",
+    "tile": "#B82554"
+  },
+  "font": "Poppins",
+  "logo": "assets/logo.png",
+  "mark": "assets/logo.png",
+  "features": [
+    {
+      "icon": "gear",
+      "title": "Build Your Curry",
+      "detail": "Build your own curry"
+    },
+    {
+      "icon": "person",
+      "title": "Event Catering",
+      "detail": "Custom menu packages"
+    },
+    {
+      "icon": "monitor",
+      "title": "Kitchen Hours",
+      "detail": "11:00 AM to 10:00 PM"
+    }
+  ]
+}

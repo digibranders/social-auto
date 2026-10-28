@@ -1,0 +1,63 @@
+{
+  "brand": "currycook",
+  "timezone": "+05:30",
+  "posts": [
+    {
+      "id": "w01-d1",
+      "date": "2026-10-29T10:00:00+05:30",
+      "painPoint": "You want curry but aren't sure what to choose for your meal.",
+      "mode": "ai",
+      "headline": "Not sure what |curry to choose|?",
+      "subline": "Browse popular dishes or build your own curry.",
+      "caption": "Craving curry, but stuck choosing what to order?\n\nWhen you know what you’re in the mood for but want to make the meal your own, deciding on one dish can feel like a little dilemma. Curry Cook has popular curry menu items to explore, plus a Build Your Own Curry option when you’d rather choose your own combination.\n\nTake a look at the menu and find a curry that sounds right for today. The kitchen operates daily from 11:00 AM to 10:00 PM.\n\nExplore the menu and order at currycook.com (link in bio).",
+      "hashtags": [
+        "#CurryCraving",
+        "#CurryMenu",
+        "#BuildYourOwnCurry",
+        "#CurryLovers",
+        "#ChesterfieldMI",
+        "#LocalFood",
+        "#CurryCook"
+      ],
+      "imagePrompt": "An adult in casual clothes sits at a kitchen table, looking thoughtfully between several closed takeaway containers and an empty bowl, with a spoon in hand and a hungry, undecided expression, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere"
+    },
+    {
+      "id": "w01-d2",
+      "date": "2026-10-30T10:00:00+05:30",
+      "painPoint": "You’re hosting a family gathering or wedding and don’t want to handle every meal detail yourself.",
+      "mode": "ai",
+      "headline": "Hosting? Let |curry join the table|",
+      "subline": "Catering and custom menu packages for gatherings.",
+      "caption": "Getting everyone together is lovely. Planning the food can feel like a lot.\n\nWhen you’re hosting a family gathering or wedding, it’s easy to feel pulled between welcoming guests and sorting out the meal. Curry Cook offers catering for family gatherings and weddings, with custom menu packages for your event.\n\nYou can explore the menu and consider a curry spread for your celebration, without having to make every dish yourself. For details about what could suit your gathering, visit the website.\n\nExplore the menu and order at currycook.com (link in bio).",
+      "hashtags": [
+        "#FamilyGathering",
+        "#WeddingCatering",
+        "#EventCatering",
+        "#CurryForTheTable",
+        "#ChesterfieldMI",
+        "#CateringIdeas",
+        "#CurryCook"
+      ],
+      "imagePrompt": "A host in a neat home kitchen glances anxiously at a crowded counter while family members gather in the next room; serving dishes and a stack of empty plates wait to be arranged, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere"
+    },
+    {
+      "id": "w01-d3",
+      "date": "2026-10-31T10:00:00+05:30",
+      "painPoint": "You’re organizing a corporate lunch and need a food option that feels considered without building the menu from scratch.",
+      "mode": "ai",
+      "headline": "Lunch planning got |too complicated|?",
+      "subline": "Curry catering with custom menu packages.",
+      "caption": "A team lunch should be a chance to gather—not another menu puzzle to solve.\n\nIf you’re organizing a corporate lunch, deciding what to serve can take time, especially when you want the meal to feel planned for the occasion. Curry Cook caters corporate lunches and offers custom menu packages, giving you a way to arrange a curry menu for your event.\n\nExplore the menu to see the popular curry options, then visit the website to learn more about catering. The kitchen operates daily from 11:00 AM to 10:00 PM.\n\nExplore the menu and order at currycook.com (link in bio).",
+      "hashtags": [
+        "#CorporateLunch",
+        "#OfficeCatering",
+        "#TeamLunch",
+        "#CurryCatering",
+        "#ChesterfieldMI",
+        "#LunchPlanning",
+        "#CurryCook"
+      ],
+      "imagePrompt": "An office organizer in business-casual clothes stands beside a meeting table set with blank plates and cutlery, studying a few empty serving platters as coworkers wait nearby, the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background, bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere"
+    }
+  ]
+}

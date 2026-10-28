@@ -1,0 +1,11 @@
+{
+  "clients": [
+    {
+      "site": "brandbasket.in",
+      "channel": "dai23_sy",
+      "days": 30,
+      "time": "10:00",
+      "utcOffset": "+05:30"
+    }
+  ]
+}
