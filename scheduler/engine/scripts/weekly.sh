@@ -28,7 +28,7 @@ node src/run-clients.ts
 run_status=$?
 
 cd "$ROOT" || exit 1
-git add scheduler/engine/brands scheduler/engine/out publisher/public
+git add scheduler/engine/brands scheduler/engine/out publisher/public publisher/data
 if git diff --cached --quiet; then
   echo "No new content to publish."
   exit $run_status
