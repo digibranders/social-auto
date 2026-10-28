@@ -4,7 +4,7 @@ import { slugFromSite } from './analyze.ts';
 import { chooseStartDate, tomorrowAt } from './autopilot.ts';
 import { collectColors, htmlToText } from './crawl.ts';
 import { scheduleDates } from './planner.ts';
-import { captionToHtml } from './postiz.ts';
+import { captionToHtml } from './scheduler-client.ts';
 
 test('slugFromSite uses the first domain label', () => {
   assert.equal(slugFromSite('brandbasket.in'), 'brandbasket');

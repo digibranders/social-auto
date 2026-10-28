@@ -1,5 +1,5 @@
 /**
- * Uploads rendered images to Postiz and schedules each post of a week plan.
+ * Uploads rendered images to Scheduler and schedules each post of a week plan.
  * Already-scheduled posts are recorded in scheduled.json and skipped on re-runs.
  *
  *   node src/schedule.ts --brand brands/brandbasket --plan week-01.json --channel dai23_sy [--dry-run]
@@ -8,9 +8,9 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { composeCaption, parseWeekPlan, readJson } from './content.ts';
-import { PostizClient } from './postiz.ts';
+import { SchedulerClient } from './scheduler-client.ts';
 
-export const DEFAULT_POSTIZ_URL = 'http://127.0.0.1:4007/api';
+export const DEFAULT_SCHEDULER_URL = 'http://127.0.0.1:4007/api';
 const INSTAGRAM_PROVIDERS = new Set(['instagram', 'instagram-standalone']);
 
 type ScheduledLog = Record<string, { postId: string; date: string; scheduledAt: string }>;
@@ -28,8 +28,8 @@ export interface ScheduleOptions {
   brandDir: string;
   planFile: string;
   channel: string;
-  postizKey: string;
-  postizUrl?: string;
+  schedulerKey: string;
+  schedulerUrl?: string;
   dryRun?: boolean;
   log?: (message: string) => void;
 }
@@ -42,12 +42,12 @@ export async function schedulePlan(options: ScheduleOptions): Promise<number> {
   const logPath = join(outDir, 'scheduled.json');
   const scheduled = await readLog(logPath);
 
-  const postiz = new PostizClient(options.postizUrl ?? DEFAULT_POSTIZ_URL, options.postizKey);
-  const channel = (await postiz.listIntegrations()).find(
+  const scheduler = new SchedulerClient(options.schedulerUrl ?? DEFAULT_SCHEDULER_URL, options.schedulerKey);
+  const channel = (await scheduler.listIntegrations()).find(
     (i) => i.profile === options.channel && INSTAGRAM_PROVIDERS.has(i.identifier),
   );
-  if (!channel) throw new Error(`No Instagram channel "${options.channel}" connected in Postiz`);
-  if (channel.disabled) throw new Error(`Channel "${options.channel}" is disabled in Postiz`);
+  if (!channel) throw new Error(`No Instagram channel "${options.channel}" connected in Scheduler`);
+  if (channel.disabled) throw new Error(`Channel "${options.channel}" is disabled in Scheduler`);
 
   let count = 0;
   const now = Date.now();
@@ -66,8 +66,8 @@ export async function schedulePlan(options: ScheduleOptions): Promise<number> {
       log(`${post.id}: would schedule for ${post.date} on ${channel.profile}`);
       continue;
     }
-    const image = await postiz.uploadImage(imagePath);
-    const created = await postiz.schedulePost({
+    const image = await scheduler.uploadImage(imagePath);
+    const created = await scheduler.schedulePost({
       integrationId: channel.id,
       providerIdentifier: channel.identifier,
       date: post.date,
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
       plan: { type: 'string' },
       channel: { type: 'string' },
       env: { type: 'string', default: '../upstream/.env' },
-      'postiz-url': { type: 'string', default: DEFAULT_POSTIZ_URL },
+      'scheduler-url': { type: 'string', default: DEFAULT_SCHEDULER_URL },
       'dry-run': { type: 'boolean', default: false },
     },
   });
@@ -97,14 +97,14 @@ async function main(): Promise<void> {
     throw new Error('Usage: --brand <dir> --plan <file.json> --channel <instagram username> [--dry-run]');
   }
   process.loadEnvFile(resolve(values.env));
-  const key = process.env['POSTIZ_API_KEY'];
-  if (!key) throw new Error(`POSTIZ_API_KEY is not set in ${values.env}`);
+  const key = process.env['SCHEDULER_API_KEY'];
+  if (!key) throw new Error(`SCHEDULER_API_KEY is not set in ${values.env}`);
   await schedulePlan({
     brandDir: resolve(values.brand),
     planFile: values.plan,
     channel: values.channel,
-    postizKey: key,
-    postizUrl: values['postiz-url'],
+    schedulerKey: key,
+    schedulerUrl: values['scheduler-url'],
     dryRun: values['dry-run'],
   });
 }

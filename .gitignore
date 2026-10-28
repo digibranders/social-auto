@@ -9,6 +9,6 @@ node_modules/
 .DS_Store
 
 # Rendering scratch files (final JPGs and plans are kept)
-postiz/engine/out/**/*.png
-postiz/engine/out/**/*.html
-!postiz/engine/out/**/preview.html
+scheduler/engine/out/**/*.png
+scheduler/engine/out/**/*.html
+!scheduler/engine/out/**/preview.html

@@ -3,26 +3,26 @@ import { basename } from 'node:path';
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
-export class PostizApiError extends Error {
+export class SchedulerApiError extends Error {
   readonly endpoint: string;
   readonly status: number;
 
   constructor(endpoint: string, status: number, body: string) {
-    super(`Postiz ${endpoint} failed with ${status}: ${body.slice(0, 300)}`);
-    this.name = 'PostizApiError';
+    super(`Scheduler ${endpoint} failed with ${status}: ${body.slice(0, 300)}`);
+    this.name = 'SchedulerApiError';
     this.endpoint = endpoint;
     this.status = status;
   }
 }
 
-export interface PostizIntegration {
+export interface SchedulerChannel {
   id: string;
   identifier: string;
   profile: string;
   disabled: boolean;
 }
 
-export interface PostizMedia {
+export interface SchedulerMedia {
   id: string;
   path: string;
 }
@@ -33,7 +33,7 @@ export interface SchedulePostInput {
   /** ISO 8601 date-time with offset. */
   date: string;
   caption: string;
-  image: PostizMedia;
+  image: SchedulerMedia;
 }
 
 export interface CreatedPost {
@@ -44,7 +44,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** Postiz stores post bodies as HTML; one paragraph per line keeps Instagram's line breaks. */
+/** Scheduler stores post bodies as HTML; one paragraph per line keeps Instagram's line breaks. */
 export function captionToHtml(caption: string): string {
   return caption
     .split('\n')
@@ -52,7 +52,7 @@ export function captionToHtml(caption: string): string {
     .join('');
 }
 
-export class PostizClient {
+export class SchedulerClient {
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
@@ -68,13 +68,13 @@ export class PostizClient {
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     const text = await response.text();
-    if (!response.ok) throw new PostizApiError(endpoint, response.status, text);
+    if (!response.ok) throw new SchedulerApiError(endpoint, response.status, text);
     return text ? (JSON.parse(text) as unknown) : null;
   }
 
-  async listIntegrations(): Promise<PostizIntegration[]> {
+  async listIntegrations(): Promise<SchedulerChannel[]> {
     const data = await this.request('/integrations');
-    if (!Array.isArray(data)) throw new PostizApiError('/integrations', 200, 'expected an array');
+    if (!Array.isArray(data)) throw new SchedulerApiError('/integrations', 200, 'expected an array');
     return data.filter(isRecord).map((i) => ({
       id: String(i['id']),
       identifier: String(i['identifier'] ?? i['providerIdentifier'] ?? ''),
@@ -83,12 +83,12 @@ export class PostizClient {
     }));
   }
 
-  async uploadImage(filePath: string): Promise<PostizMedia> {
+  async uploadImage(filePath: string): Promise<SchedulerMedia> {
     const form = new FormData();
     form.append('file', new Blob([await readFile(filePath)], { type: 'image/jpeg' }), basename(filePath));
     const data = await this.request('/upload', { method: 'POST', body: form });
     if (!isRecord(data) || typeof data['id'] !== 'string' || typeof data['path'] !== 'string') {
-      throw new PostizApiError('/upload', 200, `unexpected response ${JSON.stringify(data)}`);
+      throw new SchedulerApiError('/upload', 200, `unexpected response ${JSON.stringify(data)}`);
     }
     return { id: data['id'], path: data['path'] };
   }
@@ -114,7 +114,7 @@ export class PostizClient {
     });
     const first: unknown = Array.isArray(data) ? data[0] : data;
     if (!isRecord(first) || typeof first['postId'] !== 'string') {
-      throw new PostizApiError('/posts', 200, `unexpected response ${JSON.stringify(data)}`);
+      throw new SchedulerApiError('/posts', 200, `unexpected response ${JSON.stringify(data)}`);
     }
     return { postId: first['postId'] };
   }

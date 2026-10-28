@@ -7,7 +7,7 @@
  *
  * First run for a site builds brands/<slug>/brand.json from the website. Every run writes the
  * next week-NN.json with new pain points (history.json prevents repeats), renders the posters
- * and, unless --dry-run, schedules them in Postiz.
+ * and, unless --dry-run, schedules them in Scheduler.
  */
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -16,7 +16,7 @@ import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseBrand, parseWeekPlan, readJson } from './content.ts';
 import { planWeek } from './planner.ts';
 import { DEFAULT_IMAGE_MODEL, renderPlan } from './render.ts';
-import { DEFAULT_POSTIZ_URL, schedulePlan } from './schedule.ts';
+import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
 
 const BRANDS_ROOT = resolve('brands');
 const WEEK_FILE = /^week-(\d+)\.json$/;
@@ -96,7 +96,7 @@ async function main(): Promise<void> {
       'utc-offset': { type: 'string', default: '+05:30' },
       'image-model': { type: 'string', default: DEFAULT_IMAGE_MODEL },
       env: { type: 'string', default: '../upstream/.env' },
-      'postiz-url': { type: 'string', default: DEFAULT_POSTIZ_URL },
+      'scheduler-url': { type: 'string', default: DEFAULT_SCHEDULER_URL },
       'refresh-brand': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -163,8 +163,8 @@ async function main(): Promise<void> {
     brandDir,
     planFile,
     channel: values.channel,
-    postizKey: requireEnv('POSTIZ_API_KEY', values.env),
-    postizUrl: values['postiz-url'],
+    schedulerKey: requireEnv('SCHEDULER_API_KEY', values.env),
+    schedulerUrl: values['scheduler-url'],
     log: (m) => console.log(`    ${m}`),
   });
   console.log(`Done: ${count} posts scheduled. Preview: ${join(outDir, 'preview.html')}`);
