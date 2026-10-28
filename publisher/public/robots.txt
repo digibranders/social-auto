@@ -1,0 +1,6 @@
+# Private publishing endpoint: not for search engines.
+# /posts/ stays fetchable so Instagram can download scheduled images;
+# every response also carries "X-Robots-Tag: noindex, nofollow".
+User-agent: *
+Allow: /posts/
+Disallow: /
