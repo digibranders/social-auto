@@ -74,11 +74,17 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/login': { method: 'POST', load: () => import('../api/login.ts').then((m) => m.POST) },
   '/api/logout': { method: 'POST', load: () => import('../api/logout.ts').then((m) => m.POST as Handler) },
   '/api/data': { method: 'GET', load: () => import('../api/data.ts').then((m) => m.GET) },
+  '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
 };
 
 const app = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
   const path = url.pathname;
+  // Edited pictures normally come from the publisher; when one is configured, relay them for local testing.
+  if (path === '/api/edited-image' && process.env['EDIT_URL']) {
+    const relayed = await fetch(new URL(`/api/edited-image${url.search}`, process.env['EDIT_URL']));
+    return send(res, relayed);
+  }
   if (path.startsWith('/api/')) {
     const route = routes[path];
     if (!route || req.method !== route.method) {

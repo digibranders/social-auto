@@ -21,6 +21,10 @@ export interface StatusPost {
   permalink: string | null;
   publishedAt: string | null;
   mediaUrl: string | null;
+  /** The caption or picture was changed in the dashboard after the content job planned it. */
+  edited: boolean;
+  /** Still ahead of its time and not yet live, so it may be changed. */
+  editable: boolean;
 }
 
 export interface ChannelHealth {
@@ -117,6 +121,8 @@ export function parseStatus(raw: unknown): StatusResponse {
       permalink: textOrNull(post, 'permalink', where),
       publishedAt: textOrNull(post, 'publishedAt', where),
       mediaUrl: textOrNull(post, 'mediaUrl', where),
+      edited: post['edited'] === true,
+      editable: post['editable'] === true,
     };
   });
 
