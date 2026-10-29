@@ -2,7 +2,7 @@
  * Website in, scheduled Instagram posts out.
  *
  *   node src/autopilot.ts --site example.com --channel their_insta [--days 7] [--time 10:00]
- *                         [--start YYYY-MM-DD] [--utc-offset +05:30] [--image-model zimage]
+ *                         [--weekdays mon,wed,fri] [--start YYYY-MM-DD] [--utc-offset +05:30] [--image-model zimage]
  *                         [--refresh-brand] [--dry-run] [--target scheduler|publisher]
  *
  * First run for a site builds brands/<slug>/brand.json from the website. Every run writes the
@@ -14,6 +14,7 @@ import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { analyzeSite, slugFromSite } from './analyze.ts';
+import { parseWeekdays } from './cadence.ts';
 import { parseBrand, parseWeekPlan, readJson } from './content.ts';
 import { exportToPublisher } from './export-publisher.ts';
 import { planWeek } from './planner.ts';
@@ -93,6 +94,7 @@ async function main(): Promise<void> {
       site: { type: 'string' },
       channel: { type: 'string' },
       days: { type: 'string', default: '7' },
+      weekdays: { type: 'string' },
       time: { type: 'string', default: '10:00' },
       start: { type: 'string' },
       'utc-offset': { type: 'string', default: '+05:30' },
@@ -111,6 +113,7 @@ async function main(): Promise<void> {
   if (target === 'scheduler' && !values.channel && !values['dry-run']) {
     throw new Error('--channel is required for --target scheduler unless --dry-run is set');
   }
+  const weekdays = values.weekdays ? parseWeekdays(values.weekdays.split(',')) : undefined;
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
 
@@ -134,7 +137,8 @@ async function main(): Promise<void> {
   const planFile = `week-${String(weekNumber).padStart(2, '0')}.json`;
   const startDate =
     values.start ?? chooseStartDate(await lastPlannedDate(brandDir), tomorrowAt(values['utc-offset']));
-  console.log(`2/4 Writing ${days} new pain-point posts from ${startDate} (${planFile})…`);
+  const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
+  console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
   const plan = await planWeek({
     apiKey: pollinationsKey,
     brand,
@@ -146,6 +150,7 @@ async function main(): Promise<void> {
       time: values.time,
       utcOffset: values['utc-offset'],
       count: days,
+      ...(weekdays ? { weekdays } : {}),
     },
     usedPainPoints: history.weeks.flatMap((w) => w.painPoints),
   });

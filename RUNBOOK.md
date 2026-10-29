@@ -45,8 +45,11 @@ Edits live in the private Vercel Blob store `social-publisher-edits` (file `over
 ### Change or remove a post (in the files)
 Edit `scheduler/engine/brands/<client>/week-NN.json` (caption, headline, `imagePrompt`). Delete `out/<client>/week-NN/<id>-bg.jpg` to draw a new picture. Then in `scheduler/engine`: `node src/render.ts --brand brands/<client> --plan week-NN.json`, `node src/export-publisher.ts --brand brands/<client>`, commit, pull request, merge. Do not edit a post whose time has already passed.
 
+### Change how often a client posts
+In `scheduler/engine/clients.json`, give the client either `"postsPerWeek": N` (1 to 7, spread evenly: 1 = Mon, 2 = Mon/Thu, 3 = Mon/Wed/Fri, 5 = Mon to Fri, 7 = daily) or exact days, `"weekdays": ["tue", "sat"]` (which wins over the number). Each Monday run adds one week's worth of posts after the last planned one. A change applies from the **next weekly run**; posts already scheduled stay as they are (delete them in the files, see "Change or remove a post", if they should go). A longer gap between posts also makes the queue last longer, so the "running low" alerts come later. The old `"days": N` (N posts on consecutive days) still works.
+
 ### Add a client
-Add an entry to `scheduler/engine/clients.json` (`site`, `days`, `time`, `utcOffset`, `target: "publisher"`). The first run builds `brands/<client>/brand.json` from the website: check it. **The publisher currently posts through one Instagram account**; a second account needs support added to the publisher before its posts can go out.
+Add an entry to `scheduler/engine/clients.json` (`site`, `postsPerWeek` or `weekdays`, `time`, `utcOffset`, `target: "publisher"`). The first run builds `brands/<client>/brand.json` from the website: check it. **The publisher currently posts through one Instagram account**; a second account needs support added to the publisher before its posts can go out.
 
 ### Dashboard password and sessions
 The password is the Vercel variable `DASHBOARD_PASSWORD` in project `social-dashboard`: `vercel env update DASHBOARD_PASSWORD production --sensitive`, then redeploy. Changing `SESSION_SECRET` signs everyone out.

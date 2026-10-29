@@ -1,5 +1,6 @@
 /** Writes a week of pain-point posts for a brand with the text model. */
 import { parseWeekPlan, type Brand, type WeekPlan } from './content.ts';
+import { postDates, type Weekday } from './cadence.ts';
 import { chatJson } from './llm.ts';
 
 export const VISUAL_STYLE =
@@ -15,22 +16,19 @@ export interface PlanSchedule {
   /** UTC offset of that local time, e.g. +05:30. */
   utcOffset: string;
   count: number;
+  /** Post only on these days of the week; without it, posts go on consecutive days. */
+  weekdays?: readonly Weekday[];
 }
 
-/** ISO dates for consecutive days at the same local time. */
-export function scheduleDates({ startDate, time, utcOffset, count }: PlanSchedule): string[] {
+/** ISO dates at the same local time: consecutive days, or only the chosen weekdays. */
+export function scheduleDates({ startDate, time, utcOffset, count, weekdays }: PlanSchedule): string[] {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new Error(`Invalid start date "${startDate}", expected YYYY-MM-DD`);
   if (!/^\d{2}:\d{2}$/.test(time)) throw new Error(`Invalid time "${time}", expected HH:MM`);
   if (!/^[+-]\d{2}:\d{2}$/.test(utcOffset)) throw new Error(`Invalid UTC offset "${utcOffset}", expected +HH:MM`);
-  const first = Date.UTC(
-    Number(startDate.slice(0, 4)),
-    Number(startDate.slice(5, 7)) - 1,
-    Number(startDate.slice(8, 10)),
-  );
-  return Array.from({ length: count }, (_, i) => {
-    const day = new Date(first + i * 86_400_000).toISOString().slice(0, 10);
-    return `${day}T${time}:00${utcOffset}`;
-  });
+  const days = weekdays
+    ? postDates(startDate, count, weekdays)
+    : Array.from({ length: count }, (_, i) => new Date(Date.parse(`${startDate}T00:00:00Z`) + i * 86_400_000).toISOString().slice(0, 10));
+  return days.map((day) => `${day}T${time}:00${utcOffset}`);
 }
 
 const SYSTEM_PROMPT = `You are a senior social media copywriter for small and local businesses.

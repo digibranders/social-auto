@@ -7,6 +7,7 @@
 import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
 import { parseArgs, promisify } from 'node:util';
+import { parseWeekdays, weekdaysForPostsPerWeek, type Weekday } from './cadence.ts';
 import { readJson } from './content.ts';
 
 const run = promisify(execFile);
@@ -18,7 +19,15 @@ export interface ClientConfig {
   site: string;
   /** Instagram username; required for the "scheduler" target. */
   channel?: string;
-  days: number;
+  /**
+   * How often to post. Give one of (first match wins):
+   *   weekdays      exact days, e.g. ["tue", "sat"]
+   *   postsPerWeek  1 to 7, spread evenly through the week (5 = Monday to Friday)
+   *   days          older setting: that many posts on consecutive days
+   */
+  weekdays?: Weekday[];
+  postsPerWeek?: number;
+  days?: number;
   time: string;
   utcOffset: string;
   target: ClientTarget;
@@ -31,7 +40,13 @@ export function parseClients(raw: unknown): ClientConfig[] {
     for (const key of ['site', 'time', 'utcOffset'] as const) {
       if (typeof c[key] !== 'string' || !c[key]) throw new Error(`clients[${i}].${key} must be a non-empty string`);
     }
-    if (!Number.isInteger(c['days'])) throw new Error(`clients[${i}].days must be a whole number`);
+    if (c['weekdays'] === undefined && c['postsPerWeek'] === undefined && !Number.isInteger(c['days'])) {
+      throw new Error(`clients[${i}] needs "postsPerWeek", "weekdays" or "days"`);
+    }
+    if (c['postsPerWeek'] !== undefined && (!Number.isInteger(c['postsPerWeek']) || (c['postsPerWeek'] as number) < 1 || (c['postsPerWeek'] as number) > 7)) {
+      throw new Error(`clients[${i}].postsPerWeek must be a whole number from 1 to 7`);
+    }
+    const weekdays = c['weekdays'] === undefined ? undefined : parseWeekdays(c['weekdays']);
     const target = c['target'] ?? 'scheduler';
     if (target !== 'scheduler' && target !== 'publisher') {
       throw new Error(`clients[${i}].target must be "scheduler" or "publisher"`);
@@ -39,19 +54,31 @@ export function parseClients(raw: unknown): ClientConfig[] {
     if (target === 'scheduler' && (typeof c['channel'] !== 'string' || !c['channel'])) {
       throw new Error(`clients[${i}].channel is required for the scheduler target`);
     }
-    return { ...(c as unknown as ClientConfig), target };
+    return { ...(c as unknown as ClientConfig), ...(weekdays ? { weekdays } : {}), target };
   });
 }
 
+/** The days a client posts on, and how many posts one weekly run adds (a week's worth). */
+export function cadenceOf(client: ClientConfig): { count: number; weekdays?: readonly Weekday[] } {
+  if (client.weekdays) return { count: client.weekdays.length, weekdays: client.weekdays };
+  if (client.postsPerWeek !== undefined) {
+    const weekdays = weekdaysForPostsPerWeek(client.postsPerWeek);
+    return { count: weekdays.length, weekdays };
+  }
+  return { count: client.days as number };
+}
+
 export function autopilotArgs(client: ClientConfig): string[] {
+  const { count, weekdays } = cadenceOf(client);
   const args = [
     'src/autopilot.ts',
     '--site', client.site,
-    '--days', String(client.days),
+    '--days', String(count),
     '--time', client.time,
     '--utc-offset', client.utcOffset,
     '--target', client.target,
   ];
+  if (weekdays) args.push('--weekdays', weekdays.join(','));
   if (client.channel) args.push('--channel', client.channel);
   return args;
 }

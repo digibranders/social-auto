@@ -2,7 +2,7 @@
   "clients": [
     {
       "site": "brandbasket.in",
-      "days": 7,
+      "postsPerWeek": 7,
       "time": "10:00",
       "utcOffset": "+05:30",
       "target": "publisher"
