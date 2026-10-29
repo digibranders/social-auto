@@ -1,5 +1,5 @@
 import { BlobPreconditionFailedError, del, get, put } from '@vercel/blob';
-import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overrides.ts';
+import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overrides.js';
 
 /**
  * Where dashboard edits live: one private Vercel Blob store (token in BLOB_READ_WRITE_TOKEN, created
