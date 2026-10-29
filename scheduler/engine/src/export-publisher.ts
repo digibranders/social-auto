@@ -1,6 +1,8 @@
 /**
  * Copies rendered posters and captions into the Vercel publisher so it can post without this Mac.
- * Only posts that are still upcoming (or due today) are exported.
+ * Every post ever planned stays in the schedule, so the dashboard can show any past week. Only
+ * upcoming and recent posts keep their poster; older ones are exported with `image: null`, which
+ * keeps the deployment from growing forever.
  *
  * Posters are public (Instagram downloads them) but named by a hash of their content, so URLs
  * cannot be guessed. The schedule is written to publisher/data/schedule.ts, which the posting
@@ -15,7 +17,7 @@ import { parseArgs } from 'node:util';
 import { composeCaption, parseWeekPlan, readJson } from './content.ts';
 
 const WEEK_FILE = /^week-\d+\.json$/;
-/** Keep posts from the last 20 hours so a post due today is still published. */
+/** Posters are kept for posts from the last 20 hours onwards, so a post due today can still be published. */
 const KEEP_RECENT_MS = 20 * 60 * 60 * 1000;
 
 export interface ExportedPost {
@@ -23,7 +25,8 @@ export interface ExportedPost {
   id: string;
   date: string;
   caption: string;
-  image: string;
+  /** Poster path in the publisher, or null once the poster was pruned. */
+  image: string | null;
 }
 
 /** 128-bit content hash: stable for the same image, unguessable without it. */
@@ -73,16 +76,19 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
     const plan = parseWeekPlan(await readJson(join(brandDir, file)), file);
     const outDir = resolve('out', brand, basename(file, '.json'));
     for (const post of plan.posts) {
-      if (Date.parse(post.date) < now - KEEP_RECENT_MS) continue;
-      const image = await readFile(join(outDir, `${post.id}.jpg`));
-      const fileName = posterFileName(image);
-      await writeFile(join(postsDir, fileName), image);
+      let poster: string | null = null;
+      if (Date.parse(post.date) >= now - KEEP_RECENT_MS) {
+        const image = await readFile(join(outDir, `${post.id}.jpg`));
+        const fileName = posterFileName(image);
+        await writeFile(join(postsDir, fileName), image);
+        poster = `/posts/${brand}/${fileName}`;
+      }
       exported.push({
         brand,
         id: `${brand}-${post.id}`,
         date: post.date,
         caption: composeCaption(post),
-        image: `/posts/${brand}/${fileName}`,
+        image: poster,
       });
     }
   }
@@ -108,7 +114,8 @@ async function main(): Promise<void> {
   const posts = await exportToPublisher(resolve(values.brand), resolve(values.publisher));
   const first = posts[0]?.date ?? '-';
   const last = posts.at(-1)?.date ?? '-';
-  console.log(`Exported ${posts.length} posts (${first} → ${last})`);
+  const withPosters = posts.filter((p) => p.image !== null).length;
+  console.log(`Exported ${posts.length} posts (${first} → ${last}), ${withPosters} with posters`);
 }
 
 if (import.meta.main) {

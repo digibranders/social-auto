@@ -1,0 +1,6 @@
+node_modules
+.vercel
+.env*
+.dashboard-login.txt
+# Compiled browser code: built by `npm run build`
+public/assets

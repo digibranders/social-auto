@@ -8,6 +8,11 @@ test('the schedule module round-trips and rejects hand-written files', () => {
   assert.throws(() => parseScheduleModule('export const schedule = {"posts": []};\n'), /not generated/);
 });
 
+test('the schedule module keeps old posts whose poster was pruned (image: null)', () => {
+  const posts = [{ brand: 'b', id: 'b-w01-d1', date: '2026-01-01T10:00:00+05:30', caption: 'Old', image: null }];
+  assert.deepEqual(parseScheduleModule(scheduleModule(posts)), posts);
+});
+
 test('posterFileName is stable for the same image and different for others', () => {
   const a = Buffer.from('image-a');
   assert.equal(posterFileName(a), posterFileName(Buffer.from('image-a')));

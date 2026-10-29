@@ -1,7 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
 
+/** JSON response that browsers and CDNs must never cache. */
 export function json(status: number, body: Record<string, unknown>): Response {
-  return Response.json(body, { status });
+  return Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 }
 
 export function requireEnv(name: string): string {
@@ -10,8 +11,11 @@ export function requireEnv(name: string): string {
   return value;
 }
 
-/** Cron endpoints are only callable with the shared secret, sent as a Bearer token. */
-export function isAuthorized(request: Request, secret = process.env['CRON_SECRET']): boolean {
+/**
+ * Private endpoints are only callable with their own shared secret, sent as a Bearer token.
+ * The secret is an explicit argument so an unset variable can never fall back to another endpoint's secret.
+ */
+export function isAuthorized(request: Request, secret: string | undefined): boolean {
   if (!secret) return false;
   const expected = Buffer.from(`Bearer ${secret}`);
   const actual = Buffer.from(request.headers.get('authorization') ?? '');
