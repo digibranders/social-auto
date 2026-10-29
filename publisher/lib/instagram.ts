@@ -18,6 +18,27 @@ async function graph(step: string, path: string, init?: RequestInit): Promise<Re
   return body;
 }
 
+export interface RefreshedToken {
+  token: string;
+  expiresInDays: number;
+}
+
+/**
+ * Extends a long-lived token's life (about 60 days). Instagram only allows this for tokens at least
+ * 24 hours old that are still valid. The refresh endpoint is not versioned, unlike the rest of the API.
+ */
+export async function refreshToken(token: string): Promise<RefreshedToken> {
+  const params = new URLSearchParams({ grant_type: 'ig_refresh_token', access_token: token });
+  const response = await fetch(`https://graph.instagram.com/refresh_access_token?${params}`, {
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = (await response.json()) as Record<string, unknown>;
+  if (!response.ok || body['error'] || typeof body['access_token'] !== 'string') {
+    throw new InstagramApiError('refresh token', JSON.stringify(body['error'] ?? body));
+  }
+  return { token: body['access_token'], expiresInDays: Math.floor(Number(body['expires_in']) / 86_400) };
+}
+
 export interface RecentMedia {
   id: string;
   caption: string;
