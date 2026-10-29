@@ -16,7 +16,7 @@ const RENEW_HELP =
   'and save it as INSTAGRAM_TOKEN in the Vercel project.';
 
 export async function GET(request: Request): Promise<Response> {
-  if (!isAuthorized(request)) return json(401, { error: 'unauthorized' });
+  if (!isAuthorized(request, process.env['CRON_SECRET'])) return json(401, { error: 'unauthorized' });
 
   try {
     const current = requireEnv('INSTAGRAM_TOKEN');

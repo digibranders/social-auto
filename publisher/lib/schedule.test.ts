@@ -1,6 +1,61 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError } from './schedule.ts';
+import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError } from './schedule.ts';
+
+const hour = 60 * 60 * 1000;
+const NOW = Date.parse('2026-12-10T12:00:00+05:30');
+const at = (offsetHours: number): string => new Date(NOW + offsetHours * hour).toISOString();
+const scheduled = (id: string, offsetHours: number, caption: string, image: string | null = `/posts/b/${id}.jpg`) => ({
+  brand: 'b',
+  id,
+  date: at(offsetHours),
+  caption,
+  image,
+});
+const media = (id: string, caption: string) => ({
+  id,
+  caption,
+  timestamp: '2026-12-09T04:40:00+0000',
+  permalink: `https://instagram.com/p/${id}/`,
+  mediaUrl: `https://cdn.example/${id}.jpg`,
+});
+
+test('buildStatus tells published, due, missed and scheduled posts apart', () => {
+  const posts = [
+    scheduled('old-live', -50, 'Live  caption', null),
+    scheduled('old-lost', -48, 'Lost caption', null),
+    scheduled('today', -2, 'Today caption'),
+    scheduled('soon', 22, 'Soon caption'),
+  ];
+  const { posts: result, runway } = buildStatus(posts, [media('m1', 'Live caption')], NOW, 'https://pub.example');
+  const state = Object.fromEntries(result.map((p) => [p.id, p.state]));
+  assert.deepEqual(state, { 'old-live': 'published', 'old-lost': 'missed', today: 'due', soon: 'scheduled' });
+  const live = result.find((p) => p.id === 'old-live');
+  assert.equal(live?.permalink, 'https://instagram.com/p/m1/');
+  assert.equal(live?.mediaUrl, 'https://cdn.example/m1.jpg');
+  assert.equal(live?.image, null);
+  assert.equal(result.find((p) => p.id === 'soon')?.image, 'https://pub.example/posts/b/soon.jpg');
+  assert.deepEqual(runway, [{ brand: 'b', postsLeft: 1 }]);
+});
+
+test('buildStatus does not guess about the past when Instagram cannot be reached', () => {
+  const posts = [scheduled('past', -48, 'P', null), scheduled('future', 5, 'F')];
+  const { posts: result } = buildStatus(posts, null, NOW, 'https://pub.example');
+  assert.deepEqual(result.map((p) => p.state), ['unknown', 'scheduled']);
+});
+
+test('buildStatus matches each Instagram post to at most one scheduled post and sorts by date', () => {
+  const posts = [scheduled('b', 5, 'Same'), scheduled('a', -3, 'Same')];
+  const { posts: result } = buildStatus(posts, [media('m1', 'Same')], NOW, 'https://pub.example');
+  assert.deepEqual(result.map((p) => [p.id, p.state]), [['a', 'published'], ['b', 'scheduled']]);
+});
+
+test('parseSchedule accepts a null poster and duePost never picks a post without one', () => {
+  const parsed = parseSchedule({ posts: [{ id: 'x', date: at(-1), caption: 'c', image: null }] });
+  assert.equal(parsed[0]?.image, null);
+  assert.equal(duePost(parsed, NOW), null);
+  assert.throws(() => parseSchedule({ posts: [{ id: 'x', date: at(-1), caption: 'c', image: '' }] }), ScheduleError);
+});
 
 test('lowQueueWarnings reports clients whose schedule is about to run out', () => {
   const day = (brand: string, date: string) => ({ brand, id: `${brand}-${date}`, date: `${date}T10:00:00+05:30`, caption: 'c', image: '/i' });

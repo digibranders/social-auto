@@ -52,6 +52,65 @@ export async function recentMedia(userId: string, token: string, limit = 10): Pr
   return data.map((m) => ({ id: String(m['id']), caption: String(m['caption'] ?? ''), timestamp: String(m['timestamp'] ?? '') }));
 }
 
+/** A post on the account, as the dashboard needs it. */
+export interface AccountMedia {
+  id: string;
+  caption: string;
+  timestamp: string;
+  permalink: string;
+  /** The picture as Instagram serves it; the link is temporary. */
+  mediaUrl: string | null;
+}
+
+const MEDIA_PAGE_SIZE = 100;
+const MEDIA_MAX_PAGES = 20;
+
+/** The account's posts newer than `sinceMs`, newest first, following Instagram's paging. */
+export async function mediaSince(userId: string, token: string, sinceMs: number): Promise<AccountMedia[]> {
+  const params = new URLSearchParams({
+    fields: 'id,caption,timestamp,permalink,media_type,media_url,thumbnail_url',
+    limit: String(MEDIA_PAGE_SIZE),
+    access_token: token,
+  });
+  let url: string | null = `${GRAPH}/${userId}/media?${params}`;
+  const out: AccountMedia[] = [];
+  for (let page = 0; url !== null && page < MEDIA_MAX_PAGES; page++) {
+    const response: Response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+    const body = (await response.json()) as Record<string, unknown>;
+    if (!response.ok || body['error']) throw new InstagramApiError('list media', JSON.stringify(body['error'] ?? body));
+    const data = Array.isArray(body['data']) ? (body['data'] as Array<Record<string, unknown>>) : [];
+    for (const item of data) {
+      if (Date.parse(String(item['timestamp'])) < sinceMs) return out;
+      const picture = item['media_type'] === 'VIDEO' ? item['thumbnail_url'] : item['media_url'];
+      out.push({
+        id: String(item['id']),
+        caption: String(item['caption'] ?? ''),
+        timestamp: String(item['timestamp'] ?? ''),
+        permalink: String(item['permalink'] ?? ''),
+        mediaUrl: typeof picture === 'string' ? picture : null,
+      });
+    }
+    const paging = body['paging'] as { next?: unknown } | undefined;
+    url = typeof paging?.next === 'string' ? paging.next : null;
+  }
+  return out;
+}
+
+export interface AccountProfile {
+  username: string | null;
+  /** The profile picture; the link is temporary. */
+  pictureUrl: string | null;
+}
+
+export async function accountProfile(token: string): Promise<AccountProfile> {
+  const params = new URLSearchParams({ fields: 'username,profile_picture_url', access_token: token });
+  const body = await graph('read account', `/me?${params}`);
+  return {
+    username: typeof body['username'] === 'string' ? body['username'] : null,
+    pictureUrl: typeof body['profile_picture_url'] === 'string' ? body['profile_picture_url'] : null,
+  };
+}
+
 /** Step 1: Instagram downloads the image and prepares an unpublished container. */
 export async function createImageContainer(userId: string, token: string, imageUrl: string, caption: string): Promise<string> {
   const form = new URLSearchParams({ image_url: imageUrl, caption, access_token: token });

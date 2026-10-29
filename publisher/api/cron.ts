@@ -19,7 +19,7 @@ import { notify } from '../lib/notify.js';
 import { duePost, lowQueueWarnings, parseSchedule, sameCaption } from '../lib/schedule.js';
 
 export async function GET(request: Request): Promise<Response> {
-  if (!isAuthorized(request)) return json(401, { error: 'unauthorized' });
+  if (!isAuthorized(request, process.env['CRON_SECRET'])) return json(401, { error: 'unauthorized' });
 
   const url = new URL(request.url);
   const dryRun = url.searchParams.get('dryRun') === '1';
