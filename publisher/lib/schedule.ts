@@ -1,4 +1,6 @@
 export interface ScheduledPost {
+  /** Client the post belongs to; posts without one count as a single "default" client. */
+  brand?: string;
   id: string;
   /** ISO 8601 with offset, e.g. 2026-10-29T10:00:00+05:30 */
   date: string;
@@ -25,8 +27,34 @@ export function parseSchedule(raw: unknown): ScheduledPost[] {
       if (typeof p[key] !== 'string' || !p[key]) throw new ScheduleError(`posts[${i}].${key} must be a non-empty string`);
     }
     if (Number.isNaN(Date.parse(p['date'] as string))) throw new ScheduleError(`posts[${i}].date is not a valid date`);
+    if (p['brand'] !== undefined && typeof p['brand'] !== 'string') {
+      throw new ScheduleError(`posts[${i}].brand must be a string`);
+    }
     return p as unknown as ScheduledPost;
   });
+}
+
+/** Warn when a client has exactly this many posts left to publish (one post a day). */
+export const LOW_QUEUE_WARN_AT: readonly number[] = [7, 3, 1, 0];
+
+export interface LowQueueWarning {
+  brand: string;
+  postsLeft: number;
+}
+
+/**
+ * Clients whose schedule is about to run out. Posts that were due recently still count towards
+ * "known" clients, so the final post's day reports 0 left instead of the client vanishing.
+ */
+export function lowQueueWarnings(posts: ScheduledPost[], now: number): LowQueueWarning[] {
+  const left = new Map<string, number>();
+  for (const post of posts) {
+    const brand = post.brand ?? 'default';
+    left.set(brand, (left.get(brand) ?? 0) + (Date.parse(post.date) > now ? 1 : 0));
+  }
+  return [...left.entries()]
+    .filter(([, postsLeft]) => LOW_QUEUE_WARN_AT.includes(postsLeft))
+    .map(([brand, postsLeft]) => ({ brand, postsLeft }));
 }
 
 /** The latest post whose time has passed within the due window, if any. */
