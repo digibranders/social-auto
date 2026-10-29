@@ -257,6 +257,17 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .detail h3 { font-size: 0.95rem; margin-top: 4px; }
 .caption { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* Editing a post */
+.pills { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tag-edited { border-radius: 999px; padding: 2px 10px; font-size: 0.75rem; font-weight: 700; border: 1px solid var(--border); color: var(--muted); }
+.view-panel, .edit-panel { display: grid; gap: 10px; }
+.caption-input { width: 100%; resize: vertical; min-height: 180px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; line-height: 1.45; }
+.caption-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.counter.is-error, .form-message.is-error { color: var(--missed); }
+.form-message:empty { display: none; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
 /* Sign-in page */
 .login-page { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login { width: min(380px, 100%); background: var(--panel); border-radius: 16px; padding: 28px 24px; display: grid; gap: 12px; }

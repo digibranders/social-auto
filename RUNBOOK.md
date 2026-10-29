@@ -8,7 +8,7 @@ Everyday chores and what to do when an alert arrives. Written so anyone can foll
 |---|---|---|
 | **Content engine** | `scheduler/engine` (runs on the Mac) | Reads a client's website, writes posts, draws posters. Weekly job: Mondays 10:00. |
 | **Publisher** | `publisher/` → Vercel project `social-publisher` | Posts to Instagram every day 10:00-10:59 IST, renews the token weekly, sends alerts, serves the private status feed. |
-| **Dashboard** | `dashboard/` → Vercel project `social-dashboard` | Read-only calendar behind a login: what is scheduled, published, missed. |
+| **Dashboard** | `dashboard/` → Vercel project `social-dashboard` | Calendar behind a login: what is scheduled, published, missed. Posts that have not gone out yet can be edited (caption, hashtags, picture) or reverted. |
 | **Local scheduler** (optional) | `scheduler/upstream` (Docker) | The old self-hosted dashboard. Not needed for posting. |
 
 Flow: Monday job → commits posts to GitHub `main` → Vercel deploys → publisher posts daily → dashboard reads the publisher's status feed.
@@ -38,7 +38,11 @@ Work on `development`, open a pull request, merge into `main`. Merging to `main`
 `~/social-auto-runner/scheduler/engine/scripts/weekly.sh`, or `launchctl kickstart gui/$(id -u)/com.56steve.social-auto.weekly`. The log is `~/Library/Logs/social-auto/weekly.log`.
 The job works in `~/social-auto-runner`, a separate checkout of `main`; it refuses to run if that checkout has local changes or is not on `main`.
 
-### Change or remove a post
+### Edit a post in the dashboard
+Open a scheduled post → **Edit post**. Change the caption (max 2200 characters, 30 hashtags) or **Replace picture** (square JPG, max 4 MB), or **Revert to original**. Changes apply at once and are what gets posted at the scheduled time; no redeploy. Posts that are due, published or missed cannot be edited (Instagram does not allow changing a published caption).
+Edits live in the private Vercel Blob store `social-publisher-edits` (file `overrides.json` plus `images/`), never in git. If the store cannot be read at posting time the post **fails with an alert** instead of going out unedited. The Monday job does not touch edits; deleting a post's edit (Revert) restores what the content job planned.
+
+### Change or remove a post (in the files)
 Edit `scheduler/engine/brands/<client>/week-NN.json` (caption, headline, `imagePrompt`). Delete `out/<client>/week-NN/<id>-bg.jpg` to draw a new picture. Then in `scheduler/engine`: `node src/render.ts --brand brands/<client> --plan week-NN.json`, `node src/export-publisher.ts --brand brands/<client>`, commit, pull request, merge. Do not edit a post whose time has already passed.
 
 ### Add a client
@@ -54,8 +58,8 @@ The password is the Vercel variable `DASHBOARD_PASSWORD` in project `social-dash
 
 | Name | Where |
 |---|---|
-| `INSTAGRAM_TOKEN`, `INSTAGRAM_USER_ID`, `CRON_SECRET`, `STATUS_SECRET`, `PUBLIC_ORIGIN`, `ALERT_NTFY_TOPIC` | Vercel project `social-publisher` (Production) |
-| `DASHBOARD_PASSWORD`, `SESSION_SECRET`, `STATUS_SECRET`, `STATUS_URL` | Vercel project `social-dashboard` |
+| `INSTAGRAM_TOKEN`, `INSTAGRAM_USER_ID`, `CRON_SECRET`, `STATUS_SECRET`, `EDIT_SECRET`, `PUBLIC_ORIGIN`, `ALERT_NTFY_TOPIC`, `BLOB_READ_WRITE_TOKEN` (added by connecting the store) | Vercel project `social-publisher` (Production) |
+| `DASHBOARD_PASSWORD`, `SESSION_SECRET`, `STATUS_SECRET`, `STATUS_URL`, `EDIT_SECRET` (same value as the publisher's), `EDIT_URL` | Vercel project `social-dashboard` |
 | `POLLINATIONS_API_KEY`, `SCHEDULER_API_KEY`, `ALERT_NTFY_TOPIC` and the Meta/LinkedIn app keys | `scheduler/upstream/.env` on the Mac (not in git) |
 
 ## Limits to know about

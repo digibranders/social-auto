@@ -10,11 +10,15 @@ import {
   formatDayLabel,
   formatHourLabel,
   formatMonth,
+  captionProblem,
+  captionStats,
   formatTime,
   groupByDay,
   hourOf,
   minuteOf,
   monthGrid,
+  MAX_CAPTION_LENGTH,
+  MAX_HASHTAGS,
   monthOf,
   safeHttpsUrl,
   stateLabel,
@@ -214,7 +218,7 @@ function postCard(post: StatusPost): HTMLElement {
       'div',
       { class: 'card-body' },
       h('div', { class: 'card-meta' }, avatar(channelOf(post), post.brand), h('span', { class: 'time' }, formatTime(post.date)), h('span', { class: 'client' }, brandLabel(post.brand))),
-      pill(post.state),
+      h('div', { class: 'pills' }, pill(post.state), editedTag(post)),
       h('p', { class: 'snippet' }, snippet(post.caption)),
     ),
   );
@@ -238,9 +242,119 @@ function field(label: string, value: string): HTMLElement {
   return h('div', { class: 'field' }, h('span', { class: 'field-label' }, label), h('span', {}, value));
 }
 
-function openDetail(post: StatusPost): void {
+function editedTag(post: StatusPost): HTMLElement | false {
+  return post.edited && h('span', { class: 'tag-edited', title: 'Changed in the dashboard' }, 'Edited');
+}
+
+const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
+
+/** Sends one change to the server; resolves to an explanation when it did not work. */
+async function sendEdit(post: StatusPost, action: 'caption' | 'image' | 'revert', body?: BodyInit, contentType?: string): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/edit?post=${encodeURIComponent(post.id)}&action=${action}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: contentType ? { 'Content-Type': contentType } : {},
+      body,
+    });
+    if (response.status === 401) {
+      location.replace('/login');
+      return 'You were signed out.';
+    }
+    if (response.ok) return null;
+    const answer: unknown = await response.json().catch(() => null);
+    return messageOf(answer) ?? `The server answered ${response.status}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** After a saved change: fetch the fresh feed and show the same post again. */
+async function reopenAfterChange(id: string, mode: 'view' | 'edit'): Promise<void> {
+  await load();
+  const fresh = state.data?.posts.find((p) => p.id === id);
+  if (fresh) openDetail(fresh, mode);
+  else dialog.close();
+}
+
+function editPanel(post: StatusPost): HTMLElement {
+  const message = h('p', { class: 'form-message', role: 'status' });
+  const show = (text: string, isError: boolean): void => {
+    message.textContent = text;
+    message.classList.toggle('is-error', isError);
+  };
+  const buttons: HTMLButtonElement[] = [];
+  const busy = (working: boolean): void => {
+    for (const element of buttons) element.disabled = working;
+  };
+
+  const area = h('textarea', { class: 'caption-input', rows: '12', 'aria-label': 'Caption', maxlength: String(MAX_CAPTION_LENGTH * 2) });
+  area.value = post.caption;
+  const count = h('p', { class: 'muted counter' });
+  const update = (): void => {
+    const { length, hashtags } = captionStats(area.value);
+    count.textContent = `${length} / ${MAX_CAPTION_LENGTH} characters · ${hashtags} / ${MAX_HASHTAGS} hashtags`;
+    count.classList.toggle('is-error', captionProblem(area.value) !== null);
+  };
+  area.addEventListener('input', update);
+  update();
+
+  const run = async (work: () => Promise<string | null>, mode: 'view' | 'edit'): Promise<void> => {
+    busy(true);
+    show('Saving…', false);
+    const problem = await work();
+    if (problem) {
+      show(problem, true);
+      busy(false);
+      return;
+    }
+    await reopenAfterChange(post.id, mode);
+  };
+
+  const save = button('Save caption', 'btn btn-primary', () => {
+    const problem = captionProblem(area.value);
+    if (problem) return show(problem, true);
+    void run(() => sendEdit(post, 'caption', JSON.stringify({ caption: area.value }), 'application/json'), 'view');
+  });
+  buttons.push(save);
+
+  const file = h('input', { type: 'file', accept: 'image/jpeg', class: 'visually-hidden', id: 'picture-input' });
+  file.addEventListener('change', () => {
+    const chosen = file.files?.[0];
+    file.value = '';
+    if (!chosen) return;
+    if (chosen.type !== 'image/jpeg') return show('Choose a JPG picture.', true);
+    if (chosen.size > MAX_PICTURE_BYTES) return show('That picture is over 4 MB. Choose a smaller one.', true);
+    void run(() => sendEdit(post, 'image', chosen, 'image/jpeg'), 'edit');
+  });
+  const pick = button('Replace picture', 'btn', () => file.click());
+  buttons.push(pick);
+
+  const revert = post.edited
+    ? button('Revert to original', 'btn btn-quiet', () => {
+        if (confirm('Discard your changes to this post and go back to the original?')) void run(() => sendEdit(post, 'revert'), 'view');
+      })
+    : null;
+  if (revert) buttons.push(revert);
+  const cancel = button('Cancel', 'btn btn-quiet', () => openDetail(post, 'view'));
+  buttons.push(cancel);
+
+  return h(
+    'div',
+    { class: 'edit-panel' },
+    h('h3', {}, 'Caption'),
+    area,
+    count,
+    h('p', { class: 'muted' }, 'The pictures must be square JPG, up to 4 MB. Changes go out at the scheduled time.'),
+    h('div', { class: 'actions' }, save, pick, file, revert, cancel),
+    message,
+  );
+}
+
+function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
   const source = pictureOf(post);
   const link = safeHttpsUrl(post.permalink);
+  const editing = mode === 'edit' && post.editable;
   dialog.replaceChildren(
     h(
       'div',
@@ -260,18 +374,25 @@ function openDetail(post: StatusPost): void {
         h(
           'div',
           { class: 'detail' },
-          pill(post.state),
+          h('div', { class: 'pills' }, pill(post.state), editedTag(post)),
           h('p', { class: 'muted' }, STATE_HELP[post.state]),
           field('Scheduled for', formatDateTime(post.date)),
           post.publishedAt ? field('Published', formatDateTime(post.publishedAt)) : null,
           link ? h('a', { class: 'btn btn-primary', href: link, target: '_blank', rel: 'noopener noreferrer' }, `View on ${platformLabel(post.platform)}`) : null,
-          h('h3', {}, 'Caption'),
-          h('p', { class: 'caption' }, post.caption),
+          editing
+            ? editPanel(post)
+            : h(
+                'div',
+                { class: 'view-panel' },
+                post.editable ? button('Edit post', 'btn btn-primary', () => openDetail(post, 'edit')) : null,
+                h('h3', {}, 'Caption'),
+                h('p', { class: 'caption' }, post.caption),
+              ),
         ),
       ),
     ),
   );
-  dialog.showModal();
+  if (!dialog.open) dialog.showModal();
 }
 
 function banner(kind: 'warn' | 'error', message: string): HTMLElement {

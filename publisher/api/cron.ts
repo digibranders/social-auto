@@ -16,7 +16,9 @@ import {
   waitUntilReady,
 } from '../lib/instagram.js';
 import { notify } from '../lib/notify.js';
+import { applyOverrides } from '../lib/overrides.js';
 import { duePost, lowQueueWarnings, parseSchedule, sameCaption } from '../lib/schedule.js';
+import { loadOverrides } from '../lib/store.js';
 
 export async function GET(request: Request): Promise<Response> {
   if (!isAuthorized(request, process.env['CRON_SECRET'])) return json(401, { error: 'unauthorized' });
@@ -30,7 +32,10 @@ export async function GET(request: Request): Promise<Response> {
     const origin = process.env['PUBLIC_ORIGIN'] ?? url.origin;
 
     // Imported module: bundled with the function, not served publicly.
-    const schedule = parseSchedule(scheduleData);
+    // Dashboard edits are applied on top. If they cannot be read this fails (and alerts) rather than
+    // quietly posting the unedited version.
+    const { overrides } = await loadOverrides();
+    const schedule = applyOverrides(parseSchedule(scheduleData), overrides);
 
     if (!dryRun) {
       for (const { brand, postsLeft } of lowQueueWarnings(schedule, Date.now())) {

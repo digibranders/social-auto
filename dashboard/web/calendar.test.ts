@@ -18,6 +18,8 @@ import {
   weekDays,
   weekStart,
   weekdayName,
+  captionProblem,
+  captionStats,
 } from './calendar.ts';
 import type { StatusPost } from '../shared/status.ts';
 
@@ -32,6 +34,8 @@ const post = (id: string, date: string): StatusPost => ({
   permalink: null,
   publishedAt: null,
   mediaUrl: null,
+  edited: false,
+  editable: true,
 });
 
 test('dayKeyOf uses the display time zone, not UTC', () => {
@@ -109,4 +113,12 @@ test('safeHttpsUrl only lets https links through', () => {
   assert.equal(safeHttpsUrl(null), null);
   assert.equal(safeHttpsUrl('http://localhost:4010/p.jpg', 'http://localhost:4010'), 'http://localhost:4010/p.jpg');
   assert.equal(safeHttpsUrl('http://evil.example/p.jpg', 'http://localhost:4010'), null);
+});
+
+test('captionStats counts characters and hashtags, and captionProblem names the limit that is broken', () => {
+  assert.deepEqual(captionStats('  Hello #one #दो_two world '), { length: 24, hashtags: 2 });
+  assert.equal(captionProblem('fine #one'), null);
+  assert.match(captionProblem('   ') ?? '', /empty/);
+  assert.match(captionProblem('x'.repeat(2205)) ?? '', /5 characters too long/);
+  assert.match(captionProblem(Array.from({ length: 31 }, (_, i) => `#t${i}`).join(' ')) ?? '', /31/);
 });

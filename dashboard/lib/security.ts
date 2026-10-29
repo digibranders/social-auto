@@ -60,3 +60,18 @@ export function passwordMatches(input: string, expected: string | undefined): bo
 export function isSignedIn(request: Request, secret: string | undefined, nowMs: number): boolean {
   return verifySession(readCookie(request.headers.get('cookie'), SESSION_COOKIE), secret, nowMs);
 }
+
+/**
+ * Changes must come from this site's own pages. Browsers send the Origin header on every cross-site
+ * write, so a request from another site (or with no Origin at all) is refused.
+ */
+export function isSameOrigin(request: Request): boolean {
+  const origin = request.headers.get('origin');
+  if (!origin) return false;
+  const host = request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? new URL(request.url).host;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}

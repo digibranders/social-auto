@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import {
   clearedSessionCookie,
   createSession,
+  isSameOrigin,
   isSignedIn,
   passwordMatches,
   readCookie,
@@ -59,4 +60,12 @@ test('isSignedIn reads the session from the request cookie', () => {
   const signedIn = new Request('https://example.com/api/data', { headers: { cookie: `${SESSION_COOKIE}=${token}` } });
   assert.equal(isSignedIn(signedIn, SECRET, NOW), true);
   assert.equal(isSignedIn(new Request('https://example.com/api/data'), SECRET, NOW), false);
+});
+
+test('isSameOrigin accepts only requests from the site itself', () => {
+  const make = (headers: Record<string, string>): Request => new Request('https://cal.example/api/edit', { method: 'POST', headers });
+  assert.equal(isSameOrigin(make({ origin: 'https://cal.example', host: 'cal.example' })), true);
+  assert.equal(isSameOrigin(make({ origin: 'https://evil.example', host: 'cal.example' })), false);
+  assert.equal(isSameOrigin(make({ host: 'cal.example' })), false);
+  assert.equal(isSameOrigin(make({ origin: 'not a url', host: 'cal.example' })), false);
 });

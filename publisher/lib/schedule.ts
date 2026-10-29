@@ -106,6 +106,10 @@ export interface StatusPost {
   publishedAt: string | null;
   /** The picture as Instagram serves it (temporary link); used when the poster is gone. */
   mediaUrl: string | null;
+  /** The caption or picture was changed in the dashboard after the content job planned it. */
+  edited: boolean;
+  /** Still ahead of its time and not yet on Instagram, so the dashboard may change it. */
+  editable: boolean;
 }
 
 export interface StatusSummary {
@@ -117,7 +121,7 @@ export interface StatusSummary {
  * Where every scheduled post stands. `media` is what Instagram currently shows for the account,
  * or null when Instagram could not be reached: then past posts are "unknown" rather than guessed.
  */
-export function buildStatus(posts: ScheduledPost[], media: MediaItem[] | null, now: number, origin: string): StatusSummary {
+export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, media: MediaItem[] | null, now: number, origin: string): StatusSummary {
   const used = new Set<string>();
   // Oldest first, so that when captions repeat the earliest post claims the Instagram post.
   const ordered = [...posts].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
@@ -144,6 +148,8 @@ export function buildStatus(posts: ScheduledPost[], media: MediaItem[] | null, n
       permalink: match?.permalink ?? null,
       publishedAt: match?.timestamp ?? null,
       mediaUrl: match?.mediaUrl ?? null,
+      edited: post.edited === true,
+      editable: state === 'scheduled',
     };
   });
   const runway = [...postsLeftByBrand(posts, now).entries()].map(([brand, postsLeft]) => ({ brand, postsLeft }));

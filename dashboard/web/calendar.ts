@@ -169,3 +169,20 @@ export function safeHttpsUrl(value: string | null, ownOrigin?: string): string |
     return null;
   }
 }
+
+/** Instagram's limits on a caption; the publisher enforces the same ones. */
+export const MAX_CAPTION_LENGTH = 2200;
+export const MAX_HASHTAGS = 30;
+
+export function captionStats(text: string): { length: number; hashtags: number } {
+  return { length: text.trim().length, hashtags: text.match(/#[\p{L}\p{N}_]+/gu)?.length ?? 0 };
+}
+
+/** Why a caption cannot be saved, or null when it is fine. */
+export function captionProblem(text: string): string | null {
+  const { length, hashtags } = captionStats(text);
+  if (length === 0) return 'The caption cannot be empty.';
+  if (length > MAX_CAPTION_LENGTH) return `The caption is ${length - MAX_CAPTION_LENGTH} characters too long.`;
+  if (hashtags > MAX_HASHTAGS) return `Instagram allows ${MAX_HASHTAGS} hashtags; this has ${hashtags}.`;
+  return null;
+}
