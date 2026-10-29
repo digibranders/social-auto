@@ -1,4 +1,4 @@
-import type { ScheduledPost } from './schedule.ts';
+import type { ScheduledPost } from './schedule.js';
 
 /** Instagram's own limits, plus a smaller image cap: Vercel functions accept request bodies up to 4.5 MB. */
 export const MAX_CAPTION_LENGTH = 2200;

@@ -6,8 +6,8 @@ import {
   validateJpeg,
   type OverrideMap,
   type PostOverride,
-} from './overrides.ts';
-import type { ScheduledPost } from './schedule.ts';
+} from './overrides.js';
+import type { ScheduledPost } from './schedule.js';
 
 /** What editing needs from storage; the real one is lib/store.ts, tests use memory. */
 export interface EditStore {
