@@ -249,7 +249,6 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .caption { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* Connecting channels */
-.connect { margin: 8px 0 0; width: 100%; }
 .banner-ok { background: var(--published-bg); color: var(--published); border-color: color-mix(in srgb, var(--published) 35%, transparent); }
 
 /* Editing a post */
@@ -341,6 +340,8 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .btn-danger { color: var(--missed); }
 .post-list { display: grid; gap: 8px; }
 .client-select { max-width: 200px; }
+.add-channel { width: 100%; justify-content: center; margin-top: 8px; }
+.picker-client { display: flex; align-items: center; gap: 10px; }
 
 #picker { width: min(640px, calc(100vw - 24px)); }
 .options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

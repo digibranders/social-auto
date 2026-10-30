@@ -399,16 +399,9 @@ function banners(): HTMLElement[] {
   return out;
 }
 
-/** One "Connect Facebook" link per client: Facebook asks which of their Pages to allow. */
-function connectLinks(): HTMLElement[] {
-  const brands = [...new Set((state.data?.runway ?? []).map((r) => r.brand))].filter((b) => !state.calendarClient || b === state.calendarClient);
-  return brands.map((brand) =>
-    h(
-      'a',
-      { class: 'btn connect', href: `/api/facebook-start?brand=${encodeURIComponent(brand)}` },
-      brands.length > 1 ? `Connect Facebook for ${brandLabel(brand)}` : 'Connect Facebook',
-    ),
-  );
+/** One Add channel button under the list: it opens the window with every channel type, Facebook among them. */
+function addChannelButton(): HTMLElement {
+  return button([icon('plus'), 'Add channel'], 'btn add-channel', () => openPicker(state.calendarClient));
 }
 
 function channelsPanel(): HTMLElement {
@@ -444,7 +437,7 @@ function channelsPanel(): HTMLElement {
     { class: 'channels', 'aria-label': 'Channels' },
     h('h2', { class: 'panel-title' }, 'Channels'),
     h('div', { class: 'channel-list' }, entry(null), ...channels.map(entry)),
-    ...connectLinks(),
+    addChannelButton(),
     ...runway.map((r) =>
       h(
         'p',
@@ -715,8 +708,10 @@ async function disconnect(channel: ChannelHealth): Promise<void> {
   await load();
 }
 
-function openPicker(brand: string): void {
-  picker.replaceChildren(channelPicker(brand, clientsContext, () => picker.close()));
+/** Opens the Add channel window; with no client chosen it asks which one the channel is for. */
+function openPicker(brand: string | null): void {
+  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
+  picker.replaceChildren(channelPicker(brand, clients, clientsContext, () => picker.close()));
   picker.showModal();
 }
 

@@ -10,7 +10,7 @@ export interface ClientsContext {
   openCalendar(brand: string): void;
   /** One upcoming post as a card; opens its window when clicked. */
   postCard(post: StatusPost): HTMLElement;
-  addChannel(brand: string): void;
+  addChannel(brand: string | null): void;
   disconnect(channel: ChannelHealth): void;
 }
 
@@ -76,7 +76,7 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
   );
 }
 
-function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext): HTMLElement {
+function notConnectedRow(kind: ChannelKind, ctx: ClientsContext): HTMLElement {
   const comingSoon = kind === 'google' || kind === 'linkedin';
   return h(
     'div',
@@ -86,7 +86,6 @@ function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext):
     h(
       'div',
       { class: 'channel-actions' },
-      kind === 'facebook' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/facebook-start?brand=${encodeURIComponent(brand)}`)) : null,
       button('How to connect', 'btn', () => ctx.go({ page: 'help', channel: GUIDE_FOR[kind] })),
     ),
   );
@@ -108,7 +107,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     { class: 'panel-card' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Channels'), button([icon('plus'), 'Add channel'], 'btn btn-primary', () => ctx.addChannel(client.brand))),
     ...client.channels.map((c) => channelRow(client, c, ctx)),
-    ...KINDS.filter((k) => k === 'google' || !connected.has(k)).map((k) => notConnectedRow(client.brand, k, ctx)),
+    ...KINDS.filter((k) => k === 'google' || !connected.has(k)).map((k) => notConnectedRow(k, ctx)),
   );
 
   const next = client.upcoming.slice(0, UPCOMING_SHOWN);
@@ -137,11 +136,18 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
 }
 
 /** The Add channel window's contents. Facebook starts the real connection; the others point to their guide. */
-export function channelPicker(brand: string, ctx: ClientsContext, close: () => void): HTMLElement {
+export function channelPicker(brand: string | null, clients: Array<{ brand: string; label: string }>, ctx: ClientsContext, close: () => void): HTMLElement {
   const note = h('p', { class: 'note', hidden: '' });
+  // With several clients and none chosen yet, the person says whom the channel is for.
+  const who = h('select', { class: 'btn client-select', 'aria-label': 'Client' });
+  for (const client of clients) {
+    const option = h('option', { value: client.brand }, client.label);
+    if (client.brand === (brand ?? clients[0]?.brand)) option.selected = true;
+    who.append(option);
+  }
   const choose = (kind: ChannelKind): void => {
     if (kind === 'facebook') {
-      location.assign(`/api/facebook-start?brand=${encodeURIComponent(brand)}`);
+      location.assign(`/api/facebook-start?brand=${encodeURIComponent(who.value)}`);
       return;
     }
     note.hidden = false;
@@ -160,6 +166,7 @@ export function channelPicker(brand: string, ctx: ClientsContext, close: () => v
     'div',
     { class: 'dialog-inner' },
     h('div', { class: 'dialog-head' }, h('h2', {}, 'Add a channel'), button('Close', 'btn btn-quiet', close)),
+    clients.length > 1 ? h('label', { class: 'picker-client' }, h('span', { class: 'muted' }, 'For client'), who) : null,
     h('h3', { class: 'label' }, 'Available'),
     h(
       'div',
