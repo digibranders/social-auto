@@ -39,6 +39,8 @@ interface State {
   showEarlier: boolean;
   data: StatusResponse | null;
   error: string | null;
+  /** A one-off message, e.g. the result of connecting a channel. */
+  notice: { kind: 'ok' | 'warn'; text: string } | null;
   loadedAt: number | null;
   loading: boolean;
   /** Scroll position of the hourly grid, kept across refreshes; null means "go to the first post". */
@@ -52,7 +54,6 @@ const LIST_DAYS_BACK = 1;
 const MONTH_CHIPS_PER_DAY = 3;
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const PLATFORM_LABELS: Record<Platform, string> = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn' };
-const PLATFORM_BADGES: Record<Platform, string> = { instagram: 'IG', facebook: 'f', linkedin: 'in' };
 const STATE_HELP: Record<PostState, string> = {
   published: 'This post is live.',
   scheduled: 'Goes out automatically at the scheduled time.',
@@ -61,6 +62,16 @@ const STATE_HELP: Record<PostState, string> = {
   unknown: 'The account could not be checked, so its status is not known.',
 };
 const SVG_NS = 'http://www.w3.org/2000/svg';
+/** Platform marks as simple shapes (white on the platform's colour, set in CSS), drawn here so nothing is fetched. */
+const LOGOS: Record<Platform, string[]> = {
+  facebook: ['M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z'],
+  linkedin: [
+    'M6.9 9.5h2.6V18H6.9z',
+    'M8.2 5.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
+    'M11 9.5h2.5v1.2c.4-.7 1.3-1.4 2.7-1.4 2.7 0 3.2 1.8 3.2 4.1V18h-2.6v-4.1c0-1 0-2.2-1.4-2.2s-1.6 1.1-1.6 2.2V18H11z',
+  ],
+  instagram: [],
+};
 const ICONS: Record<string, string[]> = {
   calendar: ['M8 2v4', 'M16 2v4', 'M3 10h18', 'M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'],
   list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
@@ -82,6 +93,7 @@ const state: State = {
   loadedAt: null,
   loading: false,
   gridScroll: null,
+  notice: null,
 };
 
 function required<T extends HTMLElement>(id: string): T {
@@ -104,6 +116,27 @@ function h<K extends keyof HTMLElementTagNameMap>(
   for (const [name, value] of Object.entries(attrs)) if (value !== undefined) element.setAttribute(name, value);
   for (const child of children) if (child !== false && child !== null && child !== undefined) element.append(child);
   return element;
+}
+
+/** The platform's mark: filled shapes for Facebook and LinkedIn, an outlined camera for Instagram. */
+function logo(platform: Platform): SVGSVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('class', `logo logo-${platform}`);
+  svg.setAttribute('aria-hidden', 'true');
+  const add = (tag: string, attributes: Record<string, string>): void => {
+    const element = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
+    svg.append(element);
+  };
+  if (platform === 'instagram') {
+    add('rect', { x: '5', y: '5', width: '14', height: '14', rx: '4', class: 'logo-line' });
+    add('circle', { cx: '12', cy: '12', r: '3.2', class: 'logo-line' });
+    add('circle', { cx: '16.2', cy: '7.8', r: '0.9', class: 'logo-dot' });
+  } else {
+    for (const d of LOGOS[platform]) add('path', { d });
+  }
+  return svg;
 }
 
 function icon(name: string): SVGSVGElement {
@@ -162,7 +195,12 @@ function channelOf(post: StatusPost): ChannelHealth | undefined {
 function visiblePosts(): StatusPost[] {
   const posts = state.data?.posts ?? [];
   const selected = state.data?.channels.find((c) => channelKey(c) === state.channel);
-  return selected ? posts.filter((p) => p.platform === selected.platform && selected.brands.includes(p.brand)) : posts;
+  if (!selected) return posts;
+  return posts.filter(
+    (p) =>
+      selected.brands.includes(p.brand) &&
+      (p.platform === selected.platform || p.crossposts.some((c) => c.platform === selected.platform && c.account === selected.account)),
+  );
 }
 
 /** The channel's picture, or its first letter, with a small badge for the platform. */
@@ -173,7 +211,7 @@ function avatar(channel: ChannelHealth | undefined, fallback: string): HTMLEleme
     'span',
     { class: 'avatar', 'aria-hidden': 'true' },
     picture ? h('img', { src: picture, alt: '', referrerpolicy: 'no-referrer' }) : h('span', { class: 'avatar-letter' }, letter),
-    channel ? h('span', { class: `badge badge-${channel.platform}` }, PLATFORM_BADGES[channel.platform]) : null,
+    channel ? h('span', { class: `badge badge-${channel.platform}` }, logo(channel.platform)) : null,
   );
 }
 
@@ -378,6 +416,15 @@ function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
           h('p', { class: 'muted' }, STATE_HELP[post.state]),
           field('Scheduled for', formatDateTime(post.date)),
           post.publishedAt ? field('Published', formatDateTime(post.publishedAt)) : null,
+          ...post.crossposts.map((c) => {
+            const link = safeHttpsUrl(c.permalink);
+            return h(
+              'div',
+              { class: 'field' },
+              h('span', { class: 'field-label' }, `${platformLabel(c.platform)} · ${c.account}`),
+              link ? h('a', { href: link, target: '_blank', rel: 'noopener noreferrer' }, `${stateLabel(c.state)} · view`) : h('span', {}, stateLabel(c.state)),
+            );
+          }),
           link ? h('a', { class: 'btn btn-primary', href: link, target: '_blank', rel: 'noopener noreferrer' }, `View on ${platformLabel(post.platform)}`) : null,
           editing
             ? editPanel(post)
@@ -401,6 +448,7 @@ function banner(kind: 'warn' | 'error', message: string): HTMLElement {
 
 function banners(): HTMLElement[] {
   const out: HTMLElement[] = [];
+  if (state.notice) out.push(h('div', { class: `banner banner-${state.notice.kind}`, role: 'status' }, state.notice.text));
   if (state.error) {
     const since = state.loadedAt ? ` Showing what was loaded at ${formatTime(state.loadedAt)}.` : '';
     out.push(banner('warn', `Could not refresh: ${shorten(state.error, 200)}.${since}`));
@@ -415,6 +463,18 @@ function banners(): HTMLElement[] {
   const missed = data.posts.filter((p) => p.state === 'missed').length;
   if (missed) out.push(banner('error', `${missed} post${missed === 1 ? ' was' : 's were'} missed. Open it to see the details.`));
   return out;
+}
+
+/** One "Connect Facebook" link per client: Facebook asks which of their Pages to allow. */
+function connectLinks(): HTMLElement[] {
+  const brands = [...new Set((state.data?.runway ?? []).map((r) => r.brand))];
+  return brands.map((brand) =>
+    h(
+      'a',
+      { class: 'btn connect', href: `/api/facebook-start?brand=${encodeURIComponent(brand)}` },
+      brands.length > 1 ? `Connect Facebook for ${brandLabel(brand)}` : 'Connect Facebook',
+    ),
+  );
 }
 
 function channelsPanel(): HTMLElement {
@@ -442,10 +502,6 @@ function channelsPanel(): HTMLElement {
     return item;
   };
 
-  const posts = visiblePosts();
-  const count = (...states: PostState[]): number => posts.filter((p) => states.includes(p.state)).length;
-  const stat = (label: string, value: number, kind: string): HTMLElement =>
-    h('div', { class: `stat stat-${kind}` }, h('span', { class: 'stat-value' }, String(value)), h('span', { class: 'stat-label' }, label));
   const selected = channels.find((c) => channelKey(c) === state.channel);
   const runway = (state.data?.runway ?? []).filter((r) => !selected || selected.brands.includes(r.brand));
 
@@ -454,8 +510,7 @@ function channelsPanel(): HTMLElement {
     { class: 'channels', 'aria-label': 'Channels' },
     h('h2', { class: 'panel-title' }, 'Channels'),
     h('div', { class: 'channel-list' }, entry(null), ...channels.map(entry)),
-    h('h2', { class: 'panel-title panel-title-sub' }, 'Overview'),
-    h('div', { class: 'stats' }, stat('Published', count('published'), 'published'), stat('Scheduled', count('scheduled', 'due'), 'scheduled'), stat('Needs attention', count('missed', 'unknown'), 'missed')),
+    ...connectLinks(),
     ...runway.map((r) =>
       h(
         'p',
@@ -745,7 +800,21 @@ narrow.addEventListener('change', () => {
   render();
 });
 
+/** After coming back from Facebook the address says what happened; show it once and tidy the address. */
+function readNoticeFromAddress(): void {
+  const result = new URLSearchParams(location.search).get('facebook');
+  if (!result) return;
+  const messages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
+    connected: { kind: 'ok', text: 'Facebook connected. Posts from now on will also go to the approved Pages.' },
+    denied: { kind: 'warn', text: 'Facebook was not connected: the approval was cancelled.' },
+    failed: { kind: 'warn', text: 'Facebook could not be connected. Try again, and choose at least one Page you manage.' },
+  };
+  state.notice = messages[result] ?? null;
+  history.replaceState(null, '', location.pathname);
+}
+
 applyStoredTheme();
+readNoticeFromAddress();
 loadPrefs();
 render();
 void load();

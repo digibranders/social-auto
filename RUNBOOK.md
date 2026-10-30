@@ -34,6 +34,9 @@ Work on `development`, open a pull request, merge into `main`. Merging to `main`
 4. Check: `curl -H "Authorization: Bearer $CRON_SECRET" "https://social-publisher-lovat.vercel.app/api/cron?dryRun=1&post=<post id>"` should answer `dry-run-ready`.
 5. Delete the private file.
 
+### Connect a client's Facebook Page
+The client first makes your Facebook account an admin of their Page (Page settings, Page access, "Facebook access"; full control is not needed). Accept it, then in the dashboard click **Connect Facebook** (as that same Facebook account), choose "current Pages only" and tick the Page. The Page token is saved **encrypted** in the private store (`channels.json`) and never shown. From the next scheduled post on, each post also goes to the Page; posts from before the connection are not sent. Instagram and Facebook are independent: one failing does not stop the other, and each failure sends its own alert. To disconnect a Page: POST `/api/channels` with `{"remove": "facebook:<page id>"}` and the edit secret (a button is not built yet). While the Meta app is unpublished, only accounts with a role in the app can connect.
+
 ### Run the weekly job by hand
 `~/social-auto-runner/scheduler/engine/scripts/weekly.sh`, or `launchctl kickstart gui/$(id -u)/com.56steve.social-auto.weekly`. The log is `~/Library/Logs/social-auto/weekly.log`.
 The job works in `~/social-auto-runner`, a separate checkout of `main`; it refuses to run if that checkout has local changes or is not on `main`.
@@ -61,8 +64,8 @@ The password is the Vercel variable `DASHBOARD_PASSWORD` in project `social-dash
 
 | Name | Where |
 |---|---|
-| `INSTAGRAM_TOKEN`, `INSTAGRAM_USER_ID`, `CRON_SECRET`, `STATUS_SECRET`, `EDIT_SECRET`, `PUBLIC_ORIGIN`, `ALERT_NTFY_TOPIC`, `BLOB_READ_WRITE_TOKEN` (added by connecting the store) | Vercel project `social-publisher` (Production) |
-| `DASHBOARD_PASSWORD`, `SESSION_SECRET`, `STATUS_SECRET`, `STATUS_URL`, `EDIT_SECRET` (same value as the publisher's), `EDIT_URL` | Vercel project `social-dashboard` |
+| `INSTAGRAM_TOKEN`, `INSTAGRAM_USER_ID`, `CRON_SECRET`, `STATUS_SECRET`, `EDIT_SECRET`, `PUBLIC_ORIGIN`, `ALERT_NTFY_TOPIC`, `BLOB_READ_WRITE_TOKEN` (added by connecting the store), `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `CHANNEL_KEY` (64 hex characters; losing it makes saved channel tokens unreadable, so reconnect the Pages) | Vercel project `social-publisher` (Production) |
+| `DASHBOARD_PASSWORD`, `SESSION_SECRET`, `STATUS_SECRET`, `STATUS_URL`, `EDIT_SECRET` (same value as the publisher's), `EDIT_URL`, `FACEBOOK_APP_ID`, `FACEBOOK_CONFIG_ID` | Vercel project `social-dashboard` |
 | `POLLINATIONS_API_KEY`, `SCHEDULER_API_KEY`, `ALERT_NTFY_TOPIC` and the Meta/LinkedIn app keys | `scheduler/upstream/.env` on the Mac (not in git) |
 
 ## Limits to know about

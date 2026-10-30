@@ -1,4 +1,5 @@
 import { BlobPreconditionFailedError, del, get, put } from '@vercel/blob';
+import { parseChannels, parsePostedLog, type ChannelFile, type PostedLog } from './channels.js';
 import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overrides.js';
 
 /**
@@ -64,4 +65,54 @@ export async function loadImage(key: string): Promise<ReadableStream<Uint8Array>
 
 export async function deleteImage(key: string): Promise<void> {
   await del(imagePath(key));
+}
+
+const CHANNELS_PATH = 'channels.json';
+const POSTED_PATH = 'posted.json';
+
+interface LoadedJson {
+  value: unknown;
+  etag: string | null;
+}
+
+async function readJson(path: string): Promise<LoadedJson> {
+  const result = await get(path, { access: 'private', useCache: false });
+  if (!result) return { value: null, etag: null };
+  if (result.statusCode !== 200) throw new Error(`unexpected status ${result.statusCode} reading ${path}`);
+  return { value: JSON.parse(await new Response(result.stream).text()), etag: result.blob.etag };
+}
+
+async function writeJson(path: string, value: unknown, etag: string | null): Promise<void> {
+  try {
+    await put(path, JSON.stringify(value), {
+      access: 'private',
+      contentType: 'application/json',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+      ...(etag ? { ifMatch: etag } : {}),
+    });
+  } catch (error) {
+    if (error instanceof BlobPreconditionFailedError) throw new EditError('Another change was saved at the same moment. Try again.', 409);
+    throw error;
+  }
+}
+
+export async function loadChannels(): Promise<{ file: ChannelFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: { channels: [] }, etag: null };
+  const { value, etag } = await readJson(CHANNELS_PATH);
+  return { file: value === null ? { channels: [] } : parseChannels(value), etag };
+}
+
+export function saveChannels(file: ChannelFile, etag: string | null): Promise<void> {
+  return writeJson(CHANNELS_PATH, file, etag);
+}
+
+export async function loadPosted(): Promise<{ log: PostedLog; etag: string | null }> {
+  if (!storeConfigured()) return { log: {}, etag: null };
+  const { value, etag } = await readJson(POSTED_PATH);
+  return { log: value === null ? {} : parsePostedLog(value), etag };
+}
+
+export function savePosted(log: PostedLog, etag: string | null): Promise<void> {
+  return writeJson(POSTED_PATH, log, etag);
 }

@@ -36,6 +36,7 @@ const post = (id: string, date: string): StatusPost => ({
   mediaUrl: null,
   edited: false,
   editable: true,
+  crossposts: [],
 });
 
 test('dayKeyOf uses the display time zone, not UTC', () => {

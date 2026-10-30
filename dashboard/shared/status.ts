@@ -25,6 +25,15 @@ export interface StatusPost {
   edited: boolean;
   /** Still ahead of its time and not yet live, so it may be changed. */
   editable: boolean;
+  /** Where the post stands on the client's other channels (Facebook Pages). */
+  crossposts: Crosspost[];
+}
+
+export interface Crosspost {
+  platform: Platform;
+  account: string;
+  state: PostState;
+  permalink: string | null;
 }
 
 export interface ChannelHealth {
@@ -123,6 +132,16 @@ export function parseStatus(raw: unknown): StatusResponse {
       mediaUrl: textOrNull(post, 'mediaUrl', where),
       edited: post['edited'] === true,
       editable: post['editable'] === true,
+      crossposts: list(post['crossposts'] ?? [], `${where}.crossposts`).map((entry, j): Crosspost => {
+        const w = `${where}.crossposts[${j}]`;
+        const c = record(entry, w);
+        return {
+          platform: oneOf(text(c, 'platform', w), PLATFORMS, `${w}.platform`),
+          account: text(c, 'account', w),
+          state: oneOf(text(c, 'state', w), POST_STATES, `${w}.state`),
+          permalink: textOrNull(c, 'permalink', w),
+        };
+      }),
     };
   });
 
