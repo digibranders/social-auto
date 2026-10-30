@@ -140,8 +140,31 @@ export function brandMark(kind: ChannelKind): SVGSVGElement {
     add('rect', { x: '0', y: '0', width: '24', height: '24', rx: '5', fill: '#0a66c2' });
     for (const d of LOGOS.linkedin) add('path', { d, fill: '#fff' });
   } else {
-    // Google Business: Google's own icon, served from this site (see public/logos).
-    add('image', { href: '/logos/google-business.png', x: '0', y: '0', width: '24', height: '24' });
+    // Google Business: a shop front with a four-panel awning and a white G, drawn to match Google's icon.
+    svg.setAttribute('viewBox', '0 0 100 87');
+    const id = `gb-${(gradientCount += 1)}`;
+    const defs = add('defs', {});
+    const gradient = add('linearGradient', { id: `${id}-body`, x1: '0', y1: '0', x2: '0', y2: '1' }, defs);
+    add('stop', { offset: '0', 'stop-color': '#2d69ea' }, gradient);
+    add('stop', { offset: '1', 'stop-color': '#4684f1' }, gradient);
+    const bodyPath = 'M6.7 30h86.7v50.6a6.4 6.4 0 0 1-6.4 6.4H13.1a6.4 6.4 0 0 1-6.4-6.4z';
+    add('path', { d: bodyPath }, add('clipPath', { id: `${id}-clip` }, defs));
+    add('path', { d: bodyPath, fill: `url(#${id}-body)` });
+    add('path', { d: 'M6.7 43.5L50 87H6.7z', fill: '#4d8bf3', 'clip-path': `url(#${id}-clip)` });
+    // Awning: panels (light, dark, light, dark), each with a rounded scallop at the bottom edge.
+    const panels: Array<[string, string, string, string]> = [
+      ['M0 32.2L6.5 5.5Q8 0 13.5 0H28.9L25 32.2z', '#7aabf7', 'M0 32.2a12.5 12.5 0 0 0 25 0z', '#74a0e1'],
+      ['M28.9 0H50V32.2H25z', '#4355b2', 'M25 32.2a12.5 12.5 0 0 0 25 0z', '#3e4fa7'],
+      ['M50 0H71.1L75 32.2H50z', '#7aabf7', 'M50 32.2a12.5 12.5 0 0 0 25 0z', '#74a0e1'],
+      ['M71.1 0H86.5Q92 0 93.5 5.5L100 32.2H75z', '#4355b2', 'M75 32.2a12.5 12.5 0 0 0 25 0z', '#3e4fa7'],
+    ];
+    for (const [panel, color, scallop, shade] of panels) {
+      add('path', { d: panel, fill: color });
+      add('path', { d: scallop, fill: shade });
+    }
+    // The white G: an open ring and its bar.
+    add('path', { d: 'M81.54 61.11A10.1 10.1 0 1 0 83.9 67.6', fill: 'none', stroke: '#fff', 'stroke-width': '5.1' });
+    add('path', { d: 'M74.1 67.6H86.2', fill: 'none', stroke: '#fff', 'stroke-width': '4.9' });
   }
   return svg;
 }
