@@ -21,6 +21,7 @@
   "include": [
     "api",
     "lib",
-    "data"
+    "data",
+    "scripts"
   ]
 }
