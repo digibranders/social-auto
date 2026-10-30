@@ -18,17 +18,6 @@ const KINDS: readonly ChannelKind[] = ['facebook', 'instagram', 'google', 'linke
 const GUIDE_FOR: Record<ChannelKind, GuideKey> = { facebook: 'facebook', instagram: 'instagram', google: 'google', linkedin: 'linkedin' };
 const UPCOMING_SHOWN = 14;
 
-function healthOf(client: ClientSummary): { kind: 'ok' | 'warn' | 'bad'; text: string } {
-  if (client.problems > 0 || client.missed > 0) return { kind: 'bad', text: 'Needs attention' };
-  if (client.queueLow) return { kind: 'warn', text: 'Queue low' };
-  return { kind: 'ok', text: 'All good' };
-}
-
-const healthPill = (client: ClientSummary): HTMLElement => {
-  const { kind, text } = healthOf(client);
-  return h('span', { class: `health-pill health-pill-${kind}` }, h('i', { class: 'dot' }), text);
-};
-
 export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTMLElement {
   if (clients.length === 0) return h('p', { class: 'empty' }, 'No clients yet.');
   return h(
@@ -39,7 +28,7 @@ export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTML
         'button',
         { type: 'button', class: 'folder', 'aria-label': `Open ${client.label}` },
         h('span', { class: 'folder-tab', 'aria-hidden': 'true' }),
-        h('div', { class: 'folder-head' }, h('h3', {}, client.label), healthPill(client)),
+        h('div', { class: 'folder-head' }, h('h3', {}, client.label)),
         h('div', { class: 'folder-marks' }, ...client.channels.map((c) => h('span', { class: 'mark', title: channelName(c.platform) }, brandMark(c.platform)))),
         h('div', { class: 'folder-stats muted' }, h('span', {}, client.pattern ?? 'Nothing booked'), h('span', {}, `${client.postsLeft} days booked`)),
       );
@@ -129,7 +118,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
       button('Clients', 'link-button', () => ctx.go({ page: 'clients' })),
       ` / ${client.label}`,
     ),
-    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label), healthPill(client)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand))),
+    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand))),
     tabs,
     tab === 'channels' ? channels : posts,
   );

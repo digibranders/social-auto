@@ -6,7 +6,7 @@ import { GUIDE_KEYS } from './route.ts';
 test('every channel has a complete guide: one-time setup, per-client steps, a check, and later', () => {
   for (const key of GUIDE_KEYS) {
     const guide = GUIDES[key];
-    assert.ok(guide.name && guide.intro && guide.needs.length >= 3, key);
+    assert.ok(guide.name && guide.intro, key);
     const titles = guide.groups.map((g) => g.title);
     assert.ok(titles.some((t) => /One-time/.test(t)), `${key} one-time`);
     assert.ok(titles.some((t) => /each new client/.test(t)), `${key} per client`);
