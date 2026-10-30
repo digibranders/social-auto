@@ -3,13 +3,17 @@
  * localhost, and saves the Page's token to a private file (never printed).
  *
  *   node --import ./dev/resolver.ts scripts/connect-facebook.ts [--page "Page name"]
+ *   node --import ./dev/resolver.ts scripts/connect-facebook.ts --user-token-file <file> [--page "Page name"]
+ *
+ * The second form skips the browser approval: it reads a user token that was made in Meta's Graph API
+ * Explorer (saved in a private file) and turns it into the Page's token.
  *
  * Needs FACEBOOK_APP_ID and FACEBOOK_APP_SECRET in ../scheduler/upstream/.env, and
  * http://localhost:4020/callback listed as a valid redirect address in the Meta app.
  */
 import { execFile } from 'node:child_process';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmod, writeFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { parseArgs } from 'node:util';
 import { authorizeUrl, exchangeCode, listPages, longLivedUserToken } from '../lib/facebook.js';
@@ -31,10 +35,36 @@ function sameState(a: string | null, b: string): boolean {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+function pickPage<T extends { name: string }>(pages: T[], wantedName: string | undefined): T {
+  if (pages.length === 0) {
+    throw new Error('No Pages came back. Approve the Page in the Facebook dialog, and check you manage the Page.');
+  }
+  const wanted = wantedName?.toLowerCase();
+  const chosen = wanted ? pages.find((p) => p.name.toLowerCase() === wanted) : pages.length === 1 ? pages[0] : undefined;
+  if (!chosen) throw new Error(`Pick one with --page "<name>". Pages found: ${pages.map((p) => p.name).join(', ')}`);
+  return chosen;
+}
+
+async function save(id: string, name: string, token: string): Promise<void> {
+  await writeFile(OUTPUT, `${JSON.stringify({ pageId: id, pageName: name, pageToken: token, savedAt: new Date().toISOString() }, null, 2)}\n`, { mode: 0o600 });
+  await chmod(OUTPUT, 0o600);
+  console.log(`Saved the token for "${name}" (Page ${id}) to publisher/.facebook-page.json (private, not in git).`);
+}
+
 async function main(): Promise<void> {
-  const { values } = parseArgs({ options: { page: { type: 'string' } } });
+  const { values } = parseArgs({ options: { page: { type: 'string' }, 'user-token-file': { type: 'string' } } });
   process.loadEnvFile(new URL('../../scheduler/upstream/.env', import.meta.url));
   const app = { appId: required('FACEBOOK_APP_ID'), appSecret: required('FACEBOOK_APP_SECRET') };
+  if (values['user-token-file']) {
+    const userToken = (await readFile(values['user-token-file'], 'utf8')).trim();
+    if (!userToken) throw new Error('The token file is empty.');
+    // Upgrading makes the Page token a permanent one; a token that cannot be upgraded still works for a test.
+    const upgraded = await longLivedUserToken(app, userToken).catch(() => userToken);
+    const pages = await listPages(upgraded);
+    const chosen = pickPage(pages, values.page);
+    await save(chosen.id, chosen.name, chosen.accessToken);
+    return;
+  }
   const state = randomBytes(16).toString('hex');
   const url = authorizeUrl({
     appId: app.appId,
@@ -63,12 +93,7 @@ async function main(): Promise<void> {
 
         const userToken = await longLivedUserToken(app, await exchangeCode(app, REDIRECT_URI, code));
         const pages = await listPages(userToken);
-        if (pages.length === 0) {
-          throw new Error('No Pages came back. Approve the Page in the Facebook dialog, and check you manage the Page.');
-        }
-        const wanted = values.page?.toLowerCase();
-        const chosen = wanted ? pages.find((p) => p.name.toLowerCase() === wanted) : pages.length === 1 ? pages[0] : undefined;
-        if (!chosen) throw new Error(`Pick one with --page "<name>". Pages found: ${pages.map((p) => p.name).join(', ')}`);
+        const chosen = pickPage(pages, values.page);
         reply(200, `Connected "${chosen.name}". You can close this tab and go back to the terminal.`);
         resolve({ id: chosen.id, name: chosen.name, token: chosen.accessToken });
       } catch (error) {
@@ -83,14 +108,12 @@ async function main(): Promise<void> {
     server.listen(PORT, '127.0.0.1', () => {
       console.log('Opening Facebook to approve the app. If nothing opens, paste this address into the browser:\n');
       console.log(`${url}\n`);
-      execFile('open', [url], () => undefined);
+      if (!process.env['NO_OPEN']) execFile('open', [url], () => undefined);
     });
     server.on('error', reject);
   });
 
-  await writeFile(OUTPUT, `${JSON.stringify({ pageId: result.id, pageName: result.name, pageToken: result.token, savedAt: new Date().toISOString() }, null, 2)}\n`, { mode: 0o600 });
-  await chmod(OUTPUT, 0o600);
-  console.log(`Saved the token for "${result.name}" (Page ${result.id}) to publisher/.facebook-page.json (private, not in git).`);
+  await save(result.id, result.name, result.token);
 }
 
 main().catch((error: unknown) => {
