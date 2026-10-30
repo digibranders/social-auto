@@ -27,6 +27,11 @@ import {
   weekdayName,
 } from './calendar.ts';
 import { applyStoredTheme, currentTheme, setTheme } from './theme.ts';
+import { brandMark, button, h, icon, platformLabel, statusMark, type Child } from './ui.ts';
+import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
+import { summarizeClients } from './clients.ts';
+import { helpPage } from './help-page.ts';
+import { parseRoute, routeHash, type Route } from './route.ts';
 
 type View = 'day' | 'week' | 'month' | 'list';
 
@@ -41,6 +46,10 @@ interface State {
   error: string | null;
   /** A one-off message, e.g. the result of connecting a channel. */
   notice: { kind: 'ok' | 'warn'; text: string } | null;
+  /** Which screen is showing (mirrors the address). */
+  route: Route;
+  /** The calendar shows only this client's posts and channels; null means every client. */
+  calendarClient: string | null;
   loadedAt: number | null;
   loading: boolean;
   /** Scroll position of the hourly grid, kept across refreshes; null means "go to the first post". */
@@ -53,7 +62,6 @@ const PREFS_KEY = 'calendar.prefs';
 const LIST_DAYS_BACK = 1;
 const MONTH_CHIPS_PER_DAY = 3;
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
-const PLATFORM_LABELS: Record<Platform, string> = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn' };
 const STATE_HELP: Record<PostState, string> = {
   published: 'This post is live.',
   scheduled: 'Goes out automatically at the scheduled time.',
@@ -61,28 +69,6 @@ const STATE_HELP: Record<PostState, string> = {
   missed: 'Its time passed and it is not on the account.',
   unknown: 'The account could not be checked, so its status is not known.',
 };
-const SVG_NS = 'http://www.w3.org/2000/svg';
-/** Platform marks as simple shapes (white on the platform's colour, set in CSS), drawn here so nothing is fetched. */
-const LOGOS: Record<Platform, string[]> = {
-  facebook: ['M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z'],
-  linkedin: [
-    'M6.9 9.5h2.6V18H6.9z',
-    'M8.2 5.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
-    'M11 9.5h2.5v1.2c.4-.7 1.3-1.4 2.7-1.4 2.7 0 3.2 1.8 3.2 4.1V18h-2.6v-4.1c0-1 0-2.2-1.4-2.2s-1.6 1.1-1.6 2.2V18H11z',
-  ],
-  instagram: [],
-};
-const ICONS: Record<string, string[]> = {
-  calendar: ['M8 2v4', 'M16 2v4', 'M3 10h18', 'M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z'],
-  list: ['M8 6h13', 'M8 12h13', 'M8 18h13', 'M3 6h.01', 'M3 12h.01', 'M3 18h.01'],
-  refresh: ['M21 12a9 9 0 1 1-3-6.7', 'M21 4v5h-5'],
-  sun: ['M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z', 'M12 2v2', 'M12 20v2', 'M4.9 4.9l1.4 1.4', 'M17.7 17.7l1.4 1.4', 'M2 12h2', 'M20 12h2', 'M4.9 19.1l1.4-1.4', 'M17.7 6.3l1.4-1.4'],
-  moon: ['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z'],
-  logout: ['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'M16 17l5-5-5-5', 'M21 12H9'],
-  left: ['M15 18l-6-6 6-6'],
-  right: ['M9 18l6-6-6-6'],
-};
-
 const state: State = {
   view: 'week',
   cursor: dayKeyOf(Date.now()),
@@ -94,6 +80,8 @@ const state: State = {
   loading: false,
   gridScroll: null,
   notice: null,
+  route: parseRoute(location.hash),
+  calendarClient: null,
 };
 
 function required<T extends HTMLElement>(id: string): T {
@@ -103,61 +91,8 @@ function required<T extends HTMLElement>(id: string): T {
 }
 const root = required<HTMLElement>('app');
 const dialog = required<HTMLDialogElement>('detail');
+const picker = required<HTMLDialogElement>('picker');
 const narrow = window.matchMedia('(max-width: 900px)');
-
-type Child = Node | string | false | null | undefined;
-
-function h<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  attrs: Record<string, string | undefined> = {},
-  ...children: Child[]
-): HTMLElementTagNameMap[K] {
-  const element = document.createElement(tag);
-  for (const [name, value] of Object.entries(attrs)) if (value !== undefined) element.setAttribute(name, value);
-  for (const child of children) if (child !== false && child !== null && child !== undefined) element.append(child);
-  return element;
-}
-
-/** The platform's mark: filled shapes for Facebook and LinkedIn, an outlined camera for Instagram. */
-function logo(platform: Platform): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', `logo logo-${platform}`);
-  svg.setAttribute('aria-hidden', 'true');
-  const add = (tag: string, attributes: Record<string, string>): void => {
-    const element = document.createElementNS(SVG_NS, tag);
-    for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
-    svg.append(element);
-  };
-  if (platform === 'instagram') {
-    add('rect', { x: '5', y: '5', width: '14', height: '14', rx: '4', class: 'logo-line' });
-    add('circle', { cx: '12', cy: '12', r: '3.2', class: 'logo-line' });
-    add('circle', { cx: '16.2', cy: '7.8', r: '0.9', class: 'logo-dot' });
-  } else {
-    for (const d of LOGOS[platform]) add('path', { d });
-  }
-  return svg;
-}
-
-function icon(name: string): SVGSVGElement {
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', 'icon');
-  svg.setAttribute('aria-hidden', 'true');
-  for (const d of ICONS[name] ?? []) {
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', d);
-    svg.append(path);
-  }
-  return svg;
-}
-
-function button(content: Child | Child[], className: string, onClick: () => void, label?: string, disabled = false): HTMLButtonElement {
-  const element = h('button', { type: 'button', class: className, 'aria-label': label }, ...(Array.isArray(content) ? content : [content]));
-  element.disabled = disabled;
-  element.addEventListener('click', onClick);
-  return element;
-}
 
 function loadPrefs(): void {
   try {
@@ -181,7 +116,6 @@ function savePrefs(): void {
 
 const today = (): string => dayKeyOf(Date.now());
 const shorten = (value: string, max: number): string => (value.length > max ? `${value.slice(0, max - 1)}…` : value);
-const platformLabel = (platform: Platform): string => PLATFORM_LABELS[platform];
 const snippet = (caption: string, max = 90): string => shorten(caption.split('\n').find((line) => line.trim()) ?? '', max);
 const channelKey = (channel: ChannelHealth): string => `${channel.platform}:${channel.account ?? channel.brands.join(',')}`;
 const channelName = (channel: ChannelHealth): string => channel.account ?? platformLabel(channel.platform);
@@ -193,7 +127,7 @@ function channelOf(post: StatusPost): ChannelHealth | undefined {
 }
 
 function visiblePosts(): StatusPost[] {
-  const posts = state.data?.posts ?? [];
+  const posts = (state.data?.posts ?? []).filter((p) => !state.calendarClient || p.brand === state.calendarClient);
   const selected = state.data?.channels.find((c) => channelKey(c) === state.channel);
   if (!selected) return posts;
   return posts.filter(
@@ -211,7 +145,7 @@ function avatar(channel: ChannelHealth | undefined, fallback: string): HTMLEleme
     'span',
     { class: 'avatar', 'aria-hidden': 'true' },
     picture ? h('img', { src: picture, alt: '', referrerpolicy: 'no-referrer' }) : h('span', { class: 'avatar-letter' }, letter),
-    channel ? h('span', { class: `badge badge-${channel.platform}` }, logo(channel.platform)) : null,
+    channel ? h('span', { class: 'badge' }, brandMark(channel.platform)) : null,
   );
 }
 
@@ -465,37 +399,31 @@ function banners(): HTMLElement[] {
   return out;
 }
 
-/** One "Connect Facebook" link per client: Facebook asks which of their Pages to allow. */
-function connectLinks(): HTMLElement[] {
-  const brands = [...new Set((state.data?.runway ?? []).map((r) => r.brand))];
-  return brands.map((brand) =>
-    h(
-      'a',
-      { class: 'btn connect', href: `/api/facebook-start?brand=${encodeURIComponent(brand)}` },
-      brands.length > 1 ? `Connect Facebook for ${brandLabel(brand)}` : 'Connect Facebook',
-    ),
-  );
+/** One Add channel button under the list: it opens the window with every channel type, Facebook among them. */
+function addChannelButton(): HTMLElement {
+  return button([icon('plus'), 'Add channel'], 'btn add-channel', () => openPicker(state.calendarClient));
 }
 
 function channelsPanel(): HTMLElement {
-  const channels = state.data?.channels ?? [];
-  const entry = (channel: ChannelHealth | null): HTMLElement => {
-    const key = channel ? channelKey(channel) : null;
+  const channels = (state.data?.channels ?? []).filter((c) => !state.calendarClient || c.brands.includes(state.calendarClient));
+  const entry = (channel: ChannelHealth): HTMLElement => {
+    const key = channelKey(channel);
     const on = state.channel === key;
     const item = h(
       'button',
       { type: 'button', class: `channel${on ? ' channel-on' : ''}`, 'aria-pressed': String(on) },
-      channel ? avatar(channel, '?') : h('span', { class: 'avatar avatar-all', 'aria-hidden': 'true' }, h('span', { class: 'avatar-letter' }, '∗')),
+      avatar(channel, '?'),
       h(
         'span',
         { class: 'channel-text' },
-        h('span', { class: 'channel-name' }, channel ? channelName(channel) : 'All channels'),
-        h('span', { class: 'channel-sub' }, channel ? `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}` : `${channels.length} connected`),
+        h('span', { class: 'channel-name' }, channelName(channel)),
+        h('span', { class: 'channel-sub' }, `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}`),
       ),
-      channel ? h('span', { class: `health ${channel.ok ? 'health-ok' : 'health-bad'}`, title: channel.ok ? 'Connected' : 'Connection problem' }) : null,
+      channel.ok ? null : statusMark(false),
     );
     item.addEventListener('click', () => {
-      state.channel = key;
+      // Choosing the channel that is already chosen shows every channel again.
+      state.channel = on ? null : key;
       savePrefs();
       render();
     });
@@ -509,8 +437,8 @@ function channelsPanel(): HTMLElement {
     'aside',
     { class: 'channels', 'aria-label': 'Channels' },
     h('h2', { class: 'panel-title' }, 'Channels'),
-    h('div', { class: 'channel-list' }, entry(null), ...channels.map(entry)),
-    ...connectLinks(),
+    h('div', { class: 'channel-list' }, ...channels.map(entry)),
+    addChannelButton(),
     ...runway.map((r) =>
       h(
         'p',
@@ -697,15 +625,53 @@ function calendarBody(): HTMLElement {
   return narrow.matches ? stackedDays(days) : timeGrid(days);
 }
 
+function go(route: Route): void {
+  const hash = routeHash(route);
+  if (location.hash === hash) {
+    state.route = route;
+    render();
+  } else {
+    location.hash = hash; // the hashchange listener updates the route and redraws
+  }
+}
+
+/** The page a route belongs to, for the menu: a client's folder counts as Clients. */
+const sectionOf = (route: Route): 'clients' | 'calendar' | 'help' => (route.page === 'client' ? 'clients' : route.page);
+
 function rail(): HTMLElement {
+  const section = sectionOf(state.route);
+  const item = (name: 'clients' | 'calendar' | 'help', iconName: string, label: string): HTMLElement => {
+    const route: Route = name === 'help' ? { page: 'help', channel: 'facebook' } : { page: name };
+    return button([icon(iconName), h('span', {}, label)], `rail-item rail-button${section === name ? ' rail-on' : ''}`, () => go(route), label);
+  };
   return h(
     'nav',
     { class: 'rail', 'aria-label': 'Main' },
     h('div', { class: 'logo', 'aria-hidden': 'true' }, 'C'),
-    h('div', { class: 'rail-item rail-on' }, icon('calendar'), h('span', {}, 'Calendar')),
+    item('clients', 'folder', 'Clients'),
+    item('calendar', 'calendar', 'Calendar'),
     h('span', { class: 'rail-spacer' }),
+    item('help', 'help', 'Help'),
     button([icon('logout'), h('span', {}, 'Sign out')], 'rail-item rail-button', () => void signOut(), 'Sign out'),
   );
+}
+
+const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', help: 'Help · Connect a channel' } as const;
+
+function clientPicker(): HTMLElement {
+  const select = h('select', { class: 'btn client-select', 'aria-label': 'Client' });
+  select.append(h('option', { value: '' }, 'All clients'));
+  for (const client of summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now())) {
+    const option = h('option', { value: client.brand }, client.label);
+    if (client.brand === state.calendarClient) option.selected = true;
+    select.append(option);
+  }
+  select.addEventListener('change', () => {
+    state.calendarClient = select.value || null;
+    state.channel = null;
+    render();
+  });
+  return select;
 }
 
 function panelHeader(): HTMLElement {
@@ -714,10 +680,11 @@ function panelHeader(): HTMLElement {
   return h(
     'header',
     { class: 'panel-head' },
-    h('h1', {}, 'Calendar'),
+    h('h1', {}, TITLES[state.route.page]),
     h(
       'div',
       { class: 'head-tools' },
+      state.route.page === 'calendar' ? clientPicker() : null,
       h('span', { class: 'muted status' }, status),
       button(icon('refresh'), `btn btn-icon${state.loading ? ' spinning' : ''}`, () => void load(), 'Refresh', state.loading),
       button(icon(dark ? 'sun' : 'moon'), 'btn btn-icon', () => { setTheme(dark ? 'light' : 'dark'); render(); }, dark ? 'Switch to light theme' : 'Switch to dark theme'),
@@ -726,19 +693,65 @@ function panelHeader(): HTMLElement {
   );
 }
 
+/** Removes a Facebook Page from a client after asking, then reloads the feed. */
+async function disconnect(channel: ChannelHealth): Promise<void> {
+  if (!channel.id) return;
+  const name = channel.account ?? 'this Page';
+  if (!confirm(`Disconnect ${name}? New posts will stop going to it. You can connect it again later.`)) return;
+  try {
+    const response = await fetch(`/api/disconnect?id=${encodeURIComponent(channel.id)}`, { method: 'POST', credentials: 'same-origin' });
+    if (response.status === 401) return void location.replace('/login');
+    const body: unknown = await response.json().catch(() => null);
+    state.notice = response.ok ? { kind: 'ok', text: `${name} was disconnected.` } : { kind: 'warn', text: messageOf(body) ?? `Could not disconnect (${response.status}).` };
+  } catch (error) {
+    state.notice = { kind: 'warn', text: error instanceof Error ? error.message : String(error) };
+  }
+  await load();
+}
+
+/** Opens the Add channel window; with no client chosen it asks which one the channel is for. */
+function openPicker(brand: string | null): void {
+  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
+  const connected: Record<string, Platform[]> = {};
+  for (const channel of state.data?.channels ?? []) for (const b of channel.brands) (connected[b] ??= []).push(channel.platform);
+  picker.replaceChildren(channelPicker(brand, clients, connected, clientsContext, () => picker.close()));
+  picker.showModal();
+}
+
+const clientsContext: ClientsContext = {
+  go,
+  openCalendar: (brand) => {
+    state.calendarClient = brand;
+    state.channel = null;
+    go({ page: 'calendar' });
+  },
+  postCard,
+  addChannel: openPicker,
+  disconnect: (channel) => void disconnect(channel),
+};
+
+function screen(): HTMLElement {
+  const data = state.data;
+  const route = state.route;
+  if (route.page === 'help') {
+    return helpPage(route.channel, (channel) => go({ page: 'help', channel }), render);
+  }
+  if (route.page === 'clients' || route.page === 'client') {
+    if (!data) return h('p', { class: 'empty' }, state.error ? 'Could not load the clients.' : 'Loading…');
+    const clients = summarizeClients(data, Date.now());
+    return route.page === 'clients'
+      ? clientsPage(clients, clientsContext)
+      : clientPage(clients.find((c) => c.brand === route.brand), route.tab, clientsContext);
+  }
+  return h('div', { class: 'panel-body' }, channelsPanel(), h('div', { class: 'cal' }, toolbar(), calendarBody()));
+}
+
 function render(): void {
   const scrolled = root.querySelector<HTMLElement>('.tbody');
   if (scrolled) state.gridScroll = scrolled.scrollTop;
   const pageScroll = window.scrollY;
 
-  root.replaceChildren(
-    h(
-      'div',
-      { class: 'shell' },
-      rail(),
-      h('section', { class: 'panel' }, panelHeader(), ...banners(), h('div', { class: 'panel-body' }, channelsPanel(), h('div', { class: 'cal' }, toolbar(), calendarBody()))),
-    ),
-  );
+  root.replaceChildren(h('div', { class: 'shell' }, rail(), h('section', { class: 'panel' }, panelHeader(), ...banners(), screen())));
 
   const grid = root.querySelector<HTMLElement>('.tbody');
   if (grid) grid.scrollTop = state.gridScroll ?? firstPostScroll(grid);
@@ -791,6 +804,9 @@ async function signOut(): Promise<void> {
 dialog.addEventListener('click', (event) => {
   if (event.target === dialog) dialog.close();
 });
+picker.addEventListener('click', (event) => {
+  if (event.target === picker) picker.close();
+});
 document.addEventListener('visibilitychange', () => {
   const stale = !state.loadedAt || Date.now() - state.loadedAt > STALE_MS;
   if (document.visibilityState === 'visible' && stale) void load();
@@ -812,6 +828,11 @@ function readNoticeFromAddress(): void {
   state.notice = messages[result] ?? null;
   history.replaceState(null, '', location.pathname);
 }
+
+window.addEventListener('hashchange', () => {
+  state.route = parseRoute(location.hash);
+  render();
+});
 
 applyStoredTheme();
 readNoticeFromAddress();

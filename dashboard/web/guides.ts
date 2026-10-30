@@ -1,0 +1,182 @@
+/**
+ * The setup guides: the same steps for every client, written so nothing has to be remembered.
+ * Each guide has one-time setup, steps per client, a check, and what to do later.
+ * The pictures are drawn from the small row descriptions in each step (see help-page.ts).
+ */
+import type { GuideKey } from './route.ts';
+
+export type Who = 'client' | 'you' | 'system';
+
+export interface ShotRow {
+  t: string;
+  s?: string;
+  /** The thing to click, highlighted. */
+  hi: boolean;
+  /** A tick box: true ticked, false empty, undefined none. */
+  chk?: boolean;
+  /** Shows a round picture, like a profile. */
+  av: boolean;
+}
+
+export interface Shot {
+  url: string;
+  rows: ShotRow[];
+  btn?: string;
+  bhi?: boolean;
+}
+
+export interface Step {
+  who: Who;
+  t: string;
+  d: string;
+  shot: Shot;
+}
+
+export interface StepGroup {
+  title: string;
+  /** Open when the guide is first shown. */
+  open: boolean;
+  steps: Step[];
+}
+
+export interface Guide {
+  name: string;
+  intro: string;
+  needs: string[];
+  groups: StepGroup[];
+  problems: Array<[string, string]>;
+}
+
+/**
+ * A picture row is written as text: "*" highlights it, "[x]" or "[ ]" adds a tick box, "@" adds a round picture,
+ * and "|" separates the title from a smaller line under it.
+ */
+function row(text: string): ShotRow {
+  let rest = text;
+  let hi = false;
+  let av = false;
+  let chk: boolean | undefined;
+  // The markers may come in any order, e.g. "[x]*Name" or "*[x]Name".
+  for (;;) {
+    if (rest.startsWith('*')) hi = true;
+    else if (rest.startsWith('@')) av = true;
+    else if (rest.startsWith('[x]')) chk = true;
+    else if (rest.startsWith('[ ]')) chk = false;
+    else break;
+    rest = rest.slice(rest.startsWith('[') ? 3 : 1);
+  }
+  const [t = '', s] = rest.split('|');
+  return { t, hi, av, ...(s ? { s } : {}), ...(chk !== undefined ? { chk } : {}) };
+}
+
+const SH = (url: string, rows: string[], btn?: string, bhi?: number): Shot => ({
+  url,
+  rows: rows.map(row),
+  ...(btn ? { btn } : {}),
+  ...(bhi ? { bhi: true } : {}),
+});
+
+const ST = (who: Who, t: string, d: string, shot: Shot): Step => ({ who, t, d, shot });
+
+export const GUIDES: Record<GuideKey, Guide> = {
+facebook:{name:'Facebook Page',
+ intro:'Posts go to the client’s Facebook Page. The client only gives your agency account access to the Page. They never use our app and never become a developer.',
+ needs:['A Facebook Page for the client (not a personal profile)','Your agency Facebook account: the one that has a role in our Meta app','Your own profile selected in the browser, not switched into a Page','About 10 minutes per client'],
+ groups:[
+  {title:'One-time setup (first time only)',open:false,steps:[
+   ST('you','Create the Meta app','Go to developers.facebook.com, My Apps, Create app. Choose the Business type and name it.',SH('developers.facebook.com › My Apps',['*Create app|Choose “Business”','Your existing apps'])),
+   ST('you','Add the Pages use case','In the app: Use cases, Add use case, choose the one to manage Pages (“Manage everything on your Page”). Open Customize and add three permissions: pages_show_list, pages_manage_posts, pages_read_engagement. “Ready for testing” is fine while the app is unpublished.',SH('Meta app › Use cases › Manage Pages › Customize',['[x]pages_show_list|Ready for testing','[x]*pages_manage_posts|Ready for testing','[x]pages_read_engagement|Ready for testing'])),
+   ST('you','Create the login configuration','Left menu: Facebook Login for Business, Configurations, Create configuration. Name it, choose “User access token”, tick the three permissions, create. Copy the Configuration ID (a long number).',SH('Meta app › Facebook Login for Business › Configurations',['*Create configuration','Page posting|Configuration ID: 1147…'])),
+   ST('you','Add the return address','Facebook Login for Business, Settings, “Valid OAuth Redirect URIs”: add https://YOUR-DASHBOARD-ADDRESS/api/facebook-callback and save. (Addresses starting with http://localhost are allowed automatically while the app is unpublished.)',SH('Meta app › Facebook Login for Business › Settings',['Client OAuth login|On','*Valid OAuth Redirect URIs|https://…/api/facebook-callback'],'Save changes')),
+   ST('you','Keep your account as Administrator','App roles, Roles. Your agency account must be listed as Administrator (or Developer). While the app is unpublished only accounts with a role can connect.',SH('Meta app › App roles › Roles',['*@Your agency account|Administrator'])),
+   ST('you','Save the keys on Vercel','Publisher project: FACEBOOK_APP_ID, FACEBOOK_APP_SECRET, CHANNEL_KEY. Dashboard project: FACEBOOK_APP_ID, FACEBOOK_CONFIG_ID. Then redeploy both. Copy and paste straight into the file or Vercel, never into chat.',SH('Vercel › Project › Settings › Environment Variables',['FACEBOOK_APP_ID|Encrypted','*FACEBOOK_APP_SECRET|Encrypted (sensitive)','CHANNEL_KEY|Encrypted (sensitive)'],'Redeploy'))]},
+  {title:'For each new client',open:true,steps:[
+   ST('client','Make sure they have a Facebook Page','If they have none: Facebook, Pages, Create new Page. When asked, choose “Public page”, not “upgrade your profile” (that would turn their profile into a Page). Give it a name and a category.',SH('facebook.com › Create a Page',['*Public page|A real Facebook Page','Upgrade your existing profile|Do NOT choose this'])),
+   ST('client','Open Page access','On the Page: Settings, Page setup, Page access.',SH('facebook.com › Page › Settings',['Page setup','*Page access|Invite people to help manage your Page','Page type'])),
+   ST('client','Give your account access','Under “People with Facebook access” click Add new. Search for your agency account by its profile link or numeric ID (names can match other people, so check the picture). Leave “full control” OFF, then click Give access.',SH('facebook.com › Page access › Add new',['*Search: your profile link or ID','@Your agency account|Content, Messages, Community activity, Ads, Insights','[ ]Allow this person to have full control'],'Give access')),
+   ST('you','Accept the invite','Log in to Facebook as your agency account. Pages, Invitations, Accept. Then check that the Page shows under “Pages you manage”. If Invitations is empty, the client probably invited a different person with a similar name: ask them to cancel it and invite again using your link or ID.',SH('facebook.com › Pages › Invitations',['@Client’s Page|invited you to manage this Page'],'Accept',1)),
+   ST('you','Start the connection','Use your own profile (not switched into a Page). Open the dashboard, the client, Channels, Add channel, Facebook.',SH('Dashboard › Client › Channels › Add channel',['Instagram|Business or Creator account','*Facebook Page|A Page you manage','LinkedIn','Google Business'])),
+   ST('you','Approve on Facebook','The window says “Continue as …”: continue as yourself. Choose “Opt in to current Pages only”, tick the client’s Page, continue. If it says the popup is too small, make the window wider.',SH('facebook.com › Choose the Pages you want to allow',['[x]Opt in to current Pages only','[x]*Client’s Page','[ ]Another Page'],'Continue')),
+   ST('system','You return to the calendar','A green message says “Facebook connected”, and the Page appears under Channels with a green dot.',SH('Dashboard › Channels',['@Instagram account|Instagram','*@Client’s Page|Facebook · connected']))]},
+  {title:'Check that it works',open:true,steps:[
+   ST('you','Look at the calendar','Click the Facebook channel on the left. Posts from the connection onward show a Facebook line in their window. Earlier posts are not sent to the Page.',SH('Dashboard › Calendar › Post',['Instagram · Scheduled','*Facebook · Scheduled'])),
+   ST('you','Set how often it posts','Client, Channels, Schedule: choose posts a week or exact days and the time. It applies from the next weekly run.',SH('Dashboard › Channels › Schedule',['[x]*3 a week|Mon, Wed, Fri','Time|10:00 IST'],'Save')),
+   ST('you','Confirm with the first real post','After the first scheduled time, open the Page and the post’s window: the Facebook line should say Published with a view link. If an alert arrives instead, see “If something goes wrong”.',SH('Page › Posts',['*@Brand post|Published · just now']))]},
+  {title:'Later: reconnect, add another Page, disconnect',open:false,steps:[
+   ST('you','Reconnect (token problem)','Add channel, Facebook again, same steps 5 and 6. It replaces the old token.',SH('Dashboard › Channels',['*Reconnect Facebook'])),
+   ST('you','Another Page for the same client','Repeat “Give your account access” for the new Page, then Add channel, Facebook, and tick the new Page.',SH('Dashboard › Channels',['*Add channel|Facebook'])),
+   ST('you','Disconnect','Client, Channels, Disconnect next to the Page. In Facebook you can also remove the app: Settings, Business integrations, remove.',SH('Dashboard › Channels',['*Disconnect|Client’s Page']))]}],
+ problems:[['“App not active”','The Facebook account you used has no role in our Meta app. Log in as your agency account.'],['“You don’t have any Pages”','The Page invite is not accepted yet, or the wrong profile accepted it. Check Pages, Invitations.'],['Invitation never arrives','The client invited a different person. Cancel it and invite again with your profile link or ID.'],['“No Pages came back”','You did not tick a Page in the approval window. Connect again and tick it.'],['Facebook shows a blank or “popup too small” page','Make the browser window wider, then try again.'],['Alert: Facebook post failed','Open the channel: if it is red, reconnect. The message names the Page; Instagram is not affected.']]},
+instagram:{name:'Instagram',
+ intro:'Posts go to the client’s Instagram account. Today the account is added as a tester and you generate its token by hand. After Meta’s app review this becomes one link the client clicks.',
+ needs:['An Instagram Business or Creator account (personal accounts do not work)','Access to our Meta app','The client’s Instagram login, or the client with you','About 15 minutes per client'],
+ groups:[
+  {title:'One-time setup (first time only)',open:false,steps:[
+   ST('you','Add the Instagram use case','In the Meta app: Use cases, Add use case, “Manage messaging & content on Instagram”. Open Customize, then “API setup with Instagram login”.',SH('Meta app › Use cases › Instagram',['*API setup with Instagram login','Business login settings'])),
+   ST('you','Add the permissions','Make sure instagram_business_basic and instagram_business_content_publish are added.',SH('Meta app › Instagram › Permissions',['[x]instagram_business_basic','[x]*instagram_business_content_publish'])),
+   ST('you','Return address (for the later Connect link)','Business login settings: add the dashboard’s return address when we switch from manual tokens to the Connect link. Not needed for the manual way.',SH('Meta app › Instagram › Business login settings',['*OAuth redirect URIs|add the dashboard address'],'Save')),
+   ST('you','Where the token is kept','For each connected account the token and account ID are stored as hidden variables (INSTAGRAM_TOKEN, INSTAGRAM_USER_ID on the first one). Never paste a token in chat.',SH('Vercel › Environment Variables',['INSTAGRAM_TOKEN|Encrypted','*INSTAGRAM_USER_ID|Encrypted']))]},
+  {title:'For each new client',open:true,steps:[
+   ST('client','Switch to a professional account','Instagram app: Settings, Account type and tools, Switch to professional account, choose Business (or Creator). A linked Facebook Page is not needed.',SH('Instagram › Settings › Account type and tools',['*Switch to professional account','Creator tools and controls'])),
+   ST('client','Send you the username','They send you the exact username, for example @clientusername.',SH('Message to you',['*@Our Instagram is @clientusername'])),
+   ST('you','Add them as an Instagram Tester','In the Meta app: App roles, Roles, Add People. Choose “Instagram Tester”, type the username, click Add.',SH('Meta app › App roles › Roles',['*Add people','[x]Instagram Tester','@@clientusername'],'Add')),
+   ST('client','Accept the tester invite','Instagram app: Settings, Apps and Websites, Tester Invites, Accept. (On the web: instagram.com/accounts/manage_access.) They must be logged in to that exact account.',SH('Instagram › Settings › Apps and Websites › Tester Invites',['@scheduler|invited you to test this app'],'Accept',1)),
+   ST('you','Generate the token','Meta app: Instagram API setup, find the account, click Generate token and approve on Instagram’s login. Use a private window if another Instagram is logged in. If Instagram asks to approve the login from a new device, approve it in the Instagram app on the client’s phone.',SH('Meta app › Instagram API setup',['@@clientusername|Instagram account','*Generate token'])),
+   ST('you','Save the token','Copy it and save it privately: today as a hidden Vercel variable, later in the dashboard (Add channel, Instagram). Never paste it in chat. Then redeploy.',SH('Vercel › Environment Variables',['*INSTAGRAM_TOKEN|paste, then save'],'Save')),
+   ST('system','Green dot','The account appears under Channels with a green dot. Posts go at the scheduled time.',SH('Dashboard › Channels',['*@Client name|Instagram · connected']))]},
+  {title:'Check that it works',open:true,steps:[
+   ST('you','Dry run','Ask Claude to run a dry run of the daily job on an upcoming post. It prepares the post without publishing it and should say ready.',SH('Result',['*dry-run-ready|post prepared, not published'])),
+   ST('you','Watch the first post','After the first scheduled time the post’s window says Published with a view link.',SH('Dashboard › Post',['*Instagram · Published|view'])),
+   ST('system','Weekly renewal','Every Monday the token is renewed by itself. If renewal fails you get a push alert and must generate a new token.',SH('Alert',['*Instagram token renewal failed']))]},
+  {title:'Later: reconnect or remove',open:false,steps:[
+   ST('you','Token revoked or expired','Generate a new token (same steps 5 and 6) and save it. It happens if the client changes their password or removes the app.',SH('Meta app › Instagram API setup',['*Generate token'])),
+   ST('you','Remove a client','Delete their token variable, and remove the tester role in App roles.',SH('Meta app › App roles',['*Remove|Instagram Tester']))]}],
+ problems:[['“Insufficient developer role”','The tester invite is not accepted, or a different Instagram account is logged in.'],['“Invalid redirect URI” or “Could not add provider”','The return address is not listed, or you are in a window logged in to the wrong account. Use a private window.'],['Token suddenly stopped working','The client changed their password or removed the app. Generate a new token.'],['The account is personal','Switch it to Business or Creator in Instagram settings.'],['Instagram asks to approve a login','Approve it in the Instagram app on the device where the account is logged in.']]},
+google:{name:'Google Business',
+ intro:'Posts appear as updates on the client’s Google Business listing. Google must approve API access for our project first, and that can take days or weeks.',
+ needs:['Google’s approval for the Business Profile APIs (apply once)','Manager access to the client’s listing','Your Google account','About 10 minutes per client after approval'],
+ groups:[
+  {title:'One-time setup (first time only)',open:false,steps:[
+   ST('you','Create a Google Cloud project','At console.cloud.google.com create a project for the dashboard.',SH('console.cloud.google.com',['*New project|content-calendar'])),
+   ST('you','Request API access','Send Google’s Business Profile API access request form for the project. Google asks about your business and checks your own listing, so follow their current requirements. Wait for the approval email.',SH('Google › Business Profile API access request',['*Request access|Status: pending','Contact email'],'Submit')),
+   ST('you','Enable the APIs','After approval, in the project: APIs and services, enable the Business Profile APIs listed in Google’s documents.',SH('Cloud console › APIs and services',['*Enable APIs|Business Profile'])),
+   ST('you','Consent screen and login','Create the OAuth consent screen (External), add the scope business.manage, then create an OAuth client (Web) with the return address https://YOUR-DASHBOARD-ADDRESS/api/google-callback.',SH('Cloud console › OAuth consent screen',['*Scope: business.manage','[x]Return address added'])),
+   ST('you','Publish the app','While the app is in “testing”, Google connections expire after 7 days. Publish it (Google may ask to verify it).',SH('Cloud console › OAuth consent screen',['Publishing status|Testing','*Publish app'])),
+   ST('you','Save the keys on Vercel','Client ID and client secret as hidden variables, then redeploy. Never paste them in chat.',SH('Vercel › Environment Variables',['GOOGLE_CLIENT_ID','*GOOGLE_CLIENT_SECRET|Encrypted (sensitive)'],'Redeploy'))]},
+  {title:'For each new client',open:true,steps:[
+   ST('client','Check the listing is verified','Their Google Business listing must exist and be verified (business.google.com).',SH('business.google.com',['*Client name|Verified'])),
+   ST('client','Make you a manager','Open the listing, Business Profile settings, People and access, Add. Enter your Google email and choose Manager.',SH('business.google.com › People and access',['*Add','@you@agency.com|Manager'],'Invite')),
+   ST('you','Accept the invite','Open the email from Google, or business.google.com, and accept. The listing now shows under your account.',SH('business.google.com › Invitations',['@Client name|invited you as Manager'],'Accept',1)),
+   ST('you','Start the connection','Dashboard, the client, Channels, Add channel, Google Business. Sign in with your Google account and allow access.',SH('accounts.google.com',['*Allow Content Calendar to manage your business?'],'Allow')),
+   ST('you','Choose the location','Tick the client’s listing (location) in the list that appears.',SH('Dashboard › Choose a location',['[x]*Client name · City','[ ]Another location'],'Connect')),
+   ST('you','Set the button link','Posts carry a button such as “Learn more”. Set where it goes in the client’s settings.',SH('Dashboard › Client settings',['Button|Learn more','*Link|https://client-site.example'])),
+   ST('system','Green dot','The listing appears under Channels with a green dot.',SH('Dashboard › Channels',['*@Client name|Google Business · connected']))]},
+  {title:'Check that it works',open:true,steps:[
+   ST('you','Look at the first post','After the first scheduled time, check the listing’s Updates: the post appears with a picture and a button. Posts are short (about 1,500 characters).',SH('Google › Business Profile › Updates',['*Client post|Learn more']))]},
+  {title:'Later: reconnect or remove',open:false,steps:[
+   ST('you','Reconnect','If the channel turns red, Add channel, Google Business again.',SH('Dashboard › Channels',['*Reconnect'])),
+   ST('client','Remove access','The client removes you under People and access.',SH('business.google.com › People and access',['*Remove|Agency account']))]}],
+ problems:[['Connect says “Waiting for Google approval”','The API access request is still pending. Nothing to fix on your side.'],['Connection drops after 7 days','The Google app is still in testing mode. Publish it.'],['Location missing','You were not accepted as a manager for that location, or it is not verified.'],['Post rejected','Google refuses some words and phone numbers in posts. Edit the caption and send it again.']]},
+linkedin:{name:'LinkedIn',
+ intro:'A personal profile works with LinkedIn’s self-serve products. A company page needs LinkedIn’s Community Management approval.',
+ needs:['For a personal profile: your own LinkedIn login','For a company page: admin access plus LinkedIn’s approval','Reconnecting about every 60 days (we alert you)','About 10 minutes per client'],
+ groups:[
+  {title:'One-time setup (first time only)',open:false,steps:[
+   ST('you','Create the LinkedIn app','At developer.linkedin.com, Create app. It must be linked to a LinkedIn company page, and that page’s admin has to verify the link.',SH('developer.linkedin.com › Create app',['*Company page|Your agency page','App name|Content Calendar'],'Create app')),
+   ST('you','Add the products','Add “Share on LinkedIn” and “Sign In with LinkedIn using OpenID Connect”. Both are self-serve.',SH('developer.linkedin.com › App › Products',['*Share on LinkedIn|Request access','Sign In with LinkedIn (OpenID)|Added'])),
+   ST('you','Add the return address','Auth tab: Authorized redirect URLs, add https://YOUR-DASHBOARD-ADDRESS/api/linkedin-callback.',SH('developer.linkedin.com › App › Auth',['*Authorized redirect URLs|https://…/api/linkedin-callback'],'Update')),
+   ST('you','For company pages: apply for approval','Apply for the Community Management API. LinkedIn may ask for a separate app and takes time to answer.',SH('developer.linkedin.com › Products',['*Community Management API|Request access'])),
+   ST('you','Save the keys on Vercel','Client ID and client secret as hidden variables, then redeploy. Never paste them in chat.',SH('Vercel › Environment Variables',['LINKEDIN_CLIENT_ID','*LINKEDIN_CLIENT_SECRET|Encrypted (sensitive)'],'Redeploy'))]},
+  {title:'For each new client',open:true,steps:[
+   ST('client','Company page only: make you an admin','Page, Admin tools, Manage admins, Add admin. Choose your profile and the Super admin or Content admin role. (A personal profile skips this step.)',SH('linkedin.com › Company page › Admin tools',['*Manage admins','@Your name|Content admin'],'Save')),
+   ST('you','Accept the admin invite','LinkedIn notifications, Accept.',SH('linkedin.com › Notifications',['@You were invited to manage Client name'],'Accept',1)),
+   ST('you','Start the connection','Dashboard, the client, Channels, Add channel, LinkedIn. Sign in, allow access.',SH('linkedin.com › Authorise',['[x]Post on your behalf','[x]*Your profile or the company page'],'Allow')),
+   ST('you','Choose where to post','Pick your profile or the company page.',SH('Dashboard › Choose',['[x]*Client name · company page','[ ]Your profile'],'Connect')),
+   ST('system','Green dot and a reminder','The channel shows a green dot with its renewal date. LinkedIn tokens last about 60 days and do not renew themselves.',SH('Dashboard › Channels',['*@Client name|LinkedIn · connected · reconnect in 54 days']))]},
+  {title:'Check that it works',open:true,steps:[
+   ST('you','Look at the first post','After the first scheduled time, check the profile or page: the post appears with its picture. The dashboard shows Published with a view link.',SH('linkedin.com › Page',['*Client post|just now']))]},
+  {title:'Later: reconnect or remove',open:false,steps:[
+   ST('you','Reconnect every ~60 days','A week before it expires you get an alert. Add channel, LinkedIn again, same steps.',SH('Alert',['*LinkedIn connection expires in 7 days'])),
+   ST('client','Remove access','The client removes you under Manage admins, or you disconnect the channel.',SH('linkedin.com › Admin tools',['*Remove admin|Agency']))]}],
+ problems:[['Company page option missing','LinkedIn has not approved Community Management access for our app yet.'],['Posting fails after about two months','The token expired. Reconnect (two clicks).'],['Cannot verify the app','The company page admin must verify the link between the page and the app.']]}
+};
