@@ -76,6 +76,7 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/data': { method: 'GET', load: () => import('../api/data.ts').then((m) => m.GET) },
   '/api/facebook-start': { method: 'GET', load: () => import('../api/facebook-start.ts').then((m) => m.GET as Handler) },
   '/api/facebook-callback': { method: 'GET', load: () => import('../api/facebook-callback.ts').then((m) => m.GET) },
+  '/api/disconnect': { method: 'POST', load: () => import('../api/disconnect.ts').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
 };
 

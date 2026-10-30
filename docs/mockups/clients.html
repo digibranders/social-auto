@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>Clients mockup · Content Calendar</title>
+<style>
+:root{--bg:#141416;--panel:#1b1b1f;--cell:#212126;--border:#2d2d34;--text:#ecedf0;--muted:#9a9ca6;--accent:#7c5cff;--accent-text:#fff;--ok:#38c172;--warn:#e7a93a;--bad:#ee5d5d;--radius:12px}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}h1,h2,h3,p{margin:0}
+.app{display:grid;grid-template-columns:76px 1fr;min-height:100vh}
+.rail{background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;align-items:center;gap:8px;padding:14px 0}
+.rail button{width:58px;border:0;background:none;border-radius:10px;padding:8px 0;color:var(--muted);font-size:11px;display:grid;justify-items:center;gap:3px}
+.rail button.on{background:var(--cell);color:var(--text)}.rail svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2}
+main{padding:22px 28px;max-width:1100px;width:100%}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+.crumbs{color:var(--muted);font-size:13px;margin-bottom:4px}.crumbs button{background:none;border:0;color:var(--muted);padding:0}.crumbs button:hover{color:var(--text)}
+h1{font-size:22px}.sub{color:var(--muted);font-size:13px}
+.btn{border:1px solid var(--border);background:var(--panel);border-radius:9px;padding:8px 14px;min-height:36px;display:inline-flex;align-items:center;gap:7px}
+.btn:hover{background:var(--cell)}.btn.primary{background:var(--accent);color:var(--accent-text);border-color:transparent;font-weight:600}.btn.quiet{background:none}.btn.danger{color:var(--bad)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.folder{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;text-align:left;display:grid;gap:10px;position:relative}
+.folder:hover{border-color:var(--accent)}.folder .tab{position:absolute;top:-9px;left:16px;width:54px;height:9px;background:var(--border);border-radius:6px 6px 0 0}
+.folder h3{font-size:17px}.logos{display:flex;gap:6px}.stat{display:flex;gap:14px;color:var(--muted);font-size:13px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px}.ok{background:var(--ok)}.warn{background:var(--warn)}.bad{background:var(--bad)}
+.add{border-style:dashed;place-items:center;color:var(--muted);min-height:150px;text-align:center}
+.lg{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;flex:none}.lg svg{width:16px;height:16px;fill:#fff;stroke:none}
+.lg.ig{background:linear-gradient(135deg,#f58529,#dd2a7b 55%,#8134af)}.lg.fb{background:#1877f2;border-radius:50%}.lg.li{background:#0a66c2}.lg.gb{background:#fff;color:#4285f4;font-weight:800;font-size:14px;border:1px solid var(--border)}
+.lg.x{background:#000;color:#fff;font-weight:800;font-size:13px}.lg.th{background:#111;color:#fff;font-weight:800;font-size:13px}.lg.tt{background:#111;color:#fff;font-size:12px}.lg.yt{background:#ff0000;color:#fff;font-size:11px}.lg.pi{background:#e60023;color:#fff;font-weight:800;font-size:13px}
+.lg.big{width:40px;height:40px;border-radius:11px}.lg.big svg{width:24px;height:24px}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:18px}.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:9px 14px;color:var(--muted)}.tabs button.on{color:var(--text);border-color:var(--accent)}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.chan{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid var(--border)}.chan:last-child{border:0}
+.chan .meta{display:grid;gap:3px}.chan .sched{color:var(--muted);font-size:13px}.chan .acts{display:flex;gap:8px;flex-wrap:wrap}
+.pill{display:inline-flex;align-items:center;font-size:12px;border-radius:99px;padding:2px 10px;background:var(--cell);border:1px solid var(--border);color:var(--muted)}
+.pill.sched{color:#8fa4ff}.pill.ok{background:rgba(56,193,114,.12);color:var(--ok);border-color:transparent}.pill.edited{color:var(--muted)}
+.two{display:grid;grid-template-columns:1.2fr 1fr;gap:16px}@media(max-width:860px){.two{grid-template-columns:1fr}.app{grid-template-columns:1fr}.rail{flex-direction:row;border-right:0;border-bottom:1px solid var(--border)}}
+.posts{display:grid;gap:10px}.post{display:grid;grid-template-columns:54px 1fr auto;gap:12px;align-items:center;background:var(--cell);border:1px solid var(--border);border-radius:10px;padding:10px}
+.thumb{width:54px;height:54px;border-radius:8px;background:linear-gradient(135deg,#f2dcc0,#c48a47);display:grid;place-items:center;font-size:10px;color:#4a3414;font-weight:700;text-align:center;line-height:1.1}
+.post .t{font-size:13px;color:var(--muted)}.post .c{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:44ch}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{border:1px solid var(--border);background:var(--cell);border-radius:8px;padding:6px 11px}.chip.on{background:var(--accent);color:#fff;border-color:transparent}
+label.f{display:grid;gap:6px;margin-bottom:14px;font-size:13px;color:var(--muted)}label.f input,label.f select{background:var(--cell);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font:inherit}
+.switch{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 0;border-top:1px solid var(--border)}.switch p{font-size:13px;color:var(--muted)}
+.tog{width:42px;height:24px;border-radius:99px;background:var(--border);border:0;position:relative;flex:none}.tog::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:left .15s}.tog.on{background:var(--ok)}.tog.on::after{left:21px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;place-items:center;padding:16px;z-index:9}.modal.show{display:grid}
+.sheet{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:20px;width:min(640px,100%);max-height:90vh;overflow:auto;display:grid;gap:14px}
+.sheet .head{display:flex;justify-content:space-between;align-items:center}
+.pick{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}@media(max-width:560px){.pick{grid-template-columns:1fr}}
+.opt{display:flex;gap:12px;align-items:center;text-align:left;background:var(--cell);border:1px solid var(--border);border-radius:11px;padding:12px}.opt:hover:not(:disabled){border-color:var(--accent)}.opt small{display:block;color:var(--muted)}
+.opt:disabled{opacity:.45;cursor:default}.soon{font-size:11px;color:var(--muted);margin-left:auto;border:1px solid var(--border);border-radius:99px;padding:1px 8px}
+.h4{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin:4px 0 -4px}
+.steps{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}.steps span{font-size:13px;color:var(--muted);padding:4px 11px;border-radius:99px;border:1px solid var(--border)}.steps span.on{color:#fff;background:var(--accent);border-color:transparent}.steps span.done{color:var(--ok)}
+.swatch{display:flex;gap:6px}.swatch i{width:26px;height:26px;border-radius:7px;border:1px solid var(--border)}
+.note{background:rgba(124,92,255,.1);border:1px solid rgba(124,92,255,.35);border-radius:10px;padding:10px 12px;font-size:13px}
+.hide{display:none!important}.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.spacer{flex:1}
+.banner{background:rgba(231,169,58,.1);border:1px solid rgba(231,169,58,.4);color:var(--warn);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+
+.cal{display:grid;grid-template-columns:230px 1fr;gap:16px}@media(max-width:860px){.cal{grid-template-columns:1fr}}
+.side .opt{width:100%;padding:9px 10px}.side .opt.on{border-color:var(--accent);background:rgba(124,92,255,.12)}.side .opt .lg{width:24px;height:24px}
+.tb{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}.seg{display:inline-flex;border:1px solid var(--border);border-radius:9px;overflow:hidden}.seg button{background:var(--panel);border:0;padding:7px 13px;color:var(--muted)}.seg button.on{background:var(--cell);color:var(--text);font-weight:600}
+.mon{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
+.mon .dh{padding:8px;font-size:12px;color:var(--muted);border-bottom:1px solid var(--border);background:var(--cell);text-align:center}
+.mon .d{min-height:104px;border-right:1px solid var(--border);border-bottom:1px solid var(--border);padding:5px;display:grid;gap:4px;align-content:start}.mon .d:nth-child(7n){border-right:0}
+.mon .d .n{font-size:12px;color:var(--muted)}.mon .d.out{opacity:.4}.mon .d.today .n{color:#fff;background:var(--accent);border-radius:99px;width:22px;text-align:center}
+.mchip{display:flex;gap:5px;align-items:center;border:0;border-left:3px solid var(--accent);background:var(--cell);border-radius:6px;padding:3px 5px;font-size:11.5px;text-align:left;width:100%;overflow:hidden}
+.mchip.published{border-color:var(--ok)}.mchip.scheduled{border-color:#6f86ff}.mchip.review{border-color:var(--warn)}.mchip.missed{border-color:var(--bad)}
+.mchip .mt{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.mchip .mini{display:flex;gap:2px;flex:none}.mini i{width:9px;height:9px;border-radius:3px;display:block}.mini .ig{background:#dd2a7b}.mini .fb{background:#1877f2;border-radius:50%}.mini .li{background:#0a66c2}
+.wk{display:grid;grid-template-columns:repeat(7,1fr);gap:8px}.wk .col{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:8px;display:grid;gap:6px;align-content:start;min-height:200px}.wk h4{margin:0;font-size:12px;color:var(--muted)}
+.lst{display:grid;gap:10px}.lst h4{margin:8px 0 0;color:var(--muted);font-size:13px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin-top:10px}
+.det{display:grid;grid-template-columns:minmax(0,260px) 1fr;gap:16px}@media(max-width:620px){.det{grid-template-columns:1fr}}
+.poster{aspect-ratio:1/1;border-radius:12px;background:linear-gradient(135deg,#f6e8d0,#c48a47);display:grid;place-items:center;text-align:center;padding:18px;font-weight:800;color:#3a2a10;font-size:20px;line-height:1.15}
+.chs{display:grid;gap:8px}.chs .r{display:flex;gap:10px;align-items:center;background:var(--cell);border:1px solid var(--border);border-radius:9px;padding:8px 10px}
+
+.hlp{display:grid;grid-template-columns:260px 1fr;gap:16px}@media(max-width:860px){.hlp{grid-template-columns:1fr}}
+.hlp .side .opt{width:100%}.hlp .side .opt.on{border-color:var(--accent);background:rgba(124,92,255,.12)}
+.hlp .side .opt .pill{margin-left:auto;font-size:11px;white-space:nowrap}
+.need{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 4px}.need span{background:var(--cell);border:1px solid var(--border);border-radius:8px;padding:4px 10px;font-size:13px}
+.step{display:grid;grid-template-columns:34px 1fr;gap:14px;padding:18px 0;border-top:1px solid var(--border)}
+.step .num{width:30px;height:30px;border-radius:50%;background:var(--cell);border:1px solid var(--border);display:grid;place-items:center;font-weight:700}
+.step h4{margin:0 0 4px;font-size:15px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}.step p{color:var(--muted);font-size:14px;margin-bottom:10px}
+.who{font-size:11px;font-weight:700;border-radius:99px;padding:2px 9px;text-transform:uppercase;letter-spacing:.05em}
+.who.client{background:rgba(231,169,58,.15);color:var(--warn)}.who.you{background:rgba(124,92,255,.18);color:#a995ff}.who.system{background:rgba(56,193,114,.14);color:var(--ok)}
+.shot{border:1px solid var(--border);border-radius:11px;overflow:hidden;max-width:520px;background:var(--cell)}
+.shot .bar{display:flex;gap:6px;align-items:center;padding:8px 10px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px;color:var(--muted)}
+.shot .bar i{width:9px;height:9px;border-radius:50%;background:var(--border);display:block}.shot .bar span{margin-left:8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.shot .body{padding:12px;display:grid;gap:7px}
+.srow{display:flex;gap:10px;align-items:center;padding:9px 11px;border-radius:8px;background:var(--panel);border:1px solid var(--border);font-size:13px;position:relative}
+.srow small{color:var(--muted);display:block;font-size:11.5px}.srow .go{margin-left:auto;color:var(--muted)}
+.srow.hi{border-color:var(--accent);box-shadow:0 0 0 3px rgba(124,92,255,.28)}.srow.hi::after{content:"click here";position:absolute;right:10px;top:-9px;background:var(--accent);color:#fff;font-size:10.5px;font-weight:700;border-radius:99px;padding:1px 8px}
+.srow.btnrow{justify-content:flex-end;background:none;border:0;padding:0}.sbtn{background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;font-weight:600;font-size:13px}.sbtn.hi{box-shadow:0 0 0 3px rgba(124,92,255,.35)}
+.srow .av{width:26px;height:26px;border-radius:50%;background:var(--border);flex:none}.srow .chk{width:16px;height:16px;border:2px solid var(--muted);border-radius:4px;flex:none}.srow .chk.on{background:var(--accent);border-color:var(--accent)}
+.prob{border:1px solid var(--border);border-radius:10px;padding:10px 14px;background:var(--cell);margin-top:8px}.prob b{display:block;margin-bottom:2px}.prob span{color:var(--muted);font-size:14px}
+.mnote{color:var(--muted);font-size:12.5px;margin-top:6px}
+.grp{border-top:1px solid var(--border);margin-top:14px}.grp>summary{cursor:pointer;font-weight:700;font-size:16px;padding:14px 0 2px;list-style:none}.grp>summary::-webkit-details-marker{display:none}.grp>summary::before{content:"▸ ";color:var(--muted)}.grp[open]>summary::before{content:"▾ "}
+.tick{margin-left:auto;font-size:12px;font-weight:500;color:var(--muted);display:inline-flex;gap:5px;align-items:center;cursor:pointer}.step h4{width:100%}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail">
+    <button class="on" data-go="clients"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>Clients</button>
+    <button data-go="calendar"><svg viewBox="0 0 24 24"><path d="M8 2v4M16 2v4M3 10h18M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"/></svg>Calendar</button>
+    <span style="flex:1"></span>
+    <button data-go="help"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7M12 17h.01"/></svg>Help</button>
+  </nav>
+  <main>
+
+  <!-- 1. CLIENTS -->
+  <section id="clients">
+    <div class="top"><div><h1>Clients</h1><p class="sub">Each client is a folder: its channels, posting plan and calendar live inside.</p></div>
+      <button class="btn primary" data-go="wizard">+ Add client</button></div>
+    <div class="grid">
+      <button class="folder" data-go="client"><span class="tab"></span>
+        <div class="row"><h3>Brandbasket</h3><span class="spacer"></span><span class="pill ok"><i class="dot ok"></i>All good</span></div>
+        <p class="sub">brandbasket.in</p>
+        <div class="logos"><span class="lg ig"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/></svg></span><span class="lg fb"><svg viewBox="0 0 24 24"><path d="M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z"/></svg></span></div>
+        <div class="stat"><span>5 posts / week</span><span>42 days booked</span></div></button>
+      <button class="folder" data-go="client"><span class="tab"></span>
+        <div class="row"><h3>Currycook</h3><span class="spacer"></span><span class="pill" style="color:var(--warn)"><i class="dot warn"></i>Queue low</span></div>
+        <p class="sub">currycook.example</p>
+        <div class="logos"><span class="lg ig"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/></svg></span><span class="lg li"><svg viewBox="0 0 24 24"><path d="M6.9 9.5h2.6V18H6.9zM8.2 5.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM11 9.5h2.5v1.2c.4-.7 1.3-1.4 2.7-1.4 2.7 0 3.2 1.8 3.2 4.1V18h-2.6v-4.1c0-1 0-2.2-1.4-2.2s-1.6 1.1-1.6 2.2V18H11z"/></svg></span><span class="lg gb">G</span></div>
+        <div class="stat"><span>3 posts / week</span><span>6 days booked</span></div></button>
+      <button class="folder add" data-go="wizard"><span style="font-size:28px">+</span><span>Add client<br><small>Paste a website to start</small></span></button>
+    </div>
+  </section>
+
+  <!-- 2. CLIENT FOLDER -->
+  <section id="client" class="hide">
+    <div class="crumbs"><button data-go="clients">Clients</button> / Brandbasket</div>
+    <div class="top"><div class="row"><h1>Brandbasket</h1><span class="pill ok"><i class="dot ok"></i>All good</span></div>
+      <div class="row"><button class="btn" data-go="calendar">Open calendar</button><button class="btn quiet danger">Pause client</button></div></div>
+    <div class="tabs" id="clientTabs"><button class="on" data-tab="channels">Channels</button><button data-tab="plan">Next posts</button><button data-tab="settings">Client settings</button></div>
+
+    <div id="tab-channels">
+      <div class="card">
+        <div class="row" style="margin-bottom:6px"><h3>Channels</h3><span class="spacer"></span><button class="btn primary" id="openPicker">+ Add channel</button></div>
+        <div class="chan"><span class="lg big ig"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/></svg></span>
+          <div class="meta"><b>Instagram · dai23_sy</b><span class="sched" data-summary="ig">5 a week · Mon–Fri · 10:00 IST</span><span class="sub"><i class="dot ok"></i>Connected · token renews every Monday</span></div>
+          <div class="acts"><button class="btn" data-sched="Instagram">Schedule</button><button class="btn quiet">Reconnect</button></div></div>
+        <div class="chan"><span class="lg big fb"><svg viewBox="0 0 24 24"><path d="M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z"/></svg></span>
+          <div class="meta"><b>Facebook · Brandbs</b><span class="sched" data-summary="fb">5 a week · Mon–Fri · 10:00 IST</span><span class="sub"><i class="dot ok"></i>Connected</span></div>
+          <div class="acts"><button class="btn" data-sched="Facebook">Schedule</button><button class="btn quiet danger">Disconnect</button></div></div>
+        <div class="chan"><span class="lg big li"><svg viewBox="0 0 24 24"><path d="M6.9 9.5h2.6V18H6.9zM8.2 5.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM11 9.5h2.5v1.2c.4-.7 1.3-1.4 2.7-1.4 2.7 0 3.2 1.8 3.2 4.1V18h-2.6v-4.1c0-1 0-2.2-1.4-2.2s-1.6 1.1-1.6 2.2V18H11z"/></svg></span>
+          <div class="meta"><b>LinkedIn</b><span class="sub">Not connected</span></div><div class="acts"><button class="btn primary">Connect</button></div></div>
+        <div class="chan"><span class="lg big gb">G</span>
+          <div class="meta"><b>Google Business Profile</b><span class="sub">Not connected · needs Google's API approval</span></div><div class="acts"><button class="btn primary">Connect</button></div></div>
+      </div>
+    </div>
+
+    <div id="tab-plan" class="hide">
+      <div class="two"><div class="card"><div class="row" style="margin-bottom:10px"><h3>Coming up</h3><span class="spacer"></span><span class="sub">Review is <b id="rv">on</b></span></div>
+        <div class="posts">
+          <div class="post"><div class="thumb">PAIN<br>POINT</div><div><div class="t">Sat 31 Oct · 10:00 · <span class="pill sched">Scheduled</span></div><div class="c">Most website quotes start with a big number before you have seen anything.</div></div><div class="row"><button class="btn">Edit</button></div></div>
+          <div class="post"><div class="thumb">PAIN<br>POINT</div><div><div class="t">Mon 2 Nov · 10:00 · <span class="pill sched">Scheduled</span> <span class="pill edited">Edited</span></div><div class="c">Your website was made. The freelancer moved on. Now it loads slowly…</div></div><div class="row"><button class="btn">Edit</button></div></div>
+          <div class="post"><div class="thumb">PAIN<br>POINT</div><div><div class="t">Tue 3 Nov · 10:00 · <span class="pill" style="color:var(--warn)">Needs your OK</span></div><div class="c">Customers search on Google first. If you are not there, you do not exist.</div></div><div class="row"><button class="btn primary">Approve</button><button class="btn quiet">Skip</button></div></div>
+        </div></div>
+        <div class="card"><h3 style="margin-bottom:8px">Queue</h3><p class="sub" style="margin-bottom:10px">42 days of posts booked. More are written automatically when it drops below 14 days.</p>
+          <button class="btn">Write more posts now</button></div></div>
+    </div>
+
+    <div id="tab-settings" class="hide">
+      <div class="card" style="max-width:640px">
+        <label class="f">Name<input value="Brandbasket" /></label>
+        <label class="f">Website the posts are written from<input value="brandbasket.in" /></label>
+        <div class="row" style="gap:12px"><label class="f" style="flex:1">Time zone<select><option>India (UTC+05:30)</option></select></label><button class="btn" style="margin-top:8px">Re-read the website</button></div>
+        <div class="switch"><div><b>Review posts before they go live</b><p>New posts wait for your OK. Off: they go out automatically at their time.</p></div><button class="tog on" id="reviewTog" aria-label="Review before posting"></button></div>
+        <div class="switch"><div><b>Alert me when the queue runs low</b><p>Push alert at 7, 3 and 1 days left.</p></div><button class="tog on" aria-label="Queue alerts"></button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. ADD CLIENT WIZARD -->
+  <section id="wizard" class="hide">
+    <div class="crumbs"><button data-go="clients">Clients</button> / New client</div>
+    <div class="top"><h1>Add a client</h1></div>
+    <div class="steps" id="steps"><span class="on">1 Website</span><span>2 Brand</span><span>3 Channels</span><span>4 Plan</span></div>
+    <div class="card" style="max-width:720px" id="wz">
+      <div data-step="1"><label class="f">Client's website<input id="site" value="https://currycook.example" /></label><p class="sub" style="margin-bottom:12px">We read the site to learn what they sell, their tone, colours and the problems their customers have.</p><button class="btn primary" id="read">Read the website</button></div>
+      <div data-step="2" class="hide"><p class="sub" id="reading">Reading the website…</p>
+        <div id="brand" class="hide" style="display:grid;gap:14px">
+          <div class="row"><h3>currycook</h3><span class="pill ok">Profile built</span></div>
+          <div><div class="h4">Colours</div><div class="swatch"><i style="background:#c8402a"></i><i style="background:#f3e3c3"></i><i style="background:#2d2a26"></i></div></div>
+          <div><div class="h4">What they sell</div><p>Ready-to-cook curry kits for busy families, delivered weekly.</p></div>
+          <div><div class="h4">Tone</div><p>Warm, practical, a little playful. No hype words.</p></div>
+          <div><div class="h4">First pain points found</div><p class="sub">“No time to plan dinner” · “Takeaway gets expensive” · “Spices go stale”…</p></div>
+          <div class="row"><button class="btn quiet" data-wz="1">Back</button><button class="btn primary" data-wz="3">Looks right</button></div></div></div>
+      <div data-step="3" class="hide"><h3 style="margin-bottom:10px">Which channels?</h3><p class="sub" style="margin-bottom:12px">You can add more later. Each one is connected after the client is created.</p>
+        <div class="pick" id="wzChans"></div><div class="row" style="margin-top:14px"><button class="btn quiet" data-wz="2">Back</button><button class="btn primary" data-wz="4">Next</button></div></div>
+      <div data-step="4" class="hide"><h3 style="margin-bottom:10px">Posting plan</h3>
+        <div class="f" style="margin-bottom:8px"><span class="sub">Posts per week (for every channel; change per channel later)</span></div>
+        <div class="chips" id="wzPer"></div>
+        <label class="f" style="margin-top:14px;max-width:200px">Time<input type="time" value="10:00" /></label>
+        <div class="switch"><div><b>Review posts before they go live</b><p>Recommended for a new client.</p></div><button class="tog on" aria-label="Review"></button></div>
+        <div class="row" style="margin-top:6px"><button class="btn quiet" data-wz="3">Back</button><button class="btn primary" id="create">Create client</button></div></div>
+    </div>
+  </section>
+
+  <!-- 4. CALENDAR (existing screen) -->
+  <section id="calendar" class="hide">
+    <div class="top"><div><h1>Calendar</h1><p class="sub">Everything scheduled, for one client or all of them.</p></div>
+      <div class="row"><select class="btn" id="calClient"><option>All clients</option><option selected>Brandbasket</option><option>Currycook</option></select><button class="btn primary" id="calAdd">+ Add channel</button></div></div>
+    <div class="cal">
+      <aside class="side card" style="align-self:start;display:grid;gap:8px">
+        <div class="h4">Channels · Brandbasket</div>
+        <button class="opt on" data-ch="all"><span class="lg" style="background:var(--border);color:var(--text)">∗</span><span><b>All channels</b><small>2 connected</small></span></button>
+        <button class="opt" data-ch="ig"><span class="lg ig"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/></svg></span><span><b>dai23_sy</b><small>Instagram</small></span><i class="dot ok" style="margin-left:auto"></i></button>
+        <button class="opt" data-ch="fb"><span class="lg fb"><svg viewBox="0 0 24 24"><path d="M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z"/></svg></span><span><b>Brandbs</b><small>Facebook</small></span><i class="dot ok" style="margin-left:auto"></i></button>
+        <button class="btn" data-go="client" style="justify-content:center">Manage channels</button>
+        <p class="sub" style="margin-top:4px">Brandbasket: 42 days of posts booked</p>
+      </aside>
+      <div>
+        <div class="tb"><div class="seg" id="calView"><button data-v="month" class="on">Month</button><button data-v="week">Week</button><button data-v="list">List</button></div>
+          <button class="btn" id="prev">‹</button><b id="calTitle" style="min-width:120px;text-align:center"></b><button class="btn" id="next">›</button><button class="btn quiet" id="todayBtn">Today</button></div>
+        <div id="calBody"></div>
+        <div class="legend"><span><i class="dot ok"></i>Published</span><span><i class="dot" style="background:#6f86ff"></i>Scheduled</span><span><i class="dot warn"></i>Needs your OK</span><span><i class="dot bad"></i>Missed</span><span>Tiny squares = channels the post goes to</span></div>
+      </div>
+    </div>
+  </section>
+
+    <!-- HELP -->
+  <section id="help" class="hide">
+    <div class="top"><div><h1>Help · Connect a channel</h1><p class="sub">The same steps for every client. “Client” steps are what the client does; “You” steps are yours.</p></div></div>
+    <div class="hlp"><aside class="side card" style="align-self:start;display:grid;gap:8px" id="hlpList"></aside><div class="card" id="hlpBody"></div></div>
+  </section>
+  </main>
+</div>
+
+<!-- ADD CHANNEL PICKER -->
+<div class="modal" id="picker"><div class="sheet"><div class="head"><h3>Add a channel to Brandbasket</h3><button class="btn quiet" data-close>Close</button></div>
+  <div class="h4">Available</div>
+  <div class="pick">
+    <button class="opt" data-connect="Instagram"><span class="lg big ig"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/></svg></span><span><b>Instagram</b><small>Business or Creator account</small></span></button>
+    <button class="opt" data-connect="Facebook"><span class="lg big fb"><svg viewBox="0 0 24 24"><path d="M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z"/></svg></span><span><b>Facebook Page</b><small>A Page you manage</small></span></button>
+    <button class="opt" data-connect="LinkedIn"><span class="lg big li"><svg viewBox="0 0 24 24"><path d="M6.9 9.5h2.6V18H6.9zM8.2 5.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM11 9.5h2.5v1.2c.4-.7 1.3-1.4 2.7-1.4 2.7 0 3.2 1.8 3.2 4.1V18h-2.6v-4.1c0-1 0-2.2-1.4-2.2s-1.6 1.1-1.6 2.2V18H11z"/></svg></span><span><b>LinkedIn</b><small>Profile or company page</small></span></button>
+    <button class="opt" data-connect="Google Business Profile"><span class="lg big gb">G</span><span><b>Google Business</b><small>Posts on the business listing</small></span></button>
+  </div>
+  <div class="h4">More networks, coming later</div>
+  <div class="pick">
+    <button class="opt" disabled><span class="lg big x">X</span><span><b>X</b></span><span class="soon">Soon</span></button>
+    <button class="opt" disabled><span class="lg big th">@</span><span><b>Threads</b></span><span class="soon">Soon</span></button>
+    <button class="opt" disabled><span class="lg big tt">♪</span><span><b>TikTok</b></span><span class="soon">Soon</span></button>
+    <button class="opt" disabled><span class="lg big yt">▶</span><span><b>YouTube</b></span><span class="soon">Soon</span></button>
+    <button class="opt" disabled><span class="lg big pi">P</span><span><b>Pinterest</b></span><span class="soon">Soon</span></button>
+  </div>
+  <p class="note" id="connectNote" style="display:none"></p><p class="sub">Not sure how? <button class="btn quiet" id="goHelp" style="padding:2px 8px;min-height:0">Open the setup guide</button></p></div></div>
+
+<!-- POST DETAIL -->
+<div class="modal" id="detail"><div class="sheet" style="width:min(780px,100%)"><div class="head"><div class="row"><h3>Brandbasket</h3><span class="pill" id="dState"></span><span class="pill edited hide" id="dEdited">Edited</span></div><button class="btn quiet" data-close>Close</button></div>
+  <div class="det"><div class="poster" id="dPoster">Does your site look out of date?</div>
+    <div style="display:grid;gap:12px;align-content:start">
+      <div><div class="h4">Goes out on</div><div class="row" style="margin-top:6px"><input type="date" id="dDate" class="btn" style="padding:6px 10px"><input type="time" id="dTime" value="10:00" class="btn" style="padding:6px 10px"></div><p class="sub hide" id="dTimeNote" style="margin-top:6px">On the current plan only the day takes effect; the time works when the job runs every 15 minutes.</p></div>
+      <div><div class="h4">Channels</div><div class="chs" id="dChans" style="margin-top:6px"></div></div>
+      <div><div class="h4">Caption</div><p id="dCap" style="margin-top:6px;white-space:pre-wrap"></p></div>
+      <div class="row" id="dActs"><button class="btn primary">Edit caption and picture</button><button class="btn">Save date and time</button><button class="btn quiet">Revert to original</button></div>
+    </div></div></div></div>
+
+<!-- SCHEDULE EDITOR -->
+<div class="modal" id="sched"><div class="sheet"><div class="head"><h3 id="schedTitle">Posting schedule</h3><button class="btn quiet" data-close>Close</button></div>
+  <div><div class="h4">How often</div><div class="chips" id="per" style="margin-top:10px"></div></div>
+  <div><div class="h4">Which days</div><div class="chips" id="days" style="margin-top:10px"></div><p class="sub" style="margin-top:8px">Choosing a number picks days evenly. Tap days to set your own.</p></div>
+  <label class="f" style="max-width:220px">Time (India)<input type="time" id="time" value="10:00" /></label>
+  <div class="banner" id="timeBanner">On the current plan the daily job runs once, between 10:00 and 10:59. Other times work after the job runs every 15 minutes.</div>
+  <div class="note" id="summary"></div>
+  <div class="row"><button class="btn primary" id="saveSched">Save</button><button class="btn quiet" data-close>Cancel</button><span class="sub">Applies from the next weekly run. Posts already booked stay as they are.</span></div></div></div>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const show=id=>{if(id==='calendar'&&typeof drawCal==='function')setTimeout(drawCal);['clients','client','wizard','calendar','help'].forEach(s=>$('#'+s).classList.toggle('hide',s!==id));$$('.rail button').forEach(b=>b.classList.toggle('on',b.dataset.go===(id==='client'||id==='wizard'?'clients':id)));scrollTo(0,0)};
+document.addEventListener('click',e=>{const g=e.target.closest('[data-go]');if(g){show(g.dataset.go);if(g.dataset.go==='wizard')wz(1)}});
+$$('#clientTabs button').forEach(b=>b.onclick=()=>{$$('#clientTabs button').forEach(x=>x.classList.toggle('on',x===b));['channels','plan','settings'].forEach(t=>$('#tab-'+t).classList.toggle('hide',t!==b.dataset.tab))});
+const modal=(id,on)=>$(id).classList.toggle('show',on);
+$$('[data-close]').forEach(b=>b.onclick=()=>$$('.modal').forEach(m=>m.classList.remove('show')));
+$$('.modal').forEach(m=>m.addEventListener('click',e=>{if(e.target===m)m.classList.remove('show')}));
+$('#openPicker').onclick=()=>{$('#connectNote').style.display='none';modal('#picker',true)};
+$$('[data-connect]').forEach(b=>b.onclick=()=>{const n=$('#connectNote');n.style.display='block';n.textContent=b.dataset.connect==='Google Business Profile'?'Google Business: needs Google’s API approval first. The button will say “Waiting for Google approval” until it is granted.':b.dataset.connect==='Instagram'?'Instagram: the client accepts a tester invite, then you click Connect and approve. After Meta’s review it becomes one link the client clicks.':b.dataset.connect==='Facebook'?'Facebook: a Facebook window opens, you tick the client’s Page and approve. The Page is then listed here.':'LinkedIn: a LinkedIn window opens and you approve. Company pages need LinkedIn’s approval; a personal profile works now.'});
+// schedule editor
+const D=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],EVEN={1:[0],2:[0,3],3:[0,2,4],4:[0,1,3,4],5:[0,1,2,3,4],6:[0,1,2,3,4,5],7:[0,1,2,3,4,5,6]};
+let days=new Set(EVEN[5]),target='ig';
+const sum=()=>{const a=[...days].sort(),n=a.length,names=a.map(i=>D[i]).join(', ');return n?`${n} a week · ${n===7?'every day':n===5&&a.join()==='0,1,2,3,4'?'Mon–Fri':names} · ${$('#time').value} IST`:'Choose at least one day'};
+function drawSched(){$('#per').innerHTML='';for(let n=1;n<=7;n++){const b=document.createElement('button');b.className='chip'+(days.size===n&&EVEN[n].every(i=>days.has(i))?' on':'');b.textContent=n+(n===1?' a week':'');b.onclick=()=>{days=new Set(EVEN[n]);drawSched()};$('#per').append(b)}
+ $('#days').innerHTML='';D.forEach((d,i)=>{const b=document.createElement('button');b.className='chip'+(days.has(i)?' on':'');b.textContent=d;b.onclick=()=>{days.has(i)?days.delete(i):days.add(i);drawSched()};$('#days').append(b)});$('#summary').textContent='Plan: '+sum();$('#timeBanner').classList.toggle('hide',$('#time').value==='10:00')}
+$$('[data-sched]').forEach(b=>b.onclick=()=>{$('#schedTitle').textContent=b.dataset.sched+' · posting schedule';target=b.dataset.sched==='Instagram'?'ig':'fb';drawSched();modal('#sched',true)});
+$('#time').oninput=drawSched;
+$('#saveSched').onclick=()=>{if(!days.size)return;$(`[data-summary="${target}"]`).textContent=sum();modal('#sched',false)};
+$('#reviewTog').onclick=e=>{e.target.classList.toggle('on');$('#rv').textContent=e.target.classList.contains('on')?'on':'off'};
+$$('.tog').forEach(t=>{if(t.id!=='reviewTog')t.onclick=()=>t.classList.toggle('on')});
+// wizard
+const CH=[['Instagram','ig'],['Facebook Page','fb'],['LinkedIn','li'],['Google Business','gb']];
+$('#wzChans').innerHTML=CH.map(([n,c],i)=>`<label class="opt"><input type="checkbox" ${i<2?'checked':''}/> <span class="lg ${c}">${c==='gb'?'G':c==='ig'?'IG':c==='fb'?'f':'in'}</span><b>${n}</b></label>`).join('');
+$('#wzPer').innerHTML=[1,2,3,4,5,6,7].map(n=>`<button class="chip${n===3?' on':''}" data-n="${n}">${n}</button>`).join('');
+$('#wzPer').onclick=e=>{const b=e.target.closest('.chip');if(b)$$('#wzPer .chip').forEach(x=>x.classList.toggle('on',x===b))};
+function wz(n){$$('[data-step]').forEach(s=>s.classList.toggle('hide',+s.dataset.step!==n));$$('#steps span').forEach((s,i)=>{s.classList.toggle('on',i+1===n);s.classList.toggle('done',i+1<n)})}
+$$('[data-wz]').forEach(b=>b.onclick=()=>wz(+b.dataset.wz));
+$('#read').onclick=()=>{wz(2);$('#brand').classList.add('hide');$('#reading').classList.remove('hide');setTimeout(()=>{$('#reading').classList.add('hide');$('#brand').classList.remove('hide')},1100)};
+$('#create').onclick=()=>{show('client')};
+drawSched();
+// ---- calendar
+const TEXTS=['Does your site look out of date?','A website is not a brochure','Your customers search on Google first','Quotes that start with a big number','The freelancer moved on','No lock-ins, cancel anytime'];
+const CAPS=['Most website quotes start with a big number before you have seen anything.\n\nFree build, live in 7 working days, ₹2,999 a month.\n\n#SmallBusinessIndia #Brandbasket','Instagram is great for showing what you do. It is rented space, though.\n\nGive customers one page that answers everything in seconds.\n\n#LocalSEO #Brandbasket'];
+const TODAY=new Date(2026,9,30);let view='month',cur=new Date(2026,9,1),chan='all';
+const key=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+function postsFor(d){const wd=(d.getDay()+6)%7;if(wd>4)return[];const n=Math.floor((d-new Date(2026,8,28))/864e5);const past=d<=TODAY;const review=!past&&d>=new Date(2026,10,3)&&d<=new Date(2026,10,6);const missed=false;
+ return[{id:key(d),d,text:TEXTS[((n%6)+6)%6],cap:CAPS[n%2],state:past?'published':review?'review':'scheduled',edited:key(d)==='2026-11-02',ch:['ig','fb'].filter(c=>c==='ig'||d>=new Date(2026,9,31))}]}
+const vis=p=>chan==='all'||p.ch.includes(chan);
+const minis=p=>'<span class="mini">'+p.ch.map(c=>`<i class="${c}"></i>`).join('')+'</span>';
+const chip=p=>`<button class="mchip ${p.state}" data-post="${p.id}">${minis(p)}<span class="mt">10:00 ${p.text}</span></button>`;
+const fmt=(d,o)=>d.toLocaleDateString('en-GB',o);
+function drawCal(){const body=$('#calBody');let h='';
+ if(view==='month'){const first=new Date(cur.getFullYear(),cur.getMonth(),1),start=new Date(first);start.setDate(1-((first.getDay()+6)%7));$('#calTitle').textContent=fmt(first,{month:'long',year:'numeric'});
+  h='<div class="mon">'+D.map(x=>`<div class="dh">${x}</div>`).join('');for(let i=0;i<42;i++){const d=new Date(start);d.setDate(start.getDate()+i);if(i>=35&&d.getMonth()!==first.getMonth())break;h+=`<div class="d${d.getMonth()!==first.getMonth()?' out':''}${key(d)===key(TODAY)?' today':''}"><span class="n">${d.getDate()}</span>${postsFor(d).filter(vis).map(chip).join('')}</div>`}h+='</div>'}
+ if(view==='week'){const st=new Date(cur);st.setDate(cur.getDate()-((cur.getDay()+6)%7));const en=new Date(st);en.setDate(st.getDate()+6);$('#calTitle').textContent=fmt(st,{day:'numeric',month:'short'})+' – '+fmt(en,{day:'numeric',month:'short'});
+  h='<div class="wk">'+D.map((x,i)=>{const d=new Date(st);d.setDate(st.getDate()+i);return `<div class="col"><h4>${x} ${d.getDate()}</h4>${postsFor(d).filter(vis).map(chip).join('')||'<span class="sub">—</span>'}</div>`}).join('')+'</div>'}
+ if(view==='list'){$('#calTitle').textContent=fmt(cur,{month:'long',year:'numeric'});h='<div class="lst">';for(let i=1;i<=31;i++){const d=new Date(cur.getFullYear(),cur.getMonth(),i);if(d.getMonth()!==cur.getMonth())break;postsFor(d).filter(vis).forEach(p=>{h+=`<h4>${fmt(d,{weekday:'short',day:'numeric',month:'short'})}${key(d)===key(TODAY)?' · Today':''}</h4><div class="post" data-post="${p.id}" style="cursor:pointer"><div class="thumb">${p.text.slice(0,14)}</div><div><div class="t">10:00 · ${minis(p)} <span class="pill ${p.state==='published'?'ok':'sched'}">${p.state==='review'?'Needs your OK':p.state[0].toUpperCase()+p.state.slice(1)}</span>${p.edited?' <span class="pill edited">Edited</span>':''}</div><div class="c">${p.cap.split('\n')[0]}</div></div></div>`})}h+='</div>'}
+ body.innerHTML=h}
+$('#calView').onclick=e=>{const b=e.target.closest('button');if(!b)return;view=b.dataset.v;$$('#calView button').forEach(x=>x.classList.toggle('on',x===b));drawCal()};
+$('#prev').onclick=()=>{view==='week'?cur.setDate(cur.getDate()-7):cur.setMonth(cur.getMonth()-1);drawCal()};$('#next').onclick=()=>{view==='week'?cur.setDate(cur.getDate()+7):cur.setMonth(cur.getMonth()+1);drawCal()};$('#todayBtn').onclick=()=>{cur=new Date(TODAY);drawCal()};
+$$('[data-ch]').forEach(b=>b.onclick=()=>{chan=b.dataset.ch;$$('[data-ch]').forEach(x=>x.classList.toggle('on',x===b));drawCal()});
+$('#goHelp').onclick=()=>{$$('.modal').forEach(m=>m.classList.remove('show'));show('help');drawHelp()};
+$('#calAdd').onclick=()=>{show('client');$('#openPicker').click()};
+const LG={ig:['lg ig','Instagram · dai23_sy'],fb:['lg fb','Facebook · Brandbs']};
+document.addEventListener('click',e=>{const el=e.target.closest('[data-post]');if(!el)return;const d=new Date(el.dataset.post+'T00:00:00'),p=postsFor(d)[0];if(!p)return;
+ $('#dPoster').textContent=p.text;$('#dCap').textContent=p.cap;$('#dDate').value=p.id;$('#dEdited').classList.toggle('hide',!p.edited);
+ const label={published:'Published',scheduled:'Scheduled',review:'Needs your OK'}[p.state];$('#dState').textContent=label;$('#dState').className='pill '+(p.state==='published'?'ok':'sched');
+ $('#dChans').innerHTML=p.ch.map(c=>`<div class="r"><span class="${LG[c][0]}" style="width:22px;height:22px;font-size:11px">${c==='ig'?'IG':'f'}</span><span>${LG[c][1]}</span><span class="spacer"></span><span class="pill ${p.state==='published'?'ok':'sched'}">${p.state==='published'?'Published · view':p.state==='review'?'Waiting for OK':'Scheduled'}</span></div>`).join('')+(p.ch.length<2?'':'');
+ $('#dActs').innerHTML=p.state==='published'?'<button class="btn" disabled style="opacity:.5">Published posts cannot be edited</button>':(p.state==='review'?'<button class="btn primary">Approve</button>':'')+'<button class="btn '+(p.state==='review'?'':'primary')+'">Edit caption and picture</button><button class="btn">Save date and time</button>'+(p.edited?'<button class="btn quiet">Revert to original</button>':'');
+ $('#dDate').disabled=$('#dTime').disabled=p.state==='published';modal('#detail',true)});
+$('#dTime').oninput=()=>$('#dTimeNote').classList.toggle('hide',$('#dTime').value==='10:00');
+
+// ---- help guides
+const LOGO={fb:'<span class="lg fb"><svg viewBox="0 0 24 24"><path d="M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z"/></svg></span>',ig:'<span class="lg ig"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="none" stroke="#fff" stroke-width="2"/></svg></span>',gb:'<span class="lg gb">G</span>',li:'<span class="lg li"><svg viewBox="0 0 24 24"><path d="M6.9 9.5h2.6V18H6.9zM8.2 5.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3zM11 9.5h2.5v1.2c.4-.7 1.3-1.4 2.7-1.4 2.7 0 3.2 1.8 3.2 4.1V18h-2.6v-4.1c0-1 0-2.2-1.4-2.2s-1.6 1.1-1.6 2.2V18H11z"/></svg></span>'};
+const row=r=>{let hi=0,chk,av=0;if(r[0]==='*'){hi=1;r=r.slice(1)}if(r.startsWith('[x]')){chk=1;r=r.slice(3)}else if(r.startsWith('[ ]')){chk=0;r=r.slice(3)}if(r[0]==='@'){av=1;r=r.slice(1)}const[t,sub]=r.split('|');return{t,s:sub,hi,chk,av}};
+const SH=(url,rows,btn,bhi)=>({url,rows:rows.map(row),btn,bhi});
+const ST=(who,t,d,shot)=>({who,t,d,shot});
+const GUIDE={
+fb:{name:'Facebook Page',
+ intro:'Posts go to the client’s Facebook Page. The client only gives your agency account access to the Page. They never use our app and never become a developer.',
+ needs:['A Facebook Page for the client (not a personal profile)','Your agency Facebook account: the one that has a role in our Meta app','Your own profile selected in the browser, not switched into a Page','About 10 minutes per client'],
+ groups:[
+  {title:'One-time setup (first time only)',open:0,steps:[
+   ST('you','Create the Meta app','Go to developers.facebook.com, My Apps, Create app. Choose the Business type and name it.',SH('developers.facebook.com › My Apps',['*Create app|Choose “Business”','Your existing apps'])),
+   ST('you','Add the Pages use case','In the app: Use cases, Add use case, choose the one to manage Pages (“Manage everything on your Page”). Open Customize and add three permissions: pages_show_list, pages_manage_posts, pages_read_engagement. “Ready for testing” is fine while the app is unpublished.',SH('Meta app › Use cases › Manage Pages › Customize',['[x]pages_show_list|Ready for testing','[x]*pages_manage_posts|Ready for testing','[x]pages_read_engagement|Ready for testing'])),
+   ST('you','Create the login configuration','Left menu: Facebook Login for Business, Configurations, Create configuration. Name it, choose “User access token”, tick the three permissions, create. Copy the Configuration ID (a long number).',SH('Meta app › Facebook Login for Business › Configurations',['*Create configuration','Page posting|Configuration ID: 1147…'])),
+   ST('you','Add the return address','Facebook Login for Business, Settings, “Valid OAuth Redirect URIs”: add https://YOUR-DASHBOARD-ADDRESS/api/facebook-callback and save. (Addresses starting with http://localhost are allowed automatically while the app is unpublished.)',SH('Meta app › Facebook Login for Business › Settings',['Client OAuth login|On','*Valid OAuth Redirect URIs|https://…/api/facebook-callback'],'Save changes')),
+   ST('you','Keep your account as Administrator','App roles, Roles. Your agency account must be listed as Administrator (or Developer). While the app is unpublished only accounts with a role can connect.',SH('Meta app › App roles › Roles',['*@Your agency account|Administrator'])),
+   ST('you','Save the keys on Vercel','Publisher project: FACEBOOK_APP_ID, FACEBOOK_APP_SECRET, CHANNEL_KEY. Dashboard project: FACEBOOK_APP_ID, FACEBOOK_CONFIG_ID. Then redeploy both. Copy and paste straight into the file or Vercel, never into chat.',SH('Vercel › Project › Settings › Environment Variables',['FACEBOOK_APP_ID|Encrypted','*FACEBOOK_APP_SECRET|Encrypted (sensitive)','CHANNEL_KEY|Encrypted (sensitive)'],'Redeploy'))]},
+  {title:'For each new client',open:1,steps:[
+   ST('client','Make sure they have a Facebook Page','If they have none: Facebook, Pages, Create new Page. When asked, choose “Public page”, not “upgrade your profile” (that would turn their profile into a Page). Give it a name and a category.',SH('facebook.com › Create a Page',['*Public page|A real Facebook Page','Upgrade your existing profile|Do NOT choose this'])),
+   ST('client','Open Page access','On the Page: Settings, Page setup, Page access.',SH('facebook.com › Page › Settings',['Page setup','*Page access|Invite people to help manage your Page','Page type'])),
+   ST('client','Give your account access','Under “People with Facebook access” click Add new. Search for your agency account by its profile link or numeric ID (names can match other people, so check the picture). Leave “full control” OFF, then click Give access.',SH('facebook.com › Page access › Add new',['*Search: your profile link or ID','@Your agency account|Content, Messages, Community activity, Ads, Insights','[ ]Allow this person to have full control'],'Give access')),
+   ST('you','Accept the invite','Log in to Facebook as your agency account. Pages, Invitations, Accept. Then check that the Page shows under “Pages you manage”. If Invitations is empty, the client probably invited a different person with a similar name: ask them to cancel it and invite again using your link or ID.',SH('facebook.com › Pages › Invitations',['@Client’s Page|invited you to manage this Page'],'Accept',1)),
+   ST('you','Start the connection','Use your own profile (not switched into a Page). Open the dashboard, the client, Channels, Add channel, Facebook.',SH('Dashboard › Client › Channels › Add channel',['Instagram|Business or Creator account','*Facebook Page|A Page you manage','LinkedIn','Google Business'])),
+   ST('you','Approve on Facebook','The window says “Continue as …”: continue as yourself. Choose “Opt in to current Pages only”, tick the client’s Page, continue. If it says the popup is too small, make the window wider.',SH('facebook.com › Choose the Pages you want to allow',['[x]Opt in to current Pages only','[x]*Client’s Page','[ ]Another Page'],'Continue')),
+   ST('system','You return to the calendar','A green message says “Facebook connected”, and the Page appears under Channels with a green dot.',SH('Dashboard › Channels',['@Instagram account|Instagram','*@Client’s Page|Facebook · connected']))]},
+  {title:'Check that it works',open:1,steps:[
+   ST('you','Look at the calendar','Click the Facebook channel on the left. Posts from the connection onward show a Facebook line in their window. Earlier posts are not sent to the Page.',SH('Dashboard › Calendar › Post',['Instagram · Scheduled','*Facebook · Scheduled'])),
+   ST('you','Set how often it posts','Client, Channels, Schedule: choose posts a week or exact days and the time. It applies from the next weekly run.',SH('Dashboard › Channels › Schedule',['[x]*3 a week|Mon, Wed, Fri','Time|10:00 IST'],'Save')),
+   ST('you','Confirm with the first real post','After the first scheduled time, open the Page and the post’s window: the Facebook line should say Published with a view link. If an alert arrives instead, see “If something goes wrong”.',SH('Page › Posts',['*@Brand post|Published · just now']))]},
+  {title:'Later: reconnect, add another Page, disconnect',open:0,steps:[
+   ST('you','Reconnect (token problem)','Add channel, Facebook again, same steps 5 and 6. It replaces the old token.',SH('Dashboard › Channels',['*Reconnect Facebook'])),
+   ST('you','Another Page for the same client','Repeat “Give your account access” for the new Page, then Add channel, Facebook, and tick the new Page.',SH('Dashboard › Channels',['*Add channel|Facebook'])),
+   ST('you','Disconnect','Client, Channels, Disconnect next to the Page. In Facebook you can also remove the app: Settings, Business integrations, remove.',SH('Dashboard › Channels',['*Disconnect|Client’s Page']))]}],
+ problems:[['“App not active”','The Facebook account you used has no role in our Meta app. Log in as your agency account.'],['“You don’t have any Pages”','The Page invite is not accepted yet, or the wrong profile accepted it. Check Pages, Invitations.'],['Invitation never arrives','The client invited a different person. Cancel it and invite again with your profile link or ID.'],['“No Pages came back”','You did not tick a Page in the approval window. Connect again and tick it.'],['Facebook shows a blank or “popup too small” page','Make the browser window wider, then try again.'],['Alert: Facebook post failed','Open the channel: if it is red, reconnect. The message names the Page; Instagram is not affected.']]},
+ig:{name:'Instagram',
+ intro:'Posts go to the client’s Instagram account. Today the account is added as a tester and you generate its token by hand. After Meta’s app review this becomes one link the client clicks.',
+ needs:['An Instagram Business or Creator account (personal accounts do not work)','Access to our Meta app','The client’s Instagram login, or the client with you','About 15 minutes per client'],
+ groups:[
+  {title:'One-time setup (first time only)',open:0,steps:[
+   ST('you','Add the Instagram use case','In the Meta app: Use cases, Add use case, “Manage messaging & content on Instagram”. Open Customize, then “API setup with Instagram login”.',SH('Meta app › Use cases › Instagram',['*API setup with Instagram login','Business login settings'])),
+   ST('you','Add the permissions','Make sure instagram_business_basic and instagram_business_content_publish are added.',SH('Meta app › Instagram › Permissions',['[x]instagram_business_basic','[x]*instagram_business_content_publish'])),
+   ST('you','Return address (for the later Connect link)','Business login settings: add the dashboard’s return address when we switch from manual tokens to the Connect link. Not needed for the manual way.',SH('Meta app › Instagram › Business login settings',['*OAuth redirect URIs|add the dashboard address'],'Save')),
+   ST('you','Where the token is kept','For each connected account the token and account ID are stored as hidden variables (INSTAGRAM_TOKEN, INSTAGRAM_USER_ID on the first one). Never paste a token in chat.',SH('Vercel › Environment Variables',['INSTAGRAM_TOKEN|Encrypted','*INSTAGRAM_USER_ID|Encrypted']))]},
+  {title:'For each new client',open:1,steps:[
+   ST('client','Switch to a professional account','Instagram app: Settings, Account type and tools, Switch to professional account, choose Business (or Creator). A linked Facebook Page is not needed.',SH('Instagram › Settings › Account type and tools',['*Switch to professional account','Creator tools and controls'])),
+   ST('client','Send you the username','They send you the exact username, for example @clientusername.',SH('Message to you',['@Our Instagram is @clientusername'])),
+   ST('you','Add them as an Instagram Tester','In the Meta app: App roles, Roles, Add People. Choose “Instagram Tester”, type the username, click Add.',SH('Meta app › App roles › Roles',['*Add people','[x]Instagram Tester','@@clientusername'],'Add')),
+   ST('client','Accept the tester invite','Instagram app: Settings, Apps and Websites, Tester Invites, Accept. (On the web: instagram.com/accounts/manage_access.) They must be logged in to that exact account.',SH('Instagram › Settings › Apps and Websites › Tester Invites',['@scheduler|invited you to test this app'],'Accept',1)),
+   ST('you','Generate the token','Meta app: Instagram API setup, find the account, click Generate token and approve on Instagram’s login. Use a private window if another Instagram is logged in. If Instagram asks to approve the login from a new device, approve it in the Instagram app on the client’s phone.',SH('Meta app › Instagram API setup',['@@clientusername|Instagram account','*Generate token'])),
+   ST('you','Save the token','Copy it and save it privately: today as a hidden Vercel variable, later in the dashboard (Add channel, Instagram). Never paste it in chat. Then redeploy.',SH('Vercel › Environment Variables',['*INSTAGRAM_TOKEN|paste, then save'],'Save')),
+   ST('system','Green dot','The account appears under Channels with a green dot. Posts go at the scheduled time.',SH('Dashboard › Channels',['*@Client name|Instagram · connected']))]},
+  {title:'Check that it works',open:1,steps:[
+   ST('you','Dry run','Ask Claude to run a dry run of the daily job on an upcoming post. It prepares the post without publishing it and should say ready.',SH('Result',['*dry-run-ready|post prepared, not published'])),
+   ST('you','Watch the first post','After the first scheduled time the post’s window says Published with a view link.',SH('Dashboard › Post',['*Instagram · Published|view'])),
+   ST('system','Weekly renewal','Every Monday the token is renewed by itself. If renewal fails you get a push alert and must generate a new token.',SH('Alert',['*Instagram token renewal failed']))]},
+  {title:'Later: reconnect or remove',open:0,steps:[
+   ST('you','Token revoked or expired','Generate a new token (same steps 5 and 6) and save it. It happens if the client changes their password or removes the app.',SH('Meta app › Instagram API setup',['*Generate token'])),
+   ST('you','Remove a client','Delete their token variable, and remove the tester role in App roles.',SH('Meta app › App roles',['*Remove|Instagram Tester']))]}],
+ problems:[['“Insufficient developer role”','The tester invite is not accepted, or a different Instagram account is logged in.'],['“Invalid redirect URI” or “Could not add provider”','The return address is not listed, or you are in a window logged in to the wrong account. Use a private window.'],['Token suddenly stopped working','The client changed their password or removed the app. Generate a new token.'],['The account is personal','Switch it to Business or Creator in Instagram settings.'],['Instagram asks to approve a login','Approve it in the Instagram app on the device where the account is logged in.']]},
+gb:{name:'Google Business',
+ intro:'Posts appear as updates on the client’s Google Business listing. Google must approve API access for our project first, and that can take days or weeks.',
+ needs:['Google’s approval for the Business Profile APIs (apply once)','Manager access to the client’s listing','Your Google account','About 10 minutes per client after approval'],
+ groups:[
+  {title:'One-time setup (first time only)',open:0,steps:[
+   ST('you','Create a Google Cloud project','At console.cloud.google.com create a project for the dashboard.',SH('console.cloud.google.com',['*New project|content-calendar'])),
+   ST('you','Request API access','Send Google’s Business Profile API access request form for the project. Google asks about your business and checks your own listing, so follow their current requirements. Wait for the approval email.',SH('Google › Business Profile API access request',['*Request access|Status: pending','Contact email'],'Submit')),
+   ST('you','Enable the APIs','After approval, in the project: APIs and services, enable the Business Profile APIs listed in Google’s documents.',SH('Cloud console › APIs and services',['*Enable APIs|Business Profile'])),
+   ST('you','Consent screen and login','Create the OAuth consent screen (External), add the scope business.manage, then create an OAuth client (Web) with the return address https://YOUR-DASHBOARD-ADDRESS/api/google-callback.',SH('Cloud console › OAuth consent screen',['*Scope: business.manage','[x]Return address added'])),
+   ST('you','Publish the app','While the app is in “testing”, Google connections expire after 7 days. Publish it (Google may ask to verify it).',SH('Cloud console › OAuth consent screen',['Publishing status|Testing','*Publish app'])),
+   ST('you','Save the keys on Vercel','Client ID and client secret as hidden variables, then redeploy. Never paste them in chat.',SH('Vercel › Environment Variables',['GOOGLE_CLIENT_ID','*GOOGLE_CLIENT_SECRET|Encrypted (sensitive)'],'Redeploy'))]},
+  {title:'For each new client',open:1,steps:[
+   ST('client','Check the listing is verified','Their Google Business listing must exist and be verified (business.google.com).',SH('business.google.com',['*Client name|Verified'])),
+   ST('client','Make you a manager','Open the listing, Business Profile settings, People and access, Add. Enter your Google email and choose Manager.',SH('business.google.com › People and access',['*Add','@you@agency.com|Manager'],'Invite')),
+   ST('you','Accept the invite','Open the email from Google, or business.google.com, and accept. The listing now shows under your account.',SH('business.google.com › Invitations',['@Client name|invited you as Manager'],'Accept',1)),
+   ST('you','Start the connection','Dashboard, the client, Channels, Add channel, Google Business. Sign in with your Google account and allow access.',SH('accounts.google.com',['*Allow Content Calendar to manage your business?'],'Allow')),
+   ST('you','Choose the location','Tick the client’s listing (location) in the list that appears.',SH('Dashboard › Choose a location',['[x]*Client name · City','[ ]Another location'],'Connect')),
+   ST('you','Set the button link','Posts carry a button such as “Learn more”. Set where it goes in the client’s settings.',SH('Dashboard › Client settings',['Button|Learn more','*Link|https://client-site.example'])),
+   ST('system','Green dot','The listing appears under Channels with a green dot.',SH('Dashboard › Channels',['*@Client name|Google Business · connected']))]},
+  {title:'Check that it works',open:1,steps:[
+   ST('you','Look at the first post','After the first scheduled time, check the listing’s Updates: the post appears with a picture and a button. Posts are short (about 1,500 characters).',SH('Google › Business Profile › Updates',['*Client post|Learn more']))]},
+  {title:'Later: reconnect or remove',open:0,steps:[
+   ST('you','Reconnect','If the channel turns red, Add channel, Google Business again.',SH('Dashboard › Channels',['*Reconnect'])),
+   ST('client','Remove access','The client removes you under People and access.',SH('business.google.com › People and access',['*Remove|Agency account']))]}],
+ problems:[['Connect says “Waiting for Google approval”','The API access request is still pending. Nothing to fix on your side.'],['Connection drops after 7 days','The Google app is still in testing mode. Publish it.'],['Location missing','You were not accepted as a manager for that location, or it is not verified.'],['Post rejected','Google refuses some words and phone numbers in posts. Edit the caption and send it again.']]},
+li:{name:'LinkedIn',
+ intro:'A personal profile works with LinkedIn’s self-serve products. A company page needs LinkedIn’s Community Management approval.',
+ needs:['For a personal profile: your own LinkedIn login','For a company page: admin access plus LinkedIn’s approval','Reconnecting about every 60 days (we alert you)','About 10 minutes per client'],
+ groups:[
+  {title:'One-time setup (first time only)',open:0,steps:[
+   ST('you','Create the LinkedIn app','At developer.linkedin.com, Create app. It must be linked to a LinkedIn company page, and that page’s admin has to verify the link.',SH('developer.linkedin.com › Create app',['*Company page|Your agency page','App name|Content Calendar'],'Create app')),
+   ST('you','Add the products','Add “Share on LinkedIn” and “Sign In with LinkedIn using OpenID Connect”. Both are self-serve.',SH('developer.linkedin.com › App › Products',['*Share on LinkedIn|Request access','Sign In with LinkedIn (OpenID)|Added'])),
+   ST('you','Add the return address','Auth tab: Authorized redirect URLs, add https://YOUR-DASHBOARD-ADDRESS/api/linkedin-callback.',SH('developer.linkedin.com › App › Auth',['*Authorized redirect URLs|https://…/api/linkedin-callback'],'Update')),
+   ST('you','For company pages: apply for approval','Apply for the Community Management API. LinkedIn may ask for a separate app and takes time to answer.',SH('developer.linkedin.com › Products',['*Community Management API|Request access'])),
+   ST('you','Save the keys on Vercel','Client ID and client secret as hidden variables, then redeploy. Never paste them in chat.',SH('Vercel › Environment Variables',['LINKEDIN_CLIENT_ID','*LINKEDIN_CLIENT_SECRET|Encrypted (sensitive)'],'Redeploy'))]},
+  {title:'For each new client',open:1,steps:[
+   ST('client','Company page only: make you an admin','Page, Admin tools, Manage admins, Add admin. Choose your profile and the Super admin or Content admin role. (A personal profile skips this step.)',SH('linkedin.com › Company page › Admin tools',['*Manage admins','@Your name|Content admin'],'Save')),
+   ST('you','Accept the admin invite','LinkedIn notifications, Accept.',SH('linkedin.com › Notifications',['@You were invited to manage Client name'],'Accept',1)),
+   ST('you','Start the connection','Dashboard, the client, Channels, Add channel, LinkedIn. Sign in, allow access.',SH('linkedin.com › Authorise',['[x]Post on your behalf','[x]*Your profile or the company page'],'Allow')),
+   ST('you','Choose where to post','Pick your profile or the company page.',SH('Dashboard › Choose',['[x]*Client name · company page','[ ]Your profile'],'Connect')),
+   ST('system','Green dot and a reminder','The channel shows a green dot with its renewal date. LinkedIn tokens last about 60 days and do not renew themselves.',SH('Dashboard › Channels',['*@Client name|LinkedIn · connected · reconnect in 54 days']))]},
+  {title:'Check that it works',open:1,steps:[
+   ST('you','Look at the first post','After the first scheduled time, check the profile or page: the post appears with its picture. The dashboard shows Published with a view link.',SH('linkedin.com › Page',['*Client post|just now']))]},
+  {title:'Later: reconnect or remove',open:0,steps:[
+   ST('you','Reconnect every ~60 days','A week before it expires you get an alert. Add channel, LinkedIn again, same steps.',SH('Alert',['*LinkedIn connection expires in 7 days'])),
+   ST('client','Remove access','The client removes you under Manage admins, or you disconnect the channel.',SH('linkedin.com › Admin tools',['*Remove admin|Agency']))]}],
+ problems:[['Company page option missing','LinkedIn has not approved Community Management access for our app yet.'],['Posting fails after about two months','The token expired. Reconnect (two clicks).'],['Cannot verify the app','The company page admin must verify the link between the page and the app.']]}
+};
+const ORDER=['fb','ig','gb','li'];let helpCh='fb';
+const shotHtml=sh=>`<div class="shot"><div class="bar"><i></i><i></i><i></i><span>${sh.url}</span></div><div class="body">${sh.rows.map(r=>`<div class="srow${r.hi?' hi':''}">${r.av?'<span class="av"></span>':''}${r.chk!==undefined?`<span class="chk${r.chk?' on':''}"></span>`:''}<span>${r.t}${r.s?`<small>${r.s}</small>`:''}</span>${r.hi||r.chk!==undefined||r.av?'':'<span class="go">›</span>'}</div>`).join('')}${sh.btn?`<div class="srow btnrow"><span class="sbtn${sh.bhi?' hi':''}">${sh.btn}</span></div>`:''}</div></div>`;
+const ticks=(()=>{try{return JSON.parse(localStorage.getItem('help.ticks')||'{}')}catch{return{}}})();
+const saveTicks=()=>{try{localStorage.setItem('help.ticks',JSON.stringify(ticks))}catch{}};
+function drawHelp(){const g=GUIDE[helpCh];
+ $('#hlpList').innerHTML='<div class="h4">Channels</div>'+ORDER.map(k=>`<button class="opt${k===helpCh?' on':''}" data-help="${k}">${LOGO[k]}<span><b>${GUIDE[k].name}</b></span></button>`).join('');
+ let total=0,done=0;g.groups.forEach((gr,gi)=>gr.steps.forEach((_,i)=>{total++;if(ticks[`${helpCh}.${gi}.${i}`])done++}));
+ $('#hlpBody').innerHTML=`<div class="row">${LOGO[helpCh].replace('class="lg','class="lg big')}<div><h2 style="font-size:20px">Connect ${g.name}</h2><p class="sub">${g.intro}</p></div></div><div class="h4" style="margin-top:14px">What you need</div><div class="need">${g.needs.map(n=>`<span>${n}</span>`).join('')}</div>
+ <div class="row" style="margin:14px 0 4px"><span class="sub"><b id="prog">${done}</b> of ${total} steps ticked</span><span class="spacer"></span><button class="btn quiet" id="resetTicks">Start over for a new client</button></div>`+
+ g.groups.map((gr,gi)=>`<details class="grp"${gr.open?' open':''}><summary>${gr.title} <span class="sub">· ${gr.steps.length} step${gr.steps.length===1?'':'s'}</span></summary>`+gr.steps.map((st,i)=>`<div class="step"><div class="num">${i+1}</div><div><h4>${st.t}<span class="who ${st.who}">${{client:'Client',you:'You',system:'Automatic'}[st.who]}</span><label class="tick"><input type="checkbox" data-tick="${helpCh}.${gi}.${i}"${ticks[`${helpCh}.${gi}.${i}`]?' checked':''}> Done</label></h4><p>${st.d}</p>${shotHtml(st.shot)}</div></div>`).join('')+'</details>').join('')+
+ `<div class="h4" style="margin-top:14px">If something goes wrong</div>`+g.problems.map(([a,b])=>`<div class="prob"><b>${a}</b><span>${b}</span></div>`).join('');}
+document.addEventListener('change',e=>{const t=e.target.closest('[data-tick]');if(!t)return;ticks[t.dataset.tick]=t.checked?1:0;saveTicks();let n=0;$$('#hlpBody [data-tick]').forEach(x=>{if(x.checked)n++});$('#prog').textContent=n});
+document.addEventListener('click',e=>{if(e.target.closest('#resetTicks')){Object.keys(ticks).filter(k=>k.startsWith(helpCh+'.')).forEach(k=>delete ticks[k]);saveTicks();drawHelp();return}const b=e.target.closest('[data-help]');if(b){helpCh=b.dataset.help;drawHelp()}const go=e.target.closest('[data-go="help"]');if(go)drawHelp()});
+drawCal();drawHelp();
+</script>
+</body>
+</html>

@@ -9,10 +9,11 @@ import { isSignedIn, readCookie } from '../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
 
-function back(request: Request, outcome: 'connected' | 'denied' | 'failed'): Response {
+function back(request: Request, outcome: 'connected' | 'denied' | 'failed', brand?: string): Response {
+  const where = brand ? `#/client/${brand}/channels` : '';
   return new Response(null, {
     status: 302,
-    headers: { Location: new URL(`/?facebook=${outcome}`, request.url).toString(), 'Set-Cookie': clearedConnectCookie(), 'Cache-Control': 'no-store' },
+    headers: { Location: new URL(`/?facebook=${outcome}${where}`, request.url).toString(), 'Set-Cookie': clearedConnectCookie(), 'Cache-Control': 'no-store' },
   });
 }
 
@@ -38,7 +39,7 @@ export async function GET(request: Request): Promise<Response> {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!response.ok) console.error(`facebook-connect answered ${response.status}`);
-    return back(request, response.ok ? 'connected' : 'failed');
+    return back(request, response.ok ? 'connected' : 'failed', saved.brand);
   } catch (error) {
     console.error(describeError(error));
     return back(request, 'failed');

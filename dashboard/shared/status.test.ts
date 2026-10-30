@@ -27,7 +27,19 @@ test('parseStatus accepts a valid feed and fills optional channel errors', () =>
   assert.equal(parsed.posts[0]?.state, 'published');
   assert.equal(parsed.channels[0]?.error, undefined);
   const withError = parseStatus({ ...valid, channels: [{ platform: 'instagram', account: null, avatar: null, brands: [], ok: false, error: 'Token expired' }] });
-  assert.deepEqual(withError.channels[0], { platform: 'instagram', account: null, avatar: null, brands: [], ok: false, error: 'Token expired' });
+  assert.deepEqual(withError.channels[0], { id: null, platform: 'instagram', account: null, avatar: null, brands: [], ok: false, error: 'Token expired' });
+});
+
+test('parseStatus keeps a channel id and the Facebook line of a post, and defaults them when absent', () => {
+  const parsed = parseStatus({
+    ...valid,
+    channels: [{ id: 'facebook:1499238236597230', platform: 'facebook', account: 'Page', avatar: null, brands: ['brandbasket'], ok: true }],
+    posts: [{ ...valid.posts[0], crossposts: [{ platform: 'facebook', account: 'Page', state: 'published', permalink: 'https://www.facebook.com/x' }] }],
+  });
+  assert.equal(parsed.channels[0]?.id, 'facebook:1499238236597230');
+  assert.deepEqual(parsed.posts[0]?.crossposts, [{ platform: 'facebook', account: 'Page', state: 'published', permalink: 'https://www.facebook.com/x' }]);
+  assert.deepEqual(parseStatus(valid).posts[0]?.crossposts, []);
+  assert.throws(() => parseStatus({ ...valid, posts: [{ ...valid.posts[0], crossposts: [{ platform: 'facebook', account: 'P', state: 'x', permalink: null }] }] }), /state must be one of/);
 });
 
 test('parseStatus rejects malformed feeds with a clear message', () => {

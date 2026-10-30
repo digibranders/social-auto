@@ -37,6 +37,8 @@ export interface Crosspost {
 }
 
 export interface ChannelHealth {
+  /** Set for channels that can be disconnected, e.g. "facebook:<page id>". */
+  id: string | null;
   platform: Platform;
   account: string | null;
   /** Profile picture link (temporary), if the platform gave one. */
@@ -102,6 +104,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     const channel = record(item, where);
     const error = textOrNull(channel, 'error', where);
     return {
+      id: textOrNull(channel, 'id', where),
       platform: oneOf(text(channel, 'platform', where), PLATFORMS, `${where}.platform`),
       account: textOrNull(channel, 'account', where),
       avatar: textOrNull(channel, 'avatar', where),

@@ -106,8 +106,9 @@ export async function GET(request: Request): Promise<Response> {
     return json(200, {
       generatedAt: new Date(now).toISOString(),
       channels: [
-        { platform: 'instagram', account: profile.username, avatar: profile.pictureUrl, brands, ...health },
+        { id: null, platform: 'instagram', account: profile.username, avatar: profile.pictureUrl, brands, ...health },
         ...channels.channels.map((channel) => ({
+          id: channel.id,
           platform: channel.platform,
           account: channel.pageName,
           avatar: null,
