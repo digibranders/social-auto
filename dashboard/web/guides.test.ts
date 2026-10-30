@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { GUIDES } from './guides.ts';
 import { GUIDE_KEYS } from './route.ts';
@@ -42,5 +44,22 @@ test('the Facebook guide has the lessons we learned the hard way', () => {
   const text = JSON.stringify(GUIDES.facebook);
   for (const lesson of ['Public page', 'full control', 'profile link or numeric ID', 'current Pages only', 'popup too small']) {
     assert.ok(text.includes(lesson) || text.toLowerCase().includes(lesson.toLowerCase()), lesson);
+  }
+});
+
+test('every real picture in a guide exists, is small, and has text for screen readers', () => {
+  const publicDir = join(import.meta.dirname, '..', 'public');
+  for (const key of GUIDE_KEYS) {
+    for (const group of GUIDES[key].groups) {
+      for (const step of group.steps) {
+        for (const image of step.images ?? []) {
+          assert.ok(image.src.startsWith('/help/') && /\.(jpg|png)$/.test(image.src), image.src);
+          assert.ok(image.alt.length > 10, `${image.src} has no description`);
+          const file = join(publicDir, image.src);
+          assert.ok(existsSync(file), `${image.src} is missing`);
+          assert.ok(statSync(file).size < 250 * 1024, `${image.src} is over 250 KB`);
+        }
+      }
+    }
   }
 });

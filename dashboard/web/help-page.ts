@@ -96,7 +96,7 @@ export function helpPage(channel: GuideKey, select: (key: GuideKey) => void, red
             { class: 'step-main' },
             h('h3', {}, step.t, h('span', { class: `who who-${step.who}` }, WHO_LABEL[step.who]), h('label', { class: 'tick' }, box, ' Done')),
             h('p', { class: 'muted' }, step.d),
-            picture(step.shot),
+            ...(step.images?.length ? step.images.map((image) => h('img', { class: 'shot-real', src: image.src, alt: image.alt, loading: 'lazy', decoding: 'async' })) : [picture(step.shot)]),
           ),
         );
       }),

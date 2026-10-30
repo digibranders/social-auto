@@ -406,3 +406,8 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .channel > .status-mark { margin-left: auto; }
 .option-text { display: grid; min-width: 0; }
 .option-state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--published); font-weight: 600; white-space: nowrap; }
+
+.shot-real { display: block; width: 100%; max-width: 720px; height: auto; border: 1px solid var(--border); border-radius: 11px; margin-top: 8px; }
+
+.banner-notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.banner-dismiss { flex: none; min-height: 28px; padding: 3px 10px; }
