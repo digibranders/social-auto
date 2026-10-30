@@ -140,13 +140,8 @@ export function brandMark(kind: ChannelKind): SVGSVGElement {
     add('rect', { x: '0', y: '0', width: '24', height: '24', rx: '5', fill: '#0a66c2' });
     for (const d of LOGOS.linkedin) add('path', { d, fill: '#fff' });
   } else {
-    // Google Business: a storefront with a four-colour awning.
-    add('rect', { x: '0', y: '0', width: '24', height: '24', rx: '6', fill: '#fff' });
-    [['#ea4335', '3'], ['#fbbc04', '7.5'], ['#34a853', '12'], ['#4285f4', '16.5']].forEach(([color, x]) =>
-      add('path', { d: `M${x} 5h4.5l.5 4.5a2.25 2.25 0 0 1-4.5 0z`, fill: color as string, transform: 'translate(0 0)' }),
-    );
-    add('path', { d: 'M5 12.2V19h14v-6.8', fill: 'none', stroke: '#4285f4', 'stroke-width': '1.8', 'stroke-linejoin': 'round' });
-    add('rect', { x: '10', y: '14', width: '4', height: '5', fill: '#4285f4' });
+    // Google Business: Google's own icon, served from this site (see public/logos).
+    add('image', { href: '/logos/google-business.png', x: '0', y: '0', width: '24', height: '24' });
   }
   return svg;
 }
