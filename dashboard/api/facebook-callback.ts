@@ -9,7 +9,7 @@ import { isSignedIn, readCookie } from '../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
 
-function back(request: Request, outcome: 'connected' | 'denied' | 'failed', brand?: string): Response {
+function back(request: Request, outcome: 'connected' | 'denied' | 'failed' | 'expired', brand?: string): Response {
   const where = brand ? `#/client/${brand}/channels` : '';
   return new Response(null, {
     status: 302,
@@ -25,7 +25,9 @@ export async function GET(request: Request): Promise<Response> {
 
   const saved = parseConnectCookie(readCookie(request.headers.get('cookie'), CONNECT_COOKIE));
   const code = params.get('code');
-  if (!saved || !code || !statesMatch(params.get('state'), saved.state)) return back(request, 'failed');
+  // No cookie at all means the 30 minutes ran out (or the page was reopened in another browser).
+  if (!saved) return back(request, 'expired');
+  if (!code || !statesMatch(params.get('state'), saved.state)) return back(request, 'failed');
 
   const target = process.env['EDIT_URL'];
   const secret = process.env['EDIT_SECRET'];

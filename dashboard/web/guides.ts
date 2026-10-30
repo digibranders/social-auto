@@ -25,11 +25,20 @@ export interface Shot {
   bhi?: boolean;
 }
 
+export interface StepImage {
+  /** Path under the site, e.g. /help/facebook/create-page.jpg */
+  src: string;
+  alt: string;
+}
+
 export interface Step {
   who: Who;
   t: string;
   d: string;
+  /** The drawn picture, shown when there is no real one. */
   shot: Shot;
+  /** Real screenshots of the step (blurred and marked up with tools/prepare-shot.py). */
+  images?: StepImage[];
 }
 
 export interface StepGroup {
@@ -75,7 +84,13 @@ const SH = (url: string, rows: string[], btn?: string, bhi?: number): Shot => ({
   ...(bhi ? { bhi: true } : {}),
 });
 
-const ST = (who: Who, t: string, d: string, shot: Shot): Step => ({ who, t, d, shot });
+const ST = (who: Who, t: string, d: string, shot: Shot, images?: string[]): Step => ({
+  who,
+  t,
+  d,
+  shot,
+  ...(images ? { images: images.map((src, i) => ({ src, alt: `Screenshot of the step "${t}"${images.length > 1 ? `, ${i + 1} of ${images.length}` : ''}` })) } : {}),
+});
 
 export const GUIDES: Record<GuideKey, Guide> = {
 facebook:{name:'Facebook Page',
@@ -89,12 +104,12 @@ facebook:{name:'Facebook Page',
    ST('you','Keep your account as Administrator','App roles, Roles. Your agency account must be listed as Administrator (or Developer). While the app is unpublished only accounts with a role can connect.',SH('Meta app › App roles › Roles',['*@Your agency account|Administrator'])),
    ST('you','Save the keys on Vercel','Publisher project: FACEBOOK_APP_ID, FACEBOOK_APP_SECRET, CHANNEL_KEY. Dashboard project: FACEBOOK_APP_ID, FACEBOOK_CONFIG_ID. Then redeploy both. Copy and paste straight into the file or Vercel, never into chat.',SH('Vercel › Project › Settings › Environment Variables',['FACEBOOK_APP_ID|Encrypted','*FACEBOOK_APP_SECRET|Encrypted (sensitive)','CHANNEL_KEY|Encrypted (sensitive)'],'Redeploy'))]},
   {title:'For each new client',open:true,steps:[
-   ST('client','Make sure they have a Facebook Page','If they have none: Facebook, Pages, Create new Page. When asked, choose “Public page”, not “upgrade your profile” (that would turn their profile into a Page). Give it a name and a category.',SH('facebook.com › Create a Page',['*Public page|A real Facebook Page','Upgrade your existing profile|Do NOT choose this'])),
-   ST('client','Open Page access','On the Page: Settings, Page setup, Page access.',SH('facebook.com › Page › Settings',['Page setup','*Page access|Invite people to help manage your Page','Page type'])),
-   ST('client','Give your account access','Under “People with Facebook access” click Add new. Search for your agency account by its profile link or numeric ID (names can match other people, so check the picture). Leave “full control” OFF, then click Give access.',SH('facebook.com › Page access › Add new',['*Search: your profile link or ID','@Your agency account|Content, Messages, Community activity, Ads, Insights','[ ]Allow this person to have full control'],'Give access')),
-   ST('you','Accept the invite','Log in to Facebook as your agency account. Pages, Invitations, Accept. Then check that the Page shows under “Pages you manage”. If Invitations is empty, the client probably invited a different person with a similar name: ask them to cancel it and invite again using your link or ID.',SH('facebook.com › Pages › Invitations',['@Client’s Page|invited you to manage this Page'],'Accept',1)),
-   ST('you','Start the connection','Use your own profile (not switched into a Page). Open the dashboard, the client, Channels, Add channel, Facebook.',SH('Dashboard › Client › Channels › Add channel',['Instagram|Business or Creator account','*Facebook Page|A Page you manage','LinkedIn','Google Business'])),
-   ST('you','Approve on Facebook','The window says “Continue as …”: continue as yourself. Choose “Opt in to current Pages only”, tick the client’s Page, continue. If it says the popup is too small, make the window wider.',SH('facebook.com › Choose the Pages you want to allow',['[x]Opt in to current Pages only','[x]*Client’s Page','[ ]Another Page'],'Continue')),
+   ST('client','Make sure they have a Facebook Page','If they have none: Facebook, Pages, Create new Page. When asked, choose “Public page”, not “upgrade your profile” (that would turn their profile into a Page). Give it a name and a category.',SH('facebook.com › Create a Page',['*Public page|A real Facebook Page','Upgrade your existing profile|Do NOT choose this']), ['/help/facebook/create-page.jpg']),
+   ST('client','Open Page access','On the Page: Settings, Page setup, Page access.',SH('facebook.com › Page › Settings',['Page setup','*Page access|Invite people to help manage your Page','Page type']), ['/help/facebook/page-access.jpg']),
+   ST('client','Give your account access','Under “People with Facebook access” click Add New. A window explains what Facebook access means: click Next. Then search for your agency account by its profile link or numeric ID (names can match other people, so check the picture). Leave “full control” OFF, then click Give access.',SH('facebook.com › Page access › Add new',['*Search: your profile link or ID','@Your agency account|Content, Messages, Community activity, Ads, Insights','[ ]Allow this person to have full control'],'Give access'), ['/help/facebook/add-new.jpg', '/help/facebook/facebook-access.jpg', '/help/facebook/give-access.jpg']),
+   ST('you','Accept the invite','Log in to Facebook as your agency account. Pages, Invitations, Accept. Then check that the Page shows under “Pages you manage”. If Invitations is empty, the client probably invited a different person with a similar name: ask them to cancel it and invite again using your link or ID.',SH('facebook.com › Pages › Invitations',['@Client’s Page|invited you to manage this Page'],'Accept',1), ['/help/facebook/invitations.jpg', '/help/facebook/pages-you-manage.jpg']),
+   ST('you','Start the connection','Use your own profile (not switched into a Page). Open the dashboard, the client, Channels, Add channel, Facebook.',SH('Dashboard › Client › Channels › Add channel',['Instagram|Business or Creator account','*Facebook Page|A Page you manage','LinkedIn','Google Business']), ['/help/facebook/add-channel.jpg']),
+   ST('you','Approve on Facebook','The window says “Continue as …”. If it says you have previously linked the app, click Edit settings, not Continue: Continue keeps the old Pages and leaves the new one out. Make sure it is you (your agency account), choose “Opt in to current Pages only”, tick the client’s Page, then click Continue. Facebook then says the connection was made: click Got it. If it says the popup is too small, make the window wider.',SH('facebook.com › Choose the Pages you want to allow',['[x]Opt in to current Pages only','[x]*Client’s Page','[ ]Another Page'],'Continue'), ['/help/facebook/continue-as.jpg', '/help/facebook/choose-pages.jpg', '/help/facebook/connected.jpg']),
    ST('system','You return to the calendar','A green message says “Facebook connected”, and the Page appears under Channels with a green dot.',SH('Dashboard › Channels',['@Instagram account|Instagram','*@Client’s Page|Facebook · connected']))]},
   {title:'Check that it works',open:true,steps:[
    ST('you','Look at the calendar','Click the Facebook channel on the left. Posts from the connection onward show a Facebook line in their window. Earlier posts are not sent to the Page.',SH('Dashboard › Calendar › Post',['Instagram · Scheduled','*Facebook · Scheduled'])),

@@ -382,7 +382,19 @@ function banner(kind: 'warn' | 'error', message: string): HTMLElement {
 
 function banners(): HTMLElement[] {
   const out: HTMLElement[] = [];
-  if (state.notice) out.push(h('div', { class: `banner banner-${state.notice.kind}`, role: 'status' }, state.notice.text));
+  if (state.notice) {
+    out.push(
+      h(
+        'div',
+        { class: `banner banner-${state.notice.kind} banner-notice`, role: 'status' },
+        h('span', {}, state.notice.text),
+        button('Dismiss', 'btn btn-quiet banner-dismiss', () => {
+          state.notice = null;
+          render();
+        }),
+      ),
+    );
+  }
   if (state.error) {
     const since = state.loadedAt ? ` Showing what was loaded at ${formatTime(state.loadedAt)}.` : '';
     out.push(banner('warn', `Could not refresh: ${shorten(state.error, 200)}.${since}`));
@@ -626,6 +638,7 @@ function calendarBody(): HTMLElement {
 }
 
 function go(route: Route): void {
+  state.notice = null; // a message about the last action is not about the next screen
   const hash = routeHash(route);
   if (location.hash === hash) {
     state.route = route;
@@ -824,12 +837,14 @@ function readNoticeFromAddress(): void {
     connected: { kind: 'ok', text: 'Facebook connected. Posts from now on will also go to the approved Pages.' },
     denied: { kind: 'warn', text: 'Facebook was not connected: the approval was cancelled.' },
     failed: { kind: 'warn', text: 'Facebook could not be connected. Try again, and choose at least one Page you manage.' },
+    expired: { kind: 'warn', text: 'The Facebook approval took longer than 30 minutes, so it was stopped. Click Add channel and start again.' },
   };
   state.notice = messages[result] ?? null;
   history.replaceState(null, '', location.pathname);
 }
 
 window.addEventListener('hashchange', () => {
+  state.notice = null;
   state.route = parseRoute(location.hash);
   render();
 });
