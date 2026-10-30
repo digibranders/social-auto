@@ -406,23 +406,24 @@ function addChannelButton(): HTMLElement {
 
 function channelsPanel(): HTMLElement {
   const channels = (state.data?.channels ?? []).filter((c) => !state.calendarClient || c.brands.includes(state.calendarClient));
-  const entry = (channel: ChannelHealth | null): HTMLElement => {
-    const key = channel ? channelKey(channel) : null;
+  const entry = (channel: ChannelHealth): HTMLElement => {
+    const key = channelKey(channel);
     const on = state.channel === key;
     const item = h(
       'button',
       { type: 'button', class: `channel${on ? ' channel-on' : ''}`, 'aria-pressed': String(on) },
-      channel ? avatar(channel, '?') : h('span', { class: 'avatar avatar-all', 'aria-hidden': 'true' }, h('span', { class: 'avatar-letter' }, '∗')),
+      avatar(channel, '?'),
       h(
         'span',
         { class: 'channel-text' },
-        h('span', { class: 'channel-name' }, channel ? channelName(channel) : 'All channels'),
-        h('span', { class: 'channel-sub' }, channel ? `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}` : `${channels.length} connected`),
+        h('span', { class: 'channel-name' }, channelName(channel)),
+        h('span', { class: 'channel-sub' }, `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}`),
       ),
-      channel && !channel.ok ? statusMark(false) : null,
+      channel.ok ? null : statusMark(false),
     );
     item.addEventListener('click', () => {
-      state.channel = key;
+      // Choosing the channel that is already chosen shows every channel again.
+      state.channel = on ? null : key;
       savePrefs();
       render();
     });
@@ -436,7 +437,7 @@ function channelsPanel(): HTMLElement {
     'aside',
     { class: 'channels', 'aria-label': 'Channels' },
     h('h2', { class: 'panel-title' }, 'Channels'),
-    h('div', { class: 'channel-list' }, entry(null), ...channels.map(entry)),
+    h('div', { class: 'channel-list' }, ...channels.map(entry)),
     addChannelButton(),
     ...runway.map((r) =>
       h(
