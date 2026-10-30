@@ -42,7 +42,6 @@ export interface StepGroup {
 export interface Guide {
   name: string;
   intro: string;
-  needs: string[];
   groups: StepGroup[];
   problems: Array<[string, string]>;
 }
@@ -81,7 +80,6 @@ const ST = (who: Who, t: string, d: string, shot: Shot): Step => ({ who, t, d, s
 export const GUIDES: Record<GuideKey, Guide> = {
 facebook:{name:'Facebook Page',
  intro:'Posts go to the client’s Facebook Page. The client only gives your agency account access to the Page. They never use our app and never become a developer.',
- needs:['A Facebook Page for the client (not a personal profile)','Your agency Facebook account: the one that has a role in our Meta app','Your own profile selected in the browser, not switched into a Page','About 10 minutes per client'],
  groups:[
   {title:'One-time setup (first time only)',open:false,steps:[
    ST('you','Create the Meta app','Go to developers.facebook.com, My Apps, Create app. Choose the Business type and name it.',SH('developers.facebook.com › My Apps',['*Create app|Choose “Business”','Your existing apps'])),
@@ -109,7 +107,6 @@ facebook:{name:'Facebook Page',
  problems:[['“App not active”','The Facebook account you used has no role in our Meta app. Log in as your agency account.'],['“You don’t have any Pages”','The Page invite is not accepted yet, or the wrong profile accepted it. Check Pages, Invitations.'],['Invitation never arrives','The client invited a different person. Cancel it and invite again with your profile link or ID.'],['“No Pages came back”','You did not tick a Page in the approval window. Connect again and tick it.'],['Facebook shows a blank or “popup too small” page','Make the browser window wider, then try again.'],['Alert: Facebook post failed','Open the channel: if it is red, reconnect. The message names the Page; Instagram is not affected.']]},
 instagram:{name:'Instagram',
  intro:'Posts go to the client’s Instagram account. Today the account is added as a tester and you generate its token by hand. After Meta’s app review this becomes one link the client clicks.',
- needs:['An Instagram Business or Creator account (personal accounts do not work)','Access to our Meta app','The client’s Instagram login, or the client with you','About 15 minutes per client'],
  groups:[
   {title:'One-time setup (first time only)',open:false,steps:[
    ST('you','Add the Instagram use case','In the Meta app: Use cases, Add use case, “Manage messaging & content on Instagram”. Open Customize, then “API setup with Instagram login”.',SH('Meta app › Use cases › Instagram',['*API setup with Instagram login','Business login settings'])),
@@ -134,7 +131,6 @@ instagram:{name:'Instagram',
  problems:[['“Insufficient developer role”','The tester invite is not accepted, or a different Instagram account is logged in.'],['“Invalid redirect URI” or “Could not add provider”','The return address is not listed, or you are in a window logged in to the wrong account. Use a private window.'],['Token suddenly stopped working','The client changed their password or removed the app. Generate a new token.'],['The account is personal','Switch it to Business or Creator in Instagram settings.'],['Instagram asks to approve a login','Approve it in the Instagram app on the device where the account is logged in.']]},
 google:{name:'Google Business',
  intro:'Posts appear as updates on the client’s Google Business listing. Google must approve API access for our project first, and that can take days or weeks.',
- needs:['Google’s approval for the Business Profile APIs (apply once)','Manager access to the client’s listing','Your Google account','About 10 minutes per client after approval'],
  groups:[
   {title:'One-time setup (first time only)',open:false,steps:[
    ST('you','Create a Google Cloud project','At console.cloud.google.com create a project for the dashboard.',SH('console.cloud.google.com',['*New project|content-calendar'])),
@@ -159,7 +155,6 @@ google:{name:'Google Business',
  problems:[['Connect says “Waiting for Google approval”','The API access request is still pending. Nothing to fix on your side.'],['Connection drops after 7 days','The Google app is still in testing mode. Publish it.'],['Location missing','You were not accepted as a manager for that location, or it is not verified.'],['Post rejected','Google refuses some words and phone numbers in posts. Edit the caption and send it again.']]},
 linkedin:{name:'LinkedIn',
  intro:'A personal profile works with LinkedIn’s self-serve products. A company page needs LinkedIn’s Community Management approval.',
- needs:['For a personal profile: your own LinkedIn login','For a company page: admin access plus LinkedIn’s approval','Reconnecting about every 60 days (we alert you)','About 10 minutes per client'],
  groups:[
   {title:'One-time setup (first time only)',open:false,steps:[
    ST('you','Create the LinkedIn app','At developer.linkedin.com, Create app. It must be linked to a LinkedIn company page, and that page’s admin has to verify the link.',SH('developer.linkedin.com › Create app',['*Company page|Your agency page','App name|Content Calendar'],'Create app')),

@@ -115,8 +115,6 @@ export function helpPage(channel: GuideKey, select: (key: GuideKey) => void, red
     'div',
     { class: 'help-body' },
     h('div', { class: 'help-head' }, h('span', { class: 'mark mark-big' }, brandMark(GUIDE_MARK[channel])), h('div', {}, h('h2', {}, `Connect ${guide.name}`), h('p', { class: 'muted' }, guide.intro))),
-    h('h3', { class: 'label' }, 'What you need'),
-    h('div', { class: 'need' }, ...guide.needs.map((n) => h('span', {}, n))),
     h('div', { class: 'help-progress' }, h('span', { class: 'muted' }, progress, ` of ${total} steps ticked`), reset),
     ...groups,
     h('h3', { class: 'label' }, 'If something goes wrong'),
