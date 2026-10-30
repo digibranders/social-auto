@@ -28,6 +28,8 @@ const ICONS: Record<string, string[]> = {
   folder: ['M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'],
   help: ['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 .9-1 1.7', 'M12 17h.01'],
   plus: ['M12 5v14', 'M5 12h14'],
+  check: ['M5 12.5l4.5 4.5L19 7.5'],
+  alert: ['M12 7v6', 'M12 17h.01'],
 };
 
 export type Child = Node | string | false | null | undefined;
@@ -147,4 +149,10 @@ export function brandMark(kind: ChannelKind): SVGSVGElement {
     add('rect', { x: '10', y: '14', width: '4', height: '5', fill: '#4285f4' });
   }
   return svg;
+}
+
+/** A round mark for a channel's state: a green tick when it is connected, a red "!" when it needs attention. */
+export function statusMark(ok: boolean): HTMLElement {
+  const label = ok ? 'Connected' : 'Connection problem';
+  return h('span', { class: `status-mark ${ok ? 'status-ok' : 'status-bad'}`, role: 'img', 'aria-label': label, title: label }, icon(ok ? 'check' : 'alert'));
 }

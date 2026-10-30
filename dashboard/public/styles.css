@@ -400,4 +400,15 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 }
 
 /* The client dropdown: our own arrow, set a little further in from the right edge */
-.client-select { appearance: none; -webkit-appearance: none; padding-right: 38px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238e8e96' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; background-size: 14px; }
+.client-select { appearance: none; -webkit-appearance: none; font: inherit; font-size: 0.9rem; font-weight: 500; color: var(--text); min-height: 36px; padding-right: 40px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c4c4cc' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 15px center; background-size: 16px; }
+.client-select option { background: var(--panel); color: var(--text); }
+[data-theme='light'] .client-select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2355555f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E"); }
+
+.status-mark { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; flex: none; vertical-align: middle; }
+.status-mark .icon { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.status-ok { background: var(--published); color: #0b2415; }
+.status-bad { background: var(--missed); color: #2d0c08; }
+.status-line { display: inline-flex; align-items: center; gap: 6px; }
+.channel > .status-mark { margin-left: auto; }
+.option-text { display: grid; min-width: 0; }
+.option-state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--published); font-weight: 600; white-space: nowrap; }

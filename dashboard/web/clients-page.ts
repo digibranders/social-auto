@@ -3,7 +3,7 @@ import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import type { ClientSummary } from './clients.ts';
 import { stateLabel } from './calendar.ts';
 import type { ClientTab, GuideKey, Route } from './route.ts';
-import { brandMark, button, channelName, h, icon, type ChannelKind } from './ui.ts';
+import { brandMark, button, channelName, h, icon, statusMark, type ChannelKind } from './ui.ts';
 
 export interface ClientsContext {
   go(route: Route): void;
@@ -62,8 +62,8 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
       h('span', { class: 'muted' }, client.pattern ?? 'Nothing booked'),
       h(
         'span',
-        { class: channel.ok ? 'muted' : 'bad-text' },
-        h('i', { class: `dot ${channel.ok ? 'dot-ok' : 'dot-bad'}` }),
+        { class: `status-line ${channel.ok ? 'muted' : 'bad-text'}` },
+        statusMark(channel.ok),
         channel.ok ? 'Connected' : `Connection problem: ${(channel.error ?? 'unknown').slice(0, 140)}`,
       ),
     ),
@@ -136,7 +136,13 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
 }
 
 /** The Add channel window's contents. Facebook starts the real connection; the others point to their guide. */
-export function channelPicker(brand: string | null, clients: Array<{ brand: string; label: string }>, ctx: ClientsContext, close: () => void): HTMLElement {
+export function channelPicker(
+  brand: string | null,
+  clients: Array<{ brand: string; label: string }>,
+  connected: Record<string, Platform[]>,
+  ctx: ClientsContext,
+  close: () => void,
+): HTMLElement {
   const note = h('p', { class: 'note', hidden: '' });
   // With several clients and none chosen yet, the person says whom the channel is for.
   const who = h('select', { class: 'btn client-select', 'aria-label': 'Client' });
@@ -157,12 +163,21 @@ export function channelPicker(brand: string | null, clients: Array<{ brand: stri
         : `${channelName(kind)} cannot be connected from here yet. The guide lists the steps and what to prepare.`;
     note.append(' ', button('Open the guide', 'btn', () => { close(); ctx.go({ page: 'help', channel: GUIDE_FOR[kind] }); }));
   };
-  const option = (kind: ChannelKind, sub: string): HTMLElement =>
-    button([h('span', { class: 'mark mark-big' }, brandMark(kind)), h('span', {}, h('b', {}, channelName(kind)), h('small', {}, sub))], 'option', () => choose(kind));
+  // A green tick on the channels this client already has; it follows the client chosen above.
+  const ticks: Array<() => void> = [];
+  const option = (kind: ChannelKind, sub: string): HTMLElement => {
+    const slot = h('span', { class: 'option-state' });
+    ticks.push(() => {
+      const has = kind !== 'google' && (connected[who.value] ?? []).includes(kind);
+      slot.replaceChildren(...(has ? [statusMark(true), ' Connected'] : []));
+    });
+    return button([h('span', { class: 'mark mark-big' }, brandMark(kind)), h('span', { class: 'option-text' }, h('b', {}, channelName(kind)), h('small', {}, sub)), slot], 'option', () => choose(kind));
+  };
+  who.addEventListener('change', () => ticks.forEach((update) => update()));
   const soon = (letter: string, name: string): HTMLElement =>
     h('div', { class: 'option option-soon' }, h('span', { class: 'soon-mark' }, letter), h('b', {}, name), h('span', { class: 'soon-tag' }, 'Soon'));
 
-  return h(
+  const content = h(
     'div',
     { class: 'dialog-inner' },
     h('div', { class: 'dialog-head' }, h('h2', {}, 'Add a channel'), button('Close', 'btn btn-quiet', close)),
@@ -181,4 +196,6 @@ export function channelPicker(brand: string | null, clients: Array<{ brand: stri
     note,
     h('p', { class: 'muted' }, 'Not sure how? ', button('Open the setup guides', 'link-button', () => { close(); ctx.go({ page: 'help', channel: 'facebook' }); })),
   );
+  ticks.forEach((update) => update());
+  return content;
 }

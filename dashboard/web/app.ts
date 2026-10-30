@@ -27,7 +27,7 @@ import {
   weekdayName,
 } from './calendar.ts';
 import { applyStoredTheme, currentTheme, setTheme } from './theme.ts';
-import { brandMark, button, h, icon, platformLabel, type Child } from './ui.ts';
+import { brandMark, button, h, icon, platformLabel, statusMark, type Child } from './ui.ts';
 import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
 import { summarizeClients } from './clients.ts';
 import { helpPage } from './help-page.ts';
@@ -419,7 +419,7 @@ function channelsPanel(): HTMLElement {
         h('span', { class: 'channel-name' }, channel ? channelName(channel) : 'All channels'),
         h('span', { class: 'channel-sub' }, channel ? `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}` : `${channels.length} connected`),
       ),
-      channel ? h('span', { class: `health ${channel.ok ? 'health-ok' : 'health-bad'}`, title: channel.ok ? 'Connected' : 'Connection problem' }) : null,
+      channel ? statusMark(channel.ok) : null,
     );
     item.addEventListener('click', () => {
       state.channel = key;
@@ -711,7 +711,9 @@ async function disconnect(channel: ChannelHealth): Promise<void> {
 /** Opens the Add channel window; with no client chosen it asks which one the channel is for. */
 function openPicker(brand: string | null): void {
   const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
-  picker.replaceChildren(channelPicker(brand, clients, clientsContext, () => picker.close()));
+  const connected: Record<string, Platform[]> = {};
+  for (const channel of state.data?.channels ?? []) for (const b of channel.brands) (connected[b] ??= []).push(channel.platform);
+  picker.replaceChildren(channelPicker(brand, clients, connected, clientsContext, () => picker.close()));
   picker.showModal();
 }
 
