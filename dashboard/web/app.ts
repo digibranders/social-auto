@@ -419,7 +419,7 @@ function channelsPanel(): HTMLElement {
         h('span', { class: 'channel-name' }, channel ? channelName(channel) : 'All channels'),
         h('span', { class: 'channel-sub' }, channel ? `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}` : `${channels.length} connected`),
       ),
-      channel ? statusMark(channel.ok) : null,
+      channel && !channel.ok ? statusMark(false) : null,
     );
     item.addEventListener('click', () => {
       state.channel = key;
