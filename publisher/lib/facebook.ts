@@ -109,3 +109,29 @@ export async function deletePost(postId: string, pageToken: string): Promise<voi
   });
   if (body['success'] !== true) throw new FacebookApiError('delete post', JSON.stringify(body));
 }
+
+/** Posts a picture to the Page's timeline by address: Facebook fetches the picture itself. */
+export async function postPhotoFromUrl(pageId: string, pageToken: string, imageUrl: string, caption: string): Promise<PostedPhoto> {
+  const body = await graph('photo post', `/${pageId}/photos`, {
+    method: 'POST',
+    body: new URLSearchParams({ url: imageUrl, caption, published: 'true', access_token: pageToken }),
+  });
+  return { photoId: textOf(body, 'id', 'photo post'), postId: typeof body['post_id'] === 'string' ? body['post_id'] : null };
+}
+
+/** The public address of a post, or null when Facebook does not give one. */
+export async function postLink(postId: string, pageToken: string): Promise<string | null> {
+  const params = new URLSearchParams({ fields: 'permalink_url', access_token: pageToken });
+  const body = await graph('post link', `/${postId}?${params}`);
+  return typeof body['permalink_url'] === 'string' ? body['permalink_url'] : null;
+}
+
+/** Whether the saved Page token still works. */
+export async function pageHealth(pageId: string, pageToken: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await graph('page check', `/${pageId}?${new URLSearchParams({ fields: 'id', access_token: pageToken })}`);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}

@@ -110,6 +110,8 @@ export interface StatusPost {
   edited: boolean;
   /** Still ahead of its time and not yet on Instagram, so the dashboard may change it. */
   editable: boolean;
+  /** Where the post stands on the client's other channels (Facebook Pages). Filled in by the status feed. */
+  crossposts: Array<{ platform: 'facebook'; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
 }
 
 export interface StatusSummary {
@@ -150,6 +152,7 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
       mediaUrl: match?.mediaUrl ?? null,
       edited: post.edited === true,
       editable: state === 'scheduled',
+      crossposts: [],
     };
   });
   const runway = [...postsLeftByBrand(posts, now).entries()].map(([brand, postsLeft]) => ({ brand, postsLeft }));
