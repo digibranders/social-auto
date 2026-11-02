@@ -36,6 +36,8 @@ const post = (id: string, date: string): StatusPost => ({
   mediaUrl: null,
   edited: false,
   editable: true,
+  manual: false,
+  channels: null,
   crossposts: [],
 });
 

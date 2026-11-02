@@ -7,11 +7,12 @@
  * POST /api/edit?post=<id>&action=revert
  */
 import { schedule as scheduleData } from '../data/schedule.js';
+import { toScheduled } from '../lib/manual.js';
 import { editPost, type EditAction } from '../lib/editing.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError, MAX_IMAGE_BYTES } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
-import { deleteImage, loadOverrides, saveImage, saveOverrides, storeConfigured } from '../lib/store.js';
+import { deleteImage, loadManual, loadOverrides, saveImage, saveOverrides, storeConfigured } from '../lib/store.js';
 
 const store = { load: loadOverrides, save: saveOverrides, saveImage, deleteImage };
 
@@ -40,7 +41,8 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const action = await readAction(request, url.searchParams.get('action'));
-    const result = await editPost(store, parseSchedule(scheduleData), id, action, Date.now());
+    const { file: manual } = await loadManual();
+    const result = await editPost(store, [...parseSchedule(scheduleData), ...manual.posts.map(toScheduled)], id, action, Date.now());
     return json(200, { ...result });
   } catch (error) {
     if (error instanceof EditError) return json(error.status, { error: error.message });

@@ -59,7 +59,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       channels,
       postsLeft,
       upcoming,
-      pattern: schedulePattern(posts, now),
+      pattern: schedulePattern(posts.filter((p) => !p.manual), now),
       problems: channels.filter((c) => !c.ok).length,
       missed: posts.filter((p) => p.state === 'missed').length,
       queueLow: postsLeft <= LOW_QUEUE_DAYS,

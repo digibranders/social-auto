@@ -1,6 +1,7 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import type { ClientSummary } from './clients.ts';
+import { postChannelId } from './new-post.ts';
 import { stateLabel } from './calendar.ts';
 import type { ClientTab, GuideKey, Route } from './route.ts';
 import { brandMark, button, channelName, h, icon, statusMark, type ChannelKind } from './ui.ts';
@@ -11,6 +12,8 @@ export interface ClientsContext {
   /** One upcoming post as a card; opens its window when clicked. */
   postCard(post: StatusPost): HTMLElement;
   addChannel(brand: string | null): void;
+  /** Opens the New post window; `channel` (a post channel id) is ticked in advance. */
+  newPost(brand: string | null, channel: string | null): void;
   disconnect(channel: ChannelHealth): void;
 }
 
@@ -112,6 +115,7 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
     h(
       'div',
       { class: 'channel-actions' },
+      channel.ok && postChannelId(channel) ? button('Post here', 'btn', () => ctx.newPost(client.brand, postChannelId(channel))) : null,
       button('How to reconnect', 'btn btn-quiet', () => ctx.go({ page: 'help', channel: GUIDE_FOR[channel.platform] })),
       canDisconnect ? button('Disconnect', 'btn btn-quiet btn-danger', () => ctx.disconnect(channel)) : null,
     ),
@@ -173,7 +177,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
       button('Clients', 'link-button', () => ctx.go({ page: 'clients' })),
       ` / ${client.label}`,
     ),
-    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand))),
+    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)))),
     tabs,
     tab === 'channels' ? channels : posts,
   );

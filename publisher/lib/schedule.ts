@@ -7,6 +7,10 @@ export interface ScheduledPost {
   caption: string;
   /** Path under the deployment, e.g. /posts/w01-d1.jpg. Null once the poster was pruned (old posts). */
   image: string | null;
+  /** Added by hand in the dashboard rather than planned by the content job. */
+  manual?: boolean;
+  /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc". Missing means every connected channel. */
+  channels?: string[];
 }
 
 export class ScheduleError extends Error {
@@ -41,6 +45,7 @@ export function parseSchedule(raw: unknown): ScheduledPost[] {
 export function postsLeftByBrand(posts: ScheduledPost[], now: number): Map<string, number> {
   const left = new Map<string, number>();
   for (const post of posts) {
+    if (post.manual) continue; // extra posts do not count towards the planned runway
     const brand = post.brand ?? 'default';
     left.set(brand, (left.get(brand) ?? 0) + (Date.parse(post.date) > now ? 1 : 0));
   }
@@ -76,6 +81,16 @@ export function duePost(posts: ScheduledPost[], now: number): ScheduledPost | nu
   return due[0] ?? null;
 }
 
+/** Hand-made posts whose time has passed within the due window. Unlike planned posts, several can go out on one day. */
+export function dueManualPosts(posts: ScheduledPost[], now: number): ScheduledPost[] {
+  return posts
+    .filter((p) => p.manual === true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < DUE_WINDOW_MS)
+    .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+}
+
+/** Whether a post is meant for this channel ("instagram" or a channel id). */
+export const isWantedOn = (post: { channels?: string[] }, channel: string): boolean => !post.channels || post.channels.includes(channel);
+
 /** Instagram may normalise whitespace, so compare captions loosely. */
 export function sameCaption(a: string, b: string): boolean {
   const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
@@ -96,7 +111,8 @@ export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown'
 export interface StatusPost {
   id: string;
   brand: string;
-  platform: 'instagram';
+  /** The first channel the post goes to (Instagram, unless a hand-made post skips it). */
+  platform: 'instagram' | 'facebook' | 'linkedin';
   date: string;
   caption: string;
   /** Absolute poster URL, or null once the poster was pruned. */
@@ -111,7 +127,11 @@ export interface StatusPost {
   /** Still ahead of its time and not yet on Instagram, so the dashboard may change it. */
   editable: boolean;
   /** Where the post stands on the client's other channels (Facebook Pages). Filled in by the status feed. */
-  crossposts: Array<{ platform: 'facebook'; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
+  /** Added by hand in the dashboard. */
+  manual: boolean;
+  /** Where a hand-made post goes ('instagram' and channel ids); null for planned posts, which go everywhere. */
+  channels: string[] | null;
+  crossposts: Array<{ platform: 'instagram' | 'facebook' | 'linkedin'; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
 }
 
 export interface StatusSummary {
@@ -129,13 +149,14 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
   const ordered = [...posts].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const statusPosts = ordered.map((post): StatusPost => {
     const at = Date.parse(post.date);
-    const match = media?.find((m) => !used.has(m.id) && sameCaption(m.caption, post.caption)) ?? null;
+    const onInstagram = isWantedOn(post, 'instagram');
+    const match = onInstagram ? (media?.find((m) => !used.has(m.id) && sameCaption(m.caption, post.caption)) ?? null) : null;
     if (match) used.add(match.id);
 
     let state: PostState;
     if (match) state = 'published';
     else if (at > now) state = 'scheduled';
-    else if (media === null) state = 'unknown';
+    else if (onInstagram && media === null) state = 'unknown';
     else if (now - at < DUE_WINDOW_MS) state = 'due';
     else state = 'missed';
 
@@ -152,6 +173,8 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
       mediaUrl: match?.mediaUrl ?? null,
       edited: post.edited === true,
       editable: state === 'scheduled',
+      manual: post.manual === true,
+      channels: post.channels ?? null,
       crossposts: [],
     };
   });

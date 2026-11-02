@@ -31,6 +31,7 @@ import { brandMark, button, h, icon, platformLabel, statusMark, type Child } fro
 import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
 import { summarizeClients } from './clients.ts';
 import { helpPage } from './help-page.ts';
+import { newPostForm } from './new-post.ts';
 import { parseRoute, routeHash, type Route } from './route.ts';
 
 type View = 'day' | 'week' | 'month' | 'list';
@@ -323,6 +324,16 @@ function editPanel(post: StatusPost): HTMLElement {
   );
 }
 
+/** The channels a hand-made post goes to, by name. */
+function channelNames(post: StatusPost): string {
+  const names = (post.channels ?? []).map((id) => {
+    if (id === 'instagram') return 'Instagram';
+    const channel = state.data?.channels.find((c) => c.id === id);
+    return channel ? `${platformLabel(channel.platform)} · ${channel.account ?? ''}`.replace(/ · $/, '') : id;
+  });
+  return names.join(', ');
+}
+
 function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
   const source = pictureOf(post);
   const link = safeHttpsUrl(post.permalink);
@@ -349,6 +360,7 @@ function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
           h('div', { class: 'pills' }, pill(post.state), editedTag(post)),
           h('p', { class: 'muted' }, STATE_HELP[post.state]),
           field('Scheduled for', formatDateTime(post.date)),
+          post.manual ? field('Added by hand', post.channels ? `Goes to ${channelNames(post)}` : 'Goes to every channel') : null,
           post.publishedAt ? field('Published', formatDateTime(post.publishedAt)) : null,
           ...post.crossposts.map((c) => {
             const link = safeHttpsUrl(c.permalink);
@@ -366,6 +378,7 @@ function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
                 'div',
                 { class: 'view-panel' },
                 post.editable ? button('Edit post', 'btn btn-primary', () => openDetail(post, 'edit')) : null,
+                post.editable && post.manual ? button('Delete post', 'btn btn-quiet btn-danger', () => void deleteManualPost(post)) : null,
                 h('h3', {}, 'Caption'),
                 h('p', { class: 'caption' }, post.caption),
               ),
@@ -731,6 +744,55 @@ function openPicker(brand: string | null): void {
   picker.showModal();
 }
 
+/** Saves a hand-made post: the picture first, then the post that points to it. */
+async function submitNewPost(post: { brand: string; day: string; caption: string; picture: File; channels: string[] }): Promise<string | null> {
+  const call = async (query: string, body: BodyInit, contentType: string): Promise<{ answer: Record<string, unknown> | null; problem: string | null }> => {
+    try {
+      const response = await fetch(`/api/manual?${query}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': contentType }, body });
+      if (response.status === 401) {
+        location.replace('/login');
+        return { answer: null, problem: 'You were signed out.' };
+      }
+      const answer = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+      return response.ok ? { answer, problem: null } : { answer, problem: messageOf(answer) ?? `The server answered ${response.status}` };
+    } catch (error) {
+      return { answer: null, problem: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const uploaded = await call('action=image', post.picture, 'image/jpeg');
+  const imageKey = uploaded.answer?.['imageKey'];
+  if (uploaded.problem || typeof imageKey !== 'string') return uploaded.problem ?? 'The picture could not be saved.';
+  const created = await call('action=create', JSON.stringify({ brand: post.brand, day: post.day, caption: post.caption, imageKey, channels: post.channels }), 'application/json');
+  if (created.problem) return created.problem;
+  picker.close();
+  state.notice = { kind: 'ok', text: `Post scheduled for ${post.day} at 10:00 AM. It shows under Next posts.` };
+  await load();
+  return null;
+}
+
+/** Opens the New post window; `channel` is ticked in advance. */
+function openNewPost(brand: string | null, channel: string | null): void {
+  const data = state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] };
+  const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
+  picker.replaceChildren(newPostForm(brand, channel, { clients, channels: data.channels, submit: submitNewPost, close: () => picker.close() }));
+  picker.showModal();
+}
+
+/** Removes a hand-made post that has not gone out yet, after asking. */
+async function deleteManualPost(post: StatusPost): Promise<void> {
+  if (!confirm('Delete this post? It will not be sent.')) return;
+  try {
+    const response = await fetch(`/api/manual?action=delete&post=${encodeURIComponent(post.id)}`, { method: 'POST', credentials: 'same-origin' });
+    if (response.status === 401) return void location.replace('/login');
+    const body: unknown = await response.json().catch(() => null);
+    state.notice = response.ok ? { kind: 'ok', text: 'The post was deleted.' } : { kind: 'warn', text: messageOf(body) ?? `Could not delete (${response.status}).` };
+  } catch (error) {
+    state.notice = { kind: 'warn', text: error instanceof Error ? error.message : String(error) };
+  }
+  dialog.close();
+  await load();
+}
+
 const clientsContext: ClientsContext = {
   go,
   openCalendar: (brand) => {
@@ -740,6 +802,7 @@ const clientsContext: ClientsContext = {
   },
   postCard,
   addChannel: openPicker,
+  newPost: openNewPost,
   disconnect: (channel) => void disconnect(channel),
 };
 
