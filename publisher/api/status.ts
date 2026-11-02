@@ -11,6 +11,7 @@ import { parseKey } from '../lib/crypto.js';
 import { crosspostStatusFor } from '../lib/crosspost.js';
 import { channelLabel, channelToken, type ChannelFile, type PostedLog } from '../lib/channels.js';
 import { pageHealth } from '../lib/facebook.js';
+import { locationHealth } from '../lib/google.js';
 import { memberHealth } from '../lib/linkedin.js';
 import { accountProfile, mediaSince, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
 import { applyOverrides } from '../lib/overrides.js';
@@ -58,6 +59,7 @@ async function lookUpChannels(channels: ChannelFile, now: number): Promise<Recor
       try {
         if (!key) health = { ok: false, error: keyProblem ?? 'no key' };
         else if (channel.platform === 'facebook') health = await pageHealth(channel.pageId, channelToken(channel, key));
+        else if (channel.platform === 'google') health = await locationHealth({ clientId: requireEnv('GOOGLE_CLIENT_ID'), clientSecret: requireEnv('GOOGLE_CLIENT_SECRET') }, channelToken(channel, key));
         else if (Date.parse(channel.expiresAt) <= now) health = { ok: false, error: 'The LinkedIn connection has expired. They need to connect again.' };
         else health = await memberHealth(channelToken(channel, key));
       } catch (error) {

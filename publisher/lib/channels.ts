@@ -29,7 +29,23 @@ export interface LinkedInChannel {
   connectedAt: string;
 }
 
-export type Channel = FacebookChannel | LinkedInChannel;
+/** One business location on Google, posted to as updates. The saved token is Google's refresh token, which does not expire by itself. */
+export interface GoogleChannel {
+  /** "google:<location id>" */
+  id: string;
+  platform: 'google';
+  brand: string;
+  /** "accounts/<id>" */
+  account: string;
+  /** "locations/<id>" */
+  location: string;
+  locationTitle: string;
+  /** Encrypted refresh token. */
+  token: string;
+  connectedAt: string;
+}
+
+export type Channel = FacebookChannel | LinkedInChannel | GoogleChannel;
 
 export interface ChannelFile {
   channels: Channel[];
@@ -46,7 +62,16 @@ export type PostedLog = Record<string, PostedEntry>;
 export const postedKey = (postId: string, channelId: string): string => `${postId}|${channelId}`;
 
 /** The name people see for a channel: the Page, or the member. */
-export const channelLabel = (channel: Channel): string => (channel.platform === 'facebook' ? channel.pageName : channel.memberName);
+export const channelLabel = (channel: Channel): string => {
+  switch (channel.platform) {
+    case 'facebook':
+      return channel.pageName;
+    case 'linkedin':
+      return channel.memberName;
+    case 'google':
+      return channel.locationTitle;
+  }
+};
 
 function requireText(c: Record<string, unknown>, keys: readonly string[], i: number): void {
   for (const key of keys) {
@@ -63,6 +88,8 @@ export function parseChannels(raw: unknown): ChannelFile {
     } else if (c['platform'] === 'linkedin') {
       requireText(c, ['id', 'brand', 'memberUrn', 'memberName', 'token', 'expiresAt', 'connectedAt'], i);
       if (Number.isNaN(Date.parse(c['expiresAt'] as string))) throw new Error(`channels[${i}].expiresAt is not a date`);
+    } else if (c['platform'] === 'google') {
+      requireText(c, ['id', 'brand', 'account', 'location', 'locationTitle', 'token', 'connectedAt'], i);
     } else {
       throw new Error(`channels[${i}].platform is not supported`);
     }
@@ -115,6 +142,28 @@ export function addLinkedInMember(
     memberName: member.name,
     token: encrypt(accessToken, key),
     expiresAt: new Date(now + expiresInSeconds * 1000).toISOString(),
+    connectedAt: new Date(now).toISOString(),
+  };
+  return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
+}
+
+/** Saves a business location for a client. Connecting it again replaces the old token. */
+export function addGoogleLocation(
+  file: ChannelFile,
+  brand: string,
+  place: { account: string; location: string; title: string },
+  refreshToken: string,
+  key: Buffer,
+  now: number,
+): ChannelFile {
+  const channel: GoogleChannel = {
+    id: `google:${place.location.split('/').pop()}`,
+    platform: 'google',
+    brand,
+    account: place.account,
+    location: place.location,
+    locationTitle: place.title,
+    token: encrypt(refreshToken, key),
     connectedAt: new Date(now).toISOString(),
   };
   return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };

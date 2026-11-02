@@ -9,7 +9,7 @@ export interface ScheduledPost {
   image: string | null;
   /** Added by hand in the dashboard rather than planned by the content job. */
   manual?: boolean;
-  /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc". Missing means every connected channel. */
+  /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc" or "google:123". Missing means every connected channel. */
   channels?: string[];
 }
 
@@ -112,7 +112,7 @@ export interface StatusPost {
   id: string;
   brand: string;
   /** The first channel the post goes to (Instagram, unless a hand-made post skips it). */
-  platform: 'instagram' | 'facebook' | 'linkedin';
+  platform: 'instagram' | 'facebook' | 'linkedin' | 'google';
   date: string;
   caption: string;
   /** Absolute poster URL, or null once the poster was pruned. */
@@ -131,7 +131,7 @@ export interface StatusPost {
   manual: boolean;
   /** Where a hand-made post goes ('instagram' and channel ids); null for planned posts, which go everywhere. */
   channels: string[] | null;
-  crossposts: Array<{ platform: 'instagram' | 'facebook' | 'linkedin'; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
+  crossposts: Array<{ platform: 'instagram' | 'facebook' | 'linkedin' | 'google'; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
 }
 
 export interface StatusSummary {
