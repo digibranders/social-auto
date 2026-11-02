@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { BlobPreconditionFailedError, del, get, put } from '@vercel/blob';
 import { parseChannels, parsePostedLog, type ChannelFile, type PostedLog } from './channels.js';
 import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overrides.js';
@@ -9,8 +12,14 @@ import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overr
 const OVERRIDES_PATH = 'overrides.json';
 const imagePath = (key: string): string => `images/${key}.jpg`;
 
+/**
+ * For local testing only: when LOCAL_STORE_DIR is set, the JSON documents (edits, channels, posted log) live in
+ * that folder instead of the Blob store, so a test run can never touch real data. Pictures are not stored locally.
+ */
+const localDir = (): string | null => process.env['LOCAL_STORE_DIR'] || null;
+
 export function storeConfigured(): boolean {
-  return Boolean(process.env['BLOB_READ_WRITE_TOKEN']);
+  return Boolean(process.env['BLOB_READ_WRITE_TOKEN']) || localDir() !== null;
 }
 
 export interface LoadedOverrides {
@@ -22,29 +31,13 @@ export interface LoadedOverrides {
 /** Reads the saved edits. A store that is not configured or holds nothing yet means "no edits". */
 export async function loadOverrides(): Promise<LoadedOverrides> {
   if (!storeConfigured()) return { overrides: {}, etag: null };
-  const result = await get(OVERRIDES_PATH, { access: 'private', useCache: false });
-  if (!result) return { overrides: {}, etag: null };
-  if (result.statusCode !== 200) throw new Error(`unexpected status ${result.statusCode} reading ${OVERRIDES_PATH}`);
-  const text = await new Response(result.stream).text();
-  return { overrides: parseOverrides(JSON.parse(text)), etag: result.blob.etag };
+  const { value, etag } = await readJson(OVERRIDES_PATH);
+  return { overrides: value === null ? {} : parseOverrides(value), etag };
 }
 
 /** Saves the edits, refusing to overwrite a version someone else saved since `etag` was read. */
-export async function saveOverrides(overrides: OverrideMap, etag: string | null): Promise<void> {
-  try {
-    await put(OVERRIDES_PATH, JSON.stringify(overrides), {
-      access: 'private',
-      contentType: 'application/json',
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      ...(etag ? { ifMatch: etag } : {}),
-    });
-  } catch (error) {
-    if (error instanceof BlobPreconditionFailedError) {
-      throw new EditError('Another change was saved at the same moment. Reload and try again.', 409);
-    }
-    throw error;
-  }
+export function saveOverrides(overrides: OverrideMap, etag: string | null): Promise<void> {
+  return writeJson(OVERRIDES_PATH, overrides, etag, 'Another change was saved at the same moment. Reload and try again.');
 }
 
 export async function saveImage(key: string, bytes: Uint8Array): Promise<void> {
@@ -75,14 +68,36 @@ interface LoadedJson {
   etag: string | null;
 }
 
+const fingerprint = (text: string): string => createHash('sha256').update(text).digest('hex');
+
 async function readJson(path: string): Promise<LoadedJson> {
+  const dir = localDir();
+  if (dir) {
+    const text = await readFile(join(dir, path), 'utf8').catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return null;
+      throw error;
+    });
+    return text === null ? { value: null, etag: null } : { value: JSON.parse(text), etag: fingerprint(text) };
+  }
   const result = await get(path, { access: 'private', useCache: false });
   if (!result) return { value: null, etag: null };
   if (result.statusCode !== 200) throw new Error(`unexpected status ${result.statusCode} reading ${path}`);
   return { value: JSON.parse(await new Response(result.stream).text()), etag: result.blob.etag };
 }
 
-async function writeJson(path: string, value: unknown, etag: string | null): Promise<void> {
+const CONFLICT = 'Another change was saved at the same moment. Try again.';
+
+async function writeJson(path: string, value: unknown, etag: string | null, conflict: string = CONFLICT): Promise<void> {
+  const dir = localDir();
+  if (dir) {
+    const current = await readJson(path);
+    if (current.etag !== etag) throw new EditError(conflict, 409);
+    const file = join(dir, path);
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(`${file}.tmp`, JSON.stringify(value), { mode: 0o600 });
+    await rename(`${file}.tmp`, file);
+    return;
+  }
   try {
     await put(path, JSON.stringify(value), {
       access: 'private',
@@ -92,7 +107,7 @@ async function writeJson(path: string, value: unknown, etag: string | null): Pro
       ...(etag ? { ifMatch: etag } : {}),
     });
   } catch (error) {
-    if (error instanceof BlobPreconditionFailedError) throw new EditError('Another change was saved at the same moment. Try again.', 409);
+    if (error instanceof BlobPreconditionFailedError) throw new EditError(conflict, 409);
     throw error;
   }
 }

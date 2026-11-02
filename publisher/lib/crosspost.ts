@@ -1,4 +1,5 @@
-import { channelsFor, channelToken, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
+import { channelLabel, channelsFor, channelToken, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
+import type { LinkedInPost, Visibility } from './linkedin.js';
 import { DUE_WINDOW_MS } from './schedule.js';
 
 /** What the posting code needs from Facebook; the real one is lib/facebook.ts, tests use stubs. */
@@ -6,6 +7,15 @@ export interface FacebookApi {
   postPhotoFromUrl(pageId: string, token: string, imageUrl: string, caption: string): Promise<{ photoId: string; postId: string | null }>;
   postLink(postId: string, token: string): Promise<string | null>;
   pageHealth(pageId: string, token: string): Promise<{ ok: boolean; error?: string }>;
+}
+
+/** What the posting code needs from LinkedIn; the real one is lib/linkedin.ts, tests use stubs. */
+export interface LinkedInApi {
+  fetchImage(url: string): Promise<Uint8Array>;
+  uploadImage(token: string, ownerUrn: string, image: Uint8Array): Promise<string>;
+  postImage(token: string, authorUrn: string, assetUrn: string, caption: string, visibility: Visibility): Promise<LinkedInPost>;
+  /** Whether the saved token is still accepted. */
+  memberHealth(token: string): Promise<{ ok: boolean; error?: string }>;
 }
 
 export interface PostToSend {
@@ -49,8 +59,8 @@ export async function postToFacebook(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default')) {
-    const base = { channel: channel.id, account: channel.pageName };
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'facebook')) {
+    const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
       if (!belongsTo(post, channel)) {
@@ -81,15 +91,67 @@ export async function postToFacebook(options: {
   return results;
 }
 
+/**
+ * Sends one post to every LinkedIn profile connected for its client. Same rules as Facebook: each profile is
+ * independent, nothing is sent twice, and an expired connection fails with a message that says what to do.
+ */
+export async function postToLinkedIn(options: {
+  post: PostToSend;
+  channels: ChannelFile;
+  key: Buffer;
+  origin: string;
+  log: PostedLog;
+  dryRun: boolean;
+  api: LinkedInApi;
+  now: number;
+  record: (key: string, entry: PostedLog[string]) => Promise<void>;
+}): Promise<CrosspostResult[]> {
+  const { post, key, api } = options;
+  const results: CrosspostResult[] = [];
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'linkedin')) {
+    const base = { channel: channel.id, account: channelLabel(channel) };
+    const logKey = postedKey(post.id, channel.id);
+    try {
+      if (!belongsTo(post, channel)) {
+        results.push({ ...base, status: 'skipped-before-connection' });
+        continue;
+      }
+      const already = options.log[logKey];
+      if (already) {
+        results.push({ ...base, status: 'already-posted', remoteId: already.remoteId, permalink: already.permalink });
+        continue;
+      }
+      if (!post.image) throw new Error('the post has no picture to send');
+      if (Date.parse(channel.expiresAt) <= options.now) {
+        throw new Error(`The LinkedIn connection for ${channel.memberName} has expired. They need to open their connect link again and press Allow.`);
+      }
+      const token = channelToken(channel, key);
+      if (options.dryRun) {
+        const health = await api.memberHealth(token);
+        results.push(health.ok ? { ...base, status: 'dry-run-ready' } : { ...base, status: 'failed', error: health.error ?? 'LinkedIn check failed' });
+        continue;
+      }
+      const image = await api.fetchImage(`${options.origin}${post.image}`);
+      const asset = await api.uploadImage(token, channel.memberUrn, image);
+      const posted = await api.postImage(token, channel.memberUrn, asset, post.caption, 'PUBLIC');
+      await options.record(logKey, { remoteId: posted.urn, permalink: posted.url, postedAt: new Date(options.now).toISOString() });
+      results.push({ ...base, status: 'posted', remoteId: posted.urn, permalink: posted.url });
+    } catch (error) {
+      results.push({ ...base, status: 'failed', error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
+}
+
 export interface CrosspostStatus {
-  platform: 'facebook';
+  platform: Channel['platform'];
   account: string;
   state: 'published' | 'scheduled' | 'due' | 'missed';
   permalink: string | null;
 }
 
-/** Where a post stands on every Facebook Page of its client, for the dashboard. */
-export function facebookStatusFor(post: { id: string; brand?: string; date: string }, channels: ChannelFile, log: PostedLog, now: number): CrosspostStatus[] {
+/** Where a post stands on every connected channel of its client, for the dashboard. */
+export function crosspostStatusFor(post: { id: string; brand?: string; date: string }, channels: ChannelFile, log: PostedLog, now: number): CrosspostStatus[] {
   const at = Date.parse(post.date);
   return channelsFor(channels, post.brand ?? 'default')
     .filter((channel) => at >= Date.parse(channel.connectedAt))
@@ -100,6 +162,6 @@ export function facebookStatusFor(post: { id: string; brand?: string; date: stri
       else if (at > now) state = 'scheduled';
       else if (now - at < DUE_WINDOW_MS) state = 'due';
       else state = 'missed';
-      return { platform: 'facebook', account: channel.pageName, state, permalink: done?.permalink ?? null };
+      return { platform: channel.platform, account: channelLabel(channel), state, permalink: done?.permalink ?? null };
     });
 }

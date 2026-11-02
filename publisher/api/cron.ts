@@ -1,6 +1,6 @@
 /**
- * Daily Vercel Cron: publishes the post that is due today to Instagram and to every connected Facebook Page of
- * its client, and sends a push alert when posting fails or a client's schedule is about to run out.
+ * Daily Vercel Cron: publishes the post that is due today to Instagram and to every connected Facebook Page and LinkedIn profile
+ * of its client, and sends a push alert when posting fails or a client's schedule is about to run out.
  * Each channel is independent: one failing never stops another.
  *
  * GET /api/cron            (called by Vercel Cron with Authorization: Bearer $CRON_SECRET)
@@ -9,7 +9,8 @@
  */
 import { schedule as scheduleData } from '../data/schedule.js';
 import { parseKey } from '../lib/crypto.js';
-import { postToFacebook, type CrosspostResult, type FacebookApi } from '../lib/crosspost.js';
+import { expiringSoon } from '../lib/channels.js';
+import { postToFacebook, postToLinkedIn, type CrosspostResult, type FacebookApi, type LinkedInApi } from '../lib/crosspost.js';
 import { pageHealth, postLink, postPhotoFromUrl } from '../lib/facebook.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import {
@@ -19,12 +20,15 @@ import {
   recentMedia,
   waitUntilReady,
 } from '../lib/instagram.js';
+import { fetchImage, memberHealth, postImage, uploadImage } from '../lib/linkedin.js';
 import { notify } from '../lib/notify.js';
 import { applyOverrides } from '../lib/overrides.js';
+import type { PostedEntry } from '../lib/channels.js';
 import { duePost, lowQueueWarnings, parseSchedule, sameCaption, type ScheduledPost } from '../lib/schedule.js';
 import { loadChannels, loadOverrides, loadPosted, savePosted } from '../lib/store.js';
 
 const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
+const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, memberHealth };
 
 async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: boolean): Promise<Record<string, unknown>> {
   const token = requireEnv('INSTAGRAM_TOKEN');
@@ -44,30 +48,52 @@ async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: bool
   return { status: 'published', post: post.id, media: mediaId, permalink: link };
 }
 
-/** Never throws: a problem here must not hide what happened on Instagram. */
-async function sendToFacebook(post: ScheduledPost, origin: string, dryRun: boolean): Promise<CrosspostResult[]> {
+type Platform = 'facebook' | 'linkedin';
+
+/** Never throws: a problem here must not hide what happened on Instagram or another channel. */
+async function sendToChannels(platform: Platform, post: ScheduledPost, origin: string, dryRun: boolean): Promise<CrosspostResult[]> {
   try {
     const { file } = await loadChannels();
-    if (file.channels.length === 0) return [];
+    if (!file.channels.some((c) => c.platform === platform)) return [];
     const key = parseKey(process.env['CHANNEL_KEY']);
     const { log } = await loadPosted();
-    return await postToFacebook({
+    const common = {
       post,
       channels: file,
       key,
       origin,
       log,
       dryRun,
-      api: facebookApi,
       now: Date.now(),
-      // Reload before each write so a second Page's record never overwrites the first's.
-      record: async (logKey, entry) => {
+      // Reload before each write so a second channel's record never overwrites the first's.
+      record: async (logKey: string, entry: PostedEntry): Promise<void> => {
         const latest = await loadPosted();
         await savePosted({ ...latest.log, [logKey]: entry }, latest.etag);
       },
-    });
+    };
+    return platform === 'facebook'
+      ? await postToFacebook({ ...common, api: facebookApi })
+      : await postToLinkedIn({ ...common, api: linkedInApi });
   } catch (error) {
-    return [{ channel: 'facebook', account: 'facebook', status: 'failed', error: describeError(error) }];
+    return [{ channel: platform, account: platform, status: 'failed', error: describeError(error) }];
+  }
+}
+
+/** LinkedIn gives no refresh, so tell the team before a connection ends (once a day, on 7, 3, 1 and 0 days left). */
+async function warnAboutExpiringLinkedIn(): Promise<void> {
+  try {
+    const { file } = await loadChannels();
+    for (const { channel, days } of expiringSoon(file, Date.now())) {
+      await notify({
+        title: days === 0 ? 'LinkedIn connection ends today' : `LinkedIn connection ends in ${days} day${days === 1 ? '' : 's'}`,
+        message:
+          `${channel.memberName} (${channel.brand}). Send them a new connect link from the dashboard ` +
+          '(Clients, the client, Channels, LinkedIn) and ask them to press Allow again. Posting to LinkedIn stops when it ends.',
+        priority: days <= 1 ? 'high' : 'default',
+      });
+    }
+  } catch (error) {
+    console.error(describeError(error));
   }
 }
 
@@ -95,6 +121,7 @@ export async function GET(request: Request): Promise<Response> {
           priority: postsLeft <= 1 ? 'high' : 'default',
         });
       }
+      await warnAboutExpiringLinkedIn();
     }
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
@@ -106,7 +133,8 @@ export async function GET(request: Request): Promise<Response> {
       status: 'failed',
       error: describeError(error),
     }));
-    const facebook = await sendToFacebook(post, origin, dryRun);
+    const facebook = await sendToChannels('facebook', post, origin, dryRun);
+    const linkedin = await sendToChannels('linkedin', post, origin, dryRun);
 
     if (!dryRun) {
       if (instagram['status'] === 'failed') {
@@ -117,18 +145,20 @@ export async function GET(request: Request): Promise<Response> {
           tags: 'rotating_light',
         });
       }
-      for (const result of facebook.filter((r) => r.status === 'failed')) {
-        await notify({
-          title: 'Facebook post failed',
-          message: `${result.account}: ${result.error ?? 'unknown error'}\n\nInstagram is not affected. Fix the cause, then ask Claude to re-send it.`,
-          priority: 'high',
-          tags: 'rotating_light',
-        });
+      for (const [name, results] of [['Facebook', facebook], ['LinkedIn', linkedin]] as const) {
+        for (const result of results.filter((r) => r.status === 'failed')) {
+          await notify({
+            title: `${name} post failed`,
+            message: `${result.account}: ${result.error ?? 'unknown error'}\n\nThe other channels are not affected. Fix the cause, then ask Claude to re-send it.`,
+            priority: 'high',
+            tags: 'rotating_light',
+          });
+        }
       }
     }
 
-    const failed = instagram['status'] === 'failed' || facebook.some((r) => r.status === 'failed');
-    return json(failed ? 500 : 200, { ...instagram, facebook });
+    const failed = instagram['status'] === 'failed' || [...facebook, ...linkedin].some((r) => r.status === 'failed');
+    return json(failed ? 500 : 200, { ...instagram, facebook, linkedin });
   } catch (error) {
     const message = describeError(error);
     console.error(message);

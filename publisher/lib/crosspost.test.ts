@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addFacebookPages, channelToken, parseChannels, parsePostedLog, removeChannel, postedKey, type PostedLog } from './channels.ts';
+import { addFacebookPages, addLinkedInMember, channelLabel, channelToken, daysLeft, expiringSoon, parseChannels, parsePostedLog, removeChannel, postedKey, type PostedLog } from './channels.ts';
 import { decrypt, encrypt, parseKey } from './crypto.ts';
-import { facebookStatusFor, postToFacebook, type FacebookApi } from './crosspost.ts';
+import { crosspostStatusFor, postToFacebook, postToLinkedIn, type FacebookApi, type LinkedInApi } from './crosspost.ts';
 
 const KEY = parseKey('11'.repeat(32));
 const T0 = Date.parse('2026-10-30T09:00:00Z');
@@ -47,10 +47,10 @@ test('channels keep the token encrypted, replace on reconnect, and can be remove
   assert.equal(channelToken(only, KEY), 'page-token');
   const again = addFacebookPages(channels, 'brandbasket', [{ id: '77', name: 'Renamed', accessToken: 'new' }], KEY, T0 + 1);
   assert.equal(again.channels.length, 1);
-  assert.equal(again.channels[0]?.pageName, 'Renamed');
+  assert.equal(channelLabel(again.channels[0]!), 'Renamed');
   assert.deepEqual(removeChannel(again, 'facebook:77').channels, []);
   assert.deepEqual(parseChannels(JSON.parse(JSON.stringify(channels))), channels);
-  assert.throws(() => parseChannels({ channels: [{ id: 'x' }] }), /must be a non-empty string/);
+  assert.throws(() => parseChannels({ channels: [{ id: 'x', platform: 'facebook' }] }), /must be a non-empty string/);
   assert.throws(() => parsePostedLog({ k: { remoteId: 1 } }), /malformed/);
 });
 
@@ -106,12 +106,101 @@ test('a picture-less post fails clearly, and a Page failure never blocks another
   assert.match((await run(fakeApi(), { post: { ...post, image: null } })).results[0]?.error ?? '', /no picture/);
 });
 
-test('facebookStatusFor reports published, scheduled, due and missed per Page', () => {
+test('crosspostStatusFor reports published, scheduled, due and missed per Page', () => {
   const log: PostedLog = { [postedKey('p1', 'facebook:77')]: { remoteId: 'r', permalink: 'https://f/b', postedAt: 'x' } };
-  const status = (id: string, date: string, now: string) => facebookStatusFor({ id, brand: 'brandbasket', date }, channels, log, Date.parse(now))[0];
+  const status = (id: string, date: string, now: string) => crosspostStatusFor({ id, brand: 'brandbasket', date }, channels, log, Date.parse(now))[0];
   assert.deepEqual(status('p1', '2026-10-31T10:00:00+05:30', '2026-10-31T06:00:00Z'), { platform: 'facebook', account: 'Brandbs', state: 'published', permalink: 'https://f/b' });
   assert.equal(status('p2', '2026-11-02T10:00:00+05:30', '2026-10-31T06:00:00Z')?.state, 'scheduled');
   assert.equal(status('p2', '2026-10-31T10:00:00+05:30', '2026-10-31T06:00:00Z')?.state, 'due');
   assert.equal(status('p2', '2026-10-31T10:00:00+05:30', '2026-11-03T06:00:00Z')?.state, 'missed');
-  assert.deepEqual(facebookStatusFor({ id: 'old', brand: 'brandbasket', date: '2026-10-01T10:00:00+05:30' }, channels, log, T0), []);
+  assert.deepEqual(crosspostStatusFor({ id: 'old', brand: 'brandbasket', date: '2026-10-01T10:00:00+05:30' }, channels, log, T0), []);
+});
+
+const DAY = 24 * 60 * 60 * 1000;
+const withLinkedIn = addLinkedInMember({ channels: [] }, 'brandbasket', { urn: 'urn:li:person:abc', name: 'Asha Rao' }, 'li-token', 60 * 24 * 60 * 60, KEY, T0);
+
+function fakeLinkedIn(overrides: Partial<LinkedInApi> = {}): LinkedInApi & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    fetchImage: async (url) => {
+      calls.push(`fetch ${url}`);
+      return new Uint8Array([1, 2, 3]);
+    },
+    uploadImage: async (token, owner, bytes) => {
+      calls.push(`upload ${token} ${owner} ${bytes.length}`);
+      return 'urn:li:digitalmediaAsset:A1';
+    },
+    postImage: async (token, author, asset, caption, visibility) => {
+      calls.push(`post ${author} ${asset} ${caption} ${visibility}`);
+      return { urn: 'urn:li:share:9', url: 'https://www.linkedin.com/feed/update/urn:li:share:9/' };
+    },
+    memberHealth: async () => ({ ok: true }),
+    ...overrides,
+  };
+}
+
+const runLinkedIn = (api: LinkedInApi, extra: Partial<Parameters<typeof postToLinkedIn>[0]> = {}) => {
+  const recorded: PostedLog = {};
+  return postToLinkedIn({
+    post, channels: withLinkedIn, key: KEY, origin: 'https://pub.example', log: {}, dryRun: false, api, now: Date.parse('2026-10-31T05:00:00Z'),
+    record: async (k, e) => void (recorded[k] = e), ...extra,
+  }).then((results) => ({ results, recorded }));
+};
+
+test('a LinkedIn connection keeps its token encrypted, works out its end date, and survives a round trip', () => {
+  const only = withLinkedIn.channels[0]!;
+  assert.equal(only.id, 'linkedin:abc');
+  assert.ok(!only.token.includes('li-token'));
+  assert.equal(channelToken(only, KEY), 'li-token');
+  assert.equal(only.platform === 'linkedin' && daysLeft(only, T0), 60);
+  assert.deepEqual(parseChannels(JSON.parse(JSON.stringify(withLinkedIn))), withLinkedIn);
+  assert.throws(() => parseChannels({ channels: [{ ...only, expiresAt: 'soon' }] }), /not a date/);
+  const again = addLinkedInMember(withLinkedIn, 'brandbasket', { urn: 'urn:li:person:abc', name: 'Asha R.' }, 'new', 100, KEY, T0 + 1);
+  assert.equal(again.channels.length, 1);
+  assert.equal(channelLabel(again.channels[0]!), 'Asha R.');
+});
+
+test('a post goes to LinkedIn with the picture fetched, uploaded, and shared publicly, then is recorded', async () => {
+  const api = fakeLinkedIn();
+  const { results, recorded } = await runLinkedIn(api);
+  assert.deepEqual(results.map((r) => r.status), ['posted']);
+  assert.deepEqual(api.calls, [
+    'fetch https://pub.example/posts/x.jpg',
+    'upload li-token urn:li:person:abc 3',
+    'post urn:li:person:abc urn:li:digitalmediaAsset:A1 Hello PUBLIC',
+  ]);
+  assert.equal(recorded[postedKey('p1', 'linkedin:abc')]?.remoteId, 'urn:li:share:9');
+});
+
+test('LinkedIn never repeats a post, skips earlier days, and ignores other clients', async () => {
+  const api = fakeLinkedIn();
+  const log: PostedLog = { [postedKey('p1', 'linkedin:abc')]: { remoteId: 'old', permalink: null, postedAt: 'x' } };
+  assert.equal((await runLinkedIn(api, { log })).results[0]?.status, 'already-posted');
+  assert.equal((await runLinkedIn(api, { post: { ...post, date: '2026-10-29T10:00:00+05:30' } })).results[0]?.status, 'skipped-before-connection');
+  assert.deepEqual((await runLinkedIn(api, { post: { ...post, brand: 'someone-else' } })).results, []);
+  assert.equal(api.calls.length, 0);
+});
+
+test('an expired LinkedIn connection fails with what to do, and a LinkedIn error is reported without throwing', async () => {
+  const api = fakeLinkedIn();
+  const late = await runLinkedIn(api, { now: T0 + 61 * DAY, post: { ...post, date: new Date(T0 + 61 * DAY).toISOString() } });
+  assert.equal(late.results[0]?.status, 'failed');
+  assert.match(late.results[0]?.error ?? '', /expired.*connect link/);
+  assert.equal(api.calls.length, 0);
+  const broken = fakeLinkedIn({ uploadImage: async () => { throw new Error('LinkedIn picture upload failed: 401'); } });
+  const { results, recorded } = await runLinkedIn(broken);
+  assert.match(results[0]?.error ?? '', /401/);
+  assert.deepEqual(recorded, {});
+  assert.equal((await runLinkedIn(fakeLinkedIn(), { dryRun: true })).results[0]?.status, 'dry-run-ready');
+  const down = fakeLinkedIn({ memberHealth: async () => ({ ok: false, error: 'token revoked' }) });
+  assert.equal((await runLinkedIn(down, { dryRun: true })).results[0]?.error, 'token revoked');
+});
+
+test('both platforms show in the dashboard status, and expiry warnings fire once on 7, 3, 1 and 0 days', () => {
+  const both = { channels: [...channels.channels, ...withLinkedIn.channels] };
+  const states = crosspostStatusFor({ id: 'p2', brand: 'brandbasket', date: '2026-11-02T10:00:00+05:30' }, both, {}, Date.parse('2026-10-31T06:00:00Z'));
+  assert.deepEqual(states.map((s) => `${s.platform}:${s.account}:${s.state}`), ['facebook:Brandbs:scheduled', 'linkedin:Asha Rao:scheduled']);
+  const warn = (daysAfter: number) => expiringSoon(both, T0 + 60 * DAY - daysAfter * DAY - 1000).map((w) => w.days);
+  assert.deepEqual([warn(8), warn(7), warn(6), warn(3), warn(2), warn(1), warn(0)], [[], [7], [], [3], [], [1], [0]]);
 });
