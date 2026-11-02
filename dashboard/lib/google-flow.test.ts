@@ -31,13 +31,13 @@ test('a waiting-choice cookie that is not exactly client~sealed is refused', () 
 });
 
 test('the Google link asks for offline posting access and returns to this site', () => {
-  const link = new URL(authorizeLink({ clientId: 'cid', redirectUri: 'https://x/api/google-callback', state: 's' }));
+  const link = new URL(authorizeLink({ clientId: 'cid', redirectUri: 'https://x/api/google/callback', state: 's' }));
   assert.equal(link.searchParams.get('scope'), 'https://www.googleapis.com/auth/business.manage');
   assert.equal(link.searchParams.get('access_type'), 'offline');
   assert.equal(link.searchParams.get('prompt'), 'consent');
-  assert.equal(link.searchParams.get('redirect_uri'), 'https://x/api/google-callback');
+  assert.equal(link.searchParams.get('redirect_uri'), 'https://x/api/google/callback');
   assert.equal(
     callbackUrl(new Request('http://internal/api/x', { headers: { 'x-forwarded-host': 'cal.example', 'x-forwarded-proto': 'https' } })),
-    'https://cal.example/api/google-callback',
+    'https://cal.example/api/google/callback',
   );
 });

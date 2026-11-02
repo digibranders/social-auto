@@ -43,7 +43,7 @@ export function googleLocationPicker(finish: (result: PickResult) => void, close
     buttons.forEach((b) => (b.disabled = true));
     problem.hidden = true;
     try {
-      const response = await fetch(`/api/google-pick?location=${encodeURIComponent(location.id)}`, { method: 'POST', credentials: 'same-origin' });
+      const response = await fetch(`/api/google/pick?location=${encodeURIComponent(location.id)}`, { method: 'POST', credentials: 'same-origin' });
       if (response.status === 401) return void toLogin();
       const body: unknown = await response.json().catch(() => null);
       if (!response.ok) throw new Error(messageOf(body) ?? `Could not save (${response.status}).`);
@@ -57,7 +57,7 @@ export function googleLocationPicker(finish: (result: PickResult) => void, close
 
   void (async () => {
     try {
-      const response = await fetch('/api/google-pick', { credentials: 'same-origin', cache: 'no-store' });
+      const response = await fetch('/api/google/pick', { credentials: 'same-origin', cache: 'no-store' });
       if (response.status === 401) return void toLogin();
       const body: unknown = await response.json().catch(() => null);
       const locations = response.ok ? parseLocations(body) : null;

@@ -913,7 +913,7 @@ async function load(): Promise<void> {
 }
 
 async function signOut(): Promise<void> {
-  await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => undefined);
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => undefined);
   location.replace('/login');
 }
 

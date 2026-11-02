@@ -1,11 +1,11 @@
 /**
- * GET  /api/google-pick                    the locations the signed-in Google account manages, to choose from
- * POST /api/google-pick?location=<id>      saves the chosen one for the client
+ * GET  /api/google/pick                    the locations the signed-in Google account manages, to choose from
+ * POST /api/google/pick?location=<id>      saves the chosen one for the client
  * Both use the sealed token waiting in the hidden cookie; neither ever returns it.
  */
-import { describeError, json } from '../lib/http.js';
-import { clearedPickCookie, parsePickCookie, PICK_COOKIE } from '../lib/google-flow.js';
-import { isSameOrigin, isSignedIn, readCookie } from '../lib/security.js';
+import { describeError, json } from '../../lib/http.js';
+import { clearedPickCookie, parsePickCookie, PICK_COOKIE } from '../../lib/google-flow.js';
+import { isSameOrigin, isSignedIn, readCookie } from '../../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
 const LOCATION_ID = /^\d{1,25}$/;

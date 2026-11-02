@@ -1,13 +1,13 @@
 /**
- * GET /api/google-callback?code=...&state=...
+ * GET /api/google/callback?code=...&state=...
  * Where Google sends the person back. The state must match the cookie set when they left. The one-time code goes
  * to the publisher, which swaps it for a refresh token and stores it encrypted. With one location it is saved at
  * once; with several, the dashboard asks which one (the sealed token waits in a hidden cookie).
  */
-import { describeError } from '../lib/http.js';
-import { statesMatch } from '../lib/facebook-flow.js';
-import { callbackUrl, clearedConnectCookie, GOOGLE_COOKIE, parseConnectCookie, pickCookie } from '../lib/google-flow.js';
-import { isSignedIn, readCookie } from '../lib/security.js';
+import { describeError } from '../../lib/http.js';
+import { statesMatch } from '../../lib/facebook-flow.js';
+import { callbackUrl, clearedConnectCookie, GOOGLE_COOKIE, parseConnectCookie, pickCookie } from '../../lib/google-flow.js';
+import { isSignedIn, readCookie } from '../../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
 

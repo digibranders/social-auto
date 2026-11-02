@@ -1,10 +1,10 @@
 /**
- * GET /api/google-start?brand=<client>
+ * GET /api/google/start?brand=<client>
  * Sends a signed-in person to Google to approve posting for one client's business listing.
  */
-import { isBrand, newState } from '../lib/facebook-flow.js';
-import { authorizeLink, callbackUrl, connectCookie } from '../lib/google-flow.js';
-import { isSignedIn } from '../lib/security.js';
+import { isBrand, newState } from '../../lib/facebook-flow.js';
+import { authorizeLink, callbackUrl, connectCookie } from '../../lib/google-flow.js';
+import { isSignedIn } from '../../lib/security.js';
 
 export function GET(request: Request): Response {
   if (!isSignedIn(request, process.env['SESSION_SECRET'], Date.now())) return Response.redirect(new URL('/login', request.url), 302);

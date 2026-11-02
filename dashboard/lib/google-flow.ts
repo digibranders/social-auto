@@ -48,7 +48,7 @@ export function parsePickCookie(value: string | undefined): { brand: string; sea
 }
 
 /** Where Google sends the person back to. It must match, exactly, an address saved on the Google OAuth client. */
-export const callbackUrl = (request: Request): string => `${siteOrigin(request)}/api/google-callback`;
+export const callbackUrl = (request: Request): string => `${siteOrigin(request)}/api/google/callback`;
 
 export function authorizeLink(options: { clientId: string; redirectUri: string; state: string }): string {
   const params = new URLSearchParams({

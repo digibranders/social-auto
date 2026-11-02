@@ -137,7 +137,7 @@ function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext):
     h(
       'div',
       { class: 'channel-actions' },
-      kind === 'google' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/google-start?brand=${encodeURIComponent(brand)}`)) : null,
+      kind === 'google' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(brand)}`)) : null,
       button('How to connect', 'btn', () => ctx.go({ page: 'help', channel: GUIDE_FOR[kind] })),
     ),
   );
@@ -215,7 +215,7 @@ export function channelPicker(
     if (kind === 'google') {
       note.replaceChildren(
         'Sign in with the Google account that manages the client’s business listing (the client adds you as a manager first). If it manages several locations, you choose one next.',
-        button('Connect Google', 'btn btn-primary', () => location.assign(`/api/google-start?brand=${encodeURIComponent(who.value)}`)),
+        button('Connect Google', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(who.value)}`)),
       );
       return;
     }

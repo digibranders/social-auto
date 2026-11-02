@@ -72,17 +72,17 @@ async function serveFile(res: ServerResponse, root: string, relative: string): P
 
 type Handler = (request: Request) => Response | Promise<Response>;
 const routes: Record<string, { method: string | string[]; load: () => Promise<Handler> } | undefined> = {
-  '/api/login': { method: 'POST', load: () => import('../api/login.ts').then((m) => m.POST) },
-  '/api/logout': { method: 'POST', load: () => import('../api/logout.ts').then((m) => m.POST as Handler) },
+  '/api/auth/login': { method: 'POST', load: () => import('../api/auth/[step].ts').then((m) => m.POST) },
+  '/api/auth/logout': { method: 'POST', load: () => import('../api/auth/[step].ts').then((m) => m.POST as Handler) },
   '/api/data': { method: 'GET', load: () => import('../api/data.ts').then((m) => m.GET) },
   '/api/facebook-start': { method: 'GET', load: () => import('../api/facebook-start.ts').then((m) => m.GET as Handler) },
   '/api/facebook-callback': { method: 'GET', load: () => import('../api/facebook-callback.ts').then((m) => m.GET) },
   '/api/linkedin-invite': { method: 'POST', load: () => import('../api/linkedin-invite.ts').then((m) => m.POST as Handler) },
   '/api/linkedin-start': { method: 'GET', load: () => import('../api/linkedin-start.ts').then((m) => m.GET as Handler) },
   '/api/linkedin-callback': { method: 'GET', load: () => import('../api/linkedin-callback.ts').then((m) => m.GET) },
-  '/api/google-start': { method: 'GET', load: () => import('../api/google-start.ts').then((m) => m.GET as Handler) },
-  '/api/google-callback': { method: 'GET', load: () => import('../api/google-callback.ts').then((m) => m.GET) },
-  '/api/google-pick': { method: ['GET', 'POST'], load: () => import('../api/google-pick.ts').then((m) => (request: Request) => (request.method === 'POST' ? m.POST(request) : m.GET(request))) },
+  '/api/google/start': { method: 'GET', load: () => import('../api/google/[step].ts').then((m) => m.GET) },
+  '/api/google/callback': { method: 'GET', load: () => import('../api/google/[step].ts').then((m) => m.GET) },
+  '/api/google/pick': { method: ['GET', 'POST'], load: () => import('../api/google/[step].ts').then((m) => (request: Request) => (request.method === 'POST' ? m.POST(request) : m.GET(request))) },
   '/api/disconnect': { method: 'POST', load: () => import('../api/disconnect.ts').then((m) => m.POST) },
   '/api/clients': { method: 'POST', load: () => import('../api/clients.ts').then((m) => m.POST) },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
