@@ -1,9 +1,9 @@
 import { isSignedIn } from './security.js';
 
-export type Platform = 'facebook' | 'linkedin';
+export type Platform = 'facebook' | 'linkedin' | 'instagram';
 export type Outcome = 'connected' | 'denied' | 'failed' | 'expired';
 
-const NAME: Record<Platform, string> = { facebook: 'Facebook', linkedin: 'LinkedIn' };
+const NAME: Record<Platform, string> = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram' };
 
 function messageFor(platform: Platform, outcome: Outcome): { title: string; body: string } {
   const name = NAME[platform];
@@ -20,7 +20,7 @@ function messageFor(platform: Platform, outcome: Outcome): { title: string; body
 }
 
 /**
- * Where a person lands after Facebook or LinkedIn sends them back. A person sent by a product returns to that
+ * Where a person lands after Facebook, Instagram or LinkedIn sends them back. A person sent by a product returns to that
  * product's page, which shows the result itself. A signed-in team member returns to the dashboard. Anyone else
  * (a client with no login) sees a plain thank-you page.
  */

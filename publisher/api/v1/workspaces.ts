@@ -21,7 +21,7 @@ function channelView(channel: Channel): Record<string, unknown> {
     platform: channel.platform,
     account: channelLabel(channel),
     connectedAt: channel.connectedAt,
-    ...(channel.platform === 'linkedin' ? { expiresAt: channel.expiresAt } : {}),
+    ...(channel.platform === 'linkedin' || channel.platform === 'instagram' ? { expiresAt: channel.expiresAt } : {}),
   };
 }
 

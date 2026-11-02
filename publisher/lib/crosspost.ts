@@ -19,6 +19,16 @@ export interface LinkedInApi {
   memberHealth(token: string): Promise<{ ok: boolean; error?: string }>;
 }
 
+/** What the posting code needs from Instagram; the real one is lib/instagram.ts, tests use stubs. */
+export interface InstagramApi {
+  createImageContainer(userId: string, token: string, imageUrl: string, caption: string): Promise<string>;
+  waitUntilReady(containerId: string, token: string): Promise<void>;
+  publishContainer(userId: string, token: string, containerId: string): Promise<string>;
+  permalink(mediaId: string, token: string): Promise<string>;
+  /** Whether the saved token is still accepted. */
+  tokenHealth(token: string): Promise<{ ok: boolean; error?: string }>;
+}
+
 export interface PostToSend {
   id: string;
   brand?: string;
@@ -139,6 +149,60 @@ export async function postToLinkedIn(options: {
       const posted = await api.postImage(token, channel.memberUrn, asset, post.caption, 'PUBLIC');
       await options.record(logKey, { remoteId: posted.urn, permalink: posted.url, postedAt: new Date(options.now).toISOString() });
       results.push({ ...base, status: 'posted', remoteId: posted.urn, permalink: posted.url });
+    } catch (error) {
+      results.push({ ...base, status: 'failed', error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return results;
+}
+
+/**
+ * Sends one post to every customer Instagram account connected for its client (the team's own account is handled
+ * separately by the daily job). Same rules as the others: each account is independent, nothing is sent twice, and
+ * an expired connection fails with a message that says what to do.
+ */
+export async function postToInstagram(options: {
+  post: PostToSend;
+  channels: ChannelFile;
+  key: Buffer;
+  origin: string;
+  log: PostedLog;
+  dryRun: boolean;
+  api: InstagramApi;
+  now: number;
+  record: (key: string, entry: PostedLog[string]) => Promise<void>;
+}): Promise<CrosspostResult[]> {
+  const { post, key, api } = options;
+  const results: CrosspostResult[] = [];
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'instagram').filter((c) => isWantedOn(post, c.id))) {
+    const base = { channel: channel.id, account: channelLabel(channel) };
+    const logKey = postedKey(post.id, channel.id);
+    try {
+      if (!belongsTo(post, channel)) {
+        results.push({ ...base, status: 'skipped-before-connection' });
+        continue;
+      }
+      const already = options.log[logKey];
+      if (already) {
+        results.push({ ...base, status: 'already-posted', remoteId: already.remoteId, permalink: already.permalink });
+        continue;
+      }
+      if (!post.image) throw new Error('the post has no picture to send');
+      if (Date.parse(channel.expiresAt) <= options.now) {
+        throw new Error(`The Instagram connection for ${channel.username} has expired. They need to open their connect link again and press Allow.`);
+      }
+      const token = channelToken(channel, key);
+      if (options.dryRun) {
+        const health = await api.tokenHealth(token);
+        results.push(health.ok ? { ...base, status: 'dry-run-ready' } : { ...base, status: 'failed', error: health.error ?? 'Instagram check failed' });
+        continue;
+      }
+      const container = await api.createImageContainer(channel.userId, token, `${options.origin}${post.image}`, post.caption);
+      await api.waitUntilReady(container, token);
+      const mediaId = await api.publishContainer(channel.userId, token, container);
+      const link = await api.permalink(mediaId, token).catch(() => '');
+      await options.record(logKey, { remoteId: mediaId, permalink: link || null, postedAt: new Date(options.now).toISOString() });
+      results.push({ ...base, status: 'posted', remoteId: mediaId, permalink: link || null });
     } catch (error) {
       results.push({ ...base, status: 'failed', error: error instanceof Error ? error.message : String(error) });
     }

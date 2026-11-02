@@ -1,7 +1,7 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { ClientsFile } from './clients.js';
 import type { CrosspostResult } from './crosspost.js';
-import type { LinkedInChannel } from './channels.js';
+import { channelLabel, type ExpiringChannel } from './channels.js';
 import type { Product } from './products.js';
 
 /** A message to a product about something that happened to one of its customers. */
@@ -63,13 +63,13 @@ export function eventsForResults(brand: string, postId: string, results: readonl
   });
 }
 
-/** What to tell a product when one of its customers' LinkedIn connections is about to end. */
-export function eventForExpiry(channel: LinkedInChannel, days: number, clients: ClientsFile, now: number): Addressed | null {
+/** What to tell a product when one of its customers' connections (LinkedIn or Instagram) is about to end. */
+export function eventForExpiry(channel: ExpiringChannel, days: number, clients: ClientsFile, now: number): Addressed | null {
   const owner = ownerOf(clients, channel.brand);
   if (!owner) return null;
   return {
     product: owner.product,
-    event: newEvent('connection.expiring', { externalId: owner.externalId, platform: 'linkedin', account: channel.memberName, daysLeft: days, expiresAt: channel.expiresAt }, now),
+    event: newEvent('connection.expiring', { externalId: owner.externalId, platform: channel.platform, account: channelLabel(channel), daysLeft: days, expiresAt: channel.expiresAt }, now),
   };
 }
 

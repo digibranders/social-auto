@@ -12,5 +12,6 @@ test('Instagram goes by its own name in a post, other channels by their id, and 
   const base = { avatar: null, brands: ['x'], ok: true };
   assert.equal(postChannelId({ ...base, id: null, platform: 'instagram', account: 'a' }), 'instagram');
   assert.equal(postChannelId({ ...base, id: 'linkedin:abc', platform: 'linkedin', account: 'a' }), 'linkedin:abc');
+  assert.equal(postChannelId({ ...base, id: 'instagram:17841400000000001', platform: 'instagram', account: 'a' }), 'instagram:17841400000000001');
   assert.equal(postChannelId({ ...base, id: null, platform: 'facebook', account: 'a' }), null);
 });

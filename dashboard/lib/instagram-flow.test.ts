@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { parseConnectCookie } from './facebook-flow.ts';
+import { authorizeLink, callbackUrl, clearedConnectCookie, connectCookie, INSTAGRAM_COOKIE } from './instagram-flow.ts';
+
+test('the link asks only to read the profile and publish posts, and names the way back', () => {
+  const link = new URL(authorizeLink({ appId: '123', redirectUri: 'https://cal.example/api/instagram-callback', state: 's' }));
+  assert.equal(link.origin + link.pathname, 'https://www.instagram.com/oauth/authorize');
+  assert.equal(link.searchParams.get('client_id'), '123');
+  assert.equal(link.searchParams.get('response_type'), 'code');
+  assert.equal(link.searchParams.get('scope'), 'instagram_business_basic,instagram_business_content_publish');
+  assert.equal(link.searchParams.get('state'), 's');
+  assert.equal(link.searchParams.get('redirect_uri'), 'https://cal.example/api/instagram-callback');
+});
+
+test('the cookie has its own name, round-trips the state, client and return address, and clears itself', () => {
+  const state = 'a'.repeat(32);
+  const cookie = connectCookie(state, 'brandbasket', 'https://app.brandbasket.in/social', true);
+  assert.ok(cookie.startsWith(`${INSTAGRAM_COOKIE}=`));
+  assert.match(cookie, /HttpOnly; Secure; SameSite=Lax; Path=\/api/);
+  const value = cookie.split(';')[0]!.split('=')[1];
+  assert.deepEqual(parseConnectCookie(value), { state, brand: 'brandbasket', returnUrl: 'https://app.brandbasket.in/social' });
+  assert.match(clearedConnectCookie(true), new RegExp(`^${INSTAGRAM_COOKIE}=; .*Max-Age=0`));
+});
+
+test('the way back follows the address the request came to, also behind a proxy', () => {
+  assert.equal(callbackUrl(new Request('http://localhost:4010/x', { headers: { host: 'localhost:4010' } })), 'http://localhost:4010/api/instagram-callback');
+  assert.equal(
+    callbackUrl(new Request('http://internal/x', { headers: { 'x-forwarded-host': 'cal.example', 'x-forwarded-proto': 'https' } })),
+    'https://cal.example/api/instagram-callback',
+  );
+});

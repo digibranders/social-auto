@@ -12,7 +12,7 @@ import { crosspostStatusFor } from '../lib/crosspost.js';
 import { channelLabel, channelToken, type ChannelFile, type PostedLog } from '../lib/channels.js';
 import { pageHealth } from '../lib/facebook.js';
 import { memberHealth } from '../lib/linkedin.js';
-import { accountProfile, mediaSince, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
+import { accountProfile, mediaSince, tokenHealth, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
 import { applyOverrides } from '../lib/overrides.js';
 import { toScheduled } from '../lib/manual.js';
 import { buildStatus, parseSchedule, type StatusPost } from '../lib/schedule.js';
@@ -58,8 +58,9 @@ async function lookUpChannels(channels: ChannelFile, now: number): Promise<Recor
       try {
         if (!key) health = { ok: false, error: keyProblem ?? 'no key' };
         else if (channel.platform === 'facebook') health = await pageHealth(channel.pageId, channelToken(channel, key));
-        else if (Date.parse(channel.expiresAt) <= now) health = { ok: false, error: 'The LinkedIn connection has expired. They need to connect again.' };
-        else health = await memberHealth(channelToken(channel, key));
+        else if (Date.parse(channel.expiresAt) <= now) health = { ok: false, error: `The ${channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram'} connection has expired. They need to connect again.` };
+        else if (channel.platform === 'linkedin') health = await memberHealth(channelToken(channel, key));
+        else health = await tokenHealth(channelToken(channel, key));
       } catch (error) {
         health = { ok: false, error: describeError(error) };
       }
@@ -133,7 +134,7 @@ export async function GET(request: Request): Promise<Response> {
           account: channelLabel(channel),
           avatar: null,
           brands: [channel.brand],
-          ...(channel.platform === 'linkedin' ? { expiresAt: channel.expiresAt } : {}),
+          ...(channel.platform === 'linkedin' || channel.platform === 'instagram' ? { expiresAt: channel.expiresAt } : {}),
           ...(channelHealth[channel.id] ?? { ok: false, error: 'not checked' }),
         })),
       ],

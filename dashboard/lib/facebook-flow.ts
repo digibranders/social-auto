@@ -25,14 +25,20 @@ export function newState(): string {
   return randomBytes(16).toString('hex');
 }
 
-export function connectCookie(state: string, brand: string, returnUrl: string | null = null, secure = process.env['COOKIE_INSECURE'] !== '1'): string {
+/** The cookie that remembers a connection in progress, under the given name (each platform has its own). */
+export function connectCookieFor(name: string, state: string, brand: string, returnUrl: string | null = null, secure = process.env['COOKIE_INSECURE'] !== '1'): string {
   const tail = returnUrl ? `.${Buffer.from(returnUrl).toString('base64url')}` : '';
-  return `${CONNECT_COOKIE}=${state}.${brand}${tail}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/api; Max-Age=${CONNECT_TTL_SECONDS}`;
+  return `${name}=${state}.${brand}${tail}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/api; Max-Age=${CONNECT_TTL_SECONDS}`;
 }
 
-export function clearedConnectCookie(secure = process.env['COOKIE_INSECURE'] !== '1'): string {
-  return `${CONNECT_COOKIE}=; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/api; Max-Age=0`;
+export function clearedCookieFor(name: string, secure = process.env['COOKIE_INSECURE'] !== '1'): string {
+  return `${name}=; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/api; Max-Age=0`;
 }
+
+export const connectCookie = (state: string, brand: string, returnUrl: string | null = null, secure?: boolean): string =>
+  connectCookieFor(CONNECT_COOKIE, state, brand, returnUrl, secure);
+
+export const clearedConnectCookie = (secure?: boolean): string => clearedCookieFor(CONNECT_COOKIE, secure);
 
 /** The state, client and (for a person sent by a product) the address to return to, or null when missing or malformed. */
 export function parseConnectCookie(value: string | undefined): { state: string; brand: string; returnUrl: string | null } | null {

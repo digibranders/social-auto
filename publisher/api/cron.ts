@@ -1,6 +1,6 @@
 /**
- * Daily Vercel Cron: publishes the post that is due today to Instagram and to every connected Facebook Page and LinkedIn profile
- * of its client, and sends a push alert when posting fails or a client's schedule is about to run out.
+ * Daily Vercel Cron: publishes the post that is due today to Instagram and to every connected Facebook Page, LinkedIn profile
+ * and customer Instagram account of its client, and sends a push alert when posting fails or a client's schedule is about to run out.
  * Each channel is independent: one failing never stops another.
  *
  * GET /api/cron            (called by Vercel Cron with Authorization: Bearer $CRON_SECRET)
@@ -9,8 +9,8 @@
  */
 import { schedule as scheduleData } from '../data/schedule.js';
 import { parseKey } from '../lib/crypto.js';
-import { expiringSoon } from '../lib/channels.js';
-import { postToFacebook, postToLinkedIn, type CrosspostResult, type FacebookApi, type LinkedInApi } from '../lib/crosspost.js';
+import { channelLabel, expiringSoon } from '../lib/channels.js';
+import { postToFacebook, postToInstagram, postToLinkedIn, type CrosspostResult, type FacebookApi, type InstagramApi, type LinkedInApi } from '../lib/crosspost.js';
 import { pageHealth, postLink, postPhotoFromUrl } from '../lib/facebook.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import {
@@ -18,6 +18,7 @@ import {
   permalink,
   publishContainer,
   recentMedia,
+  tokenHealth,
   waitUntilReady,
 } from '../lib/instagram.js';
 import { parseProducts } from '../lib/products.js';
@@ -32,6 +33,7 @@ import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted, saveP
 
 const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
 const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, memberHealth };
+const instagramApi: InstagramApi = { createImageContainer, waitUntilReady, publishContainer, permalink, tokenHealth };
 
 async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: boolean): Promise<Record<string, unknown>> {
   const token = requireEnv('INSTAGRAM_TOKEN');
@@ -51,7 +53,7 @@ async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: bool
   return { status: 'published', post: post.id, media: mediaId, permalink: link };
 }
 
-type Platform = 'facebook' | 'linkedin';
+type Platform = 'facebook' | 'linkedin' | 'instagram';
 
 /** Never throws: a problem here must not hide what happened on Instagram or another channel. */
 async function sendToChannels(platform: Platform, post: ScheduledPost, origin: string, dryRun: boolean): Promise<CrosspostResult[]> {
@@ -74,9 +76,9 @@ async function sendToChannels(platform: Platform, post: ScheduledPost, origin: s
         await savePosted({ ...latest.log, [logKey]: entry }, latest.etag);
       },
     };
-    return platform === 'facebook'
-      ? await postToFacebook({ ...common, api: facebookApi })
-      : await postToLinkedIn({ ...common, api: linkedInApi });
+    if (platform === 'facebook') return await postToFacebook({ ...common, api: facebookApi });
+    if (platform === 'linkedin') return await postToLinkedIn({ ...common, api: linkedInApi });
+    return await postToInstagram({ ...common, api: instagramApi });
   } catch (error) {
     return [{ channel: platform, account: platform, status: 'failed', error: describeError(error) }];
   }
@@ -94,8 +96,11 @@ async function tellProducts(post: ScheduledPost, results: readonly CrosspostResu
   }
 }
 
-/** LinkedIn gives no refresh, so tell the team before a connection ends (once a day, on 7, 3, 1 and 0 days left). */
-async function warnAboutExpiringLinkedIn(): Promise<void> {
+/**
+ * A connection with an end date (LinkedIn gives no refresh; an Instagram token is renewed weekly, so this means the
+ * renewal stopped working) is announced to the team and the product, once a day on 7, 3, 1 and 0 days left.
+ */
+async function warnAboutExpiringConnections(): Promise<void> {
   try {
     const { file } = await loadChannels();
     // A broken PRODUCTS setting must not stop the team's own warnings.
@@ -110,11 +115,12 @@ async function warnAboutExpiringLinkedIn(): Promise<void> {
     for (const { channel, days } of expiringSoon(file, Date.now())) {
       const item = eventForExpiry(channel, days, added, Date.now());
       if (item) await dispatch([item], products);
+      const name = channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram';
       await notify({
-        title: days === 0 ? 'LinkedIn connection ends today' : `LinkedIn connection ends in ${days} day${days === 1 ? '' : 's'}`,
+        title: days === 0 ? `${name} connection ends today` : `${name} connection ends in ${days} day${days === 1 ? '' : 's'}`,
         message:
-          `${channel.memberName} (${channel.brand}). Send them a new connect link from the dashboard ` +
-          '(Clients, the client, Channels, LinkedIn) and ask them to press Allow again. Posting to LinkedIn stops when it ends.',
+          `${channelLabel(channel)} (${channel.brand}). Send them a new connect link from the dashboard ` +
+          `(Clients, the client, Channels, ${name}) and ask them to press Allow again. Posting to ${name} stops when it ends.`,
         priority: days <= 1 ? 'high' : 'default',
       });
     }
@@ -150,7 +156,7 @@ export async function GET(request: Request): Promise<Response> {
           priority: postsLeft <= 1 ? 'high' : 'default',
         });
       }
-      await warnAboutExpiringLinkedIn();
+      await warnAboutExpiringConnections();
     }
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
@@ -167,9 +173,10 @@ export async function GET(request: Request): Promise<Response> {
         : { status: 'not-selected', post: post.id };
       const facebook = await sendToChannels('facebook', post, origin, dryRun);
       const linkedin = await sendToChannels('linkedin', post, origin, dryRun);
+      const accounts = await sendToChannels('instagram', post, origin, dryRun);
 
       if (!dryRun) {
-        await tellProducts(post, [...facebook, ...linkedin]);
+        await tellProducts(post, [...facebook, ...linkedin, ...accounts]);
         if (instagram['status'] === 'failed') {
           await notify({
             title: 'Instagram post failed',
@@ -178,7 +185,7 @@ export async function GET(request: Request): Promise<Response> {
             tags: 'rotating_light',
           });
         }
-        for (const [name, list] of [['Facebook', facebook], ['LinkedIn', linkedin]] as const) {
+        for (const [name, list] of [['Facebook', facebook], ['LinkedIn', linkedin], ['Instagram', accounts]] as const) {
           for (const result of list.filter((r) => r.status === 'failed')) {
             await notify({
               title: `${name} post failed`,
@@ -189,8 +196,8 @@ export async function GET(request: Request): Promise<Response> {
           }
         }
       }
-      failed ||= instagram['status'] === 'failed' || [...facebook, ...linkedin].some((r) => r.status === 'failed');
-      results.push({ ...instagram, facebook, linkedin });
+      failed ||= instagram['status'] === 'failed' || [...facebook, ...linkedin, ...accounts].some((r) => r.status === 'failed');
+      results.push({ ...instagram, facebook, linkedin, instagramAccounts: accounts });
     }
     // A single result keeps the answer's old shape; several (extra posts the same day) are listed.
     return json(failed ? 500 : 200, results.length === 1 ? (results[0] as Record<string, unknown>) : { posts: results });

@@ -15,8 +15,8 @@ export interface NewPostDeps {
   close(): void;
 }
 
-/** The id a channel goes by in a post: "instagram" for the shared Instagram account, else the channel's own id. */
-export const postChannelId = (channel: ChannelHealth): string | null => (channel.platform === 'instagram' ? 'instagram' : channel.id);
+/** The id a channel goes by in a post: its own id, or "instagram" for the team's shared Instagram account (which has none). */
+export const postChannelId = (channel: ChannelHealth): string | null => channel.id ?? (channel.platform === 'instagram' ? 'instagram' : null);
 
 /** Tomorrow as YYYY-MM-DD in the person's own calendar: the daily run is in the morning, so today is too late. */
 export function earliestDay(now: number): string {

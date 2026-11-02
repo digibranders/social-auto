@@ -77,6 +77,8 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/data': { method: 'GET', load: () => import('../api/data.ts').then((m) => m.GET) },
   '/api/facebook-start': { method: 'GET', load: () => import('../api/facebook-start.ts').then((m) => m.GET as Handler) },
   '/api/facebook-callback': { method: 'GET', load: () => import('../api/facebook-callback.ts').then((m) => m.GET) },
+  '/api/instagram-start': { method: 'GET', load: () => import('../api/instagram-start.ts').then((m) => m.GET as Handler) },
+  '/api/instagram-callback': { method: 'GET', load: () => import('../api/instagram-callback.ts').then((m) => m.GET) },
   '/api/linkedin-invite': { method: 'POST', load: () => import('../api/linkedin-invite.ts').then((m) => m.POST as Handler) },
   '/api/linkedin-start': { method: 'GET', load: () => import('../api/linkedin-start.ts').then((m) => m.GET as Handler) },
   '/api/linkedin-callback': { method: 'GET', load: () => import('../api/linkedin-callback.ts').then((m) => m.GET) },

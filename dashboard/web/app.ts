@@ -716,7 +716,7 @@ function panelHeader(): HTMLElement {
   );
 }
 
-/** Removes a Facebook Page or LinkedIn profile from a client after asking, then reloads the feed. */
+/** Removes a Facebook Page, LinkedIn profile or client Instagram account from a client after asking, then reloads the feed. */
 async function disconnect(channel: ChannelHealth): Promise<void> {
   if (!channel.id) return;
   const name = channel.account ?? 'this channel';
@@ -931,12 +931,13 @@ narrow.addEventListener('change', () => {
   render();
 });
 
-/** After coming back from Facebook or LinkedIn the address says what happened; show it once and tidy the address. */
+/** After coming back from Facebook, Instagram or LinkedIn the address says what happened; show it once and tidy the address. */
 function readNoticeFromAddress(): void {
   const query = new URLSearchParams(location.search);
   const facebook = query.get('facebook');
   const linkedin = query.get('linkedin');
-  if (!facebook && !linkedin) return;
+  const instagram = query.get('instagram');
+  if (!facebook && !linkedin && !instagram) return;
   const facebookMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
     connected: { kind: 'ok', text: 'Facebook connected. Posts from now on will also go to the approved Pages.' },
     denied: { kind: 'warn', text: 'Facebook was not connected: the approval was cancelled.' },
@@ -948,7 +949,13 @@ function readNoticeFromAddress(): void {
     denied: { kind: 'warn', text: 'LinkedIn was not connected: the approval was cancelled.' },
     failed: { kind: 'warn', text: 'LinkedIn could not be connected. Try again and press Allow.' },
   };
-  state.notice = (linkedin ? linkedinMessages[linkedin] : facebookMessages[facebook ?? '']) ?? null;
+  const instagramMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
+    connected: { kind: 'ok', text: 'Instagram connected. Posts from now on will also go to that account.' },
+    denied: { kind: 'warn', text: 'Instagram was not connected: the approval was cancelled.' },
+    failed: { kind: 'warn', text: 'Instagram could not be connected. It must be a Business or Creator account. Try again and press Allow.' },
+    expired: { kind: 'warn', text: 'The Instagram approval took longer than 30 minutes, so it was stopped. Start again.' },
+  };
+  state.notice = (instagram ? instagramMessages[instagram] : linkedin ? linkedinMessages[linkedin] : facebookMessages[facebook ?? '']) ?? null;
   history.replaceState(null, '', location.pathname);
 }
 
