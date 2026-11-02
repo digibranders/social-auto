@@ -5,29 +5,17 @@
  * POST /api/manual?action=create                 body: {"brand","day":"YYYY-MM-DD","caption","imageKey","channels":["instagram","linkedin:..."]}
  * POST /api/manual?action=delete&post=<id>       removes a hand-made post that has not gone out yet
  */
-import { randomBytes } from 'node:crypto';
 import { schedule as scheduleData } from '../data/schedule.js';
-import { channelsFor } from '../lib/channels.js';
 import { allBrands } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
-import { buildManualPost, isManualId, MAX_MANUAL_POSTS, toScheduled } from '../lib/manual.js';
-import { EditError, isEditable, MAX_IMAGE_BYTES, validateJpeg } from '../lib/overrides.js';
+import { removeNewPost, saveNewPost, storePicture } from '../lib/manual-service.js';
+import { EditError, MAX_IMAGE_BYTES } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
-import { deleteImage, loadChannels, loadClients, loadImage, loadManual, loadOverrides, saveImage, saveManual, saveOverrides, storeConfigured } from '../lib/store.js';
-
-async function imageExists(key: string): Promise<boolean> {
-  const stream = await loadImage(key);
-  await stream?.cancel();
-  return stream !== null;
-}
+import { loadClients, storeConfigured } from '../lib/store.js';
 
 async function addImage(request: Request): Promise<Response> {
   if (Number(request.headers.get('content-length') ?? 0) > MAX_IMAGE_BYTES) throw new EditError('picture is too large', 413);
-  const bytes = new Uint8Array(await request.arrayBuffer());
-  validateJpeg(bytes);
-  const imageKey = randomBytes(16).toString('hex');
-  await saveImage(imageKey, bytes);
-  return json(200, { imageKey });
+  return json(200, { imageKey: await storePicture(new Uint8Array(await request.arrayBuffer())) });
 }
 
 async function createPost(request: Request): Promise<Response> {
@@ -35,35 +23,15 @@ async function createPost(request: Request): Promise<Response> {
   if (typeof body !== 'object' || body === null) throw new EditError('send the post as JSON');
   const brand = body['brand'];
   const planned = new Set(parseSchedule(scheduleData).map((p) => p.brand ?? 'default'));
-  const [{ file: channels }, { file, etag }, { file: added }] = await Promise.all([loadChannels(), loadManual(), loadClients()]);
+  const { file: added } = await loadClients();
   if (typeof brand !== 'string' || !allBrands(planned, added).has(brand)) throw new EditError('unknown client');
-  if (file.posts.length >= MAX_MANUAL_POSTS) throw new EditError('too many extra posts are stored; delete some first');
   // The one Instagram account belongs to the clients the content job plans for; an added client cannot use it.
-  const allowed = [...(planned.has(brand) ? ['instagram'] : []), ...channelsFor(channels, brand).map((c) => c.id)];
-  const post = buildManualPost({ brand, day: body['day'], caption: body['caption'], imageKey: body['imageKey'], channels: body['channels'] }, allowed, Date.now());
-  if (!(await imageExists(post.imageKey))) throw new EditError('the picture was not found. Add it again.');
-
-  await saveManual({ posts: [...file.posts, post] }, etag);
+  const post = await saveNewPost({ brand, day: body['day'], caption: body['caption'], imageKey: body['imageKey'], channels: body['channels'] ?? [], allowInstagram: planned.has(brand) }, Date.now());
   return json(200, { post: post.id, date: post.date });
 }
 
 async function deletePost(id: string | null): Promise<Response> {
-  if (!id || !isManualId(id)) throw new EditError('post is required');
-  const { file, etag } = await loadManual();
-  const post = file.posts.find((p) => p.id === id);
-  if (!post) throw new EditError('no such post', 404);
-  if (!isEditable(toScheduled(post), Date.now())) throw new EditError('this post is already due or sent, so it can no longer be deleted', 409);
-
-  await saveManual({ posts: file.posts.filter((p) => p.id !== id) }, etag);
-  // Tidy up after the post is gone; a failure here only leaves an unused file behind.
-  const { overrides, etag: overridesEtag } = await loadOverrides();
-  const edit = overrides[id];
-  if (edit) {
-    const { [id]: _removed, ...rest } = overrides;
-    await saveOverrides(rest, overridesEtag).catch(() => undefined);
-    if (edit.imageKey) await deleteImage(edit.imageKey).catch(() => undefined);
-  }
-  await deleteImage(post.imageKey).catch(() => undefined);
+  await removeNewPost(id, Date.now());
   return json(200, { ok: true });
 }
 

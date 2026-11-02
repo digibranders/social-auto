@@ -73,3 +73,15 @@ test('a connect link is signed so the dashboard can trust the client and the ret
   assert.match(signature, /^[A-Za-z0-9_-]{43}$/);
   assert.notEqual(createInvite('t'.repeat(40), 'brandbasket-biz-123-e87367', 0), createInvite(secret, 'brandbasket-biz-123-e87367', 0));
 });
+
+test('a post for a product shows one overall state, published only when every channel has it', async () => {
+  const { overallState } = await import('./post-view.ts');
+  const at = Date.parse('2026-11-20T04:30:00Z');
+  const s = (...states: Array<'published' | 'scheduled' | 'due' | 'missed'>) => states.map((state) => ({ state }));
+  assert.equal(overallState(s('published', 'published'), at, at + 1), 'published');
+  assert.equal(overallState(s('published', 'missed'), at, at + 1), 'missed');
+  assert.equal(overallState(s('published', 'due'), at, at + 1), 'due');
+  assert.equal(overallState(s('scheduled'), at, at - 1), 'scheduled');
+  assert.equal(overallState([], at, at - 1), 'scheduled');
+  assert.equal(overallState([], at, at + 1), 'missed');
+});
