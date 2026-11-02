@@ -1,8 +1,9 @@
 /** Minimal LinkedIn client for posting a picture as a member ("Share on LinkedIn", scope w_member_social). */
 
-const AUTHORIZE = 'https://www.linkedin.com/oauth/v2/authorization';
-const TOKEN = 'https://www.linkedin.com/oauth/v2/accessToken';
-const API = 'https://api.linkedin.com';
+/** LinkedIn's addresses. The environment can point them at a pretend LinkedIn for local testing (see dev/fake-linkedin.ts). */
+const AUTHORIZE = process.env['LINKEDIN_AUTHORIZE_URL'] ?? 'https://www.linkedin.com/oauth/v2/authorization';
+const TOKEN = process.env['LINKEDIN_TOKEN_URL'] ?? 'https://www.linkedin.com/oauth/v2/accessToken';
+const API = process.env['LINKEDIN_API_URL'] ?? 'https://api.linkedin.com';
 
 /** Sign-in (OpenID: openid, profile) plus permission to post as the member. */
 export const LINKEDIN_SCOPES = ['openid', 'profile', 'w_member_social'] as const;
