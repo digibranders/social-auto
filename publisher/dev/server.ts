@@ -22,6 +22,7 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/cron': { method: 'GET', load: () => import('../api/cron.ts').then((m) => m.GET) },
   '/api/status': { method: 'GET', load: () => import('../api/status.ts').then((m) => m.GET) },
   '/api/channels': { method: 'POST', load: () => import('../api/channels.ts').then((m) => m.POST) },
+  '/api/v1/workspaces': { method: 'ANY', load: async () => { const m = await import('../api/v1/workspaces.ts'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
   '/api/clients': { method: 'POST', load: () => import('../api/clients.ts').then((m) => m.POST) },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
@@ -40,7 +41,7 @@ async function toRequest(req: IncomingMessage): Promise<Request> {
 
 createServer(async (req, res) => {
   const route = routes[new URL(req.url ?? '/', `http://${req.headers.host}`).pathname];
-  if (!route || req.method !== route.method) {
+  if (!route || (route.method !== 'ANY' && req.method !== route.method)) {
     res.statusCode = route ? 405 : 404;
     return void res.end();
   }

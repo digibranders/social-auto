@@ -136,7 +136,7 @@ export interface StatusPost {
 
 export interface StatusSummary {
   posts: StatusPost[];
-  runway: Array<{ brand: string; postsLeft: number; /** Added in the dashboard, so it has no planned posts and can be removed. */ added?: true }>;
+  runway: Array<{ brand: string; postsLeft: number; /** Added in the dashboard, so it has no planned posts and can be removed. */ added?: true; /** The name to show, for a client a product created. */ name?: string; /** The product that created it. */ product?: string }>;
 }
 
 /**
