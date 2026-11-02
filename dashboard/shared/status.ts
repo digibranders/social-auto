@@ -47,6 +47,8 @@ export interface ChannelHealth {
   brands: string[];
   ok: boolean;
   error?: string;
+  /** LinkedIn connections end on this date unless the member connects again. */
+  expiresAt?: string;
 }
 
 export interface StatusResponse {
@@ -103,6 +105,8 @@ export function parseStatus(raw: unknown): StatusResponse {
     const where = `channels[${i}]`;
     const channel = record(item, where);
     const error = textOrNull(channel, 'error', where);
+    const expiresAt = textOrNull(channel, 'expiresAt', where);
+    if (expiresAt && Number.isNaN(Date.parse(expiresAt))) throw new StatusParseError(`${where}.expiresAt is not a date`);
     return {
       id: textOrNull(channel, 'id', where),
       platform: oneOf(text(channel, 'platform', where), PLATFORMS, `${where}.platform`),
@@ -114,6 +118,7 @@ export function parseStatus(raw: unknown): StatusResponse {
       }),
       ok: channel['ok'] === true,
       ...(error ? { error } : {}),
+      ...(expiresAt ? { expiresAt } : {}),
     };
   });
 

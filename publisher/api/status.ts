@@ -8,9 +8,10 @@
 import { schedule as scheduleData } from '../data/schedule.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import { parseKey } from '../lib/crypto.js';
-import { facebookStatusFor } from '../lib/crosspost.js';
-import { channelToken, type ChannelFile } from '../lib/channels.js';
+import { crosspostStatusFor } from '../lib/crosspost.js';
+import { channelLabel, channelToken, type ChannelFile } from '../lib/channels.js';
 import { pageHealth } from '../lib/facebook.js';
+import { memberHealth } from '../lib/linkedin.js';
 import { accountProfile, mediaSince, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
 import { applyOverrides } from '../lib/overrides.js';
 import { buildStatus, parseSchedule } from '../lib/schedule.js';
@@ -32,10 +33,10 @@ interface InstagramView {
   health: Health;
 }
 
-/** Page checks are remembered for a minute per saved token, so a newly connected Page is checked at once. */
-const facebookCache = new Map<string, { at: number; health: Health }>();
+/** Page and profile checks are remembered for a minute per saved token, so a newly connected Page is checked at once. */
+const channelCache = new Map<string, { at: number; health: Health }>();
 
-async function lookUpFacebook(channels: ChannelFile, now: number): Promise<Record<string, Health>> {
+async function lookUpChannels(channels: ChannelFile, now: number): Promise<Record<string, Health>> {
   let key: Buffer | null = null;
   let keyProblem: string | null = null;
   try {
@@ -47,18 +48,21 @@ async function lookUpFacebook(channels: ChannelFile, now: number): Promise<Recor
   await Promise.all(
     channels.channels.map(async (channel) => {
       const cacheKey = `${channel.id}|${channel.token}`;
-      const cached = facebookCache.get(cacheKey);
+      const cached = channelCache.get(cacheKey);
       if (cached && now - cached.at < CACHE_MS) {
         result[channel.id] = cached.health;
         return;
       }
       let health: Health;
       try {
-        health = key ? await pageHealth(channel.pageId, channelToken(channel, key)) : { ok: false, error: keyProblem ?? 'no key' };
+        if (!key) health = { ok: false, error: keyProblem ?? 'no key' };
+        else if (channel.platform === 'facebook') health = await pageHealth(channel.pageId, channelToken(channel, key));
+        else if (Date.parse(channel.expiresAt) <= now) health = { ok: false, error: 'The LinkedIn connection has expired. They need to connect again.' };
+        else health = await memberHealth(channelToken(channel, key));
       } catch (error) {
         health = { ok: false, error: describeError(error) };
       }
-      facebookCache.set(cacheKey, { at: now, health });
+      channelCache.set(cacheKey, { at: now, health });
       result[channel.id] = health;
     }),
   );
@@ -101,7 +105,7 @@ export async function GET(request: Request): Promise<Response> {
 
     // One Instagram account carries every client for now; a second account would need its own entry here.
     const brands = [...new Set(posts.map((p) => p.brand ?? 'default'))];
-    const facebookHealth = await lookUpFacebook(channels, now);
+    const channelHealth = await lookUpChannels(channels, now);
     const summary = buildStatus(posts, media, now, origin);
     return json(200, {
       generatedAt: new Date(now).toISOString(),
@@ -110,14 +114,15 @@ export async function GET(request: Request): Promise<Response> {
         ...channels.channels.map((channel) => ({
           id: channel.id,
           platform: channel.platform,
-          account: channel.pageName,
+          account: channelLabel(channel),
           avatar: null,
           brands: [channel.brand],
-          ...(facebookHealth[channel.id] ?? { ok: false, error: 'not checked' }),
+          ...(channel.platform === 'linkedin' ? { expiresAt: channel.expiresAt } : {}),
+          ...(channelHealth[channel.id] ?? { ok: false, error: 'not checked' }),
         })),
       ],
       ...summary,
-      posts: summary.posts.map((p) => ({ ...p, crossposts: facebookStatusFor(p, channels, posted, now) })),
+      posts: summary.posts.map((p) => ({ ...p, crossposts: crosspostStatusFor(p, channels, posted, now) })),
     });
   } catch (error) {
     console.error(describeError(error));

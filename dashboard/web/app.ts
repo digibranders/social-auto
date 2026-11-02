@@ -693,10 +693,10 @@ function panelHeader(): HTMLElement {
   );
 }
 
-/** Removes a Facebook Page from a client after asking, then reloads the feed. */
+/** Removes a Facebook Page or LinkedIn profile from a client after asking, then reloads the feed. */
 async function disconnect(channel: ChannelHealth): Promise<void> {
   if (!channel.id) return;
-  const name = channel.account ?? 'this Page';
+  const name = channel.account ?? 'this channel';
   if (!confirm(`Disconnect ${name}? New posts will stop going to it. You can connect it again later.`)) return;
   try {
     const response = await fetch(`/api/disconnect?id=${encodeURIComponent(channel.id)}`, { method: 'POST', credentials: 'same-origin' });
@@ -816,16 +816,23 @@ narrow.addEventListener('change', () => {
   render();
 });
 
-/** After coming back from Facebook the address says what happened; show it once and tidy the address. */
+/** After coming back from Facebook or LinkedIn the address says what happened; show it once and tidy the address. */
 function readNoticeFromAddress(): void {
-  const result = new URLSearchParams(location.search).get('facebook');
-  if (!result) return;
-  const messages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
+  const query = new URLSearchParams(location.search);
+  const facebook = query.get('facebook');
+  const linkedin = query.get('linkedin');
+  if (!facebook && !linkedin) return;
+  const facebookMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
     connected: { kind: 'ok', text: 'Facebook connected. Posts from now on will also go to the approved Pages.' },
     denied: { kind: 'warn', text: 'Facebook was not connected: the approval was cancelled.' },
     failed: { kind: 'warn', text: 'Facebook could not be connected. Try again, and choose at least one Page you manage.' },
   };
-  state.notice = messages[result] ?? null;
+  const linkedinMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
+    connected: { kind: 'ok', text: 'LinkedIn connected. Posts from now on will also go to that profile.' },
+    denied: { kind: 'warn', text: 'LinkedIn was not connected: the approval was cancelled.' },
+    failed: { kind: 'warn', text: 'LinkedIn could not be connected. Try again and press Allow.' },
+  };
+  state.notice = (linkedin ? linkedinMessages[linkedin] : facebookMessages[facebook ?? '']) ?? null;
   history.replaceState(null, '', location.pathname);
 }
 

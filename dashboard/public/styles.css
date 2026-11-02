@@ -406,3 +406,9 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .channel > .status-mark { margin-left: auto; }
 .option-text { display: grid; min-width: 0; }
 .option-state { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--published); font-weight: 600; white-space: nowrap; }
+
+.link-box { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; margin-top: 6px; }
+.link-result { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%; }
+.link-result[hidden], .link-box [hidden] { display: none; }
+.link-field { flex: 1 1 260px; min-width: 0; font: inherit; font-size: 0.85rem; color: var(--text); background: var(--panel); border: 1px solid var(--cell-border); border-radius: var(--radius); padding: 8px 10px; }
+.link-result p { flex-basis: 100%; margin: 0; }

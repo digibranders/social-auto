@@ -151,3 +151,20 @@ export async function deletePost(token: string, urn: string): Promise<void> {
   });
   if (!response.ok && response.status !== 204) throw new LinkedInApiError('delete post', `status ${response.status}`);
 }
+
+/** The poster picture's bytes, fetched from the public address the other channels also use. */
+export async function fetchImage(url: string): Promise<Uint8Array> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new LinkedInApiError('picture download', `${url} answered ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+}
+
+/** Whether LinkedIn still accepts the saved token. */
+export async function memberHealth(token: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await memberOf(token);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}

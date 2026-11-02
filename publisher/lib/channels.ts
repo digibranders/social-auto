@@ -1,7 +1,7 @@
 import { decrypt, encrypt } from './crypto.js';
 import type { FacebookPage } from './facebook.js';
 
-/** A connected place to post, belonging to one client (brand). Tokens are stored encrypted. */
+/** A Facebook Page connected for a client (brand). Tokens are stored encrypted. */
 export interface FacebookChannel {
   /** "facebook:<page id>" */
   id: string;
@@ -14,7 +14,22 @@ export interface FacebookChannel {
   connectedAt: string;
 }
 
-export type Channel = FacebookChannel;
+/** A person's LinkedIn profile connected for a client. The client approved the app themselves. */
+export interface LinkedInChannel {
+  /** "linkedin:<member id>" */
+  id: string;
+  platform: 'linkedin';
+  brand: string;
+  /** "urn:li:person:<id>": the author of every post. */
+  memberUrn: string;
+  memberName: string;
+  /** Encrypted access token. LinkedIn gives self-serve apps no refresh token, so it ends at expiresAt. */
+  token: string;
+  expiresAt: string;
+  connectedAt: string;
+}
+
+export type Channel = FacebookChannel | LinkedInChannel;
 
 export interface ChannelFile {
   channels: Channel[];
@@ -30,14 +45,27 @@ export type PostedLog = Record<string, PostedEntry>;
 
 export const postedKey = (postId: string, channelId: string): string => `${postId}|${channelId}`;
 
+/** The name people see for a channel: the Page, or the member. */
+export const channelLabel = (channel: Channel): string => (channel.platform === 'facebook' ? channel.pageName : channel.memberName);
+
+function requireText(c: Record<string, unknown>, keys: readonly string[], i: number): void {
+  for (const key of keys) {
+    if (typeof c[key] !== 'string' || !c[key]) throw new Error(`channels[${i}].${key} must be a non-empty string`);
+  }
+}
+
 export function parseChannels(raw: unknown): ChannelFile {
   const list = (raw as { channels?: unknown } | null)?.channels;
   if (!Array.isArray(list)) throw new Error('channels file must contain a "channels" array');
   const channels = list.map((c: Record<string, unknown>, i): Channel => {
-    for (const key of ['id', 'brand', 'pageId', 'pageName', 'token', 'connectedAt'] as const) {
-      if (typeof c[key] !== 'string' || !c[key]) throw new Error(`channels[${i}].${key} must be a non-empty string`);
+    if (c['platform'] === 'facebook') {
+      requireText(c, ['id', 'brand', 'pageId', 'pageName', 'token', 'connectedAt'], i);
+    } else if (c['platform'] === 'linkedin') {
+      requireText(c, ['id', 'brand', 'memberUrn', 'memberName', 'token', 'expiresAt', 'connectedAt'], i);
+      if (Number.isNaN(Date.parse(c['expiresAt'] as string))) throw new Error(`channels[${i}].expiresAt is not a date`);
+    } else {
+      throw new Error(`channels[${i}].platform is not supported`);
     }
-    if (c['platform'] !== 'facebook') throw new Error(`channels[${i}].platform is not supported`);
     return c as unknown as Channel;
   });
   return { channels };
@@ -69,6 +97,29 @@ export function addFacebookPages(file: ChannelFile, brand: string, pages: Facebo
   return { channels: [...file.channels.filter((c) => !ids.has(c.id)), ...incoming] };
 }
 
+/** Saves a member's LinkedIn connection for a client. Connecting again replaces the old token. */
+export function addLinkedInMember(
+  file: ChannelFile,
+  brand: string,
+  member: { urn: string; name: string },
+  accessToken: string,
+  expiresInSeconds: number,
+  key: Buffer,
+  now: number,
+): ChannelFile {
+  const channel: LinkedInChannel = {
+    id: `linkedin:${member.urn.split(':').pop()}`,
+    platform: 'linkedin',
+    brand,
+    memberUrn: member.urn,
+    memberName: member.name,
+    token: encrypt(accessToken, key),
+    expiresAt: new Date(now + expiresInSeconds * 1000).toISOString(),
+    connectedAt: new Date(now).toISOString(),
+  };
+  return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
+}
+
 export function removeChannel(file: ChannelFile, id: string): ChannelFile {
   return { channels: file.channels.filter((c) => c.id !== id) };
 }
@@ -77,7 +128,26 @@ export function channelToken(channel: Channel, key: Buffer): string {
   return decrypt(channel.token, key);
 }
 
-/** The channels of one client. */
-export function channelsFor(file: ChannelFile, brand: string): Channel[] {
-  return file.channels.filter((c) => c.brand === brand);
+/** The channels of one client, optionally of one kind. */
+export function channelsFor<P extends Channel['platform']>(
+  file: ChannelFile,
+  brand: string,
+  platform?: P,
+): Array<Extract<Channel, { platform: P }>> {
+  return file.channels.filter((c) => c.brand === brand && (!platform || c.platform === platform)) as Array<Extract<Channel, { platform: P }>>;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Whole days until a LinkedIn connection ends (negative once it has). */
+export const daysLeft = (channel: LinkedInChannel, now: number): number => Math.floor((Date.parse(channel.expiresAt) - now) / DAY_MS);
+
+/** Warn when this many whole days are left. The daily job runs once a day, so each value fires once. */
+export const EXPIRY_WARN_AT: readonly number[] = [7, 3, 1, 0];
+
+export function expiringSoon(file: ChannelFile, now: number): Array<{ channel: LinkedInChannel; days: number }> {
+  return file.channels
+    .filter((c): c is LinkedInChannel => c.platform === 'linkedin')
+    .map((channel) => ({ channel, days: daysLeft(channel, now) }))
+    .filter(({ days }) => EXPIRY_WARN_AT.includes(days));
 }
