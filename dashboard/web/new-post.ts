@@ -1,4 +1,5 @@
 import { captionProblem, captionStats, MAX_CAPTION_LENGTH, MAX_HASHTAGS } from './calendar.ts';
+import { clientOption, dropdown } from './dropdown.ts';
 import { brandMark, button, h, platformLabel } from './ui.ts';
 import type { ChannelHealth } from '../shared/status.ts';
 
@@ -25,12 +26,7 @@ export function earliestDay(now: number): string {
 
 /** The New post window: pick the client, the channels, the day, a picture and the words. */
 export function newPostForm(brand: string | null, preselect: string | null, deps: NewPostDeps): HTMLElement {
-  const who = h('select', { class: 'btn client-select', 'aria-label': 'Client' });
-  for (const client of deps.clients) {
-    const option = h('option', { value: client.brand }, client.label);
-    if (client.brand === (brand ?? deps.clients[0]?.brand)) option.selected = true;
-    who.append(option);
-  }
+  const who = dropdown(deps.clients.map((c) => clientOption(c.brand, c.label)), brand ?? deps.clients[0]?.brand ?? '', 'Client');
 
   const boxes = h('div', { class: 'channel-checks' });
   const ticked = new Set<string>(preselect ? [preselect] : []);
