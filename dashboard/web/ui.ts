@@ -1,13 +1,13 @@
 /** Small drawing helpers shared by every screen. Text always goes in as text, never as HTML. */
 import type { Platform } from '../shared/status.ts';
 
-export const PLATFORM_LABELS: Record<Platform, string> = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn' };
+export const PLATFORM_LABELS: Record<Platform, string> = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', google: 'Google Business' };
 
 export const platformLabel = (platform: Platform): string => PLATFORM_LABELS[platform];
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 /** Platform marks as simple shapes (white on the platform's colour, set in CSS), drawn here so nothing is fetched. */
-const LOGOS: Record<Platform, string[]> = {
+const LOGOS: Record<Exclude<Platform, 'google'>, string[]> = {
   facebook: ['M13.5 21v-7.5h2.6l.4-3h-3V8.6c0-.9.3-1.5 1.5-1.5h1.6V4.4c-.3 0-1.2-.1-2.3-.1-2.3 0-3.9 1.4-3.9 4v2.2H8v3h2.4V21h3.1z'],
   linkedin: [
     'M6.9 9.5h2.6V18H6.9z',
@@ -52,6 +52,16 @@ export function logo(platform: Platform): SVGSVGElement {
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('class', `logo logo-${platform}`);
   svg.setAttribute('aria-hidden', 'true');
+  if (platform === 'google') {
+    // Google Business: a plain white G on the platform's colour.
+    const text = document.createElementNS(SVG_NS, 'text');
+    text.setAttribute('x', '12');
+    text.setAttribute('y', '17.5');
+    text.setAttribute('text-anchor', 'middle');
+    text.textContent = 'G';
+    svg.append(text);
+    return svg;
+  }
   const add = (tag: string, attributes: Record<string, string>): void => {
     const element = document.createElementNS(SVG_NS, tag);
     for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, value);
@@ -88,27 +98,13 @@ export function button(content: Child | Child[], className: string, onClick: () 
 }
 
 
-/** The channels the guides and the Add channel window talk about; Google has no feed platform yet. */
-export type ChannelKind = Platform | 'google';
+/** The channels the guides and the Add channel window talk about. */
+export type ChannelKind = Platform;
 
-/** A mark for any channel kind, including Google Business (a coloured G). */
-export function channelLogo(kind: ChannelKind): SVGSVGElement {
-  if (kind !== 'google') return logo(kind);
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
-  svg.setAttribute('class', 'logo logo-google');
-  svg.setAttribute('aria-hidden', 'true');
-  const text = document.createElementNS(SVG_NS, 'text');
-  text.setAttribute('x', '12');
-  text.setAttribute('y', '17.5');
-  text.setAttribute('text-anchor', 'middle');
-  text.textContent = 'G';
-  svg.append(text);
-  return svg;
-}
+/** A mark for any channel kind. */
+export const channelLogo = (kind: ChannelKind): SVGSVGElement => logo(kind);
 
-export const channelName = (kind: ChannelKind): string =>
-  kind === 'google' ? 'Google Business' : kind === 'facebook' ? 'Facebook Page' : platformLabel(kind);
+export const channelName = (kind: ChannelKind): string => (kind === 'facebook' ? 'Facebook Page' : platformLabel(kind));
 
 let gradientCount = 0;
 

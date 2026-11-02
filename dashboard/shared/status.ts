@@ -4,10 +4,10 @@
  */
 
 export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown';
-export type Platform = 'instagram' | 'facebook' | 'linkedin';
+export type Platform = 'instagram' | 'facebook' | 'linkedin' | 'google';
 
 export const POST_STATES: readonly PostState[] = ['published', 'scheduled', 'due', 'missed', 'unknown'];
-export const PLATFORMS: readonly Platform[] = ['instagram', 'facebook', 'linkedin'];
+export const PLATFORMS: readonly Platform[] = ['instagram', 'facebook', 'linkedin', 'google'];
 
 export interface StatusPost {
   id: string;
@@ -41,7 +41,7 @@ export interface Crosspost {
 }
 
 export interface ChannelHealth {
-  /** Set for channels that can be disconnected, e.g. "facebook:<page id>". */
+  /** Set for channels that can be disconnected, e.g. "facebook:<page id>" or "google:<location id>". */
   id: string | null;
   platform: Platform;
   account: string | null;

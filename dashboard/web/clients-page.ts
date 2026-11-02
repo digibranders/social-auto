@@ -96,7 +96,7 @@ export function inviteLinkBox(brand: string, label: string): HTMLElement {
 }
 
 function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsContext): HTMLElement {
-  const canDisconnect = (channel.platform === 'facebook' || channel.platform === 'linkedin') && channel.id !== null;
+  const canDisconnect = channel.platform !== 'instagram' && channel.id !== null;
   const expiry = channel.platform === 'linkedin' ? expiryNote(channel.expiresAt, Date.now()) : null;
   return h(
     'div',
@@ -127,17 +127,17 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
 }
 
 function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext): HTMLElement {
-  const comingSoon = kind === 'google';
   return h(
     'div',
     { class: 'channel-row' },
     h('span', { class: 'mark mark-big' }, brandMark(kind)),
-    h('div', { class: 'channel-meta' }, h('b', {}, channelName(kind)), h('span', { class: 'muted' }, comingSoon ? 'Not connected · connecting from the dashboard comes later' : 'Not connected'),
+    h('div', { class: 'channel-meta' }, h('b', {}, channelName(kind)), h('span', { class: 'muted' }, 'Not connected'),
       kind === 'linkedin' ? inviteLinkBox(brand, 'Get a link for the client') : null,
     ),
     h(
       'div',
       { class: 'channel-actions' },
+      kind === 'google' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/google-start?brand=${encodeURIComponent(brand)}`)) : null,
       button('How to connect', 'btn', () => ctx.go({ page: 'help', channel: GUIDE_FOR[kind] })),
     ),
   );
@@ -159,7 +159,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     { class: 'panel-card' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Channels'), button([icon('plus'), 'Add channel'], 'btn btn-primary', () => ctx.addChannel(client.brand))),
     ...client.channels.map((c) => channelRow(client, c, ctx)),
-    ...KINDS.filter((k) => k === 'google' || !connected.has(k)).map((k) => notConnectedRow(client.brand, k, ctx)),
+    ...KINDS.filter((k) => !connected.has(k)).map((k) => notConnectedRow(client.brand, k, ctx)),
   );
 
   const next = client.upcoming.slice(0, UPCOMING_SHOWN);
@@ -212,6 +212,13 @@ export function channelPicker(
       );
       return;
     }
+    if (kind === 'google') {
+      note.replaceChildren(
+        'Sign in with the Google account that manages the client’s business listing (the client adds you as a manager first). If it manages several locations, you choose one next.',
+        button('Connect Google', 'btn btn-primary', () => location.assign(`/api/google-start?brand=${encodeURIComponent(who.value)}`)),
+      );
+      return;
+    }
     note.textContent =
       kind === 'instagram'
         ? 'Instagram is connected with a token for now. The guide lists every step.'
@@ -223,7 +230,7 @@ export function channelPicker(
   const option = (kind: ChannelKind, sub: string): HTMLElement => {
     const slot = h('span', { class: 'option-state' });
     ticks.push(() => {
-      const has = kind !== 'google' && (connected[who.value] ?? []).includes(kind);
+      const has = (connected[who.value] ?? []).includes(kind);
       slot.replaceChildren(...(has ? [statusMark(true), ' Connected'] : []));
     });
     return button([h('span', { class: 'mark mark-big' }, brandMark(kind)), h('span', { class: 'option-text' }, h('b', {}, channelName(kind)), h('small', {}, sub)), slot], 'option', () => choose(kind));
@@ -244,7 +251,7 @@ export function channelPicker(
       option('instagram', 'Business or Creator account'),
       option('facebook', 'A Page you manage'),
       option('linkedin', 'A personal profile'),
-      option('google', 'Posts on the business listing'),
+      option('google', 'Updates on the business listing'),
     ),
     h('h3', { class: 'label' }, 'More networks, coming later'),
     h('div', { class: 'options' }, soon('X', 'X'), soon('@', 'Threads'), soon('♪', 'TikTok'), soon('▶', 'YouTube'), soon('P', 'Pinterest')),

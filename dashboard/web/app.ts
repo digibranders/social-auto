@@ -28,6 +28,7 @@ import {
 } from './calendar.ts';
 import { applyStoredTheme, currentTheme, setTheme } from './theme.ts';
 import { brandMark, button, h, icon, platformLabel, statusMark, type Child } from './ui.ts';
+import { googleLocationPicker } from './google-pick.ts';
 import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
 import { summarizeClients, type ClientSummary } from './clients.ts';
 import { helpPage } from './help-page.ts';
@@ -931,12 +932,16 @@ narrow.addEventListener('change', () => {
   render();
 });
 
-/** After coming back from Facebook or LinkedIn the address says what happened; show it once and tidy the address. */
+/** Set when Google found several locations, so the choice opens once the page is ready. */
+let pickGoogleLocation = false;
+
+/** After coming back from Facebook, LinkedIn or Google the address says what happened; show it once and tidy the address. */
 function readNoticeFromAddress(): void {
   const query = new URLSearchParams(location.search);
   const facebook = query.get('facebook');
   const linkedin = query.get('linkedin');
-  if (!facebook && !linkedin) return;
+  const google = query.get('google');
+  if (!facebook && !linkedin && !google) return;
   const facebookMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
     connected: { kind: 'ok', text: 'Facebook connected. Posts from now on will also go to the approved Pages.' },
     denied: { kind: 'warn', text: 'Facebook was not connected: the approval was cancelled.' },
@@ -948,7 +953,14 @@ function readNoticeFromAddress(): void {
     denied: { kind: 'warn', text: 'LinkedIn was not connected: the approval was cancelled.' },
     failed: { kind: 'warn', text: 'LinkedIn could not be connected. Try again and press Allow.' },
   };
-  state.notice = (linkedin ? linkedinMessages[linkedin] : facebookMessages[facebook ?? '']) ?? null;
+  const googleMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
+    connected: { kind: 'ok', text: 'Google connected. Posts from now on will also go to the listing as updates.' },
+    denied: { kind: 'warn', text: 'Google was not connected: the approval was cancelled.' },
+    failed: { kind: 'warn', text: 'Google could not be connected. Try again with the account that manages the listing.' },
+    nolocation: { kind: 'warn', text: 'That Google account manages no business location. The client must add it as a manager first.' },
+  };
+  if (google === 'choose') pickGoogleLocation = true;
+  state.notice = (google ? googleMessages[google] : linkedin ? linkedinMessages[linkedin] : facebookMessages[facebook ?? '']) ?? null;
   history.replaceState(null, '', location.pathname);
 }
 
@@ -962,5 +974,9 @@ applyStoredTheme();
 readNoticeFromAddress();
 loadPrefs();
 render();
+if (pickGoogleLocation) {
+  picker.replaceChildren(googleLocationPicker((result) => { state.notice = result; void load(); }, () => picker.close()));
+  picker.showModal();
+}
 void load();
 setInterval(() => void load(), REFRESH_MS);

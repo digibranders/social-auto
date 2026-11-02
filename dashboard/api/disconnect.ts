@@ -1,11 +1,11 @@
 /**
- * POST /api/disconnect?id=facebook:<page id> or linkedin:<member id>
+ * POST /api/disconnect?id=facebook:<page id> or linkedin:<member id> or google:<location id>
  * Removes a connected channel. Signed-in people only, from this site's own pages only; the publisher does the work.
  */
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
-const CHANNEL_ID = /^(facebook:\d{5,25}|linkedin:[A-Za-z0-9_-]{4,64})$/;
+const CHANNEL_ID = /^(facebook:\d{5,25}|linkedin:[A-Za-z0-9_-]{4,64}|google:\d{1,25})$/;
 const TIMEOUT_MS = 25_000;
 
 export async function POST(request: Request): Promise<Response> {
