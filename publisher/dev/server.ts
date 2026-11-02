@@ -22,6 +22,7 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/cron': { method: 'GET', load: () => import('../api/cron.ts').then((m) => m.GET) },
   '/api/status': { method: 'GET', load: () => import('../api/status.ts').then((m) => m.GET) },
   '/api/channels': { method: 'POST', load: () => import('../api/channels.ts').then((m) => m.POST) },
+  '/api/clients': { method: 'POST', load: () => import('../api/clients.ts').then((m) => m.POST) },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
   '/api/edited-image': { method: 'GET', load: () => import('../api/edited-image.ts').then((m) => m.GET) },

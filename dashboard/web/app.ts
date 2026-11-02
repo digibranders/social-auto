@@ -29,8 +29,9 @@ import {
 import { applyStoredTheme, currentTheme, setTheme } from './theme.ts';
 import { brandMark, button, h, icon, platformLabel, statusMark, type Child } from './ui.ts';
 import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
-import { summarizeClients } from './clients.ts';
+import { summarizeClients, type ClientSummary } from './clients.ts';
 import { helpPage } from './help-page.ts';
+import { addClientForm } from './add-client.ts';
 import { newPostForm } from './new-post.ts';
 import { parseRoute, routeHash, type Route } from './route.ts';
 
@@ -778,6 +779,46 @@ function openNewPost(brand: string | null, channel: string | null): void {
   picker.showModal();
 }
 
+/** Adds a client, then opens its page so the channels can be connected. */
+async function submitNewClient(name: string): Promise<string | null> {
+  try {
+    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    if (response.status === 401) {
+      location.replace('/login');
+      return 'You were signed out.';
+    }
+    const answer = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!response.ok || typeof answer?.['brand'] !== 'string') return messageOf(answer) ?? `The server answered ${response.status}`;
+    picker.close();
+    state.notice = { kind: 'ok', text: 'Client added. Connect their channels next.' };
+    await load();
+    go({ page: 'client', brand: answer['brand'], tab: 'channels' });
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+function openAddClient(): void {
+  picker.replaceChildren(addClientForm({ submit: submitNewClient, close: () => picker.close() }));
+  picker.showModal();
+}
+
+/** Removes a client that was added in the dashboard, after asking. The server refuses while it still has channels. */
+async function removeClient(client: ClientSummary): Promise<void> {
+  if (!confirm(`Remove ${client.label}? This only removes the folder; nothing has been posted for it.`)) return;
+  try {
+    const response = await fetch('/api/clients?action=remove', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: client.brand }) });
+    if (response.status === 401) return void location.replace('/login');
+    const body: unknown = await response.json().catch(() => null);
+    state.notice = response.ok ? { kind: 'ok', text: `${client.label} was removed.` } : { kind: 'warn', text: messageOf(body) ?? `Could not remove (${response.status}).` };
+    if (response.ok) go({ page: 'clients' });
+  } catch (error) {
+    state.notice = { kind: 'warn', text: error instanceof Error ? error.message : String(error) };
+  }
+  await load();
+}
+
 /** Removes a hand-made post that has not gone out yet, after asking. */
 async function deleteManualPost(post: StatusPost): Promise<void> {
   if (!confirm('Delete this post? It will not be sent.')) return;
@@ -803,6 +844,8 @@ const clientsContext: ClientsContext = {
   postCard,
   addChannel: openPicker,
   newPost: openNewPost,
+  addClient: openAddClient,
+  removeClient: (client) => void removeClient(client),
   disconnect: (channel) => void disconnect(channel),
 };
 

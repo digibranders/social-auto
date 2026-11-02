@@ -16,7 +16,7 @@ import { accountProfile, mediaSince, type AccountMedia, type AccountProfile } fr
 import { applyOverrides } from '../lib/overrides.js';
 import { toScheduled } from '../lib/manual.js';
 import { buildStatus, parseSchedule, type StatusPost } from '../lib/schedule.js';
-import { loadChannels, loadManual, loadOverrides, loadPosted } from '../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted } from '../lib/store.js';
 
 /** Instagram is asked at most once a minute per warm function instance, however many people look. */
 const CACHE_MS = 60_000;
@@ -110,7 +110,7 @@ export async function GET(request: Request): Promise<Response> {
   const origin = process.env['PUBLIC_ORIGIN'] ?? new URL(request.url).origin;
 
   try {
-    const [{ overrides }, { file: channels }, { log: posted }, { file: manual }] = await Promise.all([loadOverrides(), loadChannels(), loadPosted(), loadManual()]);
+    const [{ overrides }, { file: channels }, { log: posted }, { file: manual }, { file: added }] = await Promise.all([loadOverrides(), loadChannels(), loadPosted(), loadManual(), loadClients()]);
     const posts = applyOverrides([...parseSchedule(scheduleData), ...manual.posts.map(toScheduled)], overrides);
 
     if (!cache || now - cache.at >= CACHE_MS) {
@@ -138,6 +138,7 @@ export async function GET(request: Request): Promise<Response> {
         })),
       ],
       ...summary,
+      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const }))],
       posts: summary.posts.map((p) => withCrossposts(p, channels, posted, now)),
     });
   } catch (error) {

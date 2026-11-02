@@ -59,7 +59,8 @@ export interface StatusResponse {
   generatedAt: string;
   channels: ChannelHealth[];
   posts: StatusPost[];
-  runway: Array<{ brand: string; postsLeft: number }>;
+  /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
+  runway: Array<{ brand: string; postsLeft: number; added?: true }>;
 }
 
 export class StatusParseError extends Error {
@@ -166,7 +167,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}) };
   });
 
   return { generatedAt, channels, posts, runway };

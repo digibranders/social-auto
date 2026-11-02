@@ -10,8 +10,12 @@ import { addLinkedInMember } from '../lib/channels.js';
 import { parseKey } from '../lib/crypto.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import { exchangeCode, LinkedInApiError, memberOf } from '../lib/linkedin.js';
+import { allBrands } from '../lib/clients.js';
 import { parseSchedule } from '../lib/schedule.js';
-import { loadChannels, saveChannels, storeConfigured } from '../lib/store.js';
+import { loadChannels, loadClients, saveChannels, storeConfigured } from '../lib/store.js';
+
+/** The clients the content job plans posts for. */
+const plannedBrands = (): string[] => parseSchedule(scheduleData).map((p) => p.brand ?? 'default');
 
 const MAX_BODY_BYTES = 8 * 1024;
 
@@ -25,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof code !== 'string' || typeof redirectUri !== 'string' || typeof brand !== 'string' || !code || !redirectUri || !brand) {
     return json(400, { error: 'code, redirectUri and brand are required' });
   }
-  const knownBrands = new Set(parseSchedule(scheduleData).map((p) => p.brand ?? 'default'));
+  const knownBrands = allBrands(plannedBrands(), (await loadClients()).file);
   if (!knownBrands.has(brand)) return json(400, { error: `unknown client "${brand}"` });
 
   try {

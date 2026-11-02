@@ -52,3 +52,14 @@ test('hand-made extra posts do not change the described schedule pattern', () =>
   assert.equal(client?.pattern, schedulePattern(planned, NOW));
   assert.equal(client?.upcoming.length, 6);
 });
+
+test('a client added in the dashboard shows with no posts, is removable, and is not flagged as running low', () => {
+  const data: StatusResponse = { generatedAt: '', channels: [], posts: [], runway: [{ brand: 'new-client', postsLeft: 0, added: true }, { brand: 'acme', postsLeft: 2 }] };
+  const clients = summarizeClients(data, NOW);
+  const added = clients.find((c) => c.brand === 'new-client');
+  assert.equal(added?.label, 'New Client');
+  assert.equal(added?.added, true);
+  assert.equal(added?.queueLow, false);
+  assert.equal(clients.find((c) => c.brand === 'acme')?.added, false);
+  assert.equal(clients.find((c) => c.brand === 'acme')?.queueLow, true);
+});

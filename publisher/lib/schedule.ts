@@ -136,7 +136,7 @@ export interface StatusPost {
 
 export interface StatusSummary {
   posts: StatusPost[];
-  runway: Array<{ brand: string; postsLeft: number }>;
+  runway: Array<{ brand: string; postsLeft: number; /** Added in the dashboard, so it has no planned posts and can be removed. */ added?: true }>;
 }
 
 /**

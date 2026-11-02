@@ -14,6 +14,8 @@ export interface ClientsContext {
   addChannel(brand: string | null): void;
   /** Opens the New post window; `channel` (a post channel id) is ticked in advance. */
   newPost(brand: string | null, channel: string | null): void;
+  addClient(): void;
+  removeClient(client: ClientSummary): void;
   disconnect(channel: ChannelHealth): void;
 }
 
@@ -22,8 +24,9 @@ const GUIDE_FOR: Record<ChannelKind, GuideKey> = { facebook: 'facebook', instagr
 const UPCOMING_SHOWN = 14;
 
 export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTMLElement {
-  if (clients.length === 0) return h('p', { class: 'empty' }, 'No clients yet.');
-  return h(
+  const add = h('div', { class: 'page-actions' }, button([icon('plus'), 'Add client'], 'btn btn-primary', () => ctx.addClient()));
+  if (clients.length === 0) return h('div', {}, add, h('p', { class: 'empty' }, 'No clients yet.'));
+  return h('div', {}, add, h(
     'div',
     { class: 'folders' },
     ...clients.map((client) => {
@@ -38,7 +41,7 @@ export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTML
       card.addEventListener('click', () => ctx.go({ page: 'client', brand: client.brand, tab: 'channels' }));
       return card;
     }),
-  );
+  ));
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -177,7 +180,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
       button('Clients', 'link-button', () => ctx.go({ page: 'clients' })),
       ` / ${client.label}`,
     ),
-    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)))),
+    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
     tabs,
     tab === 'channels' ? channels : posts,
   );

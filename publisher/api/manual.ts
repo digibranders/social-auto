@@ -8,11 +8,12 @@
 import { randomBytes } from 'node:crypto';
 import { schedule as scheduleData } from '../data/schedule.js';
 import { channelsFor } from '../lib/channels.js';
+import { allBrands } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { buildManualPost, isManualId, MAX_MANUAL_POSTS, toScheduled } from '../lib/manual.js';
 import { EditError, isEditable, MAX_IMAGE_BYTES, validateJpeg } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
-import { deleteImage, loadChannels, loadImage, loadManual, loadOverrides, saveImage, saveManual, saveOverrides, storeConfigured } from '../lib/store.js';
+import { deleteImage, loadChannels, loadClients, loadImage, loadManual, loadOverrides, saveImage, saveManual, saveOverrides, storeConfigured } from '../lib/store.js';
 
 async function imageExists(key: string): Promise<boolean> {
   const stream = await loadImage(key);
@@ -33,12 +34,12 @@ async function createPost(request: Request): Promise<Response> {
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   if (typeof body !== 'object' || body === null) throw new EditError('send the post as JSON');
   const brand = body['brand'];
-  const known = new Set(parseSchedule(scheduleData).map((p) => p.brand ?? 'default'));
-  if (typeof brand !== 'string' || !known.has(brand)) throw new EditError('unknown client');
-
-  const [{ file: channels }, { file, etag }] = await Promise.all([loadChannels(), loadManual()]);
+  const planned = new Set(parseSchedule(scheduleData).map((p) => p.brand ?? 'default'));
+  const [{ file: channels }, { file, etag }, { file: added }] = await Promise.all([loadChannels(), loadManual(), loadClients()]);
+  if (typeof brand !== 'string' || !allBrands(planned, added).has(brand)) throw new EditError('unknown client');
   if (file.posts.length >= MAX_MANUAL_POSTS) throw new EditError('too many extra posts are stored; delete some first');
-  const allowed = ['instagram', ...channelsFor(channels, brand).map((c) => c.id)];
+  // The one Instagram account belongs to the clients the content job plans for; an added client cannot use it.
+  const allowed = [...(planned.has(brand) ? ['instagram'] : []), ...channelsFor(channels, brand).map((c) => c.id)];
   const post = buildManualPost({ brand, day: body['day'], caption: body['caption'], imageKey: body['imageKey'], channels: body['channels'] }, allowed, Date.now());
   if (!(await imageExists(post.imageKey))) throw new EditError('the picture was not found. Add it again.');
 

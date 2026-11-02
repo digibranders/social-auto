@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { BlobPreconditionFailedError, del, get, put } from '@vercel/blob';
 import { parseChannels, parsePostedLog, type ChannelFile, type PostedLog } from './channels.js';
+import { parseClientsFile, type ClientsFile } from './clients.js';
 import { parseManualFile, type ManualFile } from './manual.js';
 import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overrides.js';
 
@@ -137,6 +138,18 @@ export async function loadChannels(): Promise<{ file: ChannelFile; etag: string 
 
 export function saveChannels(file: ChannelFile, etag: string | null): Promise<void> {
   return writeJson(CHANNELS_PATH, file, etag);
+}
+
+const CLIENTS_PATH = 'clients.json';
+
+export async function loadClients(): Promise<{ file: ClientsFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: { clients: [] }, etag: null };
+  const { value, etag } = await readJson(CLIENTS_PATH);
+  return { file: value === null ? { clients: [] } : parseClientsFile(value), etag };
+}
+
+export function saveClients(file: ClientsFile, etag: string | null): Promise<void> {
+  return writeJson(CLIENTS_PATH, file, etag);
 }
 
 const MANUAL_PATH = 'manual.json';
