@@ -29,7 +29,41 @@ export interface LinkedInChannel {
   connectedAt: string;
 }
 
-export type Channel = FacebookChannel | LinkedInChannel;
+/** One business location on Google, posted to as updates. The saved token is Google's refresh token, which does not expire by itself. */
+export interface GoogleChannel {
+  /** "google:<location id>" */
+  id: string;
+  platform: 'google';
+  brand: string;
+  /** "accounts/<id>" */
+  account: string;
+  /** "locations/<id>" */
+  location: string;
+  locationTitle: string;
+  /** Encrypted refresh token. */
+  token: string;
+  connectedAt: string;
+}
+
+/** A customer's own Instagram account connected for a client (the team's own account is set in the environment, not here). */
+export interface InstagramChannel {
+  /** "instagram:<account id>" */
+  id: string;
+  platform: 'instagram';
+  brand: string;
+  /** The account's id, used in every posting call. */
+  userId: string;
+  username: string;
+  /** Encrypted token. It lasts about 60 days and is renewed weekly (api/refresh.ts); it ends at expiresAt if renewal stops. */
+  token: string;
+  expiresAt: string;
+  connectedAt: string;
+}
+
+export type Channel = FacebookChannel | LinkedInChannel | GoogleChannel | InstagramChannel;
+
+/** A connection with an end date: the person must connect again (or the weekly renewal must work) before it. */
+export type ExpiringChannel = LinkedInChannel | InstagramChannel;
 
 export interface ChannelFile {
   channels: Channel[];
@@ -45,8 +79,19 @@ export type PostedLog = Record<string, PostedEntry>;
 
 export const postedKey = (postId: string, channelId: string): string => `${postId}|${channelId}`;
 
-/** The name people see for a channel: the Page, or the member. */
-export const channelLabel = (channel: Channel): string => (channel.platform === 'facebook' ? channel.pageName : channel.memberName);
+/** The name people see for a channel: the Page, the member, the Google location or the Instagram username. */
+export const channelLabel = (channel: Channel): string => {
+  switch (channel.platform) {
+    case 'facebook':
+      return channel.pageName;
+    case 'linkedin':
+      return channel.memberName;
+    case 'google':
+      return channel.locationTitle;
+    case 'instagram':
+      return channel.username;
+  }
+};
 
 function requireText(c: Record<string, unknown>, keys: readonly string[], i: number): void {
   for (const key of keys) {
@@ -63,6 +108,11 @@ export function parseChannels(raw: unknown): ChannelFile {
     } else if (c['platform'] === 'linkedin') {
       requireText(c, ['id', 'brand', 'memberUrn', 'memberName', 'token', 'expiresAt', 'connectedAt'], i);
       if (Number.isNaN(Date.parse(c['expiresAt'] as string))) throw new Error(`channels[${i}].expiresAt is not a date`);
+    } else if (c['platform'] === 'instagram') {
+      requireText(c, ['id', 'brand', 'userId', 'username', 'token', 'expiresAt', 'connectedAt'], i);
+      if (Number.isNaN(Date.parse(c['expiresAt'] as string))) throw new Error(`channels[${i}].expiresAt is not a date`);
+    } else if (c['platform'] === 'google') {
+      requireText(c, ['id', 'brand', 'account', 'location', 'locationTitle', 'token', 'connectedAt'], i);
     } else {
       throw new Error(`channels[${i}].platform is not supported`);
     }
@@ -120,6 +170,60 @@ export function addLinkedInMember(
   return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
 }
 
+/** Saves a business location for a client. Connecting it again replaces the old token. */
+export function addGoogleLocation(
+  file: ChannelFile,
+  brand: string,
+  place: { account: string; location: string; title: string },
+  refreshToken: string,
+  key: Buffer,
+  now: number,
+): ChannelFile {
+  const channel: GoogleChannel = {
+    id: `google:${place.location.split('/').pop()}`,
+    platform: 'google',
+    brand,
+    account: place.account,
+    location: place.location,
+    locationTitle: place.title,
+    token: encrypt(refreshToken, key),
+    connectedAt: new Date(now).toISOString(),
+  };
+  return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
+}
+
+/** Saves a customer's Instagram account for a client. Connecting again replaces the old token. */
+export function addInstagramAccount(
+  file: ChannelFile,
+  brand: string,
+  account: { userId: string; username: string },
+  accessToken: string,
+  expiresInSeconds: number,
+  key: Buffer,
+  now: number,
+): ChannelFile {
+  const channel: InstagramChannel = {
+    id: `instagram:${account.userId}`,
+    platform: 'instagram',
+    brand,
+    userId: account.userId,
+    username: account.username,
+    token: encrypt(accessToken, key),
+    expiresAt: new Date(now + expiresInSeconds * 1000).toISOString(),
+    connectedAt: new Date(now).toISOString(),
+  };
+  return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
+}
+
+/** Stores a renewed token and its new end date for one connected Instagram account. */
+export function renewInstagramToken(file: ChannelFile, id: string, accessToken: string, expiresInSeconds: number, key: Buffer, now: number): ChannelFile {
+  return {
+    channels: file.channels.map((c) =>
+      c.platform === 'instagram' && c.id === id ? { ...c, token: encrypt(accessToken, key), expiresAt: new Date(now + expiresInSeconds * 1000).toISOString() } : c,
+    ),
+  };
+}
+
 export function removeChannel(file: ChannelFile, id: string): ChannelFile {
   return { channels: file.channels.filter((c) => c.id !== id) };
 }
@@ -139,15 +243,15 @@ export function channelsFor<P extends Channel['platform']>(
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Whole days until a LinkedIn connection ends (negative once it has). */
-export const daysLeft = (channel: LinkedInChannel, now: number): number => Math.floor((Date.parse(channel.expiresAt) - now) / DAY_MS);
+/** Whole days until a connection ends (negative once it has). */
+export const daysLeft = (channel: ExpiringChannel, now: number): number => Math.floor((Date.parse(channel.expiresAt) - now) / DAY_MS);
 
 /** Warn when this many whole days are left. The daily job runs once a day, so each value fires once. */
 export const EXPIRY_WARN_AT: readonly number[] = [7, 3, 1, 0];
 
-export function expiringSoon(file: ChannelFile, now: number): Array<{ channel: LinkedInChannel; days: number }> {
+export function expiringSoon(file: ChannelFile, now: number): Array<{ channel: ExpiringChannel; days: number }> {
   return file.channels
-    .filter((c): c is LinkedInChannel => c.platform === 'linkedin')
+    .filter((c): c is ExpiringChannel => c.platform === 'linkedin' || c.platform === 'instagram')
     .map((channel) => ({ channel, days: daysLeft(channel, now) }))
     .filter(({ days }) => EXPIRY_WARN_AT.includes(days));
 }

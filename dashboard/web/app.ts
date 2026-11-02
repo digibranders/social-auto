@@ -28,6 +28,7 @@ import {
 } from './calendar.ts';
 import { applyStoredTheme, currentTheme, setTheme } from './theme.ts';
 import { brandMark, button, h, icon, platformLabel, statusMark, type Child } from './ui.ts';
+import { googleLocationPicker } from './google-pick.ts';
 import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
 import { summarizeClients, type ClientSummary } from './clients.ts';
 import { helpPage } from './help-page.ts';
@@ -716,7 +717,7 @@ function panelHeader(): HTMLElement {
   );
 }
 
-/** Removes a Facebook Page or LinkedIn profile from a client after asking, then reloads the feed. */
+/** Removes a Facebook Page, LinkedIn profile or client Instagram account from a client after asking, then reloads the feed. */
 async function disconnect(channel: ChannelHealth): Promise<void> {
   if (!channel.id) return;
   const name = channel.account ?? 'this channel';
@@ -912,7 +913,7 @@ async function load(): Promise<void> {
 }
 
 async function signOut(): Promise<void> {
-  await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => undefined);
+  await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => undefined);
   location.replace('/login');
 }
 
@@ -931,12 +932,17 @@ narrow.addEventListener('change', () => {
   render();
 });
 
-/** After coming back from Facebook or LinkedIn the address says what happened; show it once and tidy the address. */
+/** Set when Google found several locations, so the choice opens once the page is ready. */
+let pickGoogleLocation = false;
+
+/** After coming back from Facebook, Instagram, LinkedIn or Google the address says what happened; show it once and tidy the address. */
 function readNoticeFromAddress(): void {
   const query = new URLSearchParams(location.search);
   const facebook = query.get('facebook');
   const linkedin = query.get('linkedin');
-  if (!facebook && !linkedin) return;
+  const instagram = query.get('instagram');
+  const google = query.get('google');
+  if (!facebook && !linkedin && !instagram && !google) return;
   const facebookMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
     connected: { kind: 'ok', text: 'Facebook connected. Posts from now on will also go to the approved Pages.' },
     denied: { kind: 'warn', text: 'Facebook was not connected: the approval was cancelled.' },
@@ -948,7 +954,20 @@ function readNoticeFromAddress(): void {
     denied: { kind: 'warn', text: 'LinkedIn was not connected: the approval was cancelled.' },
     failed: { kind: 'warn', text: 'LinkedIn could not be connected. Try again and press Allow.' },
   };
-  state.notice = (linkedin ? linkedinMessages[linkedin] : facebookMessages[facebook ?? '']) ?? null;
+  const instagramMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
+    connected: { kind: 'ok', text: 'Instagram connected. Posts from now on will also go to that account.' },
+    denied: { kind: 'warn', text: 'Instagram was not connected: the approval was cancelled.' },
+    failed: { kind: 'warn', text: 'Instagram could not be connected. It must be a Business or Creator account. Try again and press Allow.' },
+    expired: { kind: 'warn', text: 'The Instagram approval took longer than 30 minutes, so it was stopped. Start again.' },
+  };
+  const googleMessages: Record<string, { kind: 'ok' | 'warn'; text: string }> = {
+    connected: { kind: 'ok', text: 'Google connected. Posts from now on will also go to the listing as updates.' },
+    denied: { kind: 'warn', text: 'Google was not connected: the approval was cancelled.' },
+    failed: { kind: 'warn', text: 'Google could not be connected. Try again with the account that manages the listing.' },
+    nolocation: { kind: 'warn', text: 'That Google account manages no business location. The client must add it as a manager first.' },
+  };
+  if (google === 'choose') pickGoogleLocation = true;
+  state.notice = (google ? googleMessages[google] : instagram ? instagramMessages[instagram] : linkedin ? linkedinMessages[linkedin] : facebookMessages[facebook ?? '']) ?? null;
   history.replaceState(null, '', location.pathname);
 }
 
@@ -962,5 +981,9 @@ applyStoredTheme();
 readNoticeFromAddress();
 loadPrefs();
 render();
+if (pickGoogleLocation) {
+  picker.replaceChildren(googleLocationPicker((result) => { state.notice = result; void load(); }, () => picker.close()));
+  picker.showModal();
+}
 void load();
 setInterval(() => void load(), REFRESH_MS);

@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { isBrand } from './facebook-flow.js';
+import { isBrand, isSafeReturnUrl } from './facebook-flow.js';
+
+export { isSafeReturnUrl };
 
 /**
  * The "Connect LinkedIn" hand-off. Unlike Facebook, the person who presses Allow is usually the client, who has
@@ -17,13 +19,19 @@ function sign(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(`linkedin-invite.${payload}`).digest('base64url');
 }
 
-export function createInvite(secret: string, brand: string, nowMs: number, ttlSeconds = INVITE_TTL_SECONDS): string {
-  const payload = Buffer.from(JSON.stringify({ b: brand, e: Math.floor(nowMs / 1000) + ttlSeconds })).toString('base64url');
+export function createInvite(secret: string, brand: string, nowMs: number, ttlSeconds = INVITE_TTL_SECONDS, returnUrl?: string): string {
+  const payload = Buffer.from(JSON.stringify({ b: brand, e: Math.floor(nowMs / 1000) + ttlSeconds, ...(returnUrl ? { r: returnUrl } : {}) })).toString('base64url');
   return `${payload}.${sign(payload, secret)}`;
 }
 
-/** The client an invite is for, or null when it is forged, malformed or past its date. */
-export function verifyInvite(token: string | null, secret: string | undefined, nowMs: number): string | null {
+export interface Invite {
+  brand: string;
+  /** Where to send the person afterwards (a product's own page); missing means show our thank-you page. */
+  returnUrl: string | null;
+}
+
+/** The client an invite is for (and where to return to), or null when it is forged, malformed or past its date. */
+export function verifyInvite(token: string | null, secret: string | undefined, nowMs: number): Invite | null {
   if (!token || !secret) return null;
   const parts = token.split('.');
   const [payload, signature] = parts;
@@ -32,15 +40,18 @@ export function verifyInvite(token: string | null, secret: string | undefined, n
   const actual = Buffer.from(signature);
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
   try {
-    const { b, e } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { b?: unknown; e?: unknown };
-    return typeof b === 'string' && isBrand(b) && typeof e === 'number' && e * 1000 > nowMs ? b : null;
+    const { b, e, r } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { b?: unknown; e?: unknown; r?: unknown };
+    if (typeof b !== 'string' || !isBrand(b) || typeof e !== 'number' || e * 1000 <= nowMs) return null;
+    if (r !== undefined && !isSafeReturnUrl(r)) return null;
+    return { brand: b, returnUrl: r ?? null };
   } catch {
     return null;
   }
 }
 
-export function connectCookie(state: string, brand: string, secure = process.env['COOKIE_INSECURE'] !== '1'): string {
-  return `${LINKEDIN_COOKIE}=${state}.${brand}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/api; Max-Age=${COOKIE_TTL_SECONDS}`;
+export function connectCookie(state: string, brand: string, returnUrl: string | null = null, secure = process.env['COOKIE_INSECURE'] !== '1'): string {
+  const tail = returnUrl ? `.${Buffer.from(returnUrl).toString('base64url')}` : '';
+  return `${LINKEDIN_COOKIE}=${state}.${brand}${tail}; HttpOnly; ${secure ? 'Secure; ' : ''}SameSite=Lax; Path=/api; Max-Age=${COOKIE_TTL_SECONDS}`;
 }
 
 export function clearedConnectCookie(secure = process.env['COOKIE_INSECURE'] !== '1'): string {
@@ -48,9 +59,12 @@ export function clearedConnectCookie(secure = process.env['COOKIE_INSECURE'] !==
 }
 
 /** The state and client stored in the cookie, or null when it is missing or malformed. */
-export function parseConnectCookie(value: string | undefined): { state: string; brand: string } | null {
-  const match = /^([0-9a-f]{32})\.([a-z0-9][a-z0-9-]{0,40})$/.exec(value ?? '');
-  return match ? { state: match[1] as string, brand: match[2] as string } : null;
+export function parseConnectCookie(value: string | undefined): { state: string; brand: string; returnUrl: string | null } | null {
+  const match = /^([0-9a-f]{32})\.([a-z0-9][a-z0-9-]{0,40})(?:\.([A-Za-z0-9_-]{1,700}))?$/.exec(value ?? '');
+  if (!match) return null;
+  const returnUrl = match[3] ? Buffer.from(match[3], 'base64url').toString('utf8') : null;
+  if (returnUrl !== null && !isSafeReturnUrl(returnUrl)) return null;
+  return { state: match[1] as string, brand: match[2] as string, returnUrl };
 }
 
 /** The address of this site as the person's browser sees it, also when it sits behind a proxy. */

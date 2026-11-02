@@ -11,8 +11,9 @@ import { parseKey } from '../lib/crypto.js';
 import { crosspostStatusFor } from '../lib/crosspost.js';
 import { channelLabel, channelToken, type ChannelFile, type PostedLog } from '../lib/channels.js';
 import { pageHealth } from '../lib/facebook.js';
+import { locationHealth } from '../lib/google.js';
 import { memberHealth } from '../lib/linkedin.js';
-import { accountProfile, mediaSince, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
+import { accountProfile, mediaSince, tokenHealth, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
 import { applyOverrides } from '../lib/overrides.js';
 import { toScheduled } from '../lib/manual.js';
 import { buildStatus, parseSchedule, type StatusPost } from '../lib/schedule.js';
@@ -58,8 +59,10 @@ async function lookUpChannels(channels: ChannelFile, now: number): Promise<Recor
       try {
         if (!key) health = { ok: false, error: keyProblem ?? 'no key' };
         else if (channel.platform === 'facebook') health = await pageHealth(channel.pageId, channelToken(channel, key));
-        else if (Date.parse(channel.expiresAt) <= now) health = { ok: false, error: 'The LinkedIn connection has expired. They need to connect again.' };
-        else health = await memberHealth(channelToken(channel, key));
+        else if (channel.platform === 'google') health = await locationHealth({ clientId: requireEnv('GOOGLE_CLIENT_ID'), clientSecret: requireEnv('GOOGLE_CLIENT_SECRET') }, channelToken(channel, key));
+        else if (Date.parse(channel.expiresAt) <= now) health = { ok: false, error: `The ${channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram'} connection has expired. They need to connect again.` };
+        else if (channel.platform === 'linkedin') health = await memberHealth(channelToken(channel, key));
+        else health = await tokenHealth(channelToken(channel, key));
       } catch (error) {
         health = { ok: false, error: describeError(error) };
       }
@@ -133,12 +136,12 @@ export async function GET(request: Request): Promise<Response> {
           account: channelLabel(channel),
           avatar: null,
           brands: [channel.brand],
-          ...(channel.platform === 'linkedin' ? { expiresAt: channel.expiresAt } : {}),
+          ...(channel.platform === 'linkedin' || channel.platform === 'instagram' ? { expiresAt: channel.expiresAt } : {}),
           ...(channelHealth[channel.id] ?? { ok: false, error: 'not checked' }),
         })),
       ],
       ...summary,
-      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const }))],
+      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}) }))],
       posts: summary.posts.map((p) => withCrossposts(p, channels, posted, now)),
     });
   } catch (error) {

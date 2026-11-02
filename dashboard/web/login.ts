@@ -23,7 +23,7 @@ async function signIn(): Promise<void> {
   submit.disabled = true;
   message.textContent = '';
   try {
-    const response = await fetch('/api/login', {
+    const response = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',

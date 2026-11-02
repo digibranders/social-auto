@@ -1,6 +1,7 @@
 /** Minimal Facebook Graph API client for posting to a Facebook Page. */
 
-const GRAPH = 'https://graph.facebook.com/v23.0';
+/** Overridable only so local tests can talk to dev/fake-facebook.ts. */
+const GRAPH = process.env['FACEBOOK_GRAPH_URL'] ?? 'https://graph.facebook.com/v23.0';
 
 /** What the app asks the person to approve: list their Pages, post to them, read their post status. */
 export const FACEBOOK_SCOPES = ['pages_show_list', 'pages_manage_posts', 'pages_read_engagement'] as const;

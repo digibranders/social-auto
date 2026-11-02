@@ -18,6 +18,8 @@ export interface ClientSummary {
   queueLow: boolean;
   /** Added in the dashboard: it has no planned posts yet and can be removed. */
   added: boolean;
+  /** The product that created this client (e.g. "brandbasket"); null for your own. */
+  product: string | null;
 }
 
 const LOW_QUEUE_DAYS = 7;
@@ -59,7 +61,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
     const added = entry?.added === true;
     return {
       brand,
-      label: brandLabel(brand),
+      label: entry?.name ?? brandLabel(brand),
       channels,
       postsLeft,
       upcoming,
@@ -68,6 +70,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       missed: posts.filter((p) => p.state === 'missed').length,
       queueLow: !added && postsLeft <= LOW_QUEUE_DAYS,
       added,
+      product: entry?.product ?? null,
     };
   });
 }

@@ -1,3 +1,4 @@
+import type { Channel } from './channels.js';
 export interface ScheduledPost {
   /** Client the post belongs to; posts without one count as a single "default" client. */
   brand?: string;
@@ -9,7 +10,7 @@ export interface ScheduledPost {
   image: string | null;
   /** Added by hand in the dashboard rather than planned by the content job. */
   manual?: boolean;
-  /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc". Missing means every connected channel. */
+  /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc" or "google:123". Missing means every connected channel. */
   channels?: string[];
 }
 
@@ -112,7 +113,7 @@ export interface StatusPost {
   id: string;
   brand: string;
   /** The first channel the post goes to (Instagram, unless a hand-made post skips it). */
-  platform: 'instagram' | 'facebook' | 'linkedin';
+  platform: Channel['platform'];
   date: string;
   caption: string;
   /** Absolute poster URL, or null once the poster was pruned. */
@@ -131,12 +132,12 @@ export interface StatusPost {
   manual: boolean;
   /** Where a hand-made post goes ('instagram' and channel ids); null for planned posts, which go everywhere. */
   channels: string[] | null;
-  crossposts: Array<{ platform: 'instagram' | 'facebook' | 'linkedin'; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
+  crossposts: Array<{ platform: Channel['platform']; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
 }
 
 export interface StatusSummary {
   posts: StatusPost[];
-  runway: Array<{ brand: string; postsLeft: number; /** Added in the dashboard, so it has no planned posts and can be removed. */ added?: true }>;
+  runway: Array<{ brand: string; postsLeft: number; /** Added in the dashboard, so it has no planned posts and can be removed. */ added?: true; /** The name to show, for a client a product created. */ name?: string; /** The product that created it. */ product?: string }>;
 }
 
 /**

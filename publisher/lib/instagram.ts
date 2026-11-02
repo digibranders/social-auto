@@ -1,6 +1,9 @@
 /** Minimal Instagram Graph API client (Instagram API with Instagram Login). */
 
-const GRAPH = 'https://graph.instagram.com/v23.0';
+/** Instagram's addresses. The environment can point them at a pretend Instagram for local testing (see dev/fake-instagram.ts). */
+const ROOT = process.env['INSTAGRAM_GRAPH_URL'] ?? 'https://graph.instagram.com';
+const GRAPH = `${ROOT}/v23.0`;
+const TOKEN_URL = process.env['INSTAGRAM_TOKEN_URL'] ?? 'https://api.instagram.com/oauth/access_token';
 const STATUS_POLL_MS = 3_000;
 const STATUS_MAX_POLLS = 15;
 
@@ -29,7 +32,7 @@ export interface RefreshedToken {
  */
 export async function refreshToken(token: string): Promise<RefreshedToken> {
   const params = new URLSearchParams({ grant_type: 'ig_refresh_token', access_token: token });
-  const response = await fetch(`https://graph.instagram.com/refresh_access_token?${params}`, {
+  const response = await fetch(`${ROOT}/refresh_access_token?${params}`, {
     signal: AbortSignal.timeout(30_000),
   });
   const body = (await response.json()) as Record<string, unknown>;
@@ -144,4 +147,71 @@ export async function permalink(mediaId: string, token: string): Promise<string>
   const params = new URLSearchParams({ fields: 'permalink', access_token: token });
   const body = await graph('permalink', `/${mediaId}?${params}`);
   return String(body['permalink'] ?? '');
+}
+
+/** What a customer approves when they connect their own Instagram: reading the profile and publishing posts. */
+export const INSTAGRAM_SCOPES = ['instagram_business_basic', 'instagram_business_content_publish'] as const;
+
+export interface InstagramApp {
+  appId: string;
+  appSecret: string;
+}
+
+/** Swaps the one-time code from the redirect for a short-lived token (about an hour). Secrets go in the body, never the address. */
+export async function exchangeCode(app: InstagramApp, redirectUri: string, code: string): Promise<{ accessToken: string }> {
+  const response = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: app.appId, client_secret: app.appSecret, grant_type: 'authorization_code', redirect_uri: redirectUri, code }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok || body['error_message'] || typeof body['access_token'] !== 'string') {
+    throw new InstagramApiError('code exchange', JSON.stringify(body['error_message'] ?? body['error'] ?? { status: response.status }));
+  }
+  return { accessToken: body['access_token'] };
+}
+
+export interface LongLivedToken {
+  /** Secret: never print or log it. */
+  accessToken: string;
+  expiresInSeconds: number;
+}
+
+/** Trades the short-lived token for one that lasts about 60 days and can be renewed (see refreshToken). */
+export async function longLivedToken(app: InstagramApp, shortToken: string): Promise<LongLivedToken> {
+  const params = new URLSearchParams({ grant_type: 'ig_exchange_token', client_secret: app.appSecret, access_token: shortToken });
+  const response = await fetch(`${ROOT}/access_token?${params}`, { signal: AbortSignal.timeout(30_000) });
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok || body['error'] || typeof body['access_token'] !== 'string' || typeof body['expires_in'] !== 'number') {
+    throw new InstagramApiError('token upgrade', JSON.stringify(body['error'] ?? { status: response.status }));
+  }
+  return { accessToken: body['access_token'], expiresInSeconds: body['expires_in'] };
+}
+
+export interface InstagramAccount {
+  /** The account's own id, used in every posting call. */
+  userId: string;
+  username: string;
+}
+
+/** Who the token belongs to. */
+export async function accountOf(token: string): Promise<InstagramAccount> {
+  const params = new URLSearchParams({ fields: 'user_id,username', access_token: token });
+  const body = await graph('read account', `/me?${params}`);
+  const userId = body['user_id'] ?? body['id'];
+  if ((typeof userId !== 'string' && typeof userId !== 'number') || typeof body['username'] !== 'string' || !body['username']) {
+    throw new InstagramApiError('read account', 'the answer had no account id or username');
+  }
+  return { userId: String(userId), username: body['username'] };
+}
+
+/** Whether a saved token is still accepted. */
+export async function tokenHealth(token: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await graph('account check', `/me?${new URLSearchParams({ fields: 'user_id', access_token: token })}`);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }

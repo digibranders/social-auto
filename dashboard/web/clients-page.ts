@@ -47,7 +47,7 @@ export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTML
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** "Ends in 12 days" for a LinkedIn connection, which LinkedIn cuts after about 60 days. */
+/** "Ends in 12 days" for a connection with an end date (LinkedIn cuts it after about 60 days). */
 export function expiryNote(expiresAt: string | undefined, now: number): string | null {
   if (!expiresAt) return null;
   const days = Math.floor((Date.parse(expiresAt) - now) / DAY_MS);
@@ -57,10 +57,10 @@ export function expiryNote(expiresAt: string | undefined, now: number): string |
 }
 
 /**
- * Makes a link the client opens to connect their own LinkedIn (they press Allow on their own account).
+ * Makes a link the client opens to connect their own LinkedIn or Instagram (they press Allow on their own account).
  * Asking is one click; copying is a second, so the browser allows it.
  */
-export function inviteLinkBox(brand: string, label: string): HTMLElement {
+export function inviteLinkBox(brand: string, label: string, platform: 'linkedin' | 'instagram' = 'linkedin'): HTMLElement {
   const box = h('div', { class: 'link-box' });
   const result = h('div', { class: 'link-result', hidden: '' });
   const message = h('p', { class: 'muted', hidden: '' });
@@ -69,7 +69,7 @@ export function inviteLinkBox(brand: string, label: string): HTMLElement {
     message.hidden = true;
     void (async () => {
       try {
-        const response = await fetch(`/api/linkedin-invite?brand=${encodeURIComponent(brand)}`, { method: 'POST', credentials: 'same-origin' });
+        const response = await fetch(`/api/linkedin-invite?brand=${encodeURIComponent(brand)}${platform === 'instagram' ? '&channel=instagram' : ''}`, { method: 'POST', credentials: 'same-origin' });
         if (response.status === 401) return void location.replace('/login');
         const body = (await response.json().catch(() => null)) as { link?: unknown; expiresInDays?: unknown; error?: unknown } | null;
         if (!response.ok || typeof body?.link !== 'string') throw new Error(typeof body?.error === 'string' ? body.error : `Could not make a link (${response.status}).`);
@@ -81,7 +81,7 @@ export function inviteLinkBox(brand: string, label: string): HTMLElement {
             () => { copy.textContent = 'Press Ctrl+C to copy'; },
           );
         });
-        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their LinkedIn for this client.`));
+        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their ${platform === 'instagram' ? 'Instagram' : 'LinkedIn'} for this client.`));
         result.hidden = false;
       } catch (error) {
         message.textContent = error instanceof Error ? error.message : String(error);
@@ -96,8 +96,10 @@ export function inviteLinkBox(brand: string, label: string): HTMLElement {
 }
 
 function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsContext): HTMLElement {
-  const canDisconnect = (channel.platform === 'facebook' || channel.platform === 'linkedin') && channel.id !== null;
-  const expiry = channel.platform === 'linkedin' ? expiryNote(channel.expiresAt, Date.now()) : null;
+  const canDisconnect = channel.id !== null;
+  // A client's Instagram is renewed every week, so it is only worth mentioning once renewal has stopped working.
+  const daysToEnd = channel.expiresAt ? (Date.parse(channel.expiresAt) - Date.now()) / DAY_MS : Infinity;
+  const expiry = channel.platform === 'linkedin' || (channel.platform === 'instagram' && daysToEnd <= 7) ? expiryNote(channel.expiresAt, Date.now()) : null;
   return h(
     'div',
     { class: 'channel-row' },
@@ -115,6 +117,7 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
       ),
       expiry ? h('span', { class: 'muted' }, expiry) : null,
       channel.platform === 'linkedin' ? inviteLinkBox(client.brand, 'Get a new link for the client') : null,
+      channel.platform === 'instagram' && channel.id !== null ? inviteLinkBox(client.brand, 'Get a new link for the client', 'instagram') : null,
     ),
     h(
       'div',
@@ -127,17 +130,17 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
 }
 
 function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext): HTMLElement {
-  const comingSoon = kind === 'google';
   return h(
     'div',
     { class: 'channel-row' },
     h('span', { class: 'mark mark-big' }, brandMark(kind)),
-    h('div', { class: 'channel-meta' }, h('b', {}, channelName(kind)), h('span', { class: 'muted' }, comingSoon ? 'Not connected · connecting from the dashboard comes later' : 'Not connected'),
+    h('div', { class: 'channel-meta' }, h('b', {}, channelName(kind)), h('span', { class: 'muted' }, 'Not connected'),
       kind === 'linkedin' ? inviteLinkBox(brand, 'Get a link for the client') : null,
     ),
     h(
       'div',
       { class: 'channel-actions' },
+      kind === 'google' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(brand)}`)) : null,
       button('How to connect', 'btn', () => ctx.go({ page: 'help', channel: GUIDE_FOR[kind] })),
     ),
   );
@@ -159,7 +162,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     { class: 'panel-card' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Channels'), button([icon('plus'), 'Add channel'], 'btn btn-primary', () => ctx.addChannel(client.brand))),
     ...client.channels.map((c) => channelRow(client, c, ctx)),
-    ...KINDS.filter((k) => k === 'google' || !connected.has(k)).map((k) => notConnectedRow(client.brand, k, ctx)),
+    ...KINDS.filter((k) => !connected.has(k)).map((k) => notConnectedRow(client.brand, k, ctx)),
   );
 
   const next = client.upcoming.slice(0, UPCOMING_SHOWN);
@@ -212,10 +215,22 @@ export function channelPicker(
       );
       return;
     }
-    note.textContent =
-      kind === 'instagram'
-        ? 'Instagram is connected with a token for now. The guide lists every step.'
-        : `${channelName(kind)} cannot be connected from here yet. The guide lists the steps and what to prepare.`;
+    if (kind === 'google') {
+      note.replaceChildren(
+        'Sign in with the Google account that manages the client’s business listing (the client adds you as a manager first). If it manages several locations, you choose one next.',
+        button('Connect Google', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(who.value)}`)),
+      );
+      return;
+    }
+    if (kind === 'instagram') {
+      note.replaceChildren(
+        'A client connects their own Instagram (a Business or Creator account) by pressing Allow on their own account. Make a link and send it to the client. Our own account is connected with a token: the guide lists every step.',
+        inviteLinkBox(who.value, 'Get a link for the client', 'instagram'),
+        button('Open the guide', 'btn', () => { close(); ctx.go({ page: 'help', channel: GUIDE_FOR[kind] }); }),
+      );
+      return;
+    }
+    note.textContent = `${channelName(kind)} cannot be connected from here yet. The guide lists the steps and what to prepare.`;
     note.append(' ', button('Open the guide', 'btn', () => { close(); ctx.go({ page: 'help', channel: GUIDE_FOR[kind] }); }));
   };
   // A green tick on the channels this client already has; it follows the client chosen above.
@@ -223,7 +238,7 @@ export function channelPicker(
   const option = (kind: ChannelKind, sub: string): HTMLElement => {
     const slot = h('span', { class: 'option-state' });
     ticks.push(() => {
-      const has = kind !== 'google' && (connected[who.value] ?? []).includes(kind);
+      const has = (connected[who.value] ?? []).includes(kind);
       slot.replaceChildren(...(has ? [statusMark(true), ' Connected'] : []));
     });
     return button([h('span', { class: 'mark mark-big' }, brandMark(kind)), h('span', { class: 'option-text' }, h('b', {}, channelName(kind)), h('small', {}, sub)), slot], 'option', () => choose(kind));
@@ -244,7 +259,7 @@ export function channelPicker(
       option('instagram', 'Business or Creator account'),
       option('facebook', 'A Page you manage'),
       option('linkedin', 'A personal profile'),
-      option('google', 'Posts on the business listing'),
+      option('google', 'Updates on the business listing'),
     ),
     h('h3', { class: 'label' }, 'More networks, coming later'),
     h('div', { class: 'options' }, soon('X', 'X'), soon('@', 'Threads'), soon('♪', 'TikTok'), soon('▶', 'YouTube'), soon('P', 'Pinterest')),
