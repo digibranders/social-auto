@@ -20,13 +20,15 @@ import {
   recentMedia,
   waitUntilReady,
 } from '../lib/instagram.js';
+import { parseProducts } from '../lib/products.js';
+import { dispatch, eventForExpiry, eventsForResults } from '../lib/webhooks.js';
 import { fetchImage, memberHealth, postImage, uploadImage } from '../lib/linkedin.js';
 import { notify } from '../lib/notify.js';
 import { applyOverrides } from '../lib/overrides.js';
 import type { PostedEntry } from '../lib/channels.js';
 import { dueManualPosts, duePost, isWantedOn, lowQueueWarnings, parseSchedule, sameCaption, type ScheduledPost } from '../lib/schedule.js';
 import { toScheduled } from '../lib/manual.js';
-import { loadChannels, loadManual, loadOverrides, loadPosted, savePosted } from '../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted, savePosted } from '../lib/store.js';
 
 const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
 const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, memberHealth };
@@ -80,11 +82,34 @@ async function sendToChannels(platform: Platform, post: ScheduledPost, origin: s
   }
 }
 
+/** Tells the products whose customers' posts just went out (or failed). Never throws: a product that is down must not stop posting. */
+async function tellProducts(post: ScheduledPost, results: readonly CrosspostResult[]): Promise<void> {
+  try {
+    const products = parseProducts(process.env['PRODUCTS']);
+    if (products.length === 0) return;
+    const { file } = await loadClients();
+    await dispatch(eventsForResults(post.brand ?? 'default', post.id, results, file, Date.now()), products);
+  } catch (error) {
+    console.error(describeError(error));
+  }
+}
+
 /** LinkedIn gives no refresh, so tell the team before a connection ends (once a day, on 7, 3, 1 and 0 days left). */
 async function warnAboutExpiringLinkedIn(): Promise<void> {
   try {
     const { file } = await loadChannels();
+    // A broken PRODUCTS setting must not stop the team's own warnings.
+    const products = (() => {
+      try {
+        return parseProducts(process.env['PRODUCTS']);
+      } catch {
+        return [];
+      }
+    })();
+    const { file: added } = products.length > 0 ? await loadClients() : { file: { clients: [] } };
     for (const { channel, days } of expiringSoon(file, Date.now())) {
+      const item = eventForExpiry(channel, days, added, Date.now());
+      if (item) await dispatch([item], products);
       await notify({
         title: days === 0 ? 'LinkedIn connection ends today' : `LinkedIn connection ends in ${days} day${days === 1 ? '' : 's'}`,
         message:
@@ -144,6 +169,7 @@ export async function GET(request: Request): Promise<Response> {
       const linkedin = await sendToChannels('linkedin', post, origin, dryRun);
 
       if (!dryRun) {
+        await tellProducts(post, [...facebook, ...linkedin]);
         if (instagram['status'] === 'failed') {
           await notify({
             title: 'Instagram post failed',
