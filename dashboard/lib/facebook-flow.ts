@@ -5,7 +5,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
  * the same state (and the client being connected) in a short-lived cookie; on the way back the two must match.
  */
 export const CONNECT_COOKIE = 'fb_connect';
-const CONNECT_TTL_SECONDS = 10 * 60;
+const CONNECT_TTL_SECONDS = 30 * 60;
 const BRAND = /^[a-z0-9][a-z0-9-]{0,40}$/;
 
 export const isBrand = (value: string | null): value is string => value !== null && BRAND.test(value);
