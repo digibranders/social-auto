@@ -30,6 +30,7 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
   '/api/edited-image': { method: 'GET', load: () => import('../api/edited-image.ts').then((m) => m.GET) },
+  '/api/facebook-connect': { method: 'POST', load: () => import('../api/facebook-connect.ts').then((m) => m.POST) },
   '/api/linkedin-connect': { method: 'POST', load: () => import('../api/linkedin-connect.ts').then((m) => m.POST) },
 };
 

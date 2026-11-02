@@ -1,11 +1,11 @@
 /**
  * A link a product's customer opens to connect their own channel (they sign in on the platform and press Allow).
  *
- * POST /api/v1/connect-link   {"externalId": "<your id for the customer>", "channel": "linkedin", "returnUrl": "https://..."}
+ * POST /api/v1/connect-link   {"externalId": "<your id for the customer>", "channel": "linkedin" | "facebook", "returnUrl": "https://..."}
  *                             answers {"url": "...", "expiresInMinutes": 60}
  *
  * returnUrl must be one of the addresses registered for the product. Afterwards the customer is sent there with
- * ?social=connected|denied|failed&channel=linkedin added. Facebook and Instagram are not offered yet.
+ * ?social=connected|denied|failed&channel=<channel> added. Instagram is not offered yet: it needs a connection of its own.
  */
 import { findWorkspace, isExternalId } from '../../lib/clients.js';
 import { describeError, json } from '../../lib/http.js';
@@ -15,7 +15,9 @@ import { isReturnUrl } from '../../lib/products.js';
 import { loadClients, storeConfigured } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 2 * 1024;
-const CHANNELS = ['linkedin'] as const;
+const CHANNELS = ['linkedin', 'facebook'] as const;
+/** Each platform has its own start page on the dashboard. */
+const START_PAGE: Record<(typeof CHANNELS)[number], string> = { linkedin: '/api/linkedin-start', facebook: '/api/facebook-start' };
 
 export async function POST(request: Request): Promise<Response> {
   const product = productOf(request);
@@ -30,7 +32,8 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof body !== 'object' || body === null) return json(400, { error: 'send JSON' });
   const { externalId, channel, returnUrl } = body;
   if (!isExternalId(externalId)) return json(400, { error: 'externalId is required' });
-  if (!CHANNELS.some((c) => c === channel)) return json(400, { error: `channel must be one of: ${CHANNELS.join(', ')}` });
+  const platform = CHANNELS.find((c) => c === channel);
+  if (!platform) return json(400, { error: `channel must be one of: ${CHANNELS.join(', ')}` });
   if (returnUrl !== undefined && (typeof returnUrl !== 'string' || !isReturnUrl(product, returnUrl))) {
     return json(400, { error: 'returnUrl is not one of the addresses registered for this product' });
   }
@@ -40,7 +43,7 @@ export async function POST(request: Request): Promise<Response> {
     const workspace = findWorkspace(file, product.id, externalId);
     if (!workspace) return json(404, { error: 'no such workspace' });
     const invite = createInvite(secret, workspace.brand, Date.now(), returnUrl);
-    return json(200, { url: `${dashboard.replace(/\/+$/, '')}/api/linkedin-start?invite=${encodeURIComponent(invite)}`, expiresInMinutes: PRODUCT_INVITE_TTL_SECONDS / 60 });
+    return json(200, { url: `${dashboard.replace(/\/+$/, '')}${START_PAGE[platform]}?invite=${encodeURIComponent(invite)}`, expiresInMinutes: PRODUCT_INVITE_TTL_SECONDS / 60 });
   } catch (error) {
     console.error(describeError(error));
     return json(500, { error: 'could not make the link' });

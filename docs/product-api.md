@@ -18,7 +18,7 @@ Authorization: Bearer <product key>
 ## Endpoints (publisher)
 
 - `POST /api/v1/workspaces` `{externalId, name}`: creates the customer's workspace, or returns the existing one. `GET ?externalId=` reads it with its channels (never tokens).
-- `POST /api/v1/connect-link` `{externalId, channel: "linkedin", returnUrl?}`: a link (valid 1 hour) the customer opens to press Allow. `returnUrl` must be one of the product's registered `returnUrls`; the customer comes back to it with `?social=connected|denied|failed&channel=linkedin`.
+- `POST /api/v1/connect-link` `{externalId, channel: "linkedin" | "facebook", returnUrl?}`: a link (valid 1 hour) the customer opens to press Allow. `returnUrl` must be one of the product's registered `returnUrls`; the customer comes back to it with `?social=connected|denied|failed&channel=linkedin` (or `facebook`). A Facebook link connects every Page the customer chooses; each Page appears as its own channel id (`facebook:<page id>`).
 - `POST /api/v1/pictures`: body is the JPG (square, 320-4096 px, up to 4 MB); answers `{pictureId}`.
 - `POST /api/v1/posts` `{externalId, day: "YYYY-MM-DD", caption, pictureId, channels?}`: goes out at 10:00 IST that day to the chosen channel ids (default: all connected).
 - `GET /api/v1/posts?externalId=`: the customer's posts with an overall state and each channel's state and link.
@@ -40,4 +40,4 @@ Check the signature over the **raw** body and reject a `t` more than 5 minutes o
 
 ## Not built yet
 
-Facebook and Instagram connect links (need Meta's app review before outside customers can connect), and the AI that reads a website and writes posts on a server.
+Instagram connect links for customers (the Instagram account is still the team's single one), and the AI that reads a website and writes posts on a server.

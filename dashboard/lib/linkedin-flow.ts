@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { isBrand } from './facebook-flow.js';
+import { isBrand, isSafeReturnUrl } from './facebook-flow.js';
+
+export { isSafeReturnUrl };
 
 /**
  * The "Connect LinkedIn" hand-off. Unlike Facebook, the person who presses Allow is usually the client, who has
@@ -26,17 +28,6 @@ export interface Invite {
   brand: string;
   /** Where to send the person afterwards (a product's own page); missing means show our thank-you page. */
   returnUrl: string | null;
-}
-
-/** An address a person may be sent back to: https, or http only for the local machine. */
-export function isSafeReturnUrl(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 500) return false;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || (url.protocol === 'http:' && (url.hostname === 'localhost' || url.hostname === '127.0.0.1'));
-  } catch {
-    return false;
-  }
 }
 
 /** The client an invite is for (and where to return to), or null when it is forged, malformed or past its date. */
