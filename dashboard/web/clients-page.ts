@@ -1,6 +1,7 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import type { ClientSummary } from './clients.ts';
+import { clientOption, dropdown } from './dropdown.ts';
 import { postChannelId } from './new-post.ts';
 import { stateLabel } from './calendar.ts';
 import type { ClientTab, GuideKey, Route } from './route.ts';
@@ -196,12 +197,7 @@ export function channelPicker(
 ): HTMLElement {
   const note = h('div', { class: 'note', hidden: '' });
   // With several clients and none chosen yet, the person says whom the channel is for.
-  const who = h('select', { class: 'btn client-select', 'aria-label': 'Client' });
-  for (const client of clients) {
-    const option = h('option', { value: client.brand }, client.label);
-    if (client.brand === (brand ?? clients[0]?.brand)) option.selected = true;
-    who.append(option);
-  }
+  const who = dropdown(clients.map((c) => clientOption(c.brand, c.label)), brand ?? clients[0]?.brand ?? '', 'Client');
   const choose = (kind: ChannelKind): void => {
     if (kind === 'facebook') {
       location.assign(`/api/facebook-start?brand=${encodeURIComponent(who.value)}`);

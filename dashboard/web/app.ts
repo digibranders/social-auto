@@ -32,6 +32,7 @@ import { channelPicker, clientPage, clientsPage, type ClientsContext } from './c
 import { summarizeClients, type ClientSummary } from './clients.ts';
 import { helpPage } from './help-page.ts';
 import { addClientForm } from './add-client.ts';
+import { clientOption, dropdown } from './dropdown.ts';
 import { newPostForm } from './new-post.ts';
 import { parseRoute, routeHash, type Route } from './route.ts';
 
@@ -686,13 +687,8 @@ function rail(): HTMLElement {
 const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', help: 'Help · Connect a channel' } as const;
 
 function clientPicker(): HTMLElement {
-  const select = h('select', { class: 'btn client-select', 'aria-label': 'Client' });
-  select.append(h('option', { value: '' }, 'All clients'));
-  for (const client of summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now())) {
-    const option = h('option', { value: client.brand }, client.label);
-    if (client.brand === state.calendarClient) option.selected = true;
-    select.append(option);
-  }
+  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now());
+  const select = dropdown([{ value: '', label: 'All clients' }, ...clients.map((c) => clientOption(c.brand, c.label))], state.calendarClient ?? '', 'Client');
   select.addEventListener('change', () => {
     state.calendarClient = select.value || null;
     state.channel = null;
