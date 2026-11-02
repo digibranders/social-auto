@@ -23,7 +23,7 @@ Authorization: Bearer <product key>
 - `POST /api/v1/connect-link` `{externalId, channel: "linkedin" | "facebook" | "instagram", returnUrl?}`: a link (valid 1 hour) the customer opens to press Allow. `returnUrl` must be one of the product's registered `returnUrls`; the customer comes back to it with `?social=connected|denied|failed&channel=linkedin` (or `facebook`, `instagram`). A Facebook link connects every Page the customer chooses; each Page appears as its own channel id (`facebook:<page id>`). An Instagram link connects the customer's own Business or Creator account (no Facebook Page needed) as `instagram:<account id>`. Social-auto renews it every week, so it only ends if the customer removes the app or renewal fails, and then `connection.expiring` is sent.
 - `POST /api/v1/pictures`: body is the JPG (square, 320-4096 px, up to 4 MB); answers `{pictureId}`.
 - `POST /api/v1/posts` `{externalId, day: "YYYY-MM-DD", caption, pictureId, channels?}`: goes out at 10:00 IST that day to the chosen channel ids (default: all connected).
-- `GET /api/v1/posts?externalId=`: the customer's posts with an overall state and each channel's state and link.
+- `GET /api/v1/posts?externalId=[&from=YYYY-MM-DD&to=YYYY-MM-DD]`: all of the customer's posts, planned and extra, earliest first. Each has `id, date, caption, imageUrl?, manual, state` (overall) and `channels[]` (`platform, account, state, permalink`). `from` is the first day and `to` the last day shown, in India time.
 - `DELETE /api/v1/posts?externalId=&postId=`: removes a post that has not gone out.
 
 A product only ever reaches workspaces it created. Another product's customers answer "no such workspace".
