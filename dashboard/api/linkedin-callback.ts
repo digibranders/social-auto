@@ -19,8 +19,15 @@ const MESSAGES: Record<Outcome, { title: string; body: string }> = {
   failed: { title: 'That did not work', body: 'The connection could not be completed. Please open the link again and press Allow. If it keeps failing, tell the person who sent it.' },
 };
 
-function finish(request: Request, outcome: Outcome, brand?: string): Response {
+function finish(request: Request, outcome: Outcome, brand?: string, returnUrl: string | null = null): Response {
   const headers = { 'Set-Cookie': clearedConnectCookie(), 'Cache-Control': 'no-store' };
+  // A person sent here by a product goes back to that product's page, which shows the result itself.
+  if (returnUrl) {
+    const back = new URL(returnUrl);
+    back.searchParams.set('social', outcome);
+    back.searchParams.set('channel', 'linkedin');
+    return new Response(null, { status: 302, headers: { ...headers, Location: back.toString() } });
+  }
   if (isSignedIn(request, process.env['SESSION_SECRET'], Date.now())) {
     const where = brand ? `#/client/${brand}/channels` : '';
     return new Response(null, { status: 302, headers: { ...headers, Location: new URL(`/?linkedin=${outcome}${where}`, request.url).toString() } });
@@ -49,15 +56,16 @@ function finish(request: Request, outcome: Outcome, brand?: string): Response {
 
 export async function GET(request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
-  if (params.get('error')) return finish(request, 'denied');
-
   const saved = parseConnectCookie(readCookie(request.headers.get('cookie'), LINKEDIN_COOKIE));
+  if (params.get('error')) return finish(request, 'denied', undefined, saved?.returnUrl ?? null);
+
+
   const code = params.get('code');
-  if (!saved || !code || !statesMatch(params.get('state'), saved.state)) return finish(request, 'failed');
+  if (!saved || !code || !statesMatch(params.get('state'), saved.state)) return finish(request, 'failed', undefined, saved?.returnUrl ?? null);
 
   const target = process.env['EDIT_URL'];
   const secret = process.env['EDIT_SECRET'];
-  if (!target || !secret) return finish(request, 'failed');
+  if (!target || !secret) return finish(request, 'failed', undefined, saved.returnUrl);
 
   try {
     const response = await fetch(new URL('/api/linkedin-connect', target), {
@@ -67,9 +75,9 @@ export async function GET(request: Request): Promise<Response> {
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     if (!response.ok) console.error(`linkedin-connect answered ${response.status}`);
-    return finish(request, response.ok ? 'connected' : 'failed', saved.brand);
+    return finish(request, response.ok ? 'connected' : 'failed', saved.brand, saved.returnUrl);
   } catch (error) {
     console.error(describeError(error));
-    return finish(request, 'failed');
+    return finish(request, 'failed', undefined, saved.returnUrl);
   }
 }

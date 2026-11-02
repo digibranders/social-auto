@@ -23,6 +23,7 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/status': { method: 'GET', load: () => import('../api/status.ts').then((m) => m.GET) },
   '/api/channels': { method: 'POST', load: () => import('../api/channels.ts').then((m) => m.POST) },
   '/api/v1/workspaces': { method: 'ANY', load: async () => { const m = await import('../api/v1/workspaces.ts'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
+  '/api/v1/connect-link': { method: 'POST', load: () => import('../api/v1/connect-link.ts').then((m) => m.POST) },
   '/api/clients': { method: 'POST', load: () => import('../api/clients.ts').then((m) => m.POST) },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
