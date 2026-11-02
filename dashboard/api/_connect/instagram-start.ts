@@ -3,10 +3,10 @@
  * GET /api/instagram-start?brand=<client>                                      (a signed-in team member connecting a client's account)
  * Sends the person to Instagram to approve posting for one client.
  */
-import { isBrand, newState } from '../lib/facebook-flow.js';
-import { authorizeLink, callbackUrl, connectCookie } from '../lib/instagram-flow.js';
-import { verifyInvite } from '../lib/linkedin-flow.js';
-import { isSignedIn } from '../lib/security.js';
+import { isBrand, newState } from '../../lib/facebook-flow.js';
+import { authorizeLink, callbackUrl, connectCookie } from '../../lib/instagram-flow.js';
+import { verifyInvite } from '../../lib/linkedin-flow.js';
+import { isSignedIn } from '../../lib/security.js';
 
 const page = (status: number, message: string): Response =>
   new Response(message, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });

@@ -1,9 +1,9 @@
 /**
- * POST /api/login  { "password": "..." }
+ * POST /api/auth/login  { "password": "..." }
  * Sets a signed session cookie. A wrong password is answered after a pause, which makes guessing slow.
  */
-import { json } from '../lib/http.js';
-import { createSession, passwordMatches, sessionCookie, SESSION_TTL_SECONDS } from '../lib/security.js';
+import { json } from '../../lib/http.js';
+import { createSession, passwordMatches, sessionCookie, SESSION_TTL_SECONDS } from '../../lib/security.js';
 
 const WRONG_PASSWORD_DELAY_MS = 1_000;
 const MAX_BODY_BYTES = 1_024;

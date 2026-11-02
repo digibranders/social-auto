@@ -5,14 +5,14 @@
  *
  * POST /api/facebook-connect   {"code": "...", "redirectUri": "...", "brand": "brandbasket"}
  */
-import { schedule as scheduleData } from '../data/schedule.js';
-import { addFacebookPages } from '../lib/channels.js';
-import { parseKey } from '../lib/crypto.js';
-import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
-import { exchangeCode, FacebookApiError, listPages, longLivedUserToken } from '../lib/facebook.js';
-import { allBrands } from '../lib/clients.js';
-import { parseSchedule } from '../lib/schedule.js';
-import { loadChannels, loadClients, saveChannels, storeConfigured } from '../lib/store.js';
+import { schedule as scheduleData } from '../../data/schedule.js';
+import { addFacebookPages } from '../../lib/channels.js';
+import { parseKey } from '../../lib/crypto.js';
+import { describeError, isAuthorized, json, requireEnv } from '../../lib/http.js';
+import { exchangeCode, FacebookApiError, listPages, longLivedUserToken } from '../../lib/facebook.js';
+import { allBrands } from '../../lib/clients.js';
+import { parseSchedule } from '../../lib/schedule.js';
+import { loadChannels, loadClients, saveChannels, storeConfigured } from '../../lib/store.js';
 
 /** The clients the content job plans posts for. */
 const plannedBrands = (): string[] => parseSchedule(scheduleData).map((p) => p.brand ?? 'default');

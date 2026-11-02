@@ -4,11 +4,11 @@
  * goes to the publisher, which swaps it for a token and stores it encrypted. Where the person lands afterwards
  * is decided in lib/connect-result.ts.
  */
-import { describeError } from '../lib/http.js';
-import { statesMatch } from '../lib/facebook-flow.js';
-import { callbackUrl, clearedConnectCookie, LINKEDIN_COOKIE, parseConnectCookie } from '../lib/linkedin-flow.js';
-import { finishConnect, type Outcome } from '../lib/connect-result.js';
-import { readCookie } from '../lib/security.js';
+import { describeError } from '../../lib/http.js';
+import { statesMatch } from '../../lib/facebook-flow.js';
+import { callbackUrl, clearedConnectCookie, LINKEDIN_COOKIE, parseConnectCookie } from '../../lib/linkedin-flow.js';
+import { finishConnect, type Outcome } from '../../lib/connect-result.js';
+import { readCookie } from '../../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
 

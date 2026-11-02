@@ -6,7 +6,7 @@
   "outputDirectory": "public",
   "cleanUrls": true,
   "functions": {
-    "api/*.ts": {
+    "api/**/*.ts": {
       "maxDuration": 30
     }
   },
@@ -44,6 +44,36 @@
           "value": "public, max-age=86400, stale-while-revalidate=604800"
         }
       ]
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/facebook-start",
+      "destination": "/api/connect?step=facebook-start"
+    },
+    {
+      "source": "/api/facebook-callback",
+      "destination": "/api/connect?step=facebook-callback"
+    },
+    {
+      "source": "/api/instagram-start",
+      "destination": "/api/connect?step=instagram-start"
+    },
+    {
+      "source": "/api/instagram-callback",
+      "destination": "/api/connect?step=instagram-callback"
+    },
+    {
+      "source": "/api/linkedin-start",
+      "destination": "/api/connect?step=linkedin-start"
+    },
+    {
+      "source": "/api/linkedin-callback",
+      "destination": "/api/connect?step=linkedin-callback"
+    },
+    {
+      "source": "/api/linkedin-invite",
+      "destination": "/api/connect?step=linkedin-invite"
     }
   ]
 }

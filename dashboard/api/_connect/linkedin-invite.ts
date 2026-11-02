@@ -2,10 +2,10 @@
  * POST /api/linkedin-invite?brand=<client>[&channel=instagram]
  * Makes a link a client can open to connect their own LinkedIn (or Instagram). Signed-in people only, from this site's pages.
  */
-import { json } from '../lib/http.js';
-import { isBrand } from '../lib/facebook-flow.js';
-import { createInvite, INVITE_TTL_SECONDS, siteOrigin } from '../lib/linkedin-flow.js';
-import { isSameOrigin, isSignedIn } from '../lib/security.js';
+import { json } from '../../lib/http.js';
+import { isBrand } from '../../lib/facebook-flow.js';
+import { createInvite, INVITE_TTL_SECONDS, siteOrigin } from '../../lib/linkedin-flow.js';
+import { isSameOrigin, isSignedIn } from '../../lib/security.js';
 
 export function POST(request: Request): Response {
   const secret = process.env['SESSION_SECRET'];

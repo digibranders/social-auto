@@ -1,5 +1,5 @@
 /**
- * Daily Vercel Cron: publishes the post that is due today to Instagram and to every connected Facebook Page, LinkedIn profile
+ * Daily Vercel Cron: publishes the post that is due today to Instagram and to every connected Facebook Page, LinkedIn profile, Google location
  * and customer Instagram account of its client, and sends a push alert when posting fails or a client's schedule is about to run out.
  * Each channel is independent: one failing never stops another.
  *
@@ -10,7 +10,7 @@
 import { schedule as scheduleData } from '../data/schedule.js';
 import { parseKey } from '../lib/crypto.js';
 import { channelLabel, expiringSoon } from '../lib/channels.js';
-import { postToFacebook, postToInstagram, postToLinkedIn, type CrosspostResult, type FacebookApi, type InstagramApi, type LinkedInApi } from '../lib/crosspost.js';
+import { postToFacebook, postToGoogle, postToInstagram, postToLinkedIn, type CrosspostResult, type FacebookApi, type GoogleApi, type InstagramApi, type LinkedInApi } from '../lib/crosspost.js';
 import { pageHealth, postLink, postPhotoFromUrl } from '../lib/facebook.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import {
@@ -21,6 +21,7 @@ import {
   tokenHealth,
   waitUntilReady,
 } from '../lib/instagram.js';
+import { accessTokenFor, createPost, locationHealth } from '../lib/google.js';
 import { parseProducts } from '../lib/products.js';
 import { dispatch, eventForExpiry, eventsForResults } from '../lib/webhooks.js';
 import { fetchImage, memberHealth, postImage, uploadImage } from '../lib/linkedin.js';
@@ -34,6 +35,11 @@ import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted, saveP
 const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
 const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, memberHealth };
 const instagramApi: InstagramApi = { createImageContainer, waitUntilReady, publishContainer, permalink, tokenHealth };
+const googleApp = (): { clientId: string; clientSecret: string } => ({ clientId: requireEnv('GOOGLE_CLIENT_ID'), clientSecret: requireEnv('GOOGLE_CLIENT_SECRET') });
+const googleApi: GoogleApi = {
+  postUpdate: async (refreshToken, place, update) => createPost(await accessTokenFor(googleApp(), refreshToken), place.account, place.location, update),
+  locationHealth: (refreshToken) => locationHealth(googleApp(), refreshToken),
+};
 
 async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: boolean): Promise<Record<string, unknown>> {
   const token = requireEnv('INSTAGRAM_TOKEN');
@@ -53,7 +59,7 @@ async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: bool
   return { status: 'published', post: post.id, media: mediaId, permalink: link };
 }
 
-type Platform = 'facebook' | 'linkedin' | 'instagram';
+type Platform = 'facebook' | 'linkedin' | 'instagram' | 'google';
 
 /** Never throws: a problem here must not hide what happened on Instagram or another channel. */
 async function sendToChannels(platform: Platform, post: ScheduledPost, origin: string, dryRun: boolean): Promise<CrosspostResult[]> {
@@ -78,6 +84,7 @@ async function sendToChannels(platform: Platform, post: ScheduledPost, origin: s
     };
     if (platform === 'facebook') return await postToFacebook({ ...common, api: facebookApi });
     if (platform === 'linkedin') return await postToLinkedIn({ ...common, api: linkedInApi });
+    if (platform === 'google') return await postToGoogle({ ...common, api: googleApi });
     return await postToInstagram({ ...common, api: instagramApi });
   } catch (error) {
     return [{ channel: platform, account: platform, status: 'failed', error: describeError(error) }];
@@ -173,10 +180,11 @@ export async function GET(request: Request): Promise<Response> {
         : { status: 'not-selected', post: post.id };
       const facebook = await sendToChannels('facebook', post, origin, dryRun);
       const linkedin = await sendToChannels('linkedin', post, origin, dryRun);
+      const google = await sendToChannels('google', post, origin, dryRun);
       const accounts = await sendToChannels('instagram', post, origin, dryRun);
 
       if (!dryRun) {
-        await tellProducts(post, [...facebook, ...linkedin, ...accounts]);
+        await tellProducts(post, [...facebook, ...linkedin, ...google, ...accounts]);
         if (instagram['status'] === 'failed') {
           await notify({
             title: 'Instagram post failed',
@@ -185,7 +193,7 @@ export async function GET(request: Request): Promise<Response> {
             tags: 'rotating_light',
           });
         }
-        for (const [name, list] of [['Facebook', facebook], ['LinkedIn', linkedin], ['Instagram', accounts]] as const) {
+        for (const [name, list] of [['Facebook', facebook], ['LinkedIn', linkedin], ['Google', google], ['Instagram', accounts]] as const) {
           for (const result of list.filter((r) => r.status === 'failed')) {
             await notify({
               title: `${name} post failed`,
@@ -196,8 +204,8 @@ export async function GET(request: Request): Promise<Response> {
           }
         }
       }
-      failed ||= instagram['status'] === 'failed' || [...facebook, ...linkedin, ...accounts].some((r) => r.status === 'failed');
-      results.push({ ...instagram, facebook, linkedin, instagramAccounts: accounts });
+      failed ||= instagram['status'] === 'failed' || [...facebook, ...linkedin, ...google, ...accounts].some((r) => r.status === 'failed');
+      results.push({ ...instagram, facebook, linkedin, google, instagramAccounts: accounts });
     }
     // A single result keeps the answer's old shape; several (extra posts the same day) are listed.
     return json(failed ? 500 : 200, results.length === 1 ? (results[0] as Record<string, unknown>) : { posts: results });

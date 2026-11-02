@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addFacebookPages, addLinkedInMember, channelLabel, channelToken, daysLeft, expiringSoon, parseChannels, parsePostedLog, removeChannel, postedKey, type PostedLog } from './channels.ts';
+import { addFacebookPages, addGoogleLocation, addLinkedInMember, channelLabel, channelToken, daysLeft, expiringSoon, parseChannels, parsePostedLog, removeChannel, postedKey, type PostedLog } from './channels.ts';
 import { decrypt, encrypt, parseKey } from './crypto.ts';
-import { crosspostStatusFor, postToFacebook, postToLinkedIn, type FacebookApi, type LinkedInApi } from './crosspost.ts';
+import { openPending, PENDING_TTL_MS, sealPending } from './google-pending.ts';
+import { crosspostStatusFor, postToFacebook, postToGoogle, postToLinkedIn, type FacebookApi, type GoogleApi, type LinkedInApi } from './crosspost.ts';
 
 const KEY = parseKey('11'.repeat(32));
 const T0 = Date.parse('2026-10-30T09:00:00Z');
@@ -216,4 +217,88 @@ test('a post limited to some channels is sent only to those, and shown only for 
   assert.deepEqual((await runLinkedIn(li, { channels: both, post: { ...post, channels: ['instagram'] } })).results, []);
   const states = crosspostStatusFor({ id: 'p9', brand: 'brandbasket', date: '2026-11-02T10:00:00+05:30', channels: ['linkedin:abc'] }, both, {}, Date.parse('2026-10-31T06:00:00Z'));
   assert.deepEqual(states.map((s) => s.platform), ['linkedin']);
+});
+
+const withGoogle = addGoogleLocation({ channels: [] }, 'brandbasket', { account: 'accounts/1', location: 'locations/10', title: 'Cafe One' }, 'refresh-1', KEY, T0);
+
+function fakeGoogle(overrides: Partial<GoogleApi> = {}): GoogleApi & { calls: string[] } {
+  const calls: string[] = [];
+  return {
+    calls,
+    postUpdate: async (token, place, update) => {
+      calls.push(`post ${token} ${place.account}/${place.location} ${update.imageUrl} | ${update.summary}`);
+      return { name: 'accounts/1/locations/10/localPosts/5', url: 'https://google.com/search?q=cafe' };
+    },
+    locationHealth: async () => ({ ok: true }),
+    ...overrides,
+  };
+}
+
+const runGoogle = (api: GoogleApi, extra: Partial<Parameters<typeof postToGoogle>[0]> = {}) => {
+  const recorded: PostedLog = {};
+  return postToGoogle({
+    post, channels: withGoogle, key: KEY, origin: 'https://pub.example', log: {}, dryRun: false, api, now: Date.parse('2026-10-31T05:00:00Z'),
+    record: async (k, e) => void (recorded[k] = e), ...extra,
+  }).then((results) => ({ results, recorded }));
+};
+
+test('a Google location keeps its refresh token encrypted and survives a round trip', () => {
+  const only = withGoogle.channels[0]!;
+  assert.equal(only.id, 'google:10');
+  assert.ok(!only.token.includes('refresh-1'));
+  assert.equal(channelToken(only, KEY), 'refresh-1');
+  assert.equal(channelLabel(only), 'Cafe One');
+  assert.deepEqual(parseChannels(JSON.parse(JSON.stringify(withGoogle))), withGoogle);
+  assert.throws(() => parseChannels({ channels: [{ ...only, location: '' }] }), /location must be a non-empty string/);
+  const again = addGoogleLocation(withGoogle, 'brandbasket', { account: 'accounts/1', location: 'locations/10', title: 'Renamed' }, 'new', KEY, T0 + 1);
+  assert.equal(again.channels.length, 1);
+  assert.equal(channelLabel(again.channels[0]!), 'Renamed');
+});
+
+test('a post goes to Google as an update with the public picture address and a hashtag-free caption, then is recorded', async () => {
+  const api = fakeGoogle();
+  const { results, recorded } = await runGoogle(api, { post: { ...post, caption: 'Hello #tag' } });
+  assert.deepEqual(results.map((r) => r.status), ['posted']);
+  assert.equal(api.calls[0], 'post refresh-1 accounts/1/locations/10 https://pub.example/posts/x.jpg | Hello');
+  assert.equal(recorded[postedKey('p1', 'google:10')]?.remoteId, 'accounts/1/locations/10/localPosts/5');
+  assert.equal(results[0]?.permalink, 'https://google.com/search?q=cafe');
+});
+
+test('Google never repeats a post, skips earlier days and other clients, and honours the chosen channels', async () => {
+  const api = fakeGoogle();
+  const log: PostedLog = { [postedKey('p1', 'google:10')]: { remoteId: 'old', permalink: null, postedAt: 'x' } };
+  assert.equal((await runGoogle(api, { log })).results[0]?.status, 'already-posted');
+  assert.equal((await runGoogle(api, { post: { ...post, date: '2026-10-29T10:00:00+05:30' } })).results[0]?.status, 'skipped-before-connection');
+  assert.deepEqual((await runGoogle(api, { post: { ...post, brand: 'someone-else' } })).results, []);
+  assert.deepEqual((await runGoogle(api, { post: { ...post, channels: ['instagram'] } })).results, []);
+  assert.equal(api.calls.length, 0);
+});
+
+test('a Google failure is reported without throwing, a dry run only checks, and a picture-less post is refused', async () => {
+  const broken = fakeGoogle({ postUpdate: async () => { throw new Error('Google post failed: Phone numbers are not allowed'); } });
+  const { results, recorded } = await runGoogle(broken);
+  assert.match(results[0]?.error ?? '', /Phone numbers/);
+  assert.deepEqual(recorded, {});
+  const dry = fakeGoogle();
+  assert.equal((await runGoogle(dry, { dryRun: true })).results[0]?.status, 'dry-run-ready');
+  assert.equal(dry.calls.length, 0);
+  const down = fakeGoogle({ locationHealth: async () => ({ ok: false, error: 'access was withdrawn' }) });
+  assert.equal((await runGoogle(down, { dryRun: true })).results[0]?.error, 'access was withdrawn');
+  assert.match((await runGoogle(fakeGoogle(), { post: { ...post, image: null } })).results[0]?.error ?? '', /no picture/);
+});
+
+test('Google shows in the dashboard status next to the other channels', () => {
+  const both = { channels: [...channels.channels, ...withGoogle.channels] };
+  const states = crosspostStatusFor({ id: 'p2', brand: 'brandbasket', date: '2026-11-02T10:00:00+05:30' }, both, {}, Date.parse('2026-10-31T06:00:00Z'));
+  assert.deepEqual(states.map((s) => `${s.platform}:${s.account}:${s.state}`), ['facebook:Brandbs:scheduled', 'google:Cafe One:scheduled']);
+});
+
+test('a waiting Google connection opens only for its client, before it ends, and nothing readable leaves the server', () => {
+  const sealed = sealPending('refresh-9', 'brandbasket', KEY, T0);
+  assert.ok(!sealed.includes('refresh-9'));
+  assert.equal(openPending(sealed, 'brandbasket', KEY, T0 + 60_000), 'refresh-9');
+  assert.throws(() => openPending(sealed, 'someone-else', KEY, T0 + 60_000), /another client/);
+  assert.throws(() => openPending(sealed, 'brandbasket', KEY, T0 + PENDING_TTL_MS + 1), /expired/);
+  assert.throws(() => openPending('v1.junk', 'brandbasket', KEY, T0), /not valid/);
+  assert.throws(() => openPending(sealed, 'brandbasket', parseKey('22'.repeat(32)), T0), /not valid/);
 });

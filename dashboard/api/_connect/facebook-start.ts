@@ -1,18 +1,18 @@
 /**
- * GET /api/linkedin-start?invite=<link made in the dashboard>   (a client connecting their own profile)
- * GET /api/linkedin-start?brand=<client>                         (a signed-in team member connecting their own)
- * Sends the person to LinkedIn to approve posting for one client.
+ * GET /api/facebook-start?brand=<client>                         (a signed-in team member connecting a client's Pages)
+ * GET /api/facebook-start?invite=<link made by a product or the dashboard>   (a customer connecting their own Pages)
+ * Sends the person to Facebook to approve the Pages for one client.
  */
-import { isBrand, newState } from '../lib/facebook-flow.js';
-import { authorizeLink, callbackUrl, connectCookie, verifyInvite } from '../lib/linkedin-flow.js';
-import { isSignedIn } from '../lib/security.js';
+import { authorizeLink, callbackUrl, connectCookie, isBrand, newState } from '../../lib/facebook-flow.js';
+import { verifyInvite } from '../../lib/linkedin-flow.js';
+import { isSignedIn } from '../../lib/security.js';
 
 const page = (status: number, message: string): Response =>
   new Response(message, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 
 export function GET(request: Request): Response {
-  const clientId = process.env['LINKEDIN_CLIENT_ID'];
-  if (!clientId) return page(503, 'LinkedIn is not configured');
+  const appId = process.env['FACEBOOK_APP_ID'];
+  if (!appId) return page(503, 'Facebook is not configured');
 
   const params = new URL(request.url).searchParams;
   // Links made in the dashboard are signed with the session secret; links a product asks for, with INVITE_SECRET.
@@ -28,12 +28,10 @@ export function GET(request: Request): Response {
   }
 
   const state = newState();
+  const configId = process.env['FACEBOOK_CONFIG_ID'];
+  const link = authorizeLink({ appId, redirectUri: callbackUrl(request), state, ...(configId ? { configId } : {}) });
   return new Response(null, {
     status: 302,
-    headers: {
-      Location: authorizeLink({ clientId, redirectUri: callbackUrl(request), state }),
-      'Set-Cookie': connectCookie(state, brand, invited?.returnUrl ?? null),
-      'Cache-Control': 'no-store',
-    },
+    headers: { Location: link, 'Set-Cookie': connectCookie(state, brand, invited?.returnUrl ?? null), 'Cache-Control': 'no-store' },
   });
 }

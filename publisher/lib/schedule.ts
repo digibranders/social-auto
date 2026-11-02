@@ -10,7 +10,7 @@ export interface ScheduledPost {
   image: string | null;
   /** Added by hand in the dashboard rather than planned by the content job. */
   manual?: boolean;
-  /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc". Missing means every connected channel. */
+  /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc" or "google:123". Missing means every connected channel. */
   channels?: string[];
 }
 
