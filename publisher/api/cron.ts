@@ -24,8 +24,9 @@ import { fetchImage, memberHealth, postImage, uploadImage } from '../lib/linkedi
 import { notify } from '../lib/notify.js';
 import { applyOverrides } from '../lib/overrides.js';
 import type { PostedEntry } from '../lib/channels.js';
-import { duePost, lowQueueWarnings, parseSchedule, sameCaption, type ScheduledPost } from '../lib/schedule.js';
-import { loadChannels, loadOverrides, loadPosted, savePosted } from '../lib/store.js';
+import { dueManualPosts, duePost, isWantedOn, lowQueueWarnings, parseSchedule, sameCaption, type ScheduledPost } from '../lib/schedule.js';
+import { toScheduled } from '../lib/manual.js';
+import { loadChannels, loadManual, loadOverrides, loadPosted, savePosted } from '../lib/store.js';
 
 const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
 const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, memberHealth };
@@ -109,7 +110,10 @@ export async function GET(request: Request): Promise<Response> {
     // Dashboard edits are applied on top. If they cannot be read this fails (and alerts) rather than
     // quietly posting the unedited version.
     const { overrides } = await loadOverrides();
+    const { file: manualFile } = await loadManual();
+    // Planned posts drive the runway warnings; hand-made posts are added for sending only.
     const schedule = applyOverrides(parseSchedule(scheduleData), overrides);
+    const everything = applyOverrides([...parseSchedule(scheduleData), ...manualFile.posts.map(toScheduled)], overrides);
 
     if (!dryRun) {
       for (const { brand, postsLeft } of lowQueueWarnings(schedule, Date.now())) {
@@ -126,39 +130,44 @@ export async function GET(request: Request): Promise<Response> {
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
     const testPostId = dryRun ? url.searchParams.get('post') : null;
-    const post = testPostId ? (schedule.find((p) => p.id === testPostId) ?? null) : duePost(schedule, Date.now());
-    if (!post) return json(200, { status: testPostId ? 'post-not-found' : 'nothing-due' });
+    const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : duePost(schedule, Date.now());
+    const due = testPostId ? (planned ? [planned] : []) : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now())];
+    if (due.length === 0) return json(200, { status: testPostId ? 'post-not-found' : 'nothing-due' });
 
-    const instagram = await sendToInstagram(post, origin, dryRun).catch((error: unknown) => ({
-      status: 'failed',
-      error: describeError(error),
-    }));
-    const facebook = await sendToChannels('facebook', post, origin, dryRun);
-    const linkedin = await sendToChannels('linkedin', post, origin, dryRun);
+    const results: Array<Record<string, unknown>> = [];
+    let failed = false;
+    for (const post of due) {
+      const instagram: Record<string, unknown> = isWantedOn(post, 'instagram')
+        ? await sendToInstagram(post, origin, dryRun).catch((error: unknown) => ({ status: 'failed', error: describeError(error) }))
+        : { status: 'not-selected', post: post.id };
+      const facebook = await sendToChannels('facebook', post, origin, dryRun);
+      const linkedin = await sendToChannels('linkedin', post, origin, dryRun);
 
-    if (!dryRun) {
-      if (instagram['status'] === 'failed') {
-        await notify({
-          title: 'Instagram post failed',
-          message: `${String(instagram['error'])}\n\nA post stays due for 20 hours. Fix the cause, then ask Claude to re-send it.`,
-          priority: 'high',
-          tags: 'rotating_light',
-        });
-      }
-      for (const [name, results] of [['Facebook', facebook], ['LinkedIn', linkedin]] as const) {
-        for (const result of results.filter((r) => r.status === 'failed')) {
+      if (!dryRun) {
+        if (instagram['status'] === 'failed') {
           await notify({
-            title: `${name} post failed`,
-            message: `${result.account}: ${result.error ?? 'unknown error'}\n\nThe other channels are not affected. Fix the cause, then ask Claude to re-send it.`,
+            title: 'Instagram post failed',
+            message: `${post.id}: ${String(instagram['error'])}\n\nA post stays due for 20 hours. Fix the cause, then ask Claude to re-send it.`,
             priority: 'high',
             tags: 'rotating_light',
           });
         }
+        for (const [name, list] of [['Facebook', facebook], ['LinkedIn', linkedin]] as const) {
+          for (const result of list.filter((r) => r.status === 'failed')) {
+            await notify({
+              title: `${name} post failed`,
+              message: `${result.account}: ${result.error ?? 'unknown error'}\n\nThe other channels are not affected. Fix the cause, then ask Claude to re-send it.`,
+              priority: 'high',
+              tags: 'rotating_light',
+            });
+          }
+        }
       }
+      failed ||= instagram['status'] === 'failed' || [...facebook, ...linkedin].some((r) => r.status === 'failed');
+      results.push({ ...instagram, facebook, linkedin });
     }
-
-    const failed = instagram['status'] === 'failed' || [...facebook, ...linkedin].some((r) => r.status === 'failed');
-    return json(failed ? 500 : 200, { ...instagram, facebook, linkedin });
+    // A single result keeps the answer's old shape; several (extra posts the same day) are listed.
+    return json(failed ? 500 : 200, results.length === 1 ? (results[0] as Record<string, unknown>) : { posts: results });
   } catch (error) {
     const message = describeError(error);
     console.error(message);

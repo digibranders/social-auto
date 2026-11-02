@@ -204,3 +204,16 @@ test('both platforms show in the dashboard status, and expiry warnings fire once
   const warn = (daysAfter: number) => expiringSoon(both, T0 + 60 * DAY - daysAfter * DAY - 1000).map((w) => w.days);
   assert.deepEqual([warn(8), warn(7), warn(6), warn(3), warn(2), warn(1), warn(0)], [[], [7], [], [3], [], [1], [0]]);
 });
+
+test('a post limited to some channels is sent only to those, and shown only for those', async () => {
+  const both = { channels: [...channels.channels, ...withLinkedIn.channels] };
+  const onlyLinkedIn = { ...post, channels: ['linkedin:abc'] };
+  const fb = fakeApi();
+  assert.deepEqual((await run(fb, { channels: both, post: onlyLinkedIn })).results, []);
+  assert.equal(fb.calls.length, 0);
+  const li = fakeLinkedIn();
+  assert.deepEqual((await runLinkedIn(li, { channels: both, post: onlyLinkedIn })).results.map((r) => r.status), ['posted']);
+  assert.deepEqual((await runLinkedIn(li, { channels: both, post: { ...post, channels: ['instagram'] } })).results, []);
+  const states = crosspostStatusFor({ id: 'p9', brand: 'brandbasket', date: '2026-11-02T10:00:00+05:30', channels: ['linkedin:abc'] }, both, {}, Date.parse('2026-10-31T06:00:00Z'));
+  assert.deepEqual(states.map((s) => s.platform), ['linkedin']);
+});

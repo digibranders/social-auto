@@ -81,6 +81,8 @@ const routes: Record<string, { method: string; load: () => Promise<Handler> } | 
   '/api/linkedin-start': { method: 'GET', load: () => import('../api/linkedin-start.ts').then((m) => m.GET as Handler) },
   '/api/linkedin-callback': { method: 'GET', load: () => import('../api/linkedin-callback.ts').then((m) => m.GET) },
   '/api/disconnect': { method: 'POST', load: () => import('../api/disconnect.ts').then((m) => m.POST) },
+  '/api/clients': { method: 'POST', load: () => import('../api/clients.ts').then((m) => m.POST) },
+  '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
 };
 

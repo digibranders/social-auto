@@ -1,4 +1,5 @@
 import { channelLabel, channelsFor, channelToken, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
+import { isWantedOn } from './schedule.js';
 import type { LinkedInPost, Visibility } from './linkedin.js';
 import { DUE_WINDOW_MS } from './schedule.js';
 
@@ -25,6 +26,8 @@ export interface PostToSend {
   caption: string;
   /** Path under the deployment, e.g. /posts/x.jpg or /api/edited-image?k=... */
   image: string | null;
+  /** Where this post is meant to go; missing means every connected channel. */
+  channels?: string[];
 }
 
 export interface CrosspostResult {
@@ -59,7 +62,7 @@ export async function postToFacebook(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'facebook')) {
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'facebook').filter((c) => isWantedOn(post, c.id))) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -108,7 +111,7 @@ export async function postToLinkedIn(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'linkedin')) {
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'linkedin').filter((c) => isWantedOn(post, c.id))) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -151,9 +154,10 @@ export interface CrosspostStatus {
 }
 
 /** Where a post stands on every connected channel of its client, for the dashboard. */
-export function crosspostStatusFor(post: { id: string; brand?: string; date: string }, channels: ChannelFile, log: PostedLog, now: number): CrosspostStatus[] {
+export function crosspostStatusFor(post: { id: string; brand?: string; date: string; channels?: string[] }, channels: ChannelFile, log: PostedLog, now: number): CrosspostStatus[] {
   const at = Date.parse(post.date);
   return channelsFor(channels, post.brand ?? 'default')
+    .filter((channel) => isWantedOn(post, channel.id))
     .filter((channel) => at >= Date.parse(channel.connectedAt))
     .map((channel): CrosspostStatus => {
       const done = log[postedKey(post.id, channel.id)];

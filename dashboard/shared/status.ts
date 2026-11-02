@@ -26,6 +26,10 @@ export interface StatusPost {
   /** Still ahead of its time and not yet live, so it may be changed. */
   editable: boolean;
   /** Where the post stands on the client's other channels (Facebook Pages). */
+  /** Added by hand in the dashboard rather than planned by the content job. */
+  manual: boolean;
+  /** Where a hand-made post goes ('instagram' and channel ids); null means every connected channel. */
+  channels: string[] | null;
   crossposts: Crosspost[];
 }
 
@@ -55,7 +59,8 @@ export interface StatusResponse {
   generatedAt: string;
   channels: ChannelHealth[];
   posts: StatusPost[];
-  runway: Array<{ brand: string; postsLeft: number }>;
+  /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
+  runway: Array<{ brand: string; postsLeft: number; added?: true }>;
 }
 
 export class StatusParseError extends Error {
@@ -140,6 +145,8 @@ export function parseStatus(raw: unknown): StatusResponse {
       mediaUrl: textOrNull(post, 'mediaUrl', where),
       edited: post['edited'] === true,
       editable: post['editable'] === true,
+      manual: post['manual'] === true,
+      channels: Array.isArray(post['channels']) ? post['channels'].filter((c): c is string => typeof c === 'string') : null,
       crossposts: list(post['crossposts'] ?? [], `${where}.crossposts`).map((entry, j): Crosspost => {
         const w = `${where}.crossposts[${j}]`;
         const c = record(entry, w);
@@ -160,7 +167,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}) };
   });
 
   return { generatedAt, channels, posts, runway };

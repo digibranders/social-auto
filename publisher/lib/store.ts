@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { BlobPreconditionFailedError, del, get, put } from '@vercel/blob';
 import { parseChannels, parsePostedLog, type ChannelFile, type PostedLog } from './channels.js';
+import { parseClientsFile, type ClientsFile } from './clients.js';
+import { parseManualFile, type ManualFile } from './manual.js';
 import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overrides.js';
 
 /**
@@ -41,6 +43,12 @@ export function saveOverrides(overrides: OverrideMap, etag: string | null): Prom
 }
 
 export async function saveImage(key: string, bytes: Uint8Array): Promise<void> {
+  const dir = localDir();
+  if (dir) {
+    await mkdir(join(dir, 'images'), { recursive: true });
+    await writeFile(join(dir, imagePath(key)), bytes, { mode: 0o600 });
+    return;
+  }
   await put(imagePath(key), Buffer.from(bytes), {
     access: 'private',
     contentType: 'image/jpeg',
@@ -52,11 +60,21 @@ export async function saveImage(key: string, bytes: Uint8Array): Promise<void> {
 /** The picture's bytes, or null when no such picture exists. */
 export async function loadImage(key: string): Promise<ReadableStream<Uint8Array> | null> {
   if (!isImageKey(key) || !storeConfigured()) return null;
+  const dir = localDir();
+  if (dir) {
+    const bytes = await readFile(join(dir, imagePath(key))).catch(() => null);
+    return bytes ? new Response(bytes).body : null;
+  }
   const result = await get(imagePath(key), { access: 'private' });
   return result && result.statusCode === 200 ? result.stream : null;
 }
 
 export async function deleteImage(key: string): Promise<void> {
+  const dir = localDir();
+  if (dir) {
+    await rm(join(dir, imagePath(key)), { force: true });
+    return;
+  }
   await del(imagePath(key));
 }
 
@@ -120,6 +138,30 @@ export async function loadChannels(): Promise<{ file: ChannelFile; etag: string 
 
 export function saveChannels(file: ChannelFile, etag: string | null): Promise<void> {
   return writeJson(CHANNELS_PATH, file, etag);
+}
+
+const CLIENTS_PATH = 'clients.json';
+
+export async function loadClients(): Promise<{ file: ClientsFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: { clients: [] }, etag: null };
+  const { value, etag } = await readJson(CLIENTS_PATH);
+  return { file: value === null ? { clients: [] } : parseClientsFile(value), etag };
+}
+
+export function saveClients(file: ClientsFile, etag: string | null): Promise<void> {
+  return writeJson(CLIENTS_PATH, file, etag);
+}
+
+const MANUAL_PATH = 'manual.json';
+
+export async function loadManual(): Promise<{ file: ManualFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: { posts: [] }, etag: null };
+  const { value, etag } = await readJson(MANUAL_PATH);
+  return { file: value === null ? { posts: [] } : parseManualFile(value), etag };
+}
+
+export function saveManual(file: ManualFile, etag: string | null): Promise<void> {
+  return writeJson(MANUAL_PATH, file, etag);
 }
 
 export async function loadPosted(): Promise<{ log: PostedLog; etag: string | null }> {

@@ -9,13 +9,14 @@ import { schedule as scheduleData } from '../data/schedule.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import { parseKey } from '../lib/crypto.js';
 import { crosspostStatusFor } from '../lib/crosspost.js';
-import { channelLabel, channelToken, type ChannelFile } from '../lib/channels.js';
+import { channelLabel, channelToken, type ChannelFile, type PostedLog } from '../lib/channels.js';
 import { pageHealth } from '../lib/facebook.js';
 import { memberHealth } from '../lib/linkedin.js';
 import { accountProfile, mediaSince, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
 import { applyOverrides } from '../lib/overrides.js';
-import { buildStatus, parseSchedule } from '../lib/schedule.js';
-import { loadChannels, loadOverrides, loadPosted } from '../lib/store.js';
+import { toScheduled } from '../lib/manual.js';
+import { buildStatus, parseSchedule, type StatusPost } from '../lib/schedule.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted } from '../lib/store.js';
 
 /** Instagram is asked at most once a minute per warm function instance, however many people look. */
 const CACHE_MS = 60_000;
@@ -87,6 +88,21 @@ async function lookUpInstagram(earliest: number): Promise<InstagramView> {
   }
 }
 
+/** Adds each channel's status. A hand-made post that skips Instagram takes its state and look from the channels it does go to. */
+function withCrossposts(post: StatusPost, channels: ChannelFile, posted: PostedLog, now: number): StatusPost {
+  const crossposts = crosspostStatusFor({ ...post, channels: post.channels ?? undefined }, channels, posted, now);
+  if (post.channels === null || post.channels.includes('instagram') || crossposts.length === 0) return { ...post, crossposts };
+  const first = crossposts[0] as (typeof crossposts)[number];
+  const pending = crossposts.find((c) => c.state !== 'published');
+  return {
+    ...post,
+    platform: first.platform,
+    state: pending ? pending.state : 'published',
+    permalink: first.permalink,
+    crossposts,
+  };
+}
+
 export async function GET(request: Request): Promise<Response> {
   if (!isAuthorized(request, process.env['STATUS_SECRET'])) return json(401, { error: 'unauthorized' });
 
@@ -94,8 +110,8 @@ export async function GET(request: Request): Promise<Response> {
   const origin = process.env['PUBLIC_ORIGIN'] ?? new URL(request.url).origin;
 
   try {
-    const [{ overrides }, { file: channels }, { log: posted }] = await Promise.all([loadOverrides(), loadChannels(), loadPosted()]);
-    const posts = applyOverrides(parseSchedule(scheduleData), overrides);
+    const [{ overrides }, { file: channels }, { log: posted }, { file: manual }, { file: added }] = await Promise.all([loadOverrides(), loadChannels(), loadPosted(), loadManual(), loadClients()]);
+    const posts = applyOverrides([...parseSchedule(scheduleData), ...manual.posts.map(toScheduled)], overrides);
 
     if (!cache || now - cache.at >= CACHE_MS) {
       const earliest = posts.length ? Math.min(...posts.map((p) => Date.parse(p.date))) : now;
@@ -122,7 +138,8 @@ export async function GET(request: Request): Promise<Response> {
         })),
       ],
       ...summary,
-      posts: summary.posts.map((p) => ({ ...p, crossposts: crosspostStatusFor(p, channels, posted, now) })),
+      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const }))],
+      posts: summary.posts.map((p) => withCrossposts(p, channels, posted, now)),
     });
   } catch (error) {
     console.error(describeError(error));

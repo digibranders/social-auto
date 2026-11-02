@@ -16,6 +16,8 @@ export interface ClientSummary {
   missed: number;
   /** Seven days or fewer of posts left. */
   queueLow: boolean;
+  /** Added in the dashboard: it has no planned posts yet and can be removed. */
+  added: boolean;
 }
 
 const LOW_QUEUE_DAYS = 7;
@@ -52,17 +54,20 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
     const posts = data.posts.filter((p) => p.brand === brand);
     const upcoming = posts.filter((p) => Date.parse(p.date) > now).sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
     const channels = data.channels.filter((c) => c.brands.includes(brand));
-    const postsLeft = data.runway.find((r) => r.brand === brand)?.postsLeft ?? 0;
+    const entry = data.runway.find((r) => r.brand === brand);
+    const postsLeft = entry?.postsLeft ?? 0;
+    const added = entry?.added === true;
     return {
       brand,
       label: brandLabel(brand),
       channels,
       postsLeft,
       upcoming,
-      pattern: schedulePattern(posts, now),
+      pattern: schedulePattern(posts.filter((p) => !p.manual), now),
       problems: channels.filter((c) => !c.ok).length,
       missed: posts.filter((p) => p.state === 'missed').length,
-      queueLow: postsLeft <= LOW_QUEUE_DAYS,
+      queueLow: !added && postsLeft <= LOW_QUEUE_DAYS,
+      added,
     };
   });
 }

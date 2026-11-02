@@ -6,7 +6,7 @@ import { describeDays, schedulePattern, summarizeClients } from './clients.ts';
 const NOW = Date.parse('2026-11-02T00:00:00Z');
 const post = (brand: string, date: string, state: StatusPost['state'] = 'scheduled'): StatusPost => ({
   id: `${brand}-${date}`, brand, platform: 'instagram', date, caption: 'c', image: null, state, permalink: null,
-  publishedAt: null, mediaUrl: null, edited: false, editable: true, crossposts: [],
+  publishedAt: null, mediaUrl: null, edited: false, editable: true, manual: false, channels: null, crossposts: [],
 });
 const weekdays = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06'].map((d) => `${d}T10:00:00+05:30`);
 
@@ -42,4 +42,24 @@ test('summarizeClients groups by client with channels, runway, problems and what
   assert.equal(a?.upcoming[0]?.date, weekdays[0]);
   assert.equal(b?.queueLow, true);
   assert.equal(b?.channels.length, 1);
+});
+
+test('hand-made extra posts do not change the described schedule pattern', () => {
+  const planned = weekdays.map((d) => post('acme', d));
+  const extra = { ...post('acme', '2026-11-07T18:00:00+05:30'), id: 'manual-0123456789ab', manual: true };
+  const data: StatusResponse = { generatedAt: '', channels: [], runway: [{ brand: 'acme', postsLeft: 5 }], posts: [...planned, extra] };
+  const [client] = summarizeClients(data, NOW);
+  assert.equal(client?.pattern, schedulePattern(planned, NOW));
+  assert.equal(client?.upcoming.length, 6);
+});
+
+test('a client added in the dashboard shows with no posts, is removable, and is not flagged as running low', () => {
+  const data: StatusResponse = { generatedAt: '', channels: [], posts: [], runway: [{ brand: 'new-client', postsLeft: 0, added: true }, { brand: 'acme', postsLeft: 2 }] };
+  const clients = summarizeClients(data, NOW);
+  const added = clients.find((c) => c.brand === 'new-client');
+  assert.equal(added?.label, 'New Client');
+  assert.equal(added?.added, true);
+  assert.equal(added?.queueLow, false);
+  assert.equal(clients.find((c) => c.brand === 'acme')?.added, false);
+  assert.equal(clients.find((c) => c.brand === 'acme')?.queueLow, true);
 });
