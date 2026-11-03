@@ -1,0 +1,1 @@
+{"base": "https://megacorp.example", "mustSelect": ["/products", "/pricing", "/about", "/solutions"], "mustReject": ["/privacy", "/terms", "/cookies", "/login", "/blog/post-1", "/resources/guide-1"], "maxSelected": 7}

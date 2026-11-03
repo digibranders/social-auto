@@ -41,7 +41,7 @@ test('the text logo shows the name in the brand colours, with anything odd in th
   assert.ok(textLogoSvg('x'.repeat(80), { ink: '#000000', accent: '#111111' }).includes('x'.repeat(24)));
 });
 
-const snapshot: SiteSnapshot = { origin: 'https://acme.com', pages: [{ url: 'https://acme.com/', title: 'Acme', description: 'd', text: 'Dental care. '.repeat(50) }], logoCandidates: ['https://acme.com/logo.png'], iconCandidates: ['https://acme.com/icon.png'], colors: ['#0E8C8C'], fonts: ['Inter'] };
+const snapshot: SiteSnapshot = { origin: 'https://acme.com', pages: [{ url: 'https://acme.com/', title: 'Acme', description: 'd', text: 'Dental care. '.repeat(50) }], logoCandidates: ['https://acme.com/logo.png'], iconCandidates: ['https://acme.com/icon.png'], colors: ['#0E8C8C'], fonts: ['Inter'], pageDecisions: [] };
 const modelAnswer = (): Response => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...brandJson, visualStyle: 'Deep teal and white' }) } }] }), { status: 200 });
 
 test('when no logo can be downloaded the brand still gets one: its name as a text logo', async () => {
@@ -113,6 +113,28 @@ test('an icon that will not download leaves the plain text logo', async () => {
     });
     assert.equal(brand.logo, 'assets/logo.svg');
     assert.ok(!(await readFile(join(brandDir, 'assets/logo.svg'), 'utf8')).includes('data:image'));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the pages that were chosen and rejected are saved with their scores and reasons, for review', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'analyze-test-'));
+  try {
+    const decisions = [
+      { url: 'https://acme.com/pricing', selected: true, score: 8, reasons: ['+5 "pricing" page', '+3 in the navigation'] },
+      { url: 'https://acme.com/privacy', selected: false, score: -20, reasons: ['-20 legal or utility page (privacy)'] },
+    ];
+    const { dir: brandDir } = await analyzeSite('acme.com', dir, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), {
+      crawl: async () => ({ ...snapshot, pageDecisions: decisions }),
+      fetchBytes: async () => {
+        throw new Error('404');
+      },
+      chatFetch: (async () => modelAnswer()) as typeof fetch,
+    });
+    const saved = JSON.parse(await readFile(join(brandDir, 'pages.json'), 'utf8')) as { read: unknown[]; skipped: Array<{ url: string; reasons: string[] }> };
+    assert.deepEqual(saved.read, [decisions[0]]);
+    assert.deepEqual(saved.skipped, [decisions[1]]);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

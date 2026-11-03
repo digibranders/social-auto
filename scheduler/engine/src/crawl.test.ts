@@ -29,8 +29,8 @@ function site(pages: Record<string, string>, rendered: Record<string, string> = 
 }
 
 const home = html(`<h1>Acme Dental</h1><p>${prose(6)}</p><a href="/about">About</a> <a href="/pricing">Pricing</a> <a href="/privacy">Privacy</a>`);
-const about = html(`<p>${prose(5)}</p>`);
-const pricing = html(`<p>${prose(5)}</p>`);
+const about = html(`<p>${'Our dentists have looked after families in this town for twenty years and we love meeting new patients. '.repeat(5)}</p>`);
+const pricing = html(`<p>${'A check-up costs less than most people expect and we explain every price before any treatment begins. '.repeat(5)}</p>`);
 
 test('an ordinary site is read: its pages, in a useful order, without the skipped ones', async () => {
   const { deps, fetched } = site({ 'https://acme.com/': home, 'https://acme.com/about': about, 'https://acme.com/pricing': pricing, 'https://acme.com/privacy': about });
@@ -138,4 +138,34 @@ test('product photos and promos are never taken for the logo, even with the busi
 test('a logo in the navigation bar counts', async () => {
   const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': page('<nav><img src="/assets/logo-dark.svg" alt="Acme"></nav>') }).deps);
   assert.deepEqual(snapshot.logoCandidates, ['https://acme.com/assets/logo-dark.svg']);
+});
+
+test('every link is decided and explained in the snapshot, including pages that were not read and why', async () => {
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': home, 'https://acme.com/about': about, 'https://acme.com/pricing': pricing }).deps);
+  const byPath = new Map(snapshot.pageDecisions.map((d) => [new URL(d.url).pathname, d]));
+  assert.ok(byPath.get('/about')?.selected && byPath.get('/pricing')?.selected);
+  assert.ok(!byPath.get('/privacy')?.selected && byPath.get('/privacy')?.reasons.some((r) => /legal|utility/i.test(r)));
+  assert.ok(snapshot.pageDecisions.every((d) => d.reasons.length >= 1));
+});
+
+test('a page that repeats another page\'s text is not read twice, and says which page it repeats', async () => {
+  const same = html(`<p>${'Identical words about our friendly dental practice and the care we give to every family. '.repeat(6)}</p>`);
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': home, 'https://acme.com/about': same, 'https://acme.com/pricing': same }).deps);
+  assert.equal(snapshot.pages.length, 2);
+  const dropped = snapshot.pageDecisions.find((d) => !d.selected && d.reasons.some((r) => /duplicate of/.test(r)));
+  assert.ok(dropped && /duplicate of https:\/\/acme\.com\/(about|pricing)/.test(dropped.reasons.join(' ')));
+});
+
+test('a link that is blocked by robots.txt is recorded as blocked and the next best page is read instead', async () => {
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/robots.txt': 'User-agent: *\nDisallow: /pricing\n', 'https://acme.com/': home, 'https://acme.com/about': about, 'https://acme.com/pricing': pricing }).deps);
+  const pricingDecision = snapshot.pageDecisions.find((d) => d.url.endsWith('/pricing'));
+  assert.ok(!pricingDecision?.selected && pricingDecision?.reasons.some((r) => /robots/.test(r)));
+});
+
+test('links that only exist after the page builds itself in the browser are ranked too', async () => {
+  const thin = '<!doctype html><html lang="en"><head><title>Acme Dental</title></head><body><div id="app"></div></body></html>';
+  const built = html(`<header><nav><a href="/services">Services</a><a href="/about">About</a></nav></header><h1>Acme Dental</h1><p>${prose(7)}</p>`);
+  const { deps } = site({ 'https://acme.com/': thin, 'https://acme.com/services': about, 'https://acme.com/about': pricing }, { 'https://acme.com/': built });
+  const snapshot = await crawlSite('acme.com', deps);
+  assert.ok(snapshot.pages.some((p) => p.url.endsWith('/services')) && snapshot.pages.some((p) => p.url.endsWith('/about')));
 });

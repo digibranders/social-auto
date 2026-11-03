@@ -149,5 +149,8 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
     }
   }
   await writeFile(join(dir, 'brand.json'), `${JSON.stringify(brand, null, 2)}\n`);
+  // Which pages the profile was built from and which were left out, with scores and reasons, so a wrong choice can be seen.
+  const pages = { read: snapshot.pageDecisions.filter((d) => d.selected), skipped: snapshot.pageDecisions.filter((d) => !d.selected) };
+  await writeFile(join(dir, 'pages.json'), `${JSON.stringify(pages, null, 2)}\n`);
   return { dir, brand };
 }

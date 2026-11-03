@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { chromeDumpArgs, chromePath } from './platform.ts';
+import { canonicalOf, duplicateOf, rankPages, type PageDecision } from './pages.ts';
 import { assertPublicUrl, parseRobots, robotsAllows, safeFetch, type FetchedPage } from './safe-fetch.ts';
 
 const run = promisify(execFile);
@@ -22,8 +23,6 @@ const RENDER_TIMEOUT_MS = 45_000;
 const MAX_PAGES = 8;
 const MAX_CHARS_PER_PAGE = 3_000;
 const MAX_STYLESHEETS = 4;
-const PRIORITY_PATH = /about|service|pricing|price|plan|product|feature|solution|faq|for\/|why|how|industr|work/i;
-const SKIP_PATH = /privacy|terms|refund|shipping|cookie|login|signin|signup|cart|checkout|account|wp-admin|\.(pdf|jpg|png|svg|xml)$/i;
 
 export class CrawlError extends Error {
   constructor(message: string) {
@@ -76,6 +75,8 @@ export interface SiteSnapshot {
   /** #RRGGBB colours, most frequent first. */
   colors: string[];
   fonts: string[];
+  /** Every internal link of the homepage with its score and the reason it was or was not read, for review. */
+  pageDecisions: PageDecision[];
 }
 
 function decodeEntities(text: string): string {
@@ -102,23 +103,6 @@ export function htmlToText(html: string): string {
     .replace(/<(nav|footer)[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<[^>]+>/g, ' ');
   return decodeEntities(stripped).replace(/\s+/g, ' ').trim();
-}
-
-function internalLinks(html: string, base: URL): string[] {
-  const links = new Set<string>();
-  for (const match of html.matchAll(/href=["']([^"'#?]+)["']/gi)) {
-    const href = match[1];
-    if (!href) continue;
-    let url: URL;
-    try {
-      url = new URL(href, base);
-    } catch {
-      continue;
-    }
-    if (url.hostname !== base.hostname || SKIP_PATH.test(url.pathname) || url.pathname === '/') continue;
-    links.add(url.origin + url.pathname.replace(/\/$/, ''));
-  }
-  return [...links].sort((a, b) => Number(PRIORITY_PATH.test(b)) - Number(PRIORITY_PATH.test(a)));
 }
 
 /** Words in an address or alt text that mean a picture shows somebody else's logo: a client, partner, customer or press logo. */
@@ -311,10 +295,23 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
   };
   addPage(base.href, homeBody);
 
-  const links = internalLinks(homeBody, base).filter((link) => robotsAllows(robots, new URL(link).pathname));
-  for (const link of links.slice(0, MAX_PAGES - 1)) {
-    const page = await get(link);
-    if (page?.type.includes('html')) addPage(link, await readable(link, page.body));
+  const decisions = rankPages(homeBody, base, MAX_PAGES - 1, { allowed: (path) => robotsAllows(robots, path) });
+  for (const decision of decisions.filter((d) => d.selected)) {
+    const page = await get(decision.url);
+    if (!page?.type.includes('html')) {
+      decision.selected = false;
+      decision.reasons.push(page ? 'not read: it is not a web page' : 'not read: it could not be loaded');
+      continue;
+    }
+    const html = await readable(decision.url, page.body);
+    const text = htmlToText(html).slice(0, MAX_CHARS_PER_PAGE);
+    const repeats = duplicateOf({ url: decision.url, canonical: canonicalOf(html, new URL(decision.url)), text }, pages);
+    if (repeats) {
+      decision.selected = false;
+      decision.reasons.push(`not read: duplicate of ${repeats} (same canonical address or the same text)`);
+      continue;
+    }
+    addPage(decision.url, html);
   }
   if (pages.reduce((sum, page) => sum + page.text.length, 0) < MIN_TOTAL_CHARS) throw new TooLittleContentError(base.hostname);
 
@@ -338,5 +335,6 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     // Logo colours count double: they are the most reliable brand signal.
     colors: collectColors([...logoSvgs, ...logoSvgs, themeColor, homeBody, ...stylesheets]),
     fonts: collectFonts([homeBody, ...stylesheets]),
+    pageDecisions: decisions,
   };
 }
