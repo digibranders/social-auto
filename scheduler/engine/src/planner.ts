@@ -1,9 +1,19 @@
 /** Writes a week of pain-point posts for a brand with the text model. */
 import type { AiConfig } from './ai.ts';
-import { parseWeekPlan, type Brand, type WeekPlan } from './content.ts';
+import { parseWeekPlan, type Brand, type LayoutName, type WeekPlan } from './content.ts';
 import { postDates, type Weekday } from './cadence.ts';
 import { layoutFor, visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
+
+/**
+ * The prompt for one post's background picture: the scene, then the brand's visual style (palette in words, mood, what to
+ * avoid) when its profile has one, then lighting, composition hint and the no-text rule.
+ */
+export function scenePrompt(visual: string, layout: LayoutName, brand: Pick<Brand, 'visualStyle'>, withComposition: boolean): string {
+  const scene = visual.trim().replace(/\.$/, '');
+  const style = brand.visualStyle?.trim().replace(/\.$/, '');
+  return `${scene}${style ? `. Visual style: ${style}` : ''}${visualStyleFor(layout, withComposition)}`;
+}
 
 export interface PlanSchedule {
   /** YYYY-MM-DD of the first post. */
@@ -128,7 +138,7 @@ export async function planWeek(options: {
               mode: 'ai',
               headline: d.headline,
               subline: d.subline,
-              imagePrompt: d.visual.trim().replace(/\.$/, '') + visualStyleFor(layoutFor(options.weekNumber, offset + i), options.compositionHints ?? false),
+              imagePrompt: scenePrompt(d.visual, layoutFor(options.weekNumber, offset + i), brand, options.compositionHints ?? false),
               layout: layoutFor(options.weekNumber, offset + i),
               caption: d.caption,
               hashtags: d.hashtags,

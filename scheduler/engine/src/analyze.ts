@@ -2,9 +2,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { AiConfig } from './ai.ts';
-import { parseBrand, type Brand } from './content.ts';
+import { escapeHtml, parseBrand, type Brand, type BrandColors } from './content.ts';
 import { crawlSite, type SiteSnapshot } from './crawl.ts';
 import { chatJson } from './llm.ts';
+import { safeFetchBytes, type FetchedBytes } from './safe-fetch.ts';
 
 const LOGO_EXTENSIONS = new Set(['.svg', '.png', '.jpg', '.jpeg', '.webp']);
 const DEFAULT_FONT = 'Inter';
@@ -23,23 +24,35 @@ export function slugFromSite(site: string): string {
   return label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 }
 
-async function downloadLogo(candidates: string[], assetsDir: string): Promise<string> {
+/** Downloads the best logo that works; null when none does. */
+async function downloadLogo(candidates: string[], assetsDir: string, fetchBytes: (url: string) => Promise<FetchedBytes>): Promise<string | null> {
   for (const url of candidates) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-      const type = response.headers.get('content-type') ?? '';
-      if (!response.ok || !type.startsWith('image/')) continue;
+      const { bytes, type } = await fetchBytes(url);
+      if (!type.startsWith('image/') || bytes.length === 0) continue;
       const fromType = type.includes('svg') ? '.svg' : type.includes('png') ? '.png' : type.includes('webp') ? '.webp' : '.jpg';
       const fromPath = extname(new URL(url).pathname).toLowerCase();
       const ext = LOGO_EXTENSIONS.has(fromPath) ? fromPath : fromType;
       const file = `logo${ext}`;
-      await writeFile(join(assetsDir, file), Buffer.from(await response.arrayBuffer()));
+      await writeFile(join(assetsDir, file), bytes);
       return `assets/${file}`;
     } catch {
       continue;
     }
   }
-  throw new AnalyzeError('No downloadable logo found on the website');
+  return null;
+}
+
+const MAX_LOGO_NAME_CHARS = 24;
+
+/** A simple logo made of the brand's name, for sites whose own logo could not be downloaded. */
+export function textLogoSvg(name: string, colors: Pick<BrandColors, 'ink' | 'accent'>): string {
+  const shown = name.trim().slice(0, MAX_LOGO_NAME_CHARS);
+  const initial = escapeHtml(shown.charAt(0).toUpperCase() || '?');
+  const label = escapeHtml(shown);
+  const width = 96 + Math.max(shown.length, 4) * 34;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 96" role="img" aria-label="${label}"><rect width="80" height="80" y="8" rx="20" fill="${colors.accent}"/><text x="40" y="66" text-anchor="middle" font-family="Inter, Arial, Helvetica, sans-serif" font-size="54" font-weight="800" fill="#fff">${initial}</text><text x="96" y="66" font-family="Inter, Arial, Helvetica, sans-serif" font-size="52" font-weight="800" fill="${colors.ink}">${label}</text></svg>
+`;
 }
 
 const SYSTEM_PROMPT = `You are a brand strategist. From website content you build a factual brand profile used to write social media posts.
@@ -69,6 +82,7 @@ Return JSON with exactly these keys:
   "rules": ["3-5 content rules, e.g. no invented statistics, prices exactly as on the site, plus industry-specific cautions (medical, legal, financial)"],
   "colors": {"background": "#RRGGBB light page colour", "ink": "#RRGGBB dark text colour", "accent": "#RRGGBB main brand accent", "tile": "#RRGGBB a dark brand shade"},
   "font": "a Google Font family name for headlines, preferably one of the candidates",
+  "visualStyle": "one sentence for the people who make the pictures: the colour palette in plain words (for example deep teal, off-white, a touch of gold), the photographic mood and the kind of setting typical for this business, and what to avoid",
   "features": [
     {"icon": "monitor|gear|person|shield", "title": "2-3 words", "detail": "max 26 characters"}
   ]
@@ -79,24 +93,35 @@ Website content:
 ${pages}`;
 }
 
-export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig): Promise<{ dir: string; brand: Brand }> {
-  const snapshot = await crawlSite(site);
+/** What the brand reader uses to reach the outside; tests replace it. */
+export interface AnalyzeDeps {
+  crawl?: (site: string) => Promise<SiteSnapshot>;
+  fetchBytes?: (url: string) => Promise<FetchedBytes>;
+  chatFetch?: typeof fetch;
+}
+
+export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig, deps: AnalyzeDeps = {}): Promise<{ dir: string; brand: Brand }> {
+  const snapshot = await (deps.crawl ?? crawlSite)(site);
   const dir = join(brandsRoot, slugFromSite(snapshot.origin));
   const assetsDir = join(dir, 'assets');
   await mkdir(assetsDir, { recursive: true });
-  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir);
+  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir, deps.fetchBytes ?? ((url: string) => safeFetchBytes(url, { maxBytes: 5_000_000, accept: 'image/*,*/*' })));
+  const logoPath = logo ?? 'assets/logo.svg';
 
   const brand = await chatJson({
     ai,
+    ...(deps.chatFetch ? { fetchFn: deps.chatFetch } : {}),
     system: SYSTEM_PROMPT,
     user: userPrompt(snapshot),
     parse: (value) => {
-      const raw = { ...(value as Record<string, unknown>), website: snapshot.origin, logo, mark: logo };
+      const raw = { ...(value as Record<string, unknown>), website: snapshot.origin, logo: logoPath, mark: logoPath };
       const parsed = parseBrand(raw, 'brand profile');
       return { ...parsed, font: parsed.font.trim() || DEFAULT_FONT };
     },
   });
 
+  // No downloadable logo: the brand's name becomes its logo, so the run goes on.
+  if (!logo) await writeFile(join(assetsDir, 'logo.svg'), textLogoSvg(brand.name, brand.colors));
   await writeFile(join(dir, 'brand.json'), `${JSON.stringify(brand, null, 2)}\n`);
   return { dir, brand };
 }

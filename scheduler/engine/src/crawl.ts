@@ -1,7 +1,24 @@
-/** Reads a business website: page text, logo candidates, colours and fonts. */
+/**
+ * Reads a business website: page text, logo candidates, colours and fonts.
+ *
+ * Every address goes through safe-fetch.ts (public addresses only, checked at every redirect, an honest name, robots.txt
+ * respected). A page that arrives nearly empty because the site builds itself in the browser is rendered in Chrome.
+ */
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { chromeDumpArgs, chromePath } from './platform.ts';
+import { assertPublicUrl, parseRobots, robotsAllows, safeFetch, type FetchedPage } from './safe-fetch.ts';
 
-const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130 Safari/537.36';
-const REQUEST_TIMEOUT_MS = 20_000;
+const run = promisify(execFile);
+/** A page with less text than this probably builds itself in the browser. */
+const THIN_CHARS = 300;
+/** Less text than this over the whole site, even after rendering, is not enough to write posts from. */
+const MIN_TOTAL_CHARS = 400;
+const MAX_RENDERS = 4;
+const RENDER_TIMEOUT_MS = 45_000;
 const MAX_PAGES = 8;
 const MAX_CHARS_PER_PAGE = 3_000;
 const MAX_STYLESHEETS = 4;
@@ -12,6 +29,33 @@ export class CrawlError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'CrawlError';
+  }
+}
+
+/** The site was read, but it holds too little text to plan posts from. The dashboard shows this message to the person. */
+export class TooLittleContentError extends CrawlError {
+  constructor(site: string) {
+    super(`${site} gave too little to read (almost no text on its pages). Add a few sentences about the business to the site, or write the brand details by hand.`);
+    this.name = 'TooLittleContentError';
+  }
+}
+
+/** What the crawler uses to reach the outside; tests replace it. */
+export interface CrawlDeps {
+  fetchPage?: (url: string) => Promise<FetchedPage>;
+  /** The page's text after its scripts have run (the HTML Chrome ends up with). */
+  render?: (url: string) => Promise<string>;
+}
+
+/** Opens a public page in headless Chrome and returns the page as it looks after its scripts ran. */
+export async function renderWithChrome(url: string, env: Record<string, string | undefined> = process.env): Promise<string> {
+  await assertPublicUrl(new URL(url));
+  const profile = await mkdtemp(join(tmpdir(), 'engine-crawl-'));
+  try {
+    const { stdout } = await run(chromePath(env, process.platform), chromeDumpArgs(profile, url, env), { timeout: RENDER_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
+    return stdout;
+  } finally {
+    await rm(profile, { recursive: true, force: true });
   }
 }
 
@@ -30,20 +74,6 @@ export interface SiteSnapshot {
   /** #RRGGBB colours, most frequent first. */
   colors: string[];
   fonts: string[];
-}
-
-async function fetchText(url: string): Promise<{ finalUrl: string; body: string; type: string } | null> {
-  try {
-    const response = await fetch(url, {
-      headers: { 'User-Agent': USER_AGENT, Accept: 'text/html,text/css,*/*' },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-    if (!response.ok) return null;
-    return { finalUrl: response.url, body: await response.text(), type: response.headers.get('content-type') ?? '' };
-  } catch {
-    return null;
-  }
 }
 
 function decodeEntities(text: string): string {
@@ -150,12 +180,38 @@ function collectFonts(sources: string[]): string[] {
   return [...fonts].slice(0, 6);
 }
 
-export async function crawlSite(siteUrl: string): Promise<SiteSnapshot> {
+export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<SiteSnapshot> {
+  const fetchPage = deps.fetchPage ?? ((url: string) => safeFetch(url));
+  const render = deps.render ?? ((url: string) => renderWithChrome(url));
   const start = new URL(/^https?:\/\//i.test(siteUrl) ? siteUrl : `https://${siteUrl}`);
-  const home = await fetchText(start.href);
-  if (!home || !home.type.includes('html')) throw new CrawlError(`Could not load ${start.href}`);
+
+  // What the site asks of automated readers. No robots.txt (or none we can read) means no restrictions.
+  const robots = await fetchPage(new URL('/robots.txt', start).href).then((page) => parseRobots(page.body)).catch(() => []);
+  if (!robotsAllows(robots, start.pathname || '/')) {
+    throw new CrawlError(`${start.hostname} asks automated readers not to read it (robots.txt), so it was not read.`);
+  }
+
+  const get = (url: string): Promise<FetchedPage | null> => fetchPage(url).catch(() => null);
+  const home = await fetchPage(start.href).catch((error: unknown) => {
+    throw new CrawlError(`Could not load ${start.href}: ${error instanceof Error ? error.message : String(error)}`);
+  });
+  if (!home.type.includes('html')) throw new CrawlError(`Could not load ${start.href}: it is not a web page`);
   const base = new URL(home.finalUrl);
 
+  // A page with almost no text probably builds itself in the browser: look at it the way a browser does.
+  let renders = 0;
+  const readable = async (url: string, body: string): Promise<string> => {
+    if (htmlToText(body).length >= THIN_CHARS || renders >= MAX_RENDERS) return body;
+    renders += 1;
+    try {
+      const rendered = await render(url);
+      return htmlToText(rendered).length > htmlToText(body).length ? rendered : body;
+    } catch {
+      return body;
+    }
+  };
+
+  const homeBody = await readable(base.href, home.body);
   const pages: CrawledPage[] = [];
   const addPage = (url: string, html: string): void => {
     pages.push({
@@ -165,31 +221,33 @@ export async function crawlSite(siteUrl: string): Promise<SiteSnapshot> {
       text: htmlToText(html).slice(0, MAX_CHARS_PER_PAGE),
     });
   };
-  addPage(base.href, home.body);
+  addPage(base.href, homeBody);
 
-  for (const link of internalLinks(home.body, base).slice(0, MAX_PAGES - 1)) {
-    const page = await fetchText(link);
-    if (page?.type.includes('html')) addPage(link, page.body);
+  const links = internalLinks(homeBody, base).filter((link) => robotsAllows(robots, new URL(link).pathname));
+  for (const link of links.slice(0, MAX_PAGES - 1)) {
+    const page = await get(link);
+    if (page?.type.includes('html')) addPage(link, await readable(link, page.body));
   }
+  if (pages.reduce((sum, page) => sum + page.text.length, 0) < MIN_TOTAL_CHARS) throw new TooLittleContentError(base.hostname);
 
-  const stylesheetUrls = [...home.body.matchAll(/<link[^>]+href=["']([^"']+\.css[^"']*)["']/gi)]
+  const stylesheetUrls = [...homeBody.matchAll(/<link[^>]+href=["']([^"']+\.css[^"']*)["']/gi)]
     .map((m) => (m[1] ? new URL(decodeEntities(m[1]), base).href : ''))
     .filter(Boolean)
     .slice(0, MAX_STYLESHEETS);
-  const stylesheets = (await Promise.all(stylesheetUrls.map(fetchText))).map((s) => s?.body ?? '');
+  const stylesheets = (await Promise.all(stylesheetUrls.map(get))).map((sheet) => sheet?.body ?? '');
 
-  const logoCandidates = findLogoCandidates(home.body, base);
+  const logoCandidates = findLogoCandidates(homeBody, base);
   const logoSvgs = await Promise.all(
-    logoCandidates.filter((u) => /\.svg(\?|$)/i.test(u)).slice(0, 2).map(async (u) => (await fetchText(u))?.body ?? ''),
+    logoCandidates.filter((u) => /\.svg(\?|$)/i.test(u)).slice(0, 2).map(async (u) => (await get(u))?.body ?? ''),
   );
-  const themeColor = metaContent(home.body, 'theme-color');
+  const themeColor = metaContent(homeBody, 'theme-color');
 
   return {
     origin: base.origin,
     pages,
     logoCandidates,
     // Logo colours count double: they are the most reliable brand signal.
-    colors: collectColors([...logoSvgs, ...logoSvgs, themeColor, home.body, ...stylesheets]),
-    fonts: collectFonts([home.body, ...stylesheets]),
+    colors: collectColors([...logoSvgs, ...logoSvgs, themeColor, homeBody, ...stylesheets]),
+    fonts: collectFonts([homeBody, ...stylesheets]),
   };
 }

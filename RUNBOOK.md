@@ -44,6 +44,14 @@ The job works in `~/social-auto-runner`, a separate checkout of `main`; it refus
 ### Everything on the VPS
 Publisher and dashboard can run as two Node servers on the VPS instead of Vercel (see `deploy/README.md`): systemd services `social-publisher` and `social-dashboard`, timers `social-cron` and `social-refresh` (replacing Vercel Cron), data in `/var/lib/social-auto`, settings in `/etc/social-auto/*.env`. Logs: `journalctl -u social-publisher -u social-dashboard -u social-cron`. Update with `deploy/scripts/deploy.sh`. Never run the Vercel crons and the server timers together, or a post can go out twice.
 
+### How the engine reads a client's website
+- It identifies itself as `SocialAutoBot/1.0 (+https://social.digibranders.com)` and respects the site's `robots.txt`. A site that asks bots not to read it is not read, and the error says so.
+- It reads public addresses only: every address a name points to, and every redirect, must be public (no `localhost`, private networks or cloud-metadata addresses), on the standard web ports, with a size cap.
+- Up to 8 pages, about 3,000 characters each, preferring about, services, pricing and FAQ pages. A page that arrives almost empty (a site that builds itself in the browser) is opened in Chrome instead, up to 4 pages per run.
+- If the site holds too little text even after that, the run stops with "gave too little to read" instead of writing weak posts.
+- If no logo can be downloaded, the brand's name is drawn as a text logo. The brand profile also carries a short "visual style" (palette in words, mood) that goes into every picture prompt, and the fade over each picture uses the brand's own light background colour.
+- Known limit: Chrome follows redirects and scripts on its own, so the Chrome step is only used after the address passed the public-address check and should not be pointed at addresses you do not trust.
+
 ### Run the content engine on a Linux server
 The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (`google-chrome`) and ImageMagick (`convert`, which replaces the Mac's `sips`). Settings are environment variables, so a server needs no edits to the code:
 

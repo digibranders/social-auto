@@ -34,6 +34,8 @@ export interface Brand {
   logo: string;
   mark: string;
   features: BrandFeature[];
+  /** One sentence for picture makers: the palette in words, the mood and setting, what to avoid. Older profiles have none. */
+  visualStyle?: string;
 }
 
 function requireStringArray(obj: Record<string, unknown>, key: string, source: string): string[] {
@@ -111,7 +113,12 @@ export function parseBrand(raw: unknown, source: string): Brand {
   for (const [name, hex] of Object.entries(parsedColors)) {
     if (!HEX_COLOR.test(hex)) throw new ContentValidationError(source, `colors.${name} must be #RRGGBB`);
   }
+  if (raw['visualStyle'] !== undefined && typeof raw['visualStyle'] !== 'string') {
+    throw new ContentValidationError(source, '"visualStyle" must be text');
+  }
+  const visualStyle = typeof raw['visualStyle'] === 'string' && raw['visualStyle'].trim() ? raw['visualStyle'].trim().slice(0, 400) : undefined;
   return {
+    ...(visualStyle ? { visualStyle } : {}),
     name: requireString(raw, 'name', source),
     website: requireString(raw, 'website', source),
     handleUrl: requireString(raw, 'handleUrl', source),

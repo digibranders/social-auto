@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LAYOUTS, parseWeekPlan, type Brand, type PlannedPost } from './content.ts';
-import { compositionFor, layoutFor, lighten, renderPostHtml, visualStyleFor } from './layout.ts';
+import { compositionFor, layoutFor, lighten, luminance, renderPostHtml, visualStyleFor, washColor } from './layout.ts';
 import { resolveImageModel } from './pollinations.ts';
 
 const brand: Brand = {
@@ -95,4 +95,13 @@ test('resolveImageModel takes the flag, then POLLINATIONS_IMAGE_MODEL, then the 
   assert.equal(resolveImageModel(undefined, { POLLINATIONS_IMAGE_MODEL: 'openai/gpt-image-2.5-flare' }), 'openai/gpt-image-2.5-flare');
   assert.equal(resolveImageModel(undefined, {}), 'zimage');
   assert.equal(resolveImageModel(undefined, { POLLINATIONS_IMAGE_MODEL: '' }), 'zimage');
+});
+
+test('the fade over the picture uses the brand\'s own light background, and falls back to cream when it is dark', () => {
+  assert.ok(luminance('#FFFFFF') > 0.99 && luminance('#000000') < 0.01);
+  assert.equal(washColor('#EAF4FF'), '#EAF4FF');
+  assert.equal(washColor('#111111'), '#F7F1E8');
+  const page = (background: string) => renderPostHtml({ brand: { ...brand, colors: { ...brand.colors, background } }, post, painPointNumber: 1, logoHtml: '<svg></svg>', visualUrl: 'file:///x.jpg' });
+  assert.ok(page('#EAF4FF').includes('#EAF4FFF2'), 'the brand background is in the fade');
+  assert.ok(!page('#111111').includes('#111111F2') && page('#111111').includes('#F7F1E8F2'));
 });
