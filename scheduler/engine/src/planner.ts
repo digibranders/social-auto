@@ -3,7 +3,7 @@ import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
 import { assertCopySupported } from './copy-gate.ts';
 import { creativePrompt, formatFor } from './creative.ts';
-import { anchoredTo, assignWeek, type PillarSpec, type PostAssignment } from './pillars.ts';
+import { assignWeek, checkAnchored, defaultPillars, type PillarSpec, type PostAssignment } from './pillars.ts';
 import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
@@ -138,8 +138,9 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
     throw new Error(`post ${position} headline is too long; keep it under 45 characters`);
   }
   if (proofPoints !== undefined) assertCopySupported({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, proofPoints, position);
-  if (assignment?.anchor && !anchoredTo({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, assignment.anchor)) {
-    throw new Error(`post ${position} is a proof post and must be built on this proof point: "${assignment.anchor}"; use its words and figures unchanged`);
+  const unanchored = assignment?.anchor ? checkAnchored({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, assignment.anchor) : undefined;
+  if (assignment?.anchor && unanchored) {
+    throw new Error(`post ${position} (${assignment.pillar}) must be built on this proof point: "${assignment.anchor}", with its figures and meaning unchanged: ${unanchored}`);
   }
 }
 
@@ -173,7 +174,7 @@ export async function planWeek(options: {
     brand,
     count: dates.length,
     recent: recentPillars,
-    recentProofCount: recentPillars.filter((p) => p === 'proof').length,
+    recentAnchoredCount: recentPillars.filter((name) => (options.pillars ?? defaultPillars).find((p) => p.name === name)?.needs === 'proof').length,
     ...(options.pillars ? { pillars: options.pillars } : {}),
   });
 

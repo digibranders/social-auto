@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { anchoredTo, assignWeek, availablePillars, defaultPillars, pillarsForWeek } from './pillars.ts';
+import { anchoredTo, assignWeek, availablePillars, checkAnchored, defaultPillars, pillarsForWeek } from './pillars.ts';
 
 const NAMES = defaultPillars.map((p) => p.name);
 
@@ -41,32 +41,46 @@ test('it is deterministic, and one available pillar fills the whole week', () =>
 
 test('a pillar is offered only when the evidence for it exists', () => {
   const bare = { proofPoints: [] as string[], offer: '' };
-  assert.deepEqual(availablePillars(bare).sort(), ['education', 'problem', 'story']);
-  assert.ok(availablePillars({ ...bare, proofPoints: ['Open Saturdays'] }).includes('proof'));
-  assert.ok(availablePillars({ ...bare, offer: 'Dental care for families' }).includes('offer'));
-  assert.ok(!availablePillars({ ...bare, offer: '   ' }).includes('offer'));
+  assert.deepEqual(availablePillars(bare), []);
+  assert.deepEqual(availablePillars({ ...bare, offer: 'Dental care for families' }).sort(), ['offer', 'problem']);
+  assert.deepEqual(availablePillars({ ...bare, proofPoints: ['Open Saturdays'] }).sort(), ['education', 'proof']);
+  assert.deepEqual(availablePillars({ ...bare, identity: { kind: 'homepage' } }), ['story']);
+  assert.deepEqual(availablePillars({ ...bare, identity: { kind: 'name-only' } }), []);
+  assert.deepEqual(availablePillars({ ...bare, offer: '   ' }), []);
 });
 
-test('assignments carry the brief, and each proof post gets its own verified proof point, rotating through them', () => {
-  const brand = { proofPoints: ['Open Saturdays', 'Free first visit', 'Family discounts'], offer: 'Dental care' };
-  const first = assignWeek({ brand, count: 5, recent: [], recentProofCount: 0 });
-  assert.equal(first.length, 5);
-  assert.ok(first.every((a) => a.brief.length > 20));
-  const proofPosts = first.filter((a) => a.pillar === 'proof');
-  assert.equal(proofPosts.length, 1);
-  assert.equal(proofPosts[0]?.anchor, 'Open Saturdays');
-  assert.ok(first.filter((a) => a.pillar !== 'proof').every((a) => a.anchor === undefined));
-  const later = assignWeek({ brand, count: 5, recent: first.map((a) => a.pillar), recentProofCount: 1 });
-  assert.equal(later.find((a) => a.pillar === 'proof')?.anchor, 'Free first visit');
+test('education and proof are both built on a verified proof point, taking them in turn', () => {
+  const brand = { proofPoints: ['Open Saturdays', 'Free first visit', 'Family discounts'], offer: 'Dental care', identity: { kind: 'homepage' } };
+  const week = assignWeek({ brand, count: 5, recent: [], recentAnchoredCount: 0 });
+  assert.equal(week.length, 5);
+  assert.ok(week.every((a) => a.brief.length > 20));
+  assert.deepEqual(week.map((a) => a.pillar).sort(), ['education', 'offer', 'problem', 'proof', 'story']);
+  const anchored = week.filter((a) => a.anchor !== undefined);
+  assert.deepEqual(anchored.map((a) => a.pillar).sort(), ['education', 'proof']);
+  assert.deepEqual(anchored.map((a) => a.anchor), ['Open Saturdays', 'Free first visit']);
+  assert.ok(week.filter((a) => a.anchor === undefined).every((a) => !['proof', 'education'].includes(a.pillar)));
+  const later = assignWeek({ brand, count: 5, recent: week.map((a) => a.pillar), recentAnchoredCount: 2 });
+  assert.deepEqual(later.filter((a) => a.anchor !== undefined).map((a) => a.anchor), ['Family discounts', 'Open Saturdays']);
 });
 
-test('a brand with no proof points never gets a proof post', () => {
-  const week = assignWeek({ brand: { proofPoints: [], offer: 'Dental care' }, count: 8, recent: [], recentProofCount: 0 });
-  assert.ok(week.every((a) => a.pillar !== 'proof'));
+test('without evidence there is no education or proof post, and with nothing at all the week says so', () => {
+  const week = assignWeek({ brand: { proofPoints: [], offer: 'Dental care' }, count: 8, recent: [], recentAnchoredCount: 0 });
+  assert.ok(week.every((a) => a.pillar === 'problem' || a.pillar === 'offer'));
+  assert.throws(() => assignWeek({ brand: { proofPoints: [], offer: '' }, count: 2, recent: [], recentAnchoredCount: 0 }), /no pillar/i);
+});
+
+test('weights are settings: a heavier pillar comes up more often, and weight zero switches a pillar off', () => {
+  const specs = defaultPillars.map((p) => (p.name === 'proof' ? { ...p, weight: 2 } : p.name === 'story' ? { ...p, weight: 0 } : p));
+  const brand = { proofPoints: ['Open Saturdays'], offer: 'Dental care', identity: { kind: 'homepage' } };
+  const week = assignWeek({ brand, count: 12, recent: [], recentAnchoredCount: 0, pillars: specs }).map((a) => a.pillar);
+  const count = (n: string) => week.filter((w) => w === n).length;
+  assert.equal(count('story'), 0);
+  assert.ok(count('proof') >= count('offer') * 1.5, week.join(','));
+  for (let i = 1; i < week.length; i++) assert.notEqual(week[i], week[i - 1]);
 });
 
 test('the pillars are settings: another set can be supplied', () => {
-  const week = assignWeek({ brand: { proofPoints: [], offer: '' }, count: 2, recent: [], recentProofCount: 0, pillars: [{ name: 'tip', brief: 'Give one practical tip the audience can use today.', needs: null }, { name: 'news', brief: 'Share one update from the business in plain words.', needs: null }] });
+  const week = assignWeek({ brand: { proofPoints: [], offer: '' }, count: 2, recent: [], recentAnchoredCount: 0, pillars: [{ name: 'tip', brief: 'Give one practical tip the audience can use today.', needs: null }, { name: 'news', brief: 'Share one update from the business in plain words.', needs: null }] });
   assert.deepEqual(week.map((a) => a.pillar).sort(), ['news', 'tip']);
 });
 
@@ -74,4 +88,31 @@ test('a proof post must be built on its proof point: its main words appear in th
   const point = 'Free first visit for new patients';
   assert.equal(anchoredTo({ headline: 'Nervous about the dentist?', subline: 'Acme offers a free first visit.', caption: 'New patients start with a free first visit.' }, point), true);
   assert.equal(anchoredTo({ headline: 'Nervous about the dentist?', subline: 'Acme keeps it calm.', caption: 'We take our time with every person.' }, point), false);
+});
+
+test('word overlap is not enough: a sentence that reverses or changes the proof point is turned back', () => {
+  const point = 'Our platform does not guarantee next-day delivery';
+  const copy = (sentence: string) => ({ headline: 'Delivery, explained', subline: 'Acme is plain about delivery.', caption: sentence });
+  assert.match(checkAnchored(copy('Our platform guarantees next-day delivery.'), point) ?? '', /changes the proof point|negat/i);
+  assert.equal(checkAnchored(copy('Our platform does not guarantee next-day delivery.'), point), undefined);
+  const priced = 'Plans start from $29 per month';
+  assert.match(checkAnchored(copy('Plans start from $25 per month.'), priced) ?? '', /\$25/);
+  assert.match(checkAnchored(copy('Plans start from $29 per year.'), priced) ?? '', /year/);
+});
+
+test('a faithful paraphrase that keeps the figures is not turned back for using different words', () => {
+  const point = 'Setup takes about 10 minutes';
+  const copy = { headline: 'Be up and running quickly', subline: 'Acme Dental is ready within about 10 minutes of setup.', caption: 'Getting started is quick.' };
+  assert.equal(checkAnchored(copy, point), undefined);
+});
+
+test('a paraphrase with no figures and little shared wording cannot be confirmed, so it is turned back', () => {
+  const point = 'Free first visit for new patients';
+  assert.ok(checkAnchored({ headline: 'Come and meet us', subline: 'Acme Dental welcomes newcomers at no cost.', caption: 'Your opening appointment costs nothing.' }, point));
+});
+
+test('anchoring does not depend on English word shapes for figures: numbers and units are compared as they are', () => {
+  const point = '25 integraciones disponibles';
+  assert.equal(checkAnchored({ headline: 'Conecta todo', subline: 'Acme Dental ofrece 25 integraciones.', caption: 'Más de lo que imaginas.' }, point), undefined);
+  assert.ok(checkAnchored({ headline: 'Conecta todo', subline: 'Acme Dental ofrece 30 integraciones.', caption: 'Más de lo que imaginas.' }, point));
 });

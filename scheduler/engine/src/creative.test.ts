@@ -208,6 +208,6 @@ test('a post records its pillar, and a proof post that ignores its proof point i
   const built = buildPost({ draft: { ...goodDraft, subline: 'Acme x', caption: 'c' }, id: 'w01-d1', date: '2026-11-04T10:00:00+05:30', weekNumber: 1, index: 0, brand, pillar: 'education' });
   assert.equal(built.pillar, 'education');
   const proof = { pillar: 'proof', brief: 'b', anchor: 'Free first visit for new patients' };
-  assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme keeps it calm.', caption: 'We take our time.' }, 2, 'Acme Dental', ['Free first visit for new patients'], proof), /post 2 is a proof post/);
+  assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme keeps it calm.', caption: 'We take our time.' }, 2, 'Acme Dental', ['Free first visit for new patients'], proof), /post 2 \(proof\) must be built on this proof point/);
   assert.doesNotThrow(() => validateDraft({ ...goodDraft, subline: 'Acme offers a free first visit.', caption: 'New patients start with a free first visit.' }, 2, 'Acme Dental', ['Free first visit for new patients'], proof));
 });
