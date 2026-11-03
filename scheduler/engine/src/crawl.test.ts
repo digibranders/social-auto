@@ -105,3 +105,37 @@ test('the site\'s own icons are kept as a second choice, biggest first, with the
   assert.deepEqual(snapshot.iconCandidates, ['https://acme.com/icon.png?v=3', 'https://acme.com/apple-icon.png', 'https://acme.com/favicon.ico']);
   assert.deepEqual(snapshot.logoCandidates, []);
 });
+
+const page = (body: string): string => html(`${body}<main><p>${prose(7)}</p></main>`);
+
+test('a customer\'s logo in the page body is not the business\'s own, even with "logo" and .svg in its name, but the logo in the header is', async () => {
+  const carousel = '<section><img src="/logos/full-logo--black.svg" alt="Lovable logo" width="160"><img src="/logos/cursor-logo-mono.svg" alt="Cursor logo" width="160"></section>';
+  const header = '<header><a href="/"><img src="/brand/wordmark.svg" alt="Acme Dental logo"></a></header>';
+  const both = await crawlSite('acme.com', site({ 'https://acme.com/': page(`${header}${carousel}`) }).deps);
+  assert.deepEqual(both.logoCandidates, ['https://acme.com/brand/wordmark.svg']);
+  const onlyCarousel = await crawlSite('acme.com', site({ 'https://acme.com/': page(carousel) }).deps);
+  assert.deepEqual(onlyCarousel.logoCandidates, []);
+});
+
+test('a logo inside the link to the home page counts, in or out of a header', async () => {
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': page('<div class="bar"><a class="brand" href="https://acme.com/"><img src="/img/logo.png" alt="Home"></a></div>') }).deps);
+  assert.deepEqual(snapshot.logoCandidates, ['https://acme.com/img/logo.png']);
+});
+
+test('product photos and promos are never taken for the logo, even with the business\'s name or "logo" in the address', async () => {
+  const promos = [
+    '<img src="/v/homepage/images/acme-pro/promo_acme_pro_large.jpg" alt="Acme Pro">',
+    '<img src="/v/homepage/images/logos/acme-watch/promo_logo_acme_watch_large.png" alt="">',
+    '<img src="/cdn-cgi/imagedelivery/abc/6600ca/f=auto,fit=scale-down,width=2560" alt="Acme logo">',
+    '<img src="/img/hero-banner-acme-logo.png" alt="Acme" width="1200">',
+  ].join('');
+  const inBody = await crawlSite('acme.com', site({ 'https://acme.com/': page(`<section>${promos}</section>`) }).deps);
+  assert.deepEqual(inBody.logoCandidates, []);
+  const inHeader = await crawlSite('acme.com', site({ 'https://acme.com/': page(`<header>${promos}</header>`) }).deps);
+  assert.deepEqual(inHeader.logoCandidates, []);
+});
+
+test('a logo in the navigation bar counts', async () => {
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': page('<nav><img src="/assets/logo-dark.svg" alt="Acme"></nav>') }).deps);
+  assert.deepEqual(snapshot.logoCandidates, ['https://acme.com/assets/logo-dark.svg']);
+});

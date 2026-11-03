@@ -134,8 +134,22 @@ function safeDecode(text: string): string {
   }
 }
 
-function logoScore(src: string, alt: string, siteName: string): number {
+/** Words in an address that mean a promo, product photo or page banner, never the business's own logo. */
+const NOT_A_LOGO = /(^|[\/_.\-=,])(promo|hero|banner|product|screenshot|background|cover|feature|splash|collection)([\/_.\-=,]|$)/i;
+/** A picture this wide (in pixels) is a photo, not a logo. */
+const BIG_PICTURE_WIDTH = 500;
+
+/** The width a picture is shown or fetched at, from its width attribute or a width/w parameter in its address; 0 when unknown. */
+function pictureWidth(tag: string, src: string): number {
+  const attribute = tag.match(/\swidth=["']?(\d+)/i)?.[1];
+  const parameter = src.match(/[?&,/](?:width|w)=(\d+)/i)?.[1];
+  return Math.max(Number(attribute ?? 0), Number(parameter ?? 0));
+}
+
+function logoScore(src: string, alt: string, siteName: string, tag: string, inLogoPlace: boolean): number {
   const haystack = `${safeDecode(src)} ${alt}`.toLowerCase();
+  // A promo, product photo or banner, or a picture this wide, is never a logo, wherever it sits.
+  if (NOT_A_LOGO.test(safeDecode(src)) || pictureWidth(tag, src) >= BIG_PICTURE_WIDTH) return -Infinity;
   let score = 0;
   if (haystack.includes('logo')) score += 4;
   if (siteName.length >= 3 && haystack.includes(siteName)) score += 6;
@@ -144,23 +158,44 @@ function logoScore(src: string, alt: string, siteName: string): number {
   if (/white|inverse|negative|footer/i.test(src)) score -= 3;
   if (/icon|favicon|apple-touch/i.test(src)) score -= 1;
   if (OTHER_COMPANY.test(haystack)) score -= 10;
+  // Where it sits matters most: the header, the navigation and the link to the home page hold the business's own logo;
+  // a "logo" in the body is nearly always a customer's, a partner's or a promo.
+  score += inLogoPlace ? 6 : -3;
   return score;
 }
 
+/** The stretches of the page where a business puts its own logo: the header, the navigation and any link to the home page. */
+function logoPlaces(html: string, base: URL): Array<[number, number]> {
+  const places: Array<[number, number]> = [];
+  for (const match of html.matchAll(/<(header|nav)\b[\s\S]*?<\/\1>/gi)) places.push([match.index, match.index + match[0].length]);
+  for (const match of html.matchAll(/<a\b[^>]*\shref=["']([^"']*)["'][^>]*>[\s\S]*?<\/a>/gi)) {
+    try {
+      const target = new URL(decodeEntities(match[1] ?? ''), base);
+      if (target.origin === base.origin && target.pathname.replace(/\/+$/, '') === '' && !target.search && !target.hash) places.push([match.index, match.index + match[0].length]);
+    } catch {
+      continue;
+    }
+  }
+  return places;
+}
+
 /**
- * Pictures that could be the business's own logo, best first. Only a picture whose name or alt text carries the
- * business's name, or one plainly called "logo" that is not in a clients/partners section, counts. Other companies'
- * logos and the small browser icons never do: with no candidate the brand's name is drawn instead.
+ * Pictures that could be the business's own logo, best first. Only a picture in the header, the navigation or the link to the
+ * home page whose name or alt text carries the business's name or plainly says "logo", and that is not a customer's, a partner's,
+ * a promo or a big photo, counts. Other companies' logos and the small browser icons never do: with no candidate the site's
+ * own icon is used, and without one the brand's name is drawn.
  */
 export function findLogoCandidates(html: string, base: URL): string[] {
   const siteName = base.hostname.replace(/^www\./, '').split('.')[0] ?? '';
+  const places = logoPlaces(html, base);
   const scored = new Map<string, number>();
   for (const match of html.matchAll(/<img\b[^>]*>/gi)) {
     const tag = match[0];
     const src = tag.match(/\ssrc=["']([^"']+)["']/i)?.[1];
     if (!src || src.startsWith('data:')) continue;
     const alt = tag.match(/\salt=["']([^"']*)["']/i)?.[1] ?? '';
-    const score = logoScore(src, alt, siteName.toLowerCase());
+    const inLogoPlace = places.some(([from, to]) => match.index >= from && match.index < to);
+    const score = logoScore(src, alt, siteName.toLowerCase(), tag, inLogoPlace);
     if (score < LOGO_THRESHOLD) continue;
     let url: string;
     try {
