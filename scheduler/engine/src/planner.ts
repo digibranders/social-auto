@@ -1,12 +1,8 @@
 /** Writes a week of pain-point posts for a brand with the text model. */
 import { parseWeekPlan, type Brand, type WeekPlan } from './content.ts';
 import { postDates, type Weekday } from './cadence.ts';
+import { layoutFor, visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
-
-export const VISUAL_STYLE =
-  ', the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background,' +
-  ' bright warm natural light, premium commercial advertising photography, realistic, shallow depth of field,' +
-  ' absolutely no text, no letters, no words, no logos anywhere';
 
 export interface PlanSchedule {
   /** YYYY-MM-DD of the first post. */
@@ -93,6 +89,8 @@ export async function planWeek(options: {
   weekNumber: number;
   schedule: PlanSchedule;
   usedPainPoints: string[];
+  /** Ask the picture for room where the layout puts its text (off by default; see IMAGE_COMPOSITION_HINT). */
+  compositionHints?: boolean;
   log?: (message: string) => void;
 }): Promise<WeekPlan> {
   const { brand, schedule } = options;
@@ -129,7 +127,8 @@ export async function planWeek(options: {
               mode: 'ai',
               headline: d.headline,
               subline: d.subline,
-              imagePrompt: d.visual.trim().replace(/\.$/, '') + VISUAL_STYLE,
+              imagePrompt: d.visual.trim().replace(/\.$/, '') + visualStyleFor(layoutFor(options.weekNumber, offset + i), options.compositionHints ?? false),
+              layout: layoutFor(options.weekNumber, offset + i),
               caption: d.caption,
               hashtags: d.hashtags,
             };

@@ -50,6 +50,8 @@ The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (
 | `CHROME_NO_SANDBOX` | `1` if Ubuntu refuses Chrome's sandbox for a normal user. The engine only opens pages it built. |
 | `SOCIAL_AUTO_ENV` | A keys file (`POLLINATIONS_API_KEY`, `SCHEDULER_API_KEY`, `ALERT_NTFY_TOPIC`). Keys already in the environment win, so a service can supply them directly. Default `scheduler/upstream/.env`. |
 | `SOCIAL_AUTO_LOG_HINT` | Where an alert tells you to look for the log. |
+| `POLLINATIONS_IMAGE_MODEL` | The picture model. Default is the free `zimage`. Paid models (for example `openai/gpt-image-2.5-flare`) need credit on the Pollinations account. |
+| `IMAGE_COMPOSITION_HINT` | `1` asks the picture for open space where the poster layout puts its text. Off by default, so prompts are not tuned to one model. |
 
 ### Edit a post in the dashboard
 Open a scheduled post → **Edit post**. Change the caption (max 2200 characters, 30 hashtags) or **Replace picture** (square JPG, max 4 MB), or **Revert to original**. Changes apply at once and are what gets posted at the scheduled time; no redeploy. Posts that are due, published or missed cannot be edited (Instagram does not allow changing a published caption).
