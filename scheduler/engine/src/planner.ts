@@ -67,13 +67,13 @@ ${JSON.stringify(
 Pain points already used in earlier weeks (do NOT repeat or rephrase these):
 ${usedPainPoints.length ? usedPainPoints.map((p) => `- ${p}`).join('\n') : '- none yet'}
 
-Write ${count} posts, each on a different pain point the audience really has. Return JSON:
+Write ${count} posts, each on a different pain point the audience really has. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the problem, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan. Return JSON:
 {
   "posts": [
     {
       "painPoint": "one sentence describing the customer's problem",
-      "headline": "max 45 characters, a punchy question or statement about the pain; wrap the 2-4 most important words in |pipes| for the accent colour, e.g. 'Is your website |costing you customers?|'",
-      "subline": "max 70 characters, one line that hints at the solution",
+      "headline": "max 45 characters, a punchy question or statement about the pain in everyday words; wrap the 2-4 most important words in |pipes| for the accent colour, e.g. 'Is your website |costing you customers?|'",
+      "subline": "max 70 characters, plain words, no jargon: it names the brand (${brand.name}) and says what it does about this pain, e.g. '${brand.name} keeps all of this in one place.' Use only facts from the profile.",
       "visual": "one fresh visual idea for this pain point: a single symbolic object or abstract scene, in the way a clever magazine cover would. It must contain one object that belongs to the topic of the headline (a calendar for scheduling, a file or parcel for uploads, chat bubbles for conversation, a stack of tasks for repeated work), so a viewer links the picture to the headline within two seconds, plus one simple metaphor for the pain (a knot that unravels, a maze with one lit path). No people, no faces, no hands, no offices, desks or meeting rooms, no screens, no text. Max 30 words.",
       "visualLink": "one short sentence: how a viewer connects this picture to the headline, e.g. 'the parcel stands for big files and the narrow door for friction'",
       "caption": "Instagram caption, 450-900 characters: hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).",
@@ -106,10 +106,18 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
   return { ...base, mode: 'ai', imagePrompt: creativePrompt(format, draft.visual, brand) };
 }
 
+/** 70 is the target given to the model; allow some slack before forcing a retry. */
+const MAX_SUBLINE_CHARS = 90;
+
 /** Turns back a draft the poster cannot be made from, so the model is asked again with the reason. */
-export function validateDraft(draft: DraftPost, position: number): void {
+export function validateDraft(draft: DraftPost, position: number, brandName?: string): void {
   if (typeof draft.visual !== 'string' || !draft.visual.trim()) throw new Error(`post ${position} needs a "visual"`);
   if (typeof draft.visualLink !== 'string' || !draft.visualLink.trim()) throw new Error(`post ${position} needs a "visualLink": how the picture connects to the headline`);
+  if (brandName !== undefined) {
+    const first = brandName.trim().split(/\s+/)[0] ?? '';
+    if (typeof draft.subline !== 'string' || draft.subline.length > MAX_SUBLINE_CHARS) throw new Error(`post ${position} subline is too long; keep it under 70 characters`);
+    if (first && !draft.subline.toLowerCase().includes(first.toLowerCase())) throw new Error(`post ${position} subline must name the brand (${first}) so a stranger knows whose post it is`);
+  }
   // 45 is the target given to the model; allow some slack before forcing a retry.
   if (typeof draft.headline === 'string' && draft.headline.replaceAll('|', '').length > 60) {
     throw new Error(`post ${position} headline is too long; keep it under 45 characters`);
@@ -152,7 +160,7 @@ export async function planWeek(options: {
           brand: options.brandSlug,
           timezone: schedule.utcOffset,
           posts: (drafts as DraftPost[]).map((d, i) => {
-            validateDraft(d, i + 1);
+            validateDraft(d, i + 1, brand.name);
             return buildPost({ draft: d, id: `w${week}-d${offset + i + 1}`, date: chunkDates[i] as string, weekNumber: options.weekNumber, index: offset + i, brand });
           }),
         };

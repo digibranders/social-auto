@@ -6,7 +6,7 @@ import { FORMATS } from './content.ts';
 import { buildPost, userPrompt, validateDraft } from './planner.ts';
 
 const brand = {
-  name: 'Acme', colors: { background: '#FCFBF9', ink: '#102234', accent: '#E9AF88', tile: '#0C1E2E' }, font: 'Inter', features: [],
+  name: 'Acme Dental', colors: { background: '#FCFBF9', ink: '#102234', accent: '#E9AF88', tile: '#0C1E2E' }, font: 'Inter', features: [],
   visualStyle: 'Polished, human-centered imagery of B2B teams in modern offices',
 } as unknown as Brand;
 
@@ -126,4 +126,21 @@ test('an illustration is composed for the wide band the poster shows, not for th
   assert.match(prompt, /centered/i);
   assert.match(prompt, /top and bottom/i);
   assert.doesNotMatch(prompt, /empty space along the bottom/i);
+});
+
+test('the model is told to write for someone who has never heard of the brand: a plain-words headline, a subline that names the brand and what it does', () => {
+  const prompt = userPrompt(brand, 4, []);
+  assert.match(prompt, /never heard of/i);
+  assert.match(prompt, /plain words/i);
+  assert.match(prompt, /no jargon/i);
+  assert.match(prompt, /subline[^\n]*names? (the brand|\$?\{?Acme)/i);
+});
+
+test('a subline that does not name the brand is turned back, so a stranger always learns whose post it is', () => {
+  const named = { ...goodDraft, subline: 'Acme Dental books your next visit in one tap.' };
+  assert.doesNotThrow(() => validateDraft(named, 1, 'Acme Dental'));
+  assert.doesNotThrow(() => validateDraft({ ...goodDraft, subline: 'acme books visits fast.' }, 1, 'Acme Dental'));
+  assert.throws(() => validateDraft(goodDraft, 2, 'Acme Dental'), /post 2 subline must name the brand \(Acme\)/);
+  assert.throws(() => validateDraft({ ...goodDraft, subline: 'x'.repeat(95) + ' Acme' }, 1, 'Acme Dental'), /subline is too long/);
+  assert.doesNotThrow(() => validateDraft(goodDraft, 3));
 });
