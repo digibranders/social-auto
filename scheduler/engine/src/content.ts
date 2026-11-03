@@ -111,6 +111,13 @@ export interface PlannedPost {
   format?: FormatName;
   /** The content pillar the post belongs to (problem, education, proof, ...); absent on older plans. */
   pillar?: string;
+  /** The hook the headline was written with; when a fallback replaced it, `requestedHook` holds the hook that was assigned. */
+  hook?: string;
+  requestedHook?: string;
+  /** Repetition and language notes from the hook checks; warnings, not failures. */
+  hookWarnings?: string[];
+  /** The items of a numbered-list headline, already part of the caption. */
+  listItems?: string[];
   caption: string;
   hashtags: string[];
 }
@@ -314,6 +321,18 @@ function parsePost(raw: unknown, source: string): PlannedPost {
   if (raw['pillar'] !== undefined) {
     if (typeof raw['pillar'] !== 'string' || !raw['pillar'].trim()) throw new ContentValidationError(where, '"pillar" must be text');
     post.pillar = raw['pillar'].trim();
+  }
+  for (const key of ['hook', 'requestedHook'] as const) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"${key}" must be text`);
+    post[key] = value.trim();
+  }
+  for (const key of ['hookWarnings', 'listItems'] as const) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) throw new ContentValidationError(where, `"${key}" must be a list of text`);
+    post[key] = value as string[];
   }
   if (composeCaption(post).length > INSTAGRAM_CAPTION_LIMIT) {
     throw new ContentValidationError(where, `caption exceeds ${INSTAGRAM_CAPTION_LIMIT} characters`);
