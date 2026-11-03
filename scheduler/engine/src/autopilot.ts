@@ -17,6 +17,7 @@ import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
 import { parseBrand, parseWeekPlan, readJson } from './content.ts';
 import { exportToPublisher } from './export-publisher.ts';
+import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { planWeek } from './planner.ts';
 import { DEFAULT_IMAGE_MODEL, renderPlan } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
@@ -84,7 +85,7 @@ export function tomorrowAt(utcOffset: string, now = new Date()): string {
 
 function requireEnv(name: string, envPath: string): string {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set in ${envPath}`);
+  if (!value) throw new Error(`${name} is not set (looked in the environment and in ${envPath})`);
   return value;
 }
 
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
       start: { type: 'string' },
       'utc-offset': { type: 'string', default: '+05:30' },
       'image-model': { type: 'string', default: DEFAULT_IMAGE_MODEL },
-      env: { type: 'string', default: '../upstream/.env' },
+      env: { type: 'string' },
       'scheduler-url': { type: 'string', default: DEFAULT_SCHEDULER_URL },
       'refresh-brand': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
@@ -117,9 +118,9 @@ async function main(): Promise<void> {
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
 
-  const envPath = resolve(values.env);
-  process.loadEnvFile(envPath);
-  const pollinationsKey = requireEnv('POLLINATIONS_API_KEY', values.env);
+  const envPath = envFilePath(values.env, process.env);
+  loadEnvIfPresent(envPath);
+  const pollinationsKey = requireEnv('POLLINATIONS_API_KEY', envPath);
 
   const slug = slugFromSite(values.site);
   let brandDir = join(BRANDS_ROOT, slug);
@@ -183,7 +184,7 @@ async function main(): Promise<void> {
     brandDir,
     planFile,
     channel: values.channel,
-    schedulerKey: requireEnv('SCHEDULER_API_KEY', values.env),
+    schedulerKey: requireEnv('SCHEDULER_API_KEY', envPath),
     schedulerUrl: values['scheduler-url'],
     log: (m) => console.log(`    ${m}`),
   });
