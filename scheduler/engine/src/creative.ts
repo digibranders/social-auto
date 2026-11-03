@@ -67,6 +67,11 @@ export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl, logoT
   const cream = washColor(colors.background);
   const accent = onDark(colors.accent);
   const plate = plateFor(logoTone ?? null, cream, DARK_PLATE);
+  // A pale logo on the flat dark of a type-only poster needs no plate; over a picture, or if dark, it does.
+  const logoBox =
+    format === 'type' && plate === DARK_PLATE
+      ? 'background: none;'
+      : `padding: 12px 20px; border-radius: 16px; background: ${plate};${plate === DARK_PLATE ? ' box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16);' : ''}`;
   const picture = format !== 'type' && visualUrl ? `url("${visualUrl}") center / cover no-repeat` : 'none';
   const size = (sizes: readonly [number, number, number, number]): number => headlineSize(post, sizes);
 
@@ -120,7 +125,7 @@ export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl, logoT
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: ${CANVAS_SIZE}px; height: ${CANVAS_SIZE}px; overflow: hidden; }
   body { font-family: '${brand.font}', system-ui, sans-serif; position: relative; }
-  .logo { position: absolute; padding: 12px 20px; border-radius: 16px; background: ${plate};${plate === DARK_PLATE ? ' box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16);' : ''} }
+  .logo { position: absolute; ${logoBox} }
   .logo svg, .logo img { height: 54px; width: auto; max-width: 420px; object-fit: contain; display: block; }${layouts[format]}
 </style></head>
 <body class="format-${format}">

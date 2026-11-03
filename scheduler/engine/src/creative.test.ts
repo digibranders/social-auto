@@ -82,11 +82,23 @@ test('text from the model is escaped, and the logo sits on a light plate so it s
   assert.match(html, /\.logo \{[^}]*background/);
 });
 
-test('a mostly pale logo is put on a dark plate, a dark, mixed or unmeasured one on the light plate', () => {
-  const plateOf = (logoTone?: { pale: number; dark: number } | null): string =>
-    renderCreativePostHtml({ brand, post: post('type'), painPointNumber: 1, logoHtml: '<svg></svg>', logoTone }).match(/\.logo \{[^}]*background: (#[0-9A-Fa-f]{6})/)?.[1] ?? '';
-  assert.equal(plateOf({ pale: 1, dark: 0 }), '#14161C');
-  assert.notEqual(plateOf({ pale: 0, dark: 1 }), '#14161C');
-  assert.equal(plateOf({ pale: 0.2, dark: 0.4 }), plateOf(undefined));
-  assert.equal(plateOf(null), plateOf(undefined));
+const logoRule = (format: PlannedPost['format'], logoTone?: { pale: number; dark: number } | null): string =>
+  renderCreativePostHtml({ brand, post: post(format), painPointNumber: 1, logoHtml: '<svg></svg>', visualUrl: 'file:///x.jpg', logoTone }).match(/\.logo \{[^}]*\}/)?.[0] ?? '';
+
+test('on a picture poster a mostly pale logo gets a dark plate, a dark, mixed or unmeasured one the light plate', () => {
+  for (const format of ['illustration', 'still-life', 'isometric'] as const) {
+    assert.match(logoRule(format, { pale: 1, dark: 0 }), /background: #14161C/);
+    assert.doesNotMatch(logoRule(format, { pale: 0, dark: 1 }), /#14161C|background: none/);
+    assert.equal(logoRule(format, { pale: 0.2, dark: 0.4 }), logoRule(format, undefined));
+    assert.equal(logoRule(format, null), logoRule(format, undefined));
+  }
+});
+
+test('on a type-only poster a pale logo sits straight on the dark background with no plate; any other logo keeps a light plate', () => {
+  assert.match(logoRule('type', { pale: 1, dark: 0 }), /background: none/);
+  assert.doesNotMatch(logoRule('type', { pale: 1, dark: 0 }), /padding|box-shadow/);
+  for (const tone of [{ pale: 0, dark: 1 }, { pale: 0.2, dark: 0.4 }, null, undefined]) {
+    assert.doesNotMatch(logoRule('type', tone), /background: none|#14161C/);
+    assert.match(logoRule('type', tone), /background: #[0-9A-Fa-f]{6}/);
+  }
 });
