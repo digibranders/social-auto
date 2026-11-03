@@ -41,6 +41,16 @@ The client first makes your Facebook account an admin of their Page (Page settin
 `~/social-auto-runner/scheduler/engine/scripts/weekly.sh`, or `launchctl kickstart gui/$(id -u)/com.56steve.social-auto.weekly`. The log is `~/Library/Logs/social-auto/weekly.log`.
 The job works in `~/social-auto-runner`, a separate checkout of `main`; it refuses to run if that checkout has local changes or is not on `main`.
 
+### Run the content engine on a Linux server
+The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (`google-chrome`) and ImageMagick (`convert`, which replaces the Mac's `sips`). Settings are environment variables, so a server needs no edits to the code:
+
+| Variable | Meaning |
+|---|---|
+| `CHROME_PATH` | Chrome's location. Defaults to the Mac app on a Mac and `google-chrome` on Linux. |
+| `CHROME_NO_SANDBOX` | `1` if Ubuntu refuses Chrome's sandbox for a normal user. The engine only opens pages it built. |
+| `SOCIAL_AUTO_ENV` | A keys file (`POLLINATIONS_API_KEY`, `SCHEDULER_API_KEY`, `ALERT_NTFY_TOPIC`). Keys already in the environment win, so a service can supply them directly. Default `scheduler/upstream/.env`. |
+| `SOCIAL_AUTO_LOG_HINT` | Where an alert tells you to look for the log. |
+
 ### Edit a post in the dashboard
 Open a scheduled post → **Edit post**. Change the caption (max 2200 characters, 30 hashtags) or **Replace picture** (square JPG, max 4 MB), or **Revert to original**. Changes apply at once and are what gets posted at the scheduled time; no redeploy. Posts that are due, published or missed cannot be edited (Instagram does not allow changing a published caption).
 Edits live in the private Vercel Blob store `social-publisher-edits` (file `overrides.json` plus `images/`), never in git. If the store cannot be read at posting time the post **fails with an alert** instead of going out unedited. The Monday job does not touch edits; deleting a post's edit (Revert) restores what the content job planned.

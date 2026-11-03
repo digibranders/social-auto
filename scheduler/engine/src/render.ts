@@ -1,7 +1,7 @@
 /**
  * Renders a week plan into 1080x1080 JPGs plus a preview page.
  *
- *   node src/render.ts --brand brands/brandbasket --plan week-01.json [--env ../upstream/.env] [--model <id>]
+ *   node src/render.ts --brand brands/brandbasket --plan week-01.json [--env <keys file>] [--model <id>]
  */
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -11,10 +11,10 @@ import { pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { composeCaption, escapeHtml, parseBrand, parseWeekPlan, readJson, type PlannedPost } from './content.ts';
 import { CANVAS_SIZE, renderPostHtml } from './layout.ts';
+import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
 import { generateImage, seedFromId } from './pollinations.ts';
 
 const run = promisify(execFile);
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const JPEG_QUALITY = 90;
 /** Some models (e.g. FLUX) need multiples of 32; the layout crops to the canvas. */
 const SCENE_SIZE = Math.ceil(CANVAS_SIZE / 32) * 32;
@@ -32,23 +32,15 @@ async function exists(path: string): Promise<boolean> {
 async function screenshot(htmlPath: string, pngPath: string): Promise<void> {
   const profile = await mkdtemp(join(tmpdir(), 'engine-chrome-'));
   try {
-    await run(CHROME, [
-      '--headless=new',
-      '--disable-gpu',
-      '--hide-scrollbars',
-      `--user-data-dir=${profile}`,
-      `--window-size=${CANVAS_SIZE},${CANVAS_SIZE}`,
-      '--virtual-time-budget=8000',
-      `--screenshot=${pngPath}`,
-      pathToFileURL(htmlPath).href,
-    ]);
+    await run(chromePath(process.env, process.platform), chromeArgs(profile, pngPath, pathToFileURL(htmlPath).href, CANVAS_SIZE, process.env));
   } finally {
     await rm(profile, { recursive: true, force: true });
   }
 }
 
 async function toJpeg(pngPath: string, jpgPath: string): Promise<void> {
-  await run('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', String(JPEG_QUALITY), pngPath, '--out', jpgPath]);
+  const { file, args } = jpegCommand(process.platform, pngPath, jpgPath, JPEG_QUALITY);
+  await run(file, args);
 }
 
 async function logoMarkup(logoPath: string): Promise<string> {
@@ -132,16 +124,17 @@ async function main(): Promise<void> {
     options: {
       brand: { type: 'string' },
       plan: { type: 'string' },
-      env: { type: 'string', default: '../upstream/.env' },
+      env: { type: 'string' },
       model: { type: 'string' },
     },
   });
   if (!values.brand || !values.plan) {
     throw new Error('Usage: --brand <dir> --plan <file.json> [--env <path>] [--model <pollinations model>]');
   }
-  process.loadEnvFile(resolve(values.env));
+  const envPath = envFilePath(values.env, process.env);
+  loadEnvIfPresent(envPath);
   const key = process.env['POLLINATIONS_API_KEY'];
-  if (!key) throw new Error(`POLLINATIONS_API_KEY is not set in ${values.env}`);
+  if (!key) throw new Error(`POLLINATIONS_API_KEY is not set (looked in the environment and in ${envPath})`);
   const outDir = await renderPlan({
     brandDir: resolve(values.brand),
     planFile: values.plan,

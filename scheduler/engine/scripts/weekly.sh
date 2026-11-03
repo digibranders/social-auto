@@ -1,17 +1,20 @@
-#!/bin/zsh
-# Weekly content run (installed as a macOS LaunchAgent, Mondays 10:00).
+#!/usr/bin/env bash
+# Weekly content run. Runs the same under zsh (the Mac's LaunchAgent, Mondays 10:00) and bash (the Linux server's timer).
 # Runs inside a git worktree checked out on main:
 #   pull main -> generate posts for every client -> commit content -> push main -> Vercel deploys.
-# Any failure sends a push alert to the ntfy topic in ALERT_NTFY_TOPIC (scheduler/upstream/.env).
+# Any failure sends a push alert to the ntfy topic in ALERT_NTFY_TOPIC (environment, else the keys file:
+# SOCIAL_AUTO_ENV, else scheduler/upstream/.env).
 set -uo pipefail
 
-export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH="$HOME/.local/node/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+ENV_FILE="${SOCIAL_AUTO_ENV:-$ROOT/scheduler/upstream/.env}"
+LOG_HINT="${SOCIAL_AUTO_LOG_HINT:-~/Library/Logs/social-auto/weekly.log}"
 
 # Alert text must stay plain ASCII (it becomes an HTTP header) and must never contain secrets.
 alert() {
-  local topic
-  topic="$(grep -m1 '^ALERT_NTFY_TOPIC=' "$ROOT/scheduler/upstream/.env" 2>/dev/null | cut -d= -f2-)"
+  local topic="${ALERT_NTFY_TOPIC:-}"
+  [[ -n "$topic" ]] || topic="$(grep -m1 '^ALERT_NTFY_TOPIC=' "$ENV_FILE" 2>/dev/null | cut -d= -f2-)"
   [[ -n "$topic" ]] || return 0
   curl -s -m 10 -H "Title: Weekly content job failed" -H "Priority: high" -H "Tags: rotating_light" \
     -d "$1" "https://ntfy.sh/$topic" > /dev/null || true
@@ -19,11 +22,11 @@ alert() {
 
 fail() {
   echo "$1" >&2
-  alert "$1 (log: ~/Library/Logs/social-auto/weekly.log)"
+  alert "$1 (log: $LOG_HINT)"
   return 1
 }
 
-# The whole body lives in a function so zsh has parsed it before running: the script pulls main,
+# The whole body lives in a function so the shell has parsed it before running: the script pulls main,
 # which can rewrite this very file, and a shell reading a file that changes underneath it misbehaves.
 main() {
   cd "$ROOT" || return 1

@@ -8,6 +8,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { composeCaption, parseWeekPlan, readJson } from './content.ts';
+import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { SchedulerClient } from './scheduler-client.ts';
 
 export const DEFAULT_SCHEDULER_URL = 'http://127.0.0.1:4007/api';
@@ -88,7 +89,7 @@ async function main(): Promise<void> {
       brand: { type: 'string' },
       plan: { type: 'string' },
       channel: { type: 'string' },
-      env: { type: 'string', default: '../upstream/.env' },
+      env: { type: 'string' },
       'scheduler-url': { type: 'string', default: DEFAULT_SCHEDULER_URL },
       'dry-run': { type: 'boolean', default: false },
     },
@@ -96,9 +97,10 @@ async function main(): Promise<void> {
   if (!values.brand || !values.plan || !values.channel) {
     throw new Error('Usage: --brand <dir> --plan <file.json> --channel <instagram username> [--dry-run]');
   }
-  process.loadEnvFile(resolve(values.env));
+  const envPath = envFilePath(values.env, process.env);
+  loadEnvIfPresent(envPath);
   const key = process.env['SCHEDULER_API_KEY'];
-  if (!key) throw new Error(`SCHEDULER_API_KEY is not set in ${values.env}`);
+  if (!key) throw new Error(`SCHEDULER_API_KEY is not set (looked in the environment and in ${envPath})`);
   await schedulePlan({
     brandDir: resolve(values.brand),
     planFile: values.plan,
