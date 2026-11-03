@@ -81,3 +81,12 @@ test('text from the model is escaped, and the logo sits on a light plate so it s
   assert.ok(html.includes('&lt;b&gt;bold&lt;/b&gt;'));
   assert.match(html, /\.logo \{[^}]*background/);
 });
+
+test('a mostly pale logo is put on a dark plate, a dark, mixed or unmeasured one on the light plate', () => {
+  const plateOf = (logoTone?: { pale: number; dark: number } | null): string =>
+    renderCreativePostHtml({ brand, post: post('type'), painPointNumber: 1, logoHtml: '<svg></svg>', logoTone }).match(/\.logo \{[^}]*background: (#[0-9A-Fa-f]{6})/)?.[1] ?? '';
+  assert.equal(plateOf({ pale: 1, dark: 0 }), '#14161C');
+  assert.notEqual(plateOf({ pale: 0, dark: 1 }), '#14161C');
+  assert.equal(plateOf({ pale: 0.2, dark: 0.4 }), plateOf(undefined));
+  assert.equal(plateOf(null), plateOf(undefined));
+});

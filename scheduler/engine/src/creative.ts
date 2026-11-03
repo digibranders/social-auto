@@ -5,6 +5,10 @@
  */
 import { escapeHtml, FORMATS, parseHeadline, type Brand, type FormatName, type PlannedPost } from './content.ts';
 import { CANVAS_SIZE, darken, fontLink, lighten, luminance, washColor, type LayoutInput } from './layout.ts';
+import { plateFor } from './logo-tone.ts';
+
+/** The plate behind a pale logo. */
+const DARK_PLATE = '#14161C';
 
 /**
  * The format of the post at `index` (0-based) in the plan for week `weekNumber`. Neighbouring posts always differ, including
@@ -56,12 +60,13 @@ function headlineSize(post: PlannedPost, sizes: readonly [number, number, number
 /** A colour that reads on a dark poster: the brand's accent, lightened when it is itself dark. */
 const onDark = (accent: string): string => (luminance(accent) > 0.35 ? accent : lighten(accent, 0.4));
 
-export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl }: LayoutInput): string {
+export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl, logoTone }: LayoutInput): string {
   const format = post.format ?? 'type';
   const { colors } = brand;
   const dark = luminance(colors.ink) < 0.25 ? colors.ink : '#0F1722';
   const cream = washColor(colors.background);
   const accent = onDark(colors.accent);
+  const plate = plateFor(logoTone ?? null, cream, DARK_PLATE);
   const picture = format !== 'type' && visualUrl ? `url("${visualUrl}") center / cover no-repeat` : 'none';
   const size = (sizes: readonly [number, number, number, number]): number => headlineSize(post, sizes);
 
@@ -115,7 +120,7 @@ export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl }: Lay
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: ${CANVAS_SIZE}px; height: ${CANVAS_SIZE}px; overflow: hidden; }
   body { font-family: '${brand.font}', system-ui, sans-serif; position: relative; }
-  .logo { position: absolute; padding: 12px 20px; border-radius: 16px; background: ${cream}; }
+  .logo { position: absolute; padding: 12px 20px; border-radius: 16px; background: ${plate};${plate === DARK_PLATE ? ' box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.16);' : ''} }
   .logo svg, .logo img { height: 54px; width: auto; max-width: 420px; object-fit: contain; display: block; }${layouts[format]}
 </style></head>
 <body class="format-${format}">

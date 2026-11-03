@@ -1,4 +1,5 @@
 import { escapeHtml, LAYOUTS, parseHeadline, type Brand, type FeatureIcon, type LayoutName, type PlannedPost } from './content.ts';
+import type { LogoTone } from './logo-tone.ts';
 
 export const CANVAS_SIZE = 1080;
 
@@ -11,6 +12,8 @@ export interface LayoutInput {
   logoHtml: string;
   /** file:// URL of the AI visual; omitted for text-only posters. */
   visualUrl?: string;
+  /** How pale and how dark the logo is, when it was measured; the creative posters put a mostly pale logo on a dark plate. */
+  logoTone?: LogoTone | null;
 }
 
 const ICONS: Record<FeatureIcon, string> = {

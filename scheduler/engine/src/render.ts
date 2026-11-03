@@ -13,6 +13,7 @@ import { composeCaption, escapeHtml, parseBrand, parseWeekPlan, readJson, type P
 import { renderCreativePostHtml } from './creative.ts';
 import { CANVAS_SIZE, renderPostHtml } from './layout.ts';
 import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
+import { measureLogoTone } from './logo-tone.ts';
 import { aiConfigFromEnv, generateScene, type AiConfig, type ImageBudget } from './ai.ts';
 import { seedFromId } from './pollinations.ts';
 
@@ -87,6 +88,7 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
   const outDir = resolve('out', basename(options.brandDir), basename(options.planFile, '.json'));
   await mkdir(outDir, { recursive: true });
   const logoHtml = await logoMarkup(join(options.brandDir, brand.logo));
+  const logoTone = await measureLogoTone(join(options.brandDir, brand.logo));
   const budget: ImageBudget = { openaiImages: 0 };
 
   for (const [index, post] of plan.posts.entries()) {
@@ -105,7 +107,7 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
     }
     const htmlPath = join(outDir, `${post.id}.html`);
     const pngPath = join(outDir, `${post.id}.png`);
-    await writeFile(htmlPath, (post.format ? renderCreativePostHtml : renderPostHtml)({ brand, post, painPointNumber: index + 1, logoHtml, visualUrl }));
+    await writeFile(htmlPath, (post.format ? renderCreativePostHtml : renderPostHtml)({ brand, post, painPointNumber: index + 1, logoHtml, visualUrl, logoTone }));
     await screenshot(htmlPath, pngPath);
     await toJpeg(pngPath, join(outDir, `${post.id}.jpg`));
     await rm(pngPath);
