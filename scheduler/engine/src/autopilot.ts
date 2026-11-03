@@ -13,6 +13,7 @@
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { aiConfigFromEnv } from './ai.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
 import { parseBrand, parseWeekPlan, readJson } from './content.ts';
@@ -120,13 +121,15 @@ async function main(): Promise<void> {
 
   const envPath = envFilePath(values.env, process.env);
   loadEnvIfPresent(envPath);
-  const pollinationsKey = requireEnv('POLLINATIONS_API_KEY', envPath);
+  const ai = aiConfigFromEnv(process.env);
+  if (values['image-model']) ai.pollinationsImageModel = values['image-model'];
+  console.log(`AI: ${ai.primary === 'openai' ? `OpenAI (${ai.textModel} for text, ${ai.imageModel} at ${ai.imageQuality} quality for pictures)` : 'Pollinations'}${ai.fallback ? ', with the other provider as backup' : ''}`);
 
   const slug = slugFromSite(values.site);
   let brandDir = join(BRANDS_ROOT, slug);
   if (values['refresh-brand'] || !(await fileExists(join(brandDir, 'brand.json')))) {
     console.log(`1/4 Reading ${values.site} and building the brand profile…`);
-    brandDir = (await analyzeSite(values.site, BRANDS_ROOT, pollinationsKey)).dir;
+    brandDir = (await analyzeSite(values.site, BRANDS_ROOT, ai)).dir;
   } else {
     console.log(`1/4 Using saved brand profile ${join('brands', slug, 'brand.json')}`);
   }
@@ -141,7 +144,7 @@ async function main(): Promise<void> {
   const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
   console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
   const plan = await planWeek({
-    apiKey: pollinationsKey,
+    ai,
     compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
     brand,
     brandSlug: slug,
@@ -164,8 +167,7 @@ async function main(): Promise<void> {
   const outDir = await renderPlan({
     brandDir,
     planFile,
-    pollinationsKey,
-    imageModel: values['image-model'],
+    ai,
     log: (m) => console.log(`    ${m}`),
   });
 

@@ -1,4 +1,5 @@
 /** Writes a week of pain-point posts for a brand with the text model. */
+import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type WeekPlan } from './content.ts';
 import { postDates, type Weekday } from './cadence.ts';
 import { layoutFor, visualStyleFor } from './layout.ts';
@@ -83,7 +84,7 @@ interface DraftPost {
 export const POSTS_PER_REQUEST = 10;
 
 export async function planWeek(options: {
-  apiKey: string;
+  ai: AiConfig;
   brand: Brand;
   brandSlug: string;
   weekNumber: number;
@@ -103,7 +104,7 @@ export async function planWeek(options: {
     const chunkDates = dates.slice(offset, offset + POSTS_PER_REQUEST);
     options.log?.(`writing posts ${offset + 1}-${offset + chunkDates.length} of ${dates.length}`);
     const chunk = await chatJson({
-      apiKey: options.apiKey,
+      ai: options.ai,
       system: SYSTEM_PROMPT,
       user: userPrompt(brand, chunkDates.length, usedPainPoints),
       parse: (value) => {

@@ -1,6 +1,7 @@
 /** Turns a website into brands/<slug>/brand.json plus a downloaded logo. */
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
+import type { AiConfig } from './ai.ts';
 import { parseBrand, type Brand } from './content.ts';
 import { crawlSite, type SiteSnapshot } from './crawl.ts';
 import { chatJson } from './llm.ts';
@@ -78,7 +79,7 @@ Website content:
 ${pages}`;
 }
 
-export async function analyzeSite(site: string, brandsRoot: string, apiKey: string): Promise<{ dir: string; brand: Brand }> {
+export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig): Promise<{ dir: string; brand: Brand }> {
   const snapshot = await crawlSite(site);
   const dir = join(brandsRoot, slugFromSite(snapshot.origin));
   const assetsDir = join(dir, 'assets');
@@ -86,7 +87,7 @@ export async function analyzeSite(site: string, brandsRoot: string, apiKey: stri
   const logo = await downloadLogo(snapshot.logoCandidates, assetsDir);
 
   const brand = await chatJson({
-    apiKey,
+    ai,
     system: SYSTEM_PROMPT,
     user: userPrompt(snapshot),
     parse: (value) => {

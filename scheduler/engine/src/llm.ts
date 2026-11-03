@@ -1,6 +1,6 @@
-const CHAT_ENDPOINT = 'https://gen.pollinations.ai/v1/chat/completions';
+import { redact, textCandidates, type AiConfig, type TextCandidate } from './ai.ts';
+
 const REQUEST_TIMEOUT_MS = 180_000;
-export const DEFAULT_TEXT_MODELS = ['openai/gpt-6-luna', 'deepseek/deepseek-v4-flash'] as const;
 
 export class LlmError extends Error {
   constructor(message: string) {
@@ -10,12 +10,13 @@ export class LlmError extends Error {
 }
 
 export interface ChatJsonOptions<T> {
-  apiKey: string;
+  ai: AiConfig;
   system: string;
   user: string;
   /** Validates and narrows the parsed JSON; throw to trigger a corrective retry. */
   parse: (value: unknown) => T;
-  models?: readonly string[];
+  /** For tests: replaces the network call. */
+  fetchFn?: typeof fetch;
 }
 
 interface ChatMessage {
@@ -23,18 +24,18 @@ interface ChatMessage {
   content: string;
 }
 
-async function complete(apiKey: string, model: string, messages: ChatMessage[]): Promise<string> {
-  const response = await fetch(CHAT_ENDPOINT, {
+async function complete(candidate: TextCandidate, messages: ChatMessage[], fetchFn: typeof fetch): Promise<string> {
+  const response = await fetchFn(candidate.endpoint, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model, messages, response_format: { type: 'json_object' } }),
+    headers: { Authorization: `Bearer ${candidate.apiKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: candidate.model, messages, response_format: { type: 'json_object' } }),
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await response.text();
-  if (!response.ok) throw new LlmError(`${model} returned ${response.status}: ${text.slice(0, 300)}`);
-  const content = (JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message
-    ?.content;
-  if (!content) throw new LlmError(`${model} returned an empty response`);
+  const who = `${candidate.label} ${candidate.model}`;
+  if (!response.ok) throw new LlmError(`${who} returned ${response.status}: ${redact(text).slice(0, 300)}`);
+  const content = (JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content;
+  if (!content) throw new LlmError(`${who} returned an empty response`);
   return content;
 }
 
@@ -47,11 +48,12 @@ function extractJson(content: string): unknown {
 
 /**
  * Asks for a JSON object and validates it. On invalid output the model gets one
- * corrective retry with the validation error; on API failure the next model is tried.
+ * corrective retry with the validation error; on API failure the next model (the backup provider) is tried.
  */
 export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
   const failures: string[] = [];
-  for (const model of options.models ?? DEFAULT_TEXT_MODELS) {
+  const fetchFn = options.fetchFn ?? fetch;
+  for (const candidate of textCandidates(options.ai)) {
     const messages: ChatMessage[] = [
       { role: 'system', content: options.system },
       { role: 'user', content: options.user },
@@ -59,7 +61,7 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       let content: string;
       try {
-        content = await complete(options.apiKey, model, messages);
+        content = await complete(candidate, messages, fetchFn);
       } catch (error) {
         failures.push(error instanceof Error ? error.message : String(error));
         break;
@@ -68,7 +70,7 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
         return options.parse(extractJson(content));
       } catch (error) {
         const problem = error instanceof Error ? error.message : String(error);
-        failures.push(`${model}: ${problem}`);
+        failures.push(`${candidate.label} ${candidate.model}: ${problem}`);
         messages.push(
           { role: 'assistant', content },
           { role: 'user', content: `That JSON was invalid: ${problem}. Return the corrected full JSON object only.` },

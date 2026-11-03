@@ -12,7 +12,8 @@ import { parseArgs, promisify } from 'node:util';
 import { composeCaption, escapeHtml, parseBrand, parseWeekPlan, readJson, type PlannedPost } from './content.ts';
 import { CANVAS_SIZE, renderPostHtml } from './layout.ts';
 import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
-import { generateImage, resolveImageModel, seedFromId } from './pollinations.ts';
+import { aiConfigFromEnv, generateScene, type AiConfig, type ImageBudget } from './ai.ts';
+import { seedFromId } from './pollinations.ts';
 
 const run = promisify(execFile);
 const JPEG_QUALITY = 90;
@@ -73,8 +74,7 @@ pre{white-space:pre-wrap;font:14px/1.45 system-ui,sans-serif;margin:0}
 export interface RenderOptions {
   brandDir: string;
   planFile: string;
-  pollinationsKey: string;
-  imageModel?: string;
+  ai: AiConfig;
   log?: (message: string) => void;
 }
 
@@ -86,6 +86,7 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
   const outDir = resolve('out', basename(options.brandDir), basename(options.planFile, '.json'));
   await mkdir(outDir, { recursive: true });
   const logoHtml = await logoMarkup(join(options.brandDir, brand.logo));
+  const budget: ImageBudget = { openaiImages: 0 };
 
   for (const [index, post] of plan.posts.entries()) {
     let visualUrl: string | undefined;
@@ -93,15 +94,8 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
       const scenePath = join(outDir, `${post.id}-bg.jpg`);
       if (!(await exists(scenePath))) {
         log(`${post.id}: generating AI scene…`);
-        await generateImage({
-          apiKey: options.pollinationsKey,
-          prompt: post.imagePrompt,
-          outPath: scenePath,
-          width: SCENE_SIZE,
-          height: SCENE_SIZE,
-          seed: seedFromId(post.id),
-          model: resolveImageModel(options.imageModel, process.env),
-        });
+        const maker = await generateScene(options.ai, { prompt: post.imagePrompt, outPath: scenePath, width: SCENE_SIZE, height: SCENE_SIZE, seed: seedFromId(post.id) }, budget);
+        log(`${post.id}: scene made by ${maker}`);
       }
       visualUrl = pathToFileURL(scenePath).href;
     }
@@ -128,18 +122,13 @@ async function main(): Promise<void> {
     },
   });
   if (!values.brand || !values.plan) {
-    throw new Error('Usage: --brand <dir> --plan <file.json> [--env <path>] [--model <pollinations model>]');
+    throw new Error('Usage: --brand <dir> --plan <file.json> [--env <path>] [--model <Pollinations picture model, used only for the backup>]');
   }
   const envPath = envFilePath(values.env, process.env);
   loadEnvIfPresent(envPath);
-  const key = process.env['POLLINATIONS_API_KEY'];
-  if (!key) throw new Error(`POLLINATIONS_API_KEY is not set (looked in the environment and in ${envPath})`);
-  const outDir = await renderPlan({
-    brandDir: resolve(values.brand),
-    planFile: values.plan,
-    pollinationsKey: key,
-    imageModel: values.model,
-  });
+  const ai = aiConfigFromEnv(process.env);
+  if (values.model) ai.pollinationsImageModel = values.model;
+  const outDir = await renderPlan({ brandDir: resolve(values.brand), planFile: values.plan, ai });
   console.log(`Done: ${outDir}`);
 }
 

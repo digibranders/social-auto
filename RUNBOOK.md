@@ -53,7 +53,15 @@ The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (
 | `CHROME_NO_SANDBOX` | `1` if Ubuntu refuses Chrome's sandbox for a normal user. The engine only opens pages it built. |
 | `SOCIAL_AUTO_ENV` | A keys file (`POLLINATIONS_API_KEY`, `SCHEDULER_API_KEY`, `ALERT_NTFY_TOPIC`). Keys already in the environment win, so a service can supply them directly. Default `scheduler/upstream/.env`. |
 | `SOCIAL_AUTO_LOG_HINT` | Where an alert tells you to look for the log. |
-| `POLLINATIONS_IMAGE_MODEL` | The picture model. Default is the free `zimage`. Paid models (for example `openai/gpt-image-2.5-flare`) need credit on the Pollinations account. |
+| `OPENAI_API_KEY` | The organization's OpenAI key. When set, OpenAI writes the posts and draws the pictures. Never commit it. |
+| `OPENAI_TEXT_MODEL` | Default `gpt-6.1-terra`. |
+| `OPENAI_IMAGE_MODEL` | Default `gpt-image-2.5-flare`. |
+| `OPENAI_IMAGE_QUALITY` | `low`, `medium` (default) or `high`. Higher costs more per picture. |
+| `OPENAI_MAX_IMAGES_PER_RUN` | Default 40: the most pictures one run may order from OpenAI. |
+| `AI_PROVIDER` | `openai` or `pollinations`. Default: OpenAI when its key is set, else Pollinations. |
+| `AI_FALLBACK` | `off` stops the other provider being used when the main one fails. Default on, when its key is set. |
+| `POLLINATIONS_API_KEY` | Pollinations key: the main provider when there is no OpenAI key, otherwise the backup. |
+| `POLLINATIONS_IMAGE_MODEL` | The picture model Pollinations uses (default the free `zimage`). Paid models need credit on that account. |
 | `IMAGE_COMPOSITION_HINT` | `1` asks the picture for open space where the poster layout puts its text. Off by default, so prompts are not tuned to one model. |
 
 ### Edit a post in the dashboard
