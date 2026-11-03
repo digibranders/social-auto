@@ -101,7 +101,7 @@ function headlineHtml(post: PlannedPost): string {
     .join('');
 }
 
-function fontLink(font: string): string {
+export function fontLink(font: string): string {
   const family = encodeURIComponent(font).replaceAll('%20', '+');
   return `https://fonts.googleapis.com/css2?family=${family}:wght@400;500;700;800;900&display=block`;
 }

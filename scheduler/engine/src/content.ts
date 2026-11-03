@@ -56,6 +56,18 @@ export function isLayoutName(value: unknown): value is LayoutName {
   return typeof value === 'string' && (LAYOUTS as readonly string[]).includes(value);
 }
 
+/**
+ * The kind of poster. Posts rotate through these so a week is not one repeated image: type-only (no picture), a flat
+ * illustration, a studio still life and an isometric render. Plans written before formats existed have none and render as
+ * the original photo poster.
+ */
+export const FORMATS = ['type', 'illustration', 'still-life', 'isometric'] as const;
+export type FormatName = (typeof FORMATS)[number];
+
+export function isFormatName(value: unknown): value is FormatName {
+  return typeof value === 'string' && (FORMATS as readonly string[]).includes(value);
+}
+
 export interface PlannedPost {
   id: string;
   date: string;
@@ -67,6 +79,8 @@ export interface PlannedPost {
   imagePrompt?: string;
   /** Poster layout; plans written before layouts existed have none and render as 'left'. */
   layout?: LayoutName;
+  /** Poster format; absent on plans written before formats existed. */
+  format?: FormatName;
   caption: string;
   hashtags: string[];
 }
@@ -193,6 +207,10 @@ function parsePost(raw: unknown, source: string): PlannedPost {
   if (raw['layout'] !== undefined) {
     if (!isLayoutName(raw['layout'])) throw new ContentValidationError(where, `"layout" must be one of ${LAYOUTS.join(', ')}`);
     post.layout = raw['layout'];
+  }
+  if (raw['format'] !== undefined) {
+    if (!isFormatName(raw['format'])) throw new ContentValidationError(where, `"format" must be one of ${FORMATS.join(', ')}`);
+    post.format = raw['format'];
   }
   if (composeCaption(post).length > INSTAGRAM_CAPTION_LIMIT) {
     throw new ContentValidationError(where, `caption exceeds ${INSTAGRAM_CAPTION_LIMIT} characters`);

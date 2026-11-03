@@ -10,6 +10,7 @@ import { basename, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { composeCaption, escapeHtml, parseBrand, parseWeekPlan, readJson, type PlannedPost } from './content.ts';
+import { renderCreativePostHtml } from './creative.ts';
 import { CANVAS_SIZE, renderPostHtml } from './layout.ts';
 import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
 import { aiConfigFromEnv, generateScene, type AiConfig, type ImageBudget } from './ai.ts';
@@ -104,7 +105,7 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
     }
     const htmlPath = join(outDir, `${post.id}.html`);
     const pngPath = join(outDir, `${post.id}.png`);
-    await writeFile(htmlPath, renderPostHtml({ brand, post, painPointNumber: index + 1, logoHtml, visualUrl }));
+    await writeFile(htmlPath, (post.format ? renderCreativePostHtml : renderPostHtml)({ brand, post, painPointNumber: index + 1, logoHtml, visualUrl }));
     await screenshot(htmlPath, pngPath);
     await toJpeg(pngPath, join(outDir, `${post.id}.jpg`));
     await rm(pngPath);

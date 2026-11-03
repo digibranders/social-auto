@@ -44,6 +44,9 @@ The job works in `~/social-auto-runner`, a separate checkout of `main`; it refus
 ### Everything on the VPS
 Publisher and dashboard can run as two Node servers on the VPS instead of Vercel (see `deploy/README.md`): systemd services `social-publisher` and `social-dashboard`, timers `social-cron` and `social-refresh` (replacing Vercel Cron), data in `/var/lib/social-auto`, settings in `/etc/social-auto/*.env`. Logs: `journalctl -u social-publisher -u social-dashboard -u social-cron`. Update with `deploy/scripts/deploy.sh`. Never run the Vercel crons and the server timers together, or a post can go out twice.
 
+### How a week's posters differ
+Each post gets a poster format from a fixed rotation in code (`scheduler/engine/src/creative.ts`), so a week never looks like one repeated image: **type** (a big headline, no picture, so it costs nothing), **illustration**, **still-life** and **isometric**. Neighbouring posts always differ, also across weeks. The model only suggests an idea per post (an object or abstract scene, never people); the code wraps it with the format's look, the brand's own colours and the no-text rule. The logo is the site's own logo picture, else its icon with the name beside it, else the name alone. Plans written before formats existed still render as the old photo posters.
+
 ### How the engine reads a client's website
 - It identifies itself as `SocialAutoBot/1.0 (+https://social.digibranders.com)` and respects the site's `robots.txt`. A site that asks bots not to read it is not read, and the error says so.
 - It reads public addresses only: every address a name points to, and every redirect, must be public (no `localhost`, private networks or cloud-metadata addresses), on the standard web ports, with a size cap.

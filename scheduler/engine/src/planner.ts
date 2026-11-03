@@ -1,8 +1,9 @@
 /** Writes a week of pain-point posts for a brand with the text model. */
 import type { AiConfig } from './ai.ts';
-import { parseWeekPlan, type Brand, type LayoutName, type WeekPlan } from './content.ts';
+import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
+import { creativePrompt, formatFor } from './creative.ts';
 import { postDates, type Weekday } from './cadence.ts';
-import { layoutFor, visualStyleFor } from './layout.ts';
+import { visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
 
 /**
@@ -38,7 +39,7 @@ export function scheduleDates({ startDate, time, utcOffset, count, weekdays }: P
   return days.map((day) => `${day}T${time}:00${utcOffset}`);
 }
 
-const SYSTEM_PROMPT = `You are a senior social media copywriter for small and local businesses.
+const SYSTEM_PROMPT = `You are a senior social media copywriter and art director for businesses of every size.
 You write Instagram posts that each address one real customer pain point and show how the brand solves it.
 Hard rules:
 - Only use facts, prices and offers from the brand profile. Never invent statistics, customer counts, reviews or guarantees.
@@ -73,7 +74,7 @@ Write ${count} posts, each on a different pain point the audience really has. Re
       "painPoint": "one sentence describing the customer's problem",
       "headline": "max 45 characters, a punchy question or statement about the pain; wrap the 2-4 most important words in |pipes| for the accent colour, e.g. 'Is your website |costing you customers?|'",
       "subline": "max 70 characters, one line that hints at the solution",
-      "visual": "a concrete photographic scene that literally shows this pain point or its metaphor: who (people typical for the audience's country), what objects, what emotion. Max 45 words. No text or screens with words.",
+      "visual": "one fresh visual idea for this pain point: a single symbolic object or abstract scene that stands for it, in the way a clever magazine cover would (for example a knot that unravels into one clean line, a maze with one lit path). No people, no faces, no hands, no offices, desks or meeting rooms, no screens, no text. Max 30 words.",
       "caption": "Instagram caption, 450-900 characters: hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).",
       "hashtags": ["6-8 relevant hashtags, each starting with #, last one the brand name"]
     }
@@ -81,13 +82,25 @@ Write ${count} posts, each on a different pain point the audience really has. Re
 }`;
 }
 
-interface DraftPost {
+export interface DraftPost {
   painPoint: string;
   headline: string;
   subline: string;
   visual: string;
   caption: string;
   hashtags: string[];
+}
+
+/**
+ * One planned post from the model's draft. The format comes from the rotation in code, so a week varies whatever the model
+ * writes: a type-only post needs no picture, the others get a prompt in the brand's own colours.
+ */
+export function buildPost(options: { draft: DraftPost; id: string; date: string; weekNumber: number; index: number; brand: Brand }): PlannedPost {
+  const { draft, brand } = options;
+  const format = formatFor(options.weekNumber, options.index);
+  const base = { id: options.id, date: options.date, painPoint: draft.painPoint, format, headline: draft.headline, subline: draft.subline, caption: draft.caption, hashtags: draft.hashtags };
+  if (format === 'type') return { ...base, mode: 'template' };
+  return { ...base, mode: 'ai', imagePrompt: creativePrompt(format, draft.visual, brand) };
 }
 
 /** Larger batches make the model repeat itself, so plans are written in chunks. */
@@ -131,18 +144,7 @@ export async function planWeek(options: {
             if (typeof d.headline === 'string' && d.headline.replaceAll('|', '').length > 60) {
               throw new Error(`post ${i + 1} headline is too long; keep it under 45 characters`);
             }
-            return {
-              id: `w${week}-d${offset + i + 1}`,
-              date: chunkDates[i],
-              painPoint: d.painPoint,
-              mode: 'ai',
-              headline: d.headline,
-              subline: d.subline,
-              imagePrompt: scenePrompt(d.visual, layoutFor(options.weekNumber, offset + i), brand, options.compositionHints ?? false),
-              layout: layoutFor(options.weekNumber, offset + i),
-              caption: d.caption,
-              hashtags: d.hashtags,
-            };
+            return buildPost({ draft: d, id: `w${week}-d${offset + i + 1}`, date: chunkDates[i] as string, weekNumber: options.weekNumber, index: offset + i, brand });
           }),
         };
         return parseWeekPlan(plan, `week-${week}`).posts;
