@@ -21,7 +21,8 @@ import { parseBrand, parseWeekPlan, readJson } from './content.ts';
 import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { normalizeHeadline } from './hooks.ts';
-import { planWeek } from './planner.ts';
+import type { ConceptRecord } from './concepts.ts';
+import { conceptRecordOf, planWeek } from './planner.ts';
 import { renderPlan } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
 
@@ -29,7 +30,7 @@ const BRANDS_ROOT = resolve('brands');
 const WEEK_FILE = /^week-(\d+)\.json$/;
 
 interface History {
-  weeks: Array<{ file: string; createdAt: string; painPoints: string[]; /** The pillar of each post; weeks written before pillars have none. */ pillars?: string[]; /** The hook actually used by each post, and its headline as compared for repetition. */ hooks?: string[]; headlines?: string[] }>;
+  weeks: Array<{ file: string; createdAt: string; painPoints: string[]; /** The pillar of each post; weeks written before pillars have none. */ pillars?: string[]; /** The hook actually used by each post, and its headline as compared for repetition. */ hooks?: string[]; headlines?: string[]; /** The concept of each accepted post, for the repeat check. */ concepts?: ConceptRecord[] }>;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -165,9 +166,14 @@ async function main(): Promise<void> {
     recentPillars: history.weeks.flatMap((w) => w.pillars ?? []),
     recentHooks: history.weeks.flatMap((w) => w.hooks ?? []),
     recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
+    recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
   });
+  if (plan.insufficientConcepts) {
+    const { requested, produced, reasons } = plan.insufficientConcepts;
+    console.log(`    Only ${produced} of ${requested} posts: the rest repeated earlier ideas (insufficient distinct concepts).\n    ${reasons.join('\n    ')}`);
+  }
   await writeFile(join(brandDir, planFile), `${JSON.stringify(plan, null, 2)}\n`);
-  history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)) });
+  history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []) });
   await writeFile(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
   console.log('3/4 Rendering posters…');

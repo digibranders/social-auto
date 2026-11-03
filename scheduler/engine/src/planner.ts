@@ -3,6 +3,7 @@ import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
 import { assertCopySupported } from './copy-gate.ts';
 import { creativePrompt, formatFor } from './creative.ts';
+import { checkConcept, parseConcept, type Concept, type ConceptConfig, type ConceptRecord } from './concepts.ts';
 import { assignHooks, checkHook, defaultHooks, fallbackHeadline, HookError, normalizeHeadline, repetitionWarnings, type HookSpec } from './hooks.ts';
 import { assignWeek, checkAnchored, defaultPillars, type PillarSpec, type PostAssignment } from './pillars.ts';
 import { postDates, type Weekday } from './cadence.ts';
@@ -63,7 +64,14 @@ export interface PostPlan extends PostAssignment {
   hookBrief?: string;
 }
 
-export function userPrompt(brand: Brand, count: number, usedPainPoints: string[], assignments: readonly PostPlan[] = []): string {
+/** The most recent concepts, in a line each, so the writer sees which angles and pictures are taken; the repeat check, not this list, is what decides. */
+function conceptLines(recent: readonly ConceptRecord[]): string {
+  if (recent.length === 0) return '';
+  const lines = recent.slice(-RECENT_CONCEPTS_IN_PROMPT).map((r, i) => `${i + 1}. ${r.concept.subject} / ${r.concept.angle} / ${r.concept.message} (picture: ${r.concept.visualSubject}, ${r.concept.visualAction}, ${r.concept.visualComposition})`);
+  return `\n\nAvoid repeating these recent creative angles and pictures:\n${lines.join('\n')}\nYou may write about the same product or subject again, but with a genuinely different, evidence-supported message, and a different picture idea.`;
+}
+
+export function userPrompt(brand: Brand, count: number, usedPainPoints: string[], assignments: readonly PostPlan[] = [], recentConcepts: readonly ConceptRecord[] = []): string {
   return `Brand profile:
 ${JSON.stringify(
   {
@@ -83,7 +91,7 @@ ${JSON.stringify(
 Pain points already used in earlier weeks (do NOT repeat or rephrase these):
 ${usedPainPoints.length ? usedPainPoints.map((p) => `- ${p}`).join('\n') : '- none yet'}
 
-Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. A number, price, percentage, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if a proof point above states it, with that figure and wording unchanged; with no proof point for it, say the benefit in plain words instead. The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead.${assignmentLines(assignments)}
+Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. A number, price, percentage, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if a proof point above states it, with that figure and wording unchanged; with no proof point for it, say the benefit in plain words instead. The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead.${assignmentLines(assignments)}${conceptLines(recentConcepts)}
 
 Return JSON:
 {
@@ -94,6 +102,7 @@ Return JSON:
       "subline": "max 70 characters, plain words, no jargon: it names the brand (${brand.name}) and says what it does about this pain, e.g. '${brand.name} keeps all of this in one place.' Use only facts from the profile.",
       "visual": "one fresh visual idea for this pain point: a single symbolic object or abstract scene, in the way a clever magazine cover would. It must contain one object that belongs to the topic of the headline (a calendar for scheduling, a file or parcel for uploads, chat bubbles for conversation, a stack of tasks for repeated work), so a viewer links the picture to the headline within two seconds, plus one simple metaphor for the pain (a knot that unravels, a maze with one lit path). No people, no faces, no hands, no offices, desks or meeting rooms, no screens, no text. Max 30 words.",
       "visualLink": "one short sentence: how a viewer connects this picture to the headline, e.g. 'the parcel stands for big files and the narrow door for friction'",
+      "concept": {"subject": "what the post is about, 2-5 words", "angle": "the particular angle on that subject", "message": "the one thing the post asserts", "visualSubject": "the main object in the picture", "visualAction": "what happens to it", "visualComposition": "the framing, e.g. close-up, overhead, wide"},
       "listItems": ["only for a numbered_list post: exactly as many distinct short items as the number the headline starts with; omit it for every other post"],
       "caption": "Instagram caption, 450-900 characters: hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).",
       "hashtags": ["6-8 relevant hashtags, each starting with #, last one the brand name"]
@@ -113,13 +122,15 @@ export interface DraftPost {
   hashtags: string[];
   /** For a numbered-list headline: the items it counts. */
   listItems?: string[];
+  /** What the post is about and shows; checked for repeats before any picture is made. */
+  concept?: unknown;
 }
 
 /**
  * One planned post from the model's draft. The format comes from the rotation in code, so a week varies whatever the model
  * writes: a type-only post needs no picture, the others get a prompt in the brand's own colours.
  */
-export function buildPost(options: { draft: DraftPost; id: string; date: string; weekNumber: number; index: number; brand: Brand; pillar?: string; hook?: string; requestedHook?: string; warnings?: readonly string[] }): PlannedPost {
+export function buildPost(options: { draft: DraftPost; id: string; date: string; weekNumber: number; index: number; brand: Brand; pillar?: string; hook?: string; requestedHook?: string; warnings?: readonly string[]; concept?: Concept; anchor?: string; revisitOf?: string }): PlannedPost {
   const { draft, brand } = options;
   const format = formatFor(options.weekNumber, options.index);
   const items = options.hook === 'numbered_list' && draft.listItems ? draft.listItems.map((i) => i.trim()) : [];
@@ -127,6 +138,7 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
   const caption = items.length > 0 ? `${draft.caption.trim()}\n\n${items.map((item, n) => `${n + 1}. ${item}`).join('\n')}` : draft.caption;
   const base = {
     id: options.id, date: options.date, painPoint: draft.painPoint, ...(options.pillar ? { pillar: options.pillar } : {}),
+    ...(options.concept ? { concept: options.concept } : {}), ...(options.anchor ? { anchor: options.anchor } : {}), ...(options.revisitOf ? { revisitOf: options.revisitOf } : {}),
     ...(options.hook ? { hook: options.hook } : {}), ...(options.requestedHook ? { requestedHook: options.requestedHook } : {}),
     ...(options.warnings && options.warnings.length > 0 ? { hookWarnings: [...options.warnings] } : {}), ...(items.length > 0 ? { listItems: items } : {}),
     format, headline: draft.headline, subline: draft.subline, caption, hashtags: draft.hashtags,
@@ -137,6 +149,8 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
 
 /** 70 is the target given to the model; allow some slack before forcing a retry. */
 const MAX_SUBLINE_CHARS = 90;
+/** How many recent concepts the writer is shown. */
+const RECENT_CONCEPTS_IN_PROMPT = 10;
 /** The headline limit given to the model is 45; this is the slack allowed before a draft is sent back. */
 const MAX_HEADLINE_CHARS = 60;
 
@@ -166,6 +180,28 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
   }
 }
 
+/** A week plan, with a note when it holds fewer posts than asked for because the brand ran out of distinct, supported ideas. */
+export interface PlannedWeek extends WeekPlan {
+  insufficientConcepts?: { requested: number; produced: number; reasons: string[] };
+}
+
+/** Raised when not one draft was a new idea. The plan stops before any picture is made. */
+export class InsufficientConceptsError extends Error {
+  constructor(requested: number, reasons: readonly string[]) {
+    super(`insufficient_distinct_concepts: none of the ${requested} posts was a new idea (${reasons.join(' | ')})`);
+    this.name = 'InsufficientConceptsError';
+  }
+}
+
+/** The history record of an accepted post, or undefined for a post written before concepts were kept. */
+export function conceptRecordOf(post: PlannedPost): ConceptRecord | undefined {
+  if (!post.concept) return undefined;
+  return {
+    id: post.id, date: post.date, concept: post.concept, headline: normalizeHeadline(post.headline), pillar: post.pillar ?? 'problem', hook: post.hook ?? 'direct_statement',
+    format: post.format ?? 'type', ...(post.anchor ? { anchor: post.anchor } : {}), ...(post.revisitOf ? { revisitOf: post.revisitOf } : {}),
+  };
+}
+
 /** Larger batches make the model repeat itself, so plans are written in chunks. */
 export const POSTS_PER_REQUEST = 10;
 
@@ -188,10 +224,14 @@ export async function planWeek(options: {
   recentHeadlines?: readonly string[];
   /** The hook set; the default set when omitted. */
   hooks?: readonly HookSpec[];
+  /** The concepts of earlier accepted posts, oldest first, that a draft is compared with. */
+  recentConcepts?: readonly ConceptRecord[];
+  /** Thresholds and word lists of the repeat check. */
+  conceptConfig?: Partial<ConceptConfig>;
   log?: (message: string) => void;
   /** Replaces the network for the text model; tests use it. */
   fetchFn?: typeof fetch;
-}): Promise<WeekPlan> {
+}): Promise<PlannedWeek> {
   const { brand, schedule } = options;
   const dates = scheduleDates(schedule);
   const week = String(options.weekNumber).padStart(2, '0');
@@ -210,57 +250,90 @@ export async function planWeek(options: {
   const hooks = assignHooks({ pillars: assignments.map((a) => a.pillar), evidence: { proofPoints: brand.proofPoints }, recentHooks: options.recentHooks ?? [], recentPillars: recentPillars, hooks: hookSpecs });
   const plans: PostPlan[] = assignments.map((a, i) => ({ ...a, hook: hooks[i] as string, hookBrief: hookSpecs.find((h) => h.id === hooks[i])?.brief ?? '' }));
   const identityLine = brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
+  const recentConcepts = options.recentConcepts ?? [];
+  /** Concepts of the posts accepted so far in this plan; later posts are compared with them as well as with history. */
+  const acceptedRecords: ConceptRecord[] = [];
+  const dropped: string[] = [];
 
   for (let offset = 0; offset < dates.length; offset += POSTS_PER_REQUEST) {
     const chunkDates = dates.slice(offset, offset + POSTS_PER_REQUEST);
     options.log?.(`writing posts ${offset + 1}-${offset + chunkDates.length} of ${dates.length}`);
-    // The second try is the last: a headline that still does not follow its hook is then replaced by a safe, complete line, or the plan fails.
+    // The second try is the last: a headline that still does not follow its hook is then replaced by a safe, complete line, and a draft that
+    // still repeats an earlier idea is left out of the plan (fewer posts, never a repeat); or the plan fails.
     let attempt = 0;
+    let droppedHere: string[] = [];
     const chunk = await chatJson({
       ai: options.ai,
       ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
       system: SYSTEM_PROMPT,
-      user: userPrompt(brand, chunkDates.length, usedPainPoints, plans.slice(offset, offset + chunkDates.length)),
+      user: userPrompt(brand, chunkDates.length, usedPainPoints, plans.slice(offset, offset + chunkDates.length), [...recentConcepts, ...acceptedRecords]),
       parse: (value) => {
         attempt += 1;
+        droppedHere = [];
         const drafts = (value as { posts?: unknown }).posts;
         if (!Array.isArray(drafts) || drafts.length !== chunkDates.length) {
           throw new Error(`"posts" must contain exactly ${chunkDates.length} items`);
         }
         const builtSoFar: PlannedPost[] = [];
-        const plan = {
-          brand: options.brandSlug,
-          timezone: schedule.utcOffset,
-          posts: (drafts as DraftPost[]).map((d, i) => {
-            const assigned = plans[offset + i] as PostPlan;
-            let draft = d;
-            let used = assigned.hook as string;
-            try {
-              validateDraft(draft, i + 1, brand.name, brand.proofPoints, assigned);
-            } catch (error) {
-              if (!(error instanceof HookError) || attempt < 2) throw error;
-              const headline = fallbackHeadline({ ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(identityLine ? { identityLine } : {}), maxChars: MAX_HEADLINE_CHARS });
-              if (!headline) throw error;
-              draft = { ...d, headline };
-              used = 'direct_statement';
-              validateDraft(draft, i + 1, brand.name, brand.proofPoints, { ...assigned, hook: used });
+        const records: ConceptRecord[] = [];
+        const kept: PlannedPost[] = [];
+        (drafts as DraftPost[]).forEach((d, i) => {
+          const assigned = plans[offset + i] as PostPlan;
+          let draft = d;
+          let used = assigned.hook as string;
+          try {
+            validateDraft(draft, i + 1, brand.name, brand.proofPoints, assigned);
+          } catch (error) {
+            if (!(error instanceof HookError) || attempt < 2) throw error;
+            const headline = fallbackHeadline({ ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(identityLine ? { identityLine } : {}), maxChars: MAX_HEADLINE_CHARS });
+            if (!headline) throw error;
+            draft = { ...d, headline };
+            used = 'direct_statement';
+            validateDraft(draft, i + 1, brand.name, brand.proofPoints, { ...assigned, hook: used });
+          }
+          let concept: Concept;
+          try {
+            concept = parseConcept(draft.concept);
+          } catch (error) {
+            throw new Error(`post ${i + 1}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+          const date = chunkDates[i] as string;
+          const decision = checkConcept(
+            { concept, headline: draft.headline, pillar: assigned.pillar, date, ...(assigned.anchor ? { anchor: assigned.anchor } : {}) },
+            { history: recentConcepts, batch: [...acceptedRecords, ...records] },
+            options.conceptConfig,
+          );
+          if (decision.status === 'duplicate_message' || decision.status === 'duplicate_visual') {
+            const why = decision.reasons.join('; ');
+            if (attempt < 2) {
+              const fix = decision.status === 'duplicate_visual' ? 'keep the message, but write a new picture idea (the visual fields and "visual")' : 'write a different message or angle, supported by the profile';
+              throw new Error(`post ${i + 1} repeats an earlier idea: ${why}. Please ${fix}`);
             }
-            const earlier = [...(options.recentHeadlines ?? []), ...posts.map((p) => p.headline), ...builtSoFar.map((p) => p.headline)].map(normalizeHeadline);
-            const warnings = repetitionWarnings(draft.headline, earlier).map((w) => `${w.kind}: ${w.detail}`);
-            const built = buildPost({
-              draft, id: `w${week}-d${offset + i + 1}`, date: chunkDates[i] as string, weekNumber: options.weekNumber, index: offset + i, brand,
-              pillar: assigned.pillar, hook: used, warnings, ...(used !== assigned.hook ? { requestedHook: assigned.hook as string } : {}),
-            });
-            builtSoFar.push(built);
-            return built;
-          }),
-        };
-        return parseWeekPlan(plan, `week-${week}`).posts;
+            droppedHere.push(`post ${i + 1}: ${why}`);
+            return;
+          }
+          const earlier = [...(options.recentHeadlines ?? []), ...posts.map((p) => p.headline), ...builtSoFar.map((p) => p.headline)].map(normalizeHeadline);
+          const warnings = [...repetitionWarnings(draft.headline, earlier).map((w) => `${w.kind}: ${w.detail}`), ...decision.warnings.map((w) => `concept: ${w}`), ...(decision.status === 'unchecked' ? decision.reasons.map((r) => `concept: unchecked, ${r}`) : [])];
+          const built = buildPost({
+            draft, id: `w${week}-d${offset + i + 1}`, date, weekNumber: options.weekNumber, index: offset + i, brand,
+            pillar: assigned.pillar, hook: used, warnings, concept, ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(decision.revisitOf ? { revisitOf: decision.revisitOf } : {}),
+            ...(used !== assigned.hook ? { requestedHook: assigned.hook as string } : {}),
+          });
+          builtSoFar.push(built);
+          records.push(conceptRecordOf(built) as ConceptRecord);
+          kept.push(built);
+        });
+        if (kept.length === 0) return [];
+        return parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts: kept }, `week-${week}`).posts;
       },
     });
+    dropped.push(...droppedHere);
     posts.push(...chunk);
+    acceptedRecords.push(...chunk.map((p) => conceptRecordOf(p) as ConceptRecord));
     usedPainPoints.push(...chunk.map((p) => p.painPoint));
   }
 
-  return parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts }, `week-${week}`);
+  if (posts.length === 0) throw new InsufficientConceptsError(dates.length, dropped);
+  const plan = parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts }, `week-${week}`);
+  return dropped.length > 0 ? { ...plan, insufficientConcepts: { requested: dates.length, produced: posts.length, reasons: dropped } } : plan;
 }

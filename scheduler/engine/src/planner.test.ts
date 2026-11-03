@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { aiConfigFromEnv } from './ai.ts';
 import type { Brand } from './content.ts';
-import { planWeek } from './planner.ts';
+import type { Concept, ConceptRecord } from './concepts.ts';
+import { conceptRecordOf, InsufficientConceptsError, planWeek } from './planner.ts';
 
 const brand = {
   name: 'Acme Dental', handleUrl: 'acme.com', offer: 'Family dental care in town', audience: 'Families', tone: 'Warm', proofPoints: ['Free first visit for new patients'],
@@ -19,21 +20,32 @@ interface Behaviour {
   ignoreHooks?: boolean;
   /** Build proof and education posts on their proof point. */
   anchored?: boolean;
+  /** Replaces the concept of a post: given the slot and which call this is (1-based); undefined leaves the concept out. */
+  concept?: (slot: number, call: number, own: Concept) => Concept | undefined;
 }
 
 /** A pretend model: reads "Post N (pillar, hook)" from the prompt and writes a draft that follows it (or ignores it). */
+const COMPOSITIONS = ['close-up', 'overhead', 'wide', 'macro', 'low angle', 'side view', 'top down'];
+const ownConcept = (i: number): Concept => {
+  const topic = TOPICS[i % TOPICS.length] as string;
+  return { subject: topic, angle: `how people feel about ${topic}`, message: `a calm note about ${topic}`, visualSubject: `${topic} object`, visualAction: `slowly ${['opening', 'turning', 'rising', 'folding', 'glowing', 'sliding', 'tilting'][i % 7]}`, visualComposition: COMPOSITIONS[i % COMPOSITIONS.length] as string };
+};
+
 function model(behaviour: Behaviour = {}) {
   const prompts: string[] = [];
   const fetchFn = (async (_url: string, init?: RequestInit) => {
     const body = String(init?.body);
     prompts.push(body);
+    const call = prompts.length;
     const slots = [...body.matchAll(/Post (\d+) \((\w+), (\w+)\)/g)].map((m) => ({ pillar: m[2] as string, hook: m[3] as string }));
     const posts = slots.map(({ pillar, hook }, i) => {
       const topic = TOPICS[i % TOPICS.length] as string;
       const asked = behaviour.ignoreHooks ? 'question' : hook;
       const headline = asked === 'question' ? `Thinking about ${topic}?` : asked === 'numbered_list' ? `3 things about ${topic}` : `Notes on ${topic}`;
       const anchored = (behaviour.anchored ?? true) && (pillar === 'proof' || pillar === 'education');
+      const concept = behaviour.concept ? behaviour.concept(i, call, ownConcept(i)) : ownConcept(i);
       return {
+        ...(concept ? { concept } : {}),
         painPoint: `A post about ${topic}`, headline, subline: 'Acme Dental keeps it simple.', visual: 'A single glowing key on a table.', visualLink: 'the key stands for access',
         caption: `A short note about ${topic}.`, hashtags: ['#acme'], ...(anchored ? PROOF_TEXT : {}),
         ...(asked === 'numbered_list' && !behaviour.ignoreHooks ? { listItems: ['Ask us anything', 'Plan one small step', 'Share what you learn'] } : {}),
@@ -123,4 +135,71 @@ test('repetition with recent headlines is a recorded warning, not a retry', asyn
   assert.equal(prompts.length, 1);
   const warned = result.posts.flatMap((p) => p.hookWarnings ?? []);
   assert.ok(warned.some((w) => w.startsWith('opening:')), warned.join('|'));
+});
+
+// ---- 1.4: repeated ideas are caught before any picture is made
+/** A concept no slot of the pretend model ever writes, so a draft can repeat it on purpose. */
+const oldConcept = (k: number): Concept => ({ subject: `legacy subject ${k}`, angle: `legacy angle ${k}`, message: `legacy message ${k}`, visualSubject: `legacy thing ${k}`, visualAction: `legacy action ${k}`, visualComposition: `legacy frame ${k}` });
+const sevenWeek = (behaviour: Behaviour, over: Partial<Parameters<typeof planWeek>[0]> = {}) => plan(7, over, behaviour);
+const historyOf = (...indexes: number[]): ConceptRecord[] =>
+  indexes.map((i) => ({ id: `old-${i}`, date: '2026-09-01T10:00:00+05:30', concept: oldConcept(i), headline: `old headline ${i}`, pillar: 'education', hook: 'direct_statement', format: 'illustration' }));
+
+test('every accepted post keeps its concept, anchor and a history record, and the prompt shows recent concepts', async () => {
+  const { result, prompts } = await sevenWeek({}, { recentConcepts: historyOf(1, 2).map((r, i) => ({ ...r, concept: { ...r.concept, subject: `earlier topic ${'ab'[i]}`, angle: `earlier angle ${'cd'[i]}`, message: `earlier message ${'ef'[i]}`, visualSubject: `earlier thing ${'gh'[i]}`, visualAction: `earlier act ${'ij'[i]}`, visualComposition: `earlier frame ${'kl'[i]}` } })) });
+  assert.ok(result.posts.every((p) => p.concept !== undefined));
+  assert.match(prompts[0] ?? '', /Avoid repeating these recent creative angles and pictures/);
+  assert.match(prompts[0] ?? '', /earlier topic a/);
+  const records = result.posts.map((p) => conceptRecordOf(p) as ConceptRecord);
+  assert.equal(records.length, 7);
+  assert.deepEqual(records.map((r) => r.id), result.posts.map((p) => p.id));
+  assert.ok(result.posts.some((p) => p.anchor === 'Free first visit for new patients'));
+});
+
+test('a draft that repeats the history is sent back, and accepted once the model writes a new idea; no picture is involved', async () => {
+  const { result, prompts } = await sevenWeek({ concept: (slot, call, own) => (slot === 0 && call === 1 ? oldConcept(3) : own) }, { recentConcepts: historyOf(3) });
+  assert.equal(prompts.length, 2);
+  assert.equal(result.posts.length, 7);
+  assert.equal(result.insufficientConcepts, undefined);
+});
+
+test('a repeated picture idea alone asks only for a new picture', async () => {
+  const { result } = await sevenWeek({ concept: (slot, call, own) => (slot === 0 && call === 1 ? { ...own, subject: 'brand new subject', angle: 'brand new angle', message: 'brand new message', visualSubject: oldConcept(3).visualSubject, visualAction: oldConcept(3).visualAction, visualComposition: oldConcept(3).visualComposition } : own) }, { recentConcepts: historyOf(3) });
+  assert.equal(result.posts.length, 7);
+});
+
+test('a duplicate inside the same plan is caught like a duplicate of history', async () => {
+  const { prompts } = await sevenWeek({ concept: (slot, call, own) => (slot === 1 && call === 1 ? ownConcept(0) : own) });
+  assert.equal(prompts.length, 2);
+});
+
+test('a draft that still repeats after the last try is left out: a narrow brand gets fewer posts, never a repeat, and the plan says why', async () => {
+  const { result, prompts } = await sevenWeek({ concept: (slot, _call, own) => (slot < 2 ? oldConcept(5) : own) }, { recentConcepts: historyOf(5) });
+  assert.equal(prompts.length, 2);
+  assert.equal(result.posts.length, 5);
+  assert.equal(result.insufficientConcepts?.requested, 7);
+  assert.equal(result.insufficientConcepts?.produced, 5);
+  assert.equal(result.insufficientConcepts?.reasons.length, 2);
+  assert.ok(result.posts.every((p) => p.concept?.subject !== 'legacy subject 5'));
+});
+
+test('when no draft is a new idea the plan fails with a clear status before any picture', async () => {
+  await assert.rejects(sevenWeek({ concept: () => oldConcept(5) }, { recentConcepts: historyOf(5) }), (error: Error) => error instanceof InsufficientConceptsError && /insufficient_distinct_concepts/.test(error.message));
+  await assert.rejects(plan(2, { recentConcepts: historyOf(0, 1) }, { concept: (slot) => oldConcept(slot) }), /insufficient_distinct_concepts/);
+});
+
+test('a missing or malformed concept is sent back, never skipped', async () => {
+  const { result, prompts } = await sevenWeek({ concept: (slot, call, own) => (slot === 2 && call === 1 ? undefined : own) });
+  assert.equal(prompts.length, 2);
+  assert.equal(result.posts.length, 7);
+  await assert.rejects(sevenWeek({ concept: (slot, _call, own) => (slot === 2 ? undefined : own) }), /concept/);
+});
+
+test('a one-product brand can reuse its subject across a week when the angles, messages and pictures differ', async () => {
+  const { result } = await sevenWeek({ concept: (slot, _call, own) => ({ ...own, subject: 'the planner', angle: `use case ${'abcdefg'[slot]}${slot}`, message: `message number ${slot} ${['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf'][slot]}` }) });
+  assert.equal(result.posts.length, 7);
+  assert.equal(result.insufficientConcepts, undefined);
+});
+
+test('older posts without a concept are simply not compared', () => {
+  assert.equal(conceptRecordOf({ id: 'x', date: '2026-01-01T00:00:00Z', painPoint: 'p', mode: 'template', headline: 'h', subline: 's', caption: 'c', hashtags: [] }), undefined);
 });

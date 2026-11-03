@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { parseConcept, type Concept } from './concepts.ts';
 import type { CallToAction } from './cta.ts';
 import type { BrandIdentity } from './identity.ts';
 
@@ -118,6 +119,12 @@ export interface PlannedPost {
   hookWarnings?: string[];
   /** The items of a numbered-list headline, already part of the caption. */
   listItems?: string[];
+  /** What the post is about and shows, kept in the brand's history so later posts do not repeat it. */
+  concept?: Concept;
+  /** The proof point the post was built on. */
+  anchor?: string;
+  /** The older concept the post deliberately returns to with a different message. */
+  revisitOf?: string;
   caption: string;
   hashtags: string[];
 }
@@ -327,6 +334,19 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     if (value === undefined) continue;
     if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"${key}" must be text`);
     post[key] = value.trim();
+  }
+  for (const key of ['anchor', 'revisitOf'] as const) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"${key}" must be text`);
+    post[key] = value.trim();
+  }
+  if (raw['concept'] !== undefined) {
+    try {
+      post.concept = parseConcept(raw['concept']);
+    } catch (error) {
+      throw new ContentValidationError(where, error instanceof Error ? error.message : String(error));
+    }
   }
   for (const key of ['hookWarnings', 'listItems'] as const) {
     const value = raw[key];
