@@ -31,6 +31,14 @@ export interface UsageEntry {
   outputTokens: number;
   /** A price for the whole call, when only an estimate from a table is known. */
   flatCost?: number;
+  /** Set when a backup provider answered after the one that was asked for failed. */
+  fallbackFrom?: FallbackFrom;
+}
+
+/** What was asked for and why it did not answer, when a backup provider stood in. */
+export interface FallbackFrom {
+  requested: string;
+  reason: string;
 }
 
 /** Dollars for one call, or null when the model has no known price. */
@@ -67,6 +75,10 @@ export interface UsageRecord {
   /** Dollars, or null when the model has no known price. */
   costUsd: number | null;
   estimated: boolean;
+  /** Present only when a backup provider answered instead of the one that was asked for. */
+  fallback?: true;
+  requestedModel?: string;
+  fallbackReason?: string;
 }
 
 interface Call {
@@ -88,7 +100,10 @@ export class UsageTally {
     const at = when.toISOString();
     return this.calls.flatMap(({ entry, purpose, post }): UsageRecord[] => {
       const cost = costOf(entry);
-      const base = { at, client, purpose, model: entry.model, estimated: entry.flatCost !== undefined };
+      const base = {
+        at, client, purpose, model: entry.model, estimated: entry.flatCost !== undefined,
+        ...(entry.fallbackFrom ? { fallback: true as const, requestedModel: entry.fallbackFrom.requested, fallbackReason: entry.fallbackFrom.reason } : {}),
+      };
       if (purpose !== 'writing' || post !== null || postIds.length === 0) {
         return [{ ...base, post, inputTokens: entry.inputTokens, outputTokens: entry.outputTokens, costUsd: cost }];
       }
@@ -119,16 +134,25 @@ export class UsageTally {
     };
   }
 
+  /** Every call a backup provider answered, with what was asked for and why it failed. */
+  fallbacks(): FallbackFrom[] {
+    return this.calls.flatMap(({ entry }) => (entry.fallbackFrom ? [entry.fallbackFrom] : []));
+  }
+
   /** A short report for the end of a run. */
   format(): string {
     const { lines, totalUsd, hasUnknown } = this.summary();
+    const stood = this.fallbacks();
+    const warning = stood.length
+      ? [`  FALLBACK: ${stood.length} call${stood.length === 1 ? '' : 's'} answered by a backup provider, not the one asked for:`, ...[...new Set(stood.map((f) => `    ${f.requested} failed: ${f.reason}`))]]
+      : [];
     if (lines.length === 0) return 'AI usage: nothing was asked of the AI.';
     const money = (value: number | null): string => (value === null ? 'unpriced' : `$${value.toFixed(4)}`);
     const rows = lines.map((l) => {
       const tokens = l.estimated && l.kind === 'image' ? '(priced per picture)' : `${l.inputTokens.toLocaleString('en-US')} in / ${l.outputTokens.toLocaleString('en-US')} out tokens`;
       return `  ${l.kind.padEnd(5)} ${l.model.padEnd(24)} ${String(l.calls).padStart(3)} calls   ${tokens.padEnd(34)} ${money(l.costUsd)}`;
     });
-    return ['AI usage this run (estimates from OpenAI\'s token counts and published prices):', ...rows, `  Total  $${totalUsd.toFixed(4)}${hasUnknown ? '  (some calls could not be priced)' : ''}`].join('\n');
+    return ['AI usage this run (estimates from OpenAI\'s token counts and published prices):', ...rows, `  Total  $${totalUsd.toFixed(4)}${hasUnknown ? '  (some calls could not be priced)' : ''}`, ...warning].join('\n');
   }
 }
 

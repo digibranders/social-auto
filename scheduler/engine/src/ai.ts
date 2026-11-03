@@ -1,10 +1,11 @@
 import { writeFile } from 'node:fs/promises';
 import { generateImage as generatePollinationsImage, ImageGenerationError, resolveImageModel } from './pollinations.ts';
-import { flatImageCost, UsageTally } from './usage.ts';
+import { flatImageCost, UsageTally, type FallbackFrom } from './usage.ts';
 
 /**
  * Which AI service writes the text and draws the pictures, and with what settings. OpenAI is the main provider when
- * its key is set; Pollinations is the backup (used when OpenAI fails or refuses, if its key is set too).
+ * its key is set. The other provider is a backup only when AI_FALLBACK=on says so: a failed paid request is otherwise an
+ * error, never a quiet switch to a free model. When a backup does answer, it is said at once and recorded.
  * Everything comes from the environment, so changing a model is a settings change, not a code change.
  */
 export type ProviderName = 'openai' | 'pollinations';
@@ -12,8 +13,10 @@ export type ImageQuality = 'low' | 'medium' | 'high';
 
 export interface AiConfig {
   primary: ProviderName;
-  /** Try the other provider when the main one fails (only when its key is set). */
+  /** Try the other provider when the main one fails. Only on with AI_FALLBACK=on (and its key set). */
   fallback: boolean;
+  /** Where a notice goes when a backup provider answers instead of the one asked for. */
+  warn: (message: string) => void;
   openaiKey: string | null;
   pollinationsKey: string | null;
   openaiBase: string;
@@ -57,9 +60,13 @@ export function aiConfigFromEnv(env: Env): AiConfig {
   if (!Number.isInteger(limit) || limit < 1) throw new AiConfigError('OPENAI_MAX_IMAGES_PER_RUN must be a whole number of at least 1');
 
   const other = primary === 'openai' ? pollinationsKey : openaiKey;
+  const allowed = env['AI_FALLBACK'];
+  if (allowed !== undefined && allowed !== '' && allowed !== 'on' && allowed !== 'off') throw new AiConfigError('AI_FALLBACK must be "on" or "off"');
+  if (allowed === 'on' && !other) throw new AiConfigError(`AI_FALLBACK=on needs the other provider's key (${primary === 'openai' ? 'POLLINATIONS_API_KEY' : 'OPENAI_API_KEY'})`);
   return {
     primary,
-    fallback: env['AI_FALLBACK'] !== 'off' && Boolean(other),
+    fallback: allowed === 'on',
+    warn: (message) => console.warn(message),
     openaiKey,
     pollinationsKey,
     openaiBase: (env['OPENAI_BASE_URL'] || 'https://api.openai.com/v1').replace(/\/+$/, ''),
@@ -113,7 +120,7 @@ export interface ImageBudget {
   openaiImages: number;
 }
 
-async function openaiImage(ai: AiConfig, request: SceneRequest, budget: ImageBudget, fetchFn: typeof fetch): Promise<void> {
+async function openaiImage(ai: AiConfig, request: SceneRequest, budget: ImageBudget, fetchFn: typeof fetch, fallbackFrom?: FallbackFrom): Promise<void> {
   if (budget.openaiImages >= ai.maxOpenAiImages) throw new ImageGenerationError(`OpenAI image limit of ${ai.maxOpenAiImages} per run reached`);
   const response = await fetchFn(`${ai.openaiBase}/images/generations`, {
     method: 'POST',
@@ -135,24 +142,34 @@ async function openaiImage(ai: AiConfig, request: SceneRequest, budget: ImageBud
     inputTokens: used?.input_tokens ?? 0,
     outputTokens: used?.output_tokens ?? 0,
     ...(counted ? {} : { flatCost: flatImageCost(ai.imageQuality) }),
+    ...(fallbackFrom ? { fallbackFrom } : {}),
   });
 }
 
-/** Makes one scene picture with the main provider, then the backup if that fails. Returns who made it. */
+/** The provider and picture model a request names, as shown in a notice or a record. */
+function imageModelOf(ai: AiConfig, provider: ProviderName): string {
+  return provider === 'openai' ? `OpenAI ${ai.imageModel}` : `Pollinations ${ai.pollinationsImageModel}`;
+}
+
+/** Makes one scene picture with the main provider; the backup is tried only when it is allowed. Returns who made it. */
 export async function generateScene(ai: AiConfig, request: SceneRequest, budget: ImageBudget, fetchFn: typeof fetch = fetch): Promise<'OpenAI' | 'Pollinations'> {
   const failures: string[] = [];
-  for (const provider of order(ai)) {
+  const providers = order(ai);
+  for (const provider of providers) {
+    const standingIn = provider !== providers[0];
+    const fallbackFrom: FallbackFrom | undefined = standingIn ? { requested: imageModelOf(ai, providers[0] as ProviderName), reason: failures.at(-1) ?? 'unknown' } : undefined;
     try {
-      if (provider === 'openai') {
-        await openaiImage(ai, request, budget, fetchFn);
-        return 'OpenAI';
+      if (provider === 'openai') await openaiImage(ai, request, budget, fetchFn, fallbackFrom);
+      else {
+        await generatePollinationsImage({ ...request, apiKey: ai.pollinationsKey as string, model: ai.pollinationsImageModel, fetchFn });
+        ai.usage.add({ kind: 'image', model: `pollinations/${ai.pollinationsImageModel}`, inputTokens: 0, outputTokens: 0, ...(fallbackFrom ? { fallbackFrom } : {}) });
       }
-      await generatePollinationsImage({ ...request, apiKey: ai.pollinationsKey as string, model: ai.pollinationsImageModel, fetchFn });
-      ai.usage.add({ kind: 'image', model: `pollinations/${ai.pollinationsImageModel}`, inputTokens: 0, outputTokens: 0 });
-      return 'Pollinations';
     } catch (error) {
       failures.push(redact(error instanceof Error ? error.message : String(error)));
+      continue;
     }
+    if (fallbackFrom) ai.warn(`WARNING: ${fallbackFrom.requested} failed (${fallbackFrom.reason}); ${imageModelOf(ai, provider)} made this picture instead (AI_FALLBACK=on).`);
+    return provider === 'openai' ? 'OpenAI' : 'Pollinations';
   }
   throw new ImageGenerationError(`No picture could be made. ${failures.join(' | ')}`);
 }

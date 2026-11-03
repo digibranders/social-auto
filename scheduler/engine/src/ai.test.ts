@@ -23,7 +23,7 @@ function scripted(answer: (url: string, init: RequestInit) => Response | Promise
   return { fetchFn, calls };
 }
 
-const both = (): AiConfig => aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL });
+const both = (): AiConfig => aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, AI_FALLBACK: 'on' });
 
 test('with an OpenAI key OpenAI is the main provider, with the recommended models and Pollinations as backup', () => {
   const ai = both();
@@ -127,7 +127,7 @@ test('a picture falls back to Pollinations when OpenAI refuses, and the image li
 
     const limited = scripted((url) => (url.includes('openai.com') ? json({ data: [{ b64_json: PNG_OR_JPEG.toString('base64') }] }) : new Response(PNG_OR_JPEG, { headers: { 'content-type': 'image/jpeg' } })));
     const budget = { openaiImages: 0 };
-    const small = aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, OPENAI_MAX_IMAGES_PER_RUN: '1' });
+    const small = aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, OPENAI_MAX_IMAGES_PER_RUN: '1', AI_FALLBACK: 'on' });
     assert.equal(await generateScene(small, request(dir, '1.jpg'), budget, limited.fetchFn), 'OpenAI');
     assert.equal(await generateScene(small, request(dir, '2.jpg'), budget, limited.fetchFn), 'Pollinations');
     assert.equal(budget.openaiImages, 1);
@@ -162,4 +162,62 @@ test('a key quoted back by the provider is blanked out of every error', async ()
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('the free backup is used only when AI_FALLBACK=on says so, even with both keys set', () => {
+  assert.equal(aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL }).fallback, false);
+  assert.equal(aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, AI_FALLBACK: 'off' }).fallback, false);
+  assert.equal(aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, AI_FALLBACK: 'on' }).fallback, true);
+  assert.throws(() => aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, AI_FALLBACK: 'on' }), /AI_FALLBACK=on needs/);
+  assert.throws(() => aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, AI_FALLBACK: 'maybe' }), /AI_FALLBACK must be/);
+});
+
+test('with no backup a failed paid request fails loudly and the free provider is never called', async () => {
+  const noBackup = aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL });
+  const refused = scripted(() => json({ error: { message: 'You have no credits remaining.' } }, 402));
+  const text = await chatJson({ ai: noBackup, system: 's', user: 'u', parse: (v) => v, fetchFn: refused.fetchFn }).catch((e: unknown) => e);
+  assert.match(String((text as Error).message), /OpenAI.*402.*no credits/);
+  assert.ok(refused.calls.every((c) => c.url.includes('openai.com')));
+
+  const dir = await mkdtemp(join(tmpdir(), 'ai-test-'));
+  try {
+    const picture = await generateScene(noBackup, request(dir), { openaiImages: 0 }, refused.fetchFn).catch((e: unknown) => e);
+    assert.match(String((picture as Error).message), /OpenAI.*402.*no credits/);
+    assert.ok(refused.calls.every((c) => c.url.includes('openai.com')));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('when an allowed backup does answer it says so at once, and the records show what was asked for and what answered', async () => {
+  const warnings: string[] = [];
+  const ai = both();
+  ai.warn = (message) => warnings.push(message);
+  const dir = await mkdtemp(join(tmpdir(), 'ai-test-'));
+  try {
+    const down = scripted((url) => (url.includes('openai.com') ? json({ error: { message: 'You have no credits remaining.' } }, 402) : url.includes('chat/completions') ? reply('{"ok":1}') : new Response(PNG_OR_JPEG, { headers: { 'content-type': 'image/jpeg' } })));
+    await chatJson({ ai, system: 's', user: 'u', parse: (v) => v, fetchFn: down.fetchFn });
+    ai.usage.post = 'acme-w01-d1';
+    assert.equal(await generateScene(ai, request(dir), { openaiImages: 0 }, down.fetchFn), 'Pollinations');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0] ?? '', /OpenAI gpt-6-luna.*no credits.*Pollinations/s);
+  assert.match(warnings[1] ?? '', /OpenAI gpt-image-2\.5-sunburst.*Pollinations/s);
+
+  const records = ai.usage.records('acme', []);
+  assert.ok(records.length === 2 && records.every((r) => r.fallback === true));
+  assert.match(records[0]?.requestedModel ?? '', /^OpenAI gpt-6-luna$/);
+  assert.match(records[1]?.requestedModel ?? '', /^OpenAI gpt-image-2\.5-sunburst$/);
+  assert.match(records[1]?.fallbackReason ?? '', /402/);
+  assert.match(ai.usage.format(), /FALLBACK/i);
+});
+
+test('a run that used no backup has no fallback marks', async () => {
+  const ai = both();
+  const ok = scripted(() => reply('{"ok":1}'));
+  await chatJson({ ai, system: 's', user: 'u', parse: (v) => v, fetchFn: ok.fetchFn });
+  assert.ok(ai.usage.records('acme', []).every((r) => r.fallback === undefined && r.requestedModel === undefined));
+  assert.doesNotMatch(ai.usage.format(), /FALLBACK/i);
 });

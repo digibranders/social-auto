@@ -1,4 +1,5 @@
 import { redact, textCandidates, type AiConfig, type TextCandidate } from './ai.ts';
+import type { FallbackFrom } from './usage.ts';
 
 const REQUEST_TIMEOUT_MS = 180_000;
 
@@ -24,7 +25,7 @@ interface ChatMessage {
   content: string;
 }
 
-async function complete(candidate: TextCandidate, messages: ChatMessage[], fetchFn: typeof fetch, ai: AiConfig): Promise<string> {
+async function complete(candidate: TextCandidate, messages: ChatMessage[], fetchFn: typeof fetch, ai: AiConfig, fallbackFrom?: FallbackFrom): Promise<string> {
   const response = await fetchFn(candidate.endpoint, {
     method: 'POST',
     headers: { Authorization: `Bearer ${candidate.apiKey}`, 'Content-Type': 'application/json' },
@@ -42,7 +43,9 @@ async function complete(candidate: TextCandidate, messages: ChatMessage[], fetch
     model: candidate.label === 'OpenAI' ? candidate.model : `pollinations/${candidate.model}`,
     inputTokens: answer.usage?.prompt_tokens ?? 0,
     outputTokens: answer.usage?.completion_tokens ?? 0,
+    ...(fallbackFrom ? { fallbackFrom } : {}),
   });
+  if (fallbackFrom) ai.warn(`WARNING: ${fallbackFrom.requested} failed (${fallbackFrom.reason}); ${candidate.label} ${candidate.model} wrote this instead (AI_FALLBACK=on).`);
   return content;
 }
 
@@ -60,7 +63,12 @@ function extractJson(content: string): unknown {
 export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
   const failures: string[] = [];
   const fetchFn = options.fetchFn ?? fetch;
-  for (const candidate of textCandidates(options.ai)) {
+  const candidates = textCandidates(options.ai);
+  const first = candidates[0] as TextCandidate;
+  for (const candidate of candidates) {
+    // A different provider than the one asked for: only reached when the main one failed and a backup is allowed.
+    const standingIn = candidate.label !== first.label;
+    const lastFailure = failures.at(-1);
     const messages: ChatMessage[] = [
       { role: 'system', content: options.system },
       { role: 'user', content: options.user },
@@ -68,7 +76,7 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       let content: string;
       try {
-        content = await complete(candidate, messages, fetchFn, options.ai);
+        content = await complete(candidate, messages, fetchFn, options.ai, standingIn ? { requested: `${first.label} ${first.model}`, reason: lastFailure ?? 'unknown' } : undefined);
       } catch (error) {
         failures.push(error instanceof Error ? error.message : String(error));
         break;

@@ -71,7 +71,7 @@ The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (
 | `OPENAI_MAX_IMAGES_PER_RUN` | Default 40: the most pictures one run may order from OpenAI. |
 | `USAGE_LOG_FILE` | Where the engine adds one line per AI call (client, post, what it was for, tokens, dollars). The publisher reads the same file, which is how the dashboard's Cost tab shows each client's spend. On the server: `/var/lib/social-auto/usage.jsonl`, set both in the engine's keys file and in `social-publisher.service`. Unset, nothing is recorded. The amounts are estimates from OpenAI's token counts and published prices; the OpenAI usage page is the real bill. |
 | `AI_PROVIDER` | `openai` or `pollinations`. Default: OpenAI when its key is set, else Pollinations. |
-| `AI_FALLBACK` | `off` stops the other provider being used when the main one fails. Default on, when its key is set. |
+| `AI_FALLBACK` | `on` lets the other provider stand in when the main one fails (it needs the other provider's key). Default off: a failed paid request is an error, never a quiet switch to a free model. When a backup does answer, the run prints a `WARNING` line at once, ends with a `FALLBACK` summary, and the usage log marks those calls (`fallback`, `requestedModel`, `fallbackReason`). |
 | `POLLINATIONS_API_KEY` | Pollinations key: the main provider when there is no OpenAI key, otherwise the backup. |
 | `POLLINATIONS_IMAGE_MODEL` | The picture model Pollinations uses (default the free `zimage`). Paid models need credit on that account. |
 | `IMAGE_COMPOSITION_HINT` | `1` asks the picture for open space where the poster layout puts its text. Off by default, so prompts are not tuned to one model. |
