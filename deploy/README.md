@@ -22,8 +22,19 @@ content job writes into the same checkout the publisher reads (`SCHEDULE_FILE`),
 7. Check from the server: `curl -s http://127.0.0.1:4021/healthz` and `curl -s http://127.0.0.1:4011/healthz`.
 8. Only when ready to switch posting: enable `social-cron.timer` and `social-refresh.timer`, and stop the Vercel crons (never both).
 
-## Update
-`deploy/scripts/deploy.sh` as `social`: pulls `main`, installs, builds, restarts the two services.
+## Update (automatic)
+Merging into `main` deploys by itself (`.github/workflows/deploy.yml`):
+1. GitHub runs the tests for the publisher, the dashboard and the engine. Every pull request gets the same tests.
+2. If they pass, and the change touched the apps (`publisher/`, `dashboard/`, `deploy/`; not docs, not the weekly job's posts), GitHub connects to the server and runs `deploy/scripts/deploy.sh`.
+3. The script waits while a scheduled job is running, pulls `main`, installs, builds and restarts the two services, then checks both answer.
+4. If they do not, it goes back to the previous version and sends an alert. Fix forward by merging a fix or a revert.
+
+By hand (as the `social` user on the server): `deploy/scripts/deploy.sh`. Or from GitHub: Actions, "Test and deploy", Run workflow.
+
+How GitHub gets in: a dedicated key, kept in the repository's secrets as `DEPLOY_SSH_KEY`. On the server it sits in
+`/home/social/.ssh/authorized_keys` with `restrict,command="/home/social/social-auto/deploy/scripts/remote-deploy.sh"`, so it can
+run the deploy and nothing else. The repository variables `DEPLOY_HOST` and `DEPLOY_HOST_KEY` (the server's own public key,
+pinned) say where. To replace the key: make a new one, put its public half in `authorized_keys`, set the secret, remove the old line.
 
 ## Redirect addresses to add in the provider consoles
 `https://<host>/api/facebook-callback`, `/api/instagram-callback`, `/api/linkedin-callback`, `/api/google/callback`.

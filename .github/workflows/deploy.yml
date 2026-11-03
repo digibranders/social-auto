@@ -1,0 +1,76 @@
+name: Test and deploy
+
+# Every pull request is tested. A change to the apps that is merged into main is tested again and, if everything passes,
+# deployed to the server by running deploy/scripts/deploy.sh there. Docs, the weekly content job's output and other
+# files that do not need a restart do not start a deploy.
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths:
+      - 'publisher/**'
+      - '!publisher/data/**'
+      - '!publisher/public/**'
+      - 'dashboard/**'
+      - 'deploy/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+
+# One at a time, so two merges never deploy over each other.
+concurrency:
+  group: deploy-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Publisher
+        working-directory: publisher
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npm test
+      - name: Dashboard
+        working-directory: dashboard
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Content engine
+        working-directory: scheduler/engine
+        run: |
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          npm test
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Update the server
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_HOST_KEY: ${{ vars.DEPLOY_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_SSH_KEY:?DEPLOY_SSH_KEY is not set}" "${DEPLOY_HOST:?DEPLOY_HOST is not set}" "${DEPLOY_HOST_KEY:?DEPLOY_HOST_KEY is not set}"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # The server's own key is pinned, so this can only ever talk to the real server.
+          printf '%s %s\n' "$DEPLOY_HOST" "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          # The key on the server can only run the deploy script, whatever is asked for.
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 \
+            "social@${DEPLOY_HOST}" deploy
