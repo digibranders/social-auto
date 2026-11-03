@@ -127,8 +127,8 @@ interface Facts {
   qualifiers: string[];
 }
 
-const NUMBER = /(?<![\p{L}\p{N}.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(\s?%)?/gu;
-const CURRENCY = /(\$|€|£|₹|¥|\b(?:usd|eur|gbp|inr|jpy|cny|rs\.?)\b)\s*(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?|(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?\s*(\$|€|£|₹|¥|\b(?:usd|eur|gbp|inr)\b)/giu;
+const NUMBER = /(?<![\p{L}\p{N}.])(\d{1,3}(?:,\d{2,3})+|\d+)(?:\.(\d+))?(\s?%)?/gu;
+const CURRENCY = /(\$|€|£|₹|¥|\b(?:usd|eur|gbp|inr|jpy|cny|rs\.?)\b)\s*(\d{1,3}(?:,\d{2,3})+|\d+)(?:\.(\d+))?|(\d{1,3}(?:,\d{2,3})+|\d+)(?:\.(\d+))?\s*(\$|€|£|₹|¥|\b(?:usd|eur|gbp|inr)\b)/giu;
 
 const symbolOf = (raw: string): string => CURRENCY_SYMBOL[raw.toLowerCase()] ?? raw;
 const plain = (whole: string, fraction?: string): string => `${whole.replace(/,/g, '')}${fraction && /[1-9]/.test(fraction) ? `.${fraction.replace(/0+$/, '')}` : ''}`;

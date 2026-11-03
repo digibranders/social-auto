@@ -18,12 +18,30 @@ export interface CopyViolation {
   field: CopyField;
   sentence: string;
   reason: string;
+  /** "unsupported": it states something no verified claim supports. "unchecked": the checker cannot read it, so it is not passed silently. */
+  kind: 'unsupported' | 'unchecked';
 }
 
 export interface CopyGateConfig extends Partial<ClaimConfig> {
   /** Time words that are calls to action, not deadlines ("start today"). */
   ctaTimeWords?: readonly string[];
+  /** Vague quantities and endorsements that need proof like a figure does. Words joined with "|" mean the same thing. */
+  vague?: readonly string[];
+  /** Phrases that contain a claim word but are not a claim ("best practices"). Removed before checking. */
+  neutralPhrases?: readonly string[];
+  /** Words that, written in capitals before a number, are still just words ("UP TO 40", "SAVE 20"). */
+  plainCapitalWords?: readonly string[];
 }
+
+const DEFAULT_VAGUE = [
+  'trusted by many|trusted by thousands|trusted by millions|trusted by hundreds|trusted by countless',
+  'thousands of', 'millions of', 'hundreds of', 'tens of thousands', 'countless',
+  'most businesses|most companies|most teams|most customers|most people',
+  'industry-leading|industry leading|market-leading|market leading',
+  'award-winning|award winning', 'most trusted', 'loved by',
+];
+const DEFAULT_NEUTRAL = ['best practice|best practices'];
+const DEFAULT_PLAIN_CAPITAL = ['up', 'to', 'from', 'over', 'only', 'just', 'save', 'get', 'off', 'under', 'than', 'for', 'now', 'top', 'plus', 'pay', 'win', 'try', 'buy', 'at', 'in', 'by', 'per', 'within', 'about', 'around', 'more', 'less', 'least', 'most'];
 
 const FIELDS: readonly CopyField[] = ['headline', 'subline', 'caption'];
 const DEFAULT_CTA_TIME_WORDS = ['now', 'today', 'currently'];
@@ -80,22 +98,50 @@ export function withDigits(text: string): string {
 const sentencesOf = (text: string): string[] =>
   withDigits(text.replaceAll('|', '')).split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 
-function needsOf(sentence: string, config: ClaimConfig, ctaTimeWords: readonly string[]): Needs | undefined {
-  const type = claimType(sentence, config);
-  if (type === 'subjective' || type === 'capability') return undefined;
-  const facts = extractFacts(sentence, config);
-  const time = present(config.timeSensitive, sentence).filter((entry) => !ctaTimeWords.includes(entry));
-  const words = [...present(config.superlatives, sentence), ...present(config.guarantees, sentence), ...time];
+const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The text with neutral phrases ("best practices") taken out, so their claim word is not read as a claim. */
+function withoutNeutral(text: string, neutral: readonly string[]): string {
+  let result = normalizeForQuote(text);
+  for (const entry of neutral) for (const phrase of entry.split('|')) result = result.replace(new RegExp(`(?<![\\p{L}\\p{N}])${escape(normalizeForQuote(phrase))}(?![\\p{L}\\p{N}])`, 'gu'), ' ');
+  return result;
+}
+
+/**
+ * The text with product names and standards ("iPhone 17", "ISO 27001") taken out, so their number is not read as a figure: a word with a
+ * capital inside it or written in capitals, not in the plain-word list, followed by a whole number. Plain Title Case and all-caps headlines
+ * ("Plans Start From 29", "UP TO 40") keep their figures.
+ */
+function withoutIdentifiers(text: string, plainCapitals: readonly string[]): string {
+  const plain = new Set(plainCapitals.map((w) => w.toLowerCase()));
+  return text.replace(/(?<=\s)(\p{L}*\p{Ll}\p{Lu}\p{L}*|\p{Lu}{2,})[\s-]?(\d+)(?![\p{L}\p{N},%]|\.\d)/gu, (match, word: string) => (plain.has(word.toLowerCase()) ? match : ' '));
+}
+
+/** Why the checker cannot read a sentence, when it cannot: a script or number format its word lists and number rules do not cover. */
+function unreadable(sentence: string): string | undefined {
+  if (/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(sentence)) return 'is written in a script the claim checker does not cover, so it cannot be checked';
+  if (/\d\.\d{3}(?:\.\d{3})*,\d|\d,\d{1,2}(?![\d,])\s*(?:%|[\p{Sc}]|\p{L})/u.test(sentence)) return 'uses a decimal comma, which the claim checker does not read, so it cannot be checked';
+  return undefined;
+}
+
+function needsOf(sentence: string, config: ClaimConfig, ctaTimeWords: readonly string[], gate: Required<Pick<CopyGateConfig, 'vague' | 'neutralPhrases' | 'plainCapitalWords'>>): Needs | undefined {
+  const readable = withoutNeutral(withoutIdentifiers(sentence, gate.plainCapitalWords), gate.neutralPhrases);
+  const vague = present(gate.vague, readable);
+  const type = claimType(readable, config);
+  if ((type === 'subjective' || type === 'capability') && vague.length === 0) return undefined;
+  const facts = extractFacts(readable, config);
+  const time = present(config.timeSensitive, readable).filter((entry) => !ctaTimeWords.includes(entry));
+  const words = [...present(config.superlatives, readable), ...present(config.guarantees, readable), ...time, ...vague];
   const needs: Needs = { numbers: facts.numbers, prices: facts.prices, periods: facts.periods, qualifiers: facts.qualifiers, units: facts.units, words };
   const any = needs.numbers.length + needs.prices.length + needs.periods.length + needs.words.length;
   return any > 0 ? needs : undefined;
 }
 
-function offeredBy(text: string, config: ClaimConfig, ctaTimeWords: readonly string[]): Offered {
+function offeredBy(text: string, config: ClaimConfig, ctaTimeWords: readonly string[], vagueList: readonly string[]): Offered {
   const spelled = withDigits(text);
   const facts = extractFacts(spelled, config);
   const time = present(config.timeSensitive, spelled).filter((entry) => !ctaTimeWords.includes(entry));
-  const words = [...present(config.superlatives, spelled), ...present(config.guarantees, spelled), ...time];
+  const words = [...present(config.superlatives, spelled), ...present(config.guarantees, spelled), ...time, ...present(vagueList, spelled)];
   return { text: normalizeForQuote(spelled), numbers: facts.numbers, prices: facts.prices, periods: facts.periods, qualifiers: facts.qualifiers, units: facts.units, words };
 }
 
@@ -132,17 +178,23 @@ function unsupported(needs: Needs, evidence: readonly Offered[]): string | undef
 
 /** Every sentence of the copy that states a checkable fact no verified claim supports. */
 export function checkCopy(copy: PostCopy, evidence: readonly string[], options: CopyGateConfig = {}): CopyViolation[] {
-  const { ctaTimeWords, ...overrides } = options;
+  const { ctaTimeWords, vague, neutralPhrases, plainCapitalWords, ...overrides } = options;
   const config: ClaimConfig = { ...defaultClaimConfig, ...overrides };
   const cta = (ctaTimeWords ?? DEFAULT_CTA_TIME_WORDS).map((w) => w.toLowerCase());
-  const offered = evidence.map((text) => offeredBy(text, config, cta));
+  const gate = { vague: vague ?? DEFAULT_VAGUE, neutralPhrases: neutralPhrases ?? DEFAULT_NEUTRAL, plainCapitalWords: plainCapitalWords ?? DEFAULT_PLAIN_CAPITAL };
+  const offered = evidence.map((text) => offeredBy(text, config, cta, gate.vague));
   const violations: CopyViolation[] = [];
   for (const field of FIELDS) {
     for (const sentence of sentencesOf(copy[field] ?? '')) {
-      const needs = needsOf(sentence, config, cta);
+      const cannotRead = unreadable(sentence);
+      if (cannotRead) {
+        violations.push({ field, sentence, reason: cannotRead, kind: 'unchecked' });
+        continue;
+      }
+      const needs = needsOf(sentence, config, cta, gate);
       if (!needs) continue;
       const reason = unsupported(needs, offered);
-      if (reason) violations.push({ field, sentence, reason });
+      if (reason) violations.push({ field, sentence, reason, kind: 'unsupported' });
     }
   }
   return violations;
@@ -155,5 +207,5 @@ export function assertCopySupported(copy: PostCopy, evidence: readonly string[],
   const violations = checkCopy(copy, evidence, options);
   if (violations.length === 0) return;
   const lines = violations.map((v) => `${v.field} "${shorten(v.sentence)}" ${v.reason}`);
-  throw new Error(`post ${position} states facts the brand profile does not support: ${lines.join('; ')}. Remove them, or use only the numbers, prices and wording of the proof points`);
+  throw new Error(`post ${position} has copy the claim gate turned back: ${lines.join('; ')}. Remove what is unsupported, or use only the numbers, prices and wording of the proof points, and write in plain English with ordinary number formats`);
 }

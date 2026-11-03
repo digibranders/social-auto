@@ -148,7 +148,7 @@ test('a subline that does not name the brand is turned back, so a stranger alway
 test('validateDraft turns back copy whose figures no verified claim supports, once the proof points are given', () => {
   const proof = ['Plans start from $29 per month.'];
   assert.doesNotThrow(() => validateDraft({ ...goodDraft, subline: 'Acme plans start from $29 per month.' }, 1, 'Acme Dental', proof));
-  assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme saves you 12 hours.' }, 2, 'Acme Dental', proof), /post 2 states facts the brand profile does not support/);
+  assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme saves you 12 hours.' }, 2, 'Acme Dental', proof), /post 2 has copy the claim gate turned back/);
   assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme keeps it simple.', caption: 'The best clinic software.' }, 3, 'Acme Dental', proof), /caption/);
 });
 

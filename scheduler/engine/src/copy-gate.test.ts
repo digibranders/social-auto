@@ -123,3 +123,52 @@ test('withDigits reads compound and scaled number words', () => {
   assert.equal(withDigits('all in one place'), 'all in one place');
   assert.equal(withDigits('Someone phoned'), 'Someone phoned');
 });
+
+// ---- Hardening from the genericness audit
+test('vague quantities need proof: "trusted by many", "thousands of", "award-winning"', () => {
+  assert.equal(checkCopy(copy({ subline: 'Acme is trusted by many teams.' }), evidence).length, 1);
+  assert.equal(checkCopy(copy({ caption: 'Thousands of clinics use Acme.' }), evidence).length, 1);
+  assert.equal(checkCopy(copy({ subline: 'Acme is award-winning software.' }), evidence).length, 1);
+  assert.equal(checkCopy(copy({ subline: 'Acme is industry-leading.' }), evidence).length, 1);
+  assert.deepEqual(checkCopy(copy({ subline: 'Acme is award-winning software.' }), [...evidence, 'Acme is award-winning software.']), []);
+});
+
+test('"best practices" is advice, not a claim of leadership', () => {
+  assert.deepEqual(checkCopy(copy({ headline: 'Best practices for late payments' }), evidence), []);
+  assert.equal(checkCopy(copy({ headline: 'The best way to get paid' }), evidence).length, 1);
+});
+
+test('the same number for a different subject is blocked: 10,000 customers is not 10,000 products', () => {
+  const found = checkCopy(copy({ subline: 'Acme has 10,000 customers.' }), ['Acme lists 10,000 products.']);
+  assert.equal(found.length, 1);
+  assert.match(found[0]?.reason ?? '', /10000 customer/);
+});
+
+test('a deadline is checked even though "today" alone is not', () => {
+  assert.equal(checkCopy(copy({ caption: 'Offer ends today.' }), evidence).length, 1);
+  assert.equal(checkCopy(copy({ caption: 'Only available until Friday.' }), evidence).length, 1);
+  assert.deepEqual(checkCopy(copy({ caption: 'Start today.' }), evidence), []);
+});
+
+test('product names and standards are identifiers, not performance figures', () => {
+  assert.deepEqual(checkCopy(copy({ caption: 'Works with iPhone 17 and WordPress 6.' }), evidence), []);
+  assert.deepEqual(checkCopy(copy({ caption: 'Built around ISO 27001 controls.' }), evidence), []);
+  // Title Case does not hide a figure.
+  assert.equal(checkCopy(copy({ headline: 'Plans Start From 29 Per Month Only' }), evidence.slice(1)).length, 1);
+  assert.equal(checkCopy(copy({ headline: 'UP TO 40 HOURS SAVED' }), evidence).length, 1);
+});
+
+test('Indian digit grouping is one number: 1,00,000', () => {
+  assert.deepEqual(checkCopy(copy({ subline: 'Acme serves 1,00,000 users.' }), ['Serves 100000 users']), []);
+  assert.equal(checkCopy(copy({ subline: 'Acme serves 1,00,000 users.' }), ['Serves 10000 users']).length, 1);
+});
+
+test('text the checker cannot read is reported as unchecked, never silently passed', () => {
+  const hindi = checkCopy(copy({ subline: 'Acme आपके लिए सबसे अच्छा है।' }), evidence);
+  assert.equal(hindi.length, 1);
+  assert.equal(hindi[0]?.kind, 'unchecked');
+  const decimalComma = checkCopy(copy({ subline: 'Acme costs 1.000,50 per month.' }), evidence);
+  assert.equal(decimalComma[0]?.kind, 'unchecked');
+  assert.equal(checkCopy(copy({ subline: 'Acme saves 12 hours.' }), evidence)[0]?.kind, 'unsupported');
+  assert.throws(() => assertCopySupported(copy({ subline: 'Acme आपके लिए सबसे अच्छा है।' }), evidence, 1), /cannot be checked/);
+});
