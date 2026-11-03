@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { crawlSite, CrawlError, TooLittleContentError, type CrawlDeps } from './crawl.ts';
+import { crawlMaxPages, crawlSite, CrawlError, DEFAULT_MAX_PAGES, TooLittleContentError, type CrawlDeps } from './crawl.ts';
 import { FetchRefusedError, type FetchedPage } from './safe-fetch.ts';
 
 const SENTENCE = 'We build friendly websites for local clinics and help them get found by patients every single day. ';
@@ -178,4 +178,58 @@ test('a client\'s own page vocabulary can be passed to the crawler as configurat
   assert.ok(!plain.pages.some((p) => p.url.endsWith('/donate')));
   const configured = await crawlSite('acme.com', { ...site(pages).deps, ranking: { weights: { donate: 5 } } });
   assert.ok(configured.pages.some((p) => p.url.endsWith('/donate')));
+});
+
+test('the page budget is a setting: a default, an environment override, and refusal of nonsense', () => {
+  assert.equal(crawlMaxPages({}), DEFAULT_MAX_PAGES);
+  assert.ok(DEFAULT_MAX_PAGES > 8);
+  assert.equal(crawlMaxPages({ CRAWL_MAX_PAGES: '25' }), 25);
+  assert.equal(crawlMaxPages({ CRAWL_MAX_PAGES: '' }), DEFAULT_MAX_PAGES);
+  for (const bad of ['1', '0', '-3', '2.5', 'many', '500']) assert.throws(() => crawlMaxPages({ CRAWL_MAX_PAGES: bad }), /CRAWL_MAX_PAGES/, bad);
+});
+
+test('the budget caps how many pages are fetched, the homepage counts, and the best-ranked pages are the ones read', async () => {
+  const links = ['services', 'about', 'pricing', 'faqs', 'contact'].map((p) => `<a href="/${p}">${p}</a>`).join('');
+  const home = html(`<header><nav>${links}</nav></header><h1>Acme</h1><p>${prose(6)}</p>`);
+  const body = (n: number) => html(`<p>${`Distinct page ${n} wording about the business and what it offers to customers. `.repeat(8)}</p>`);
+  const pages: Record<string, string> = { 'https://acme.com/': home };
+  ['services', 'about', 'pricing', 'faqs', 'contact'].forEach((p, i) => { pages[`https://acme.com/${p}`] = body(i); });
+  const small = site(pages);
+  const snapshot = await crawlSite('acme.com', { ...small.deps, maxPages: 3 });
+  assert.equal(snapshot.pages.length, 3);
+  assert.equal(small.fetched.filter((u) => !u.endsWith('robots.txt') && u !== 'https://acme.com/').length, 2);
+  assert.ok(snapshot.pages.some((p) => p.url.endsWith('/services')) && snapshot.pages.some((p) => p.url.endsWith('/pricing')));
+});
+
+const distinct = (n: number): string => html(`<p>${`Wording number ${n} about what the business really does for its customers each day. `.repeat(8)}</p>`);
+const navHome = (paths: string[]): string => html(`<header><nav>${paths.map((p) => `<a href="/${p}">${p}</a>`).join('')}</nav></header><h1>Acme</h1><p>${prose(6)}</p>`);
+
+test('a page that cannot be loaded gives its place to the next best page', async () => {
+  const paths = ['services', 'about', 'pricing', 'faqs'];
+  const pages: Record<string, string> = { 'https://acme.com/': navHome(paths), 'https://acme.com/about': distinct(1), 'https://acme.com/pricing': distinct(2), 'https://acme.com/faqs': distinct(3) };
+  const snapshot = await crawlSite('acme.com', { ...site(pages).deps, maxPages: 4 });
+  assert.equal(snapshot.pages.length, 4, 'the broken /services page is replaced, not just lost');
+  const broken = snapshot.pageDecisions.find((d) => d.url.endsWith('/services'));
+  assert.ok(!broken?.selected && broken?.reasons.some((r) => /could not be loaded/.test(r)));
+});
+
+test('a page with almost no text gives its place to the next best page', async () => {
+  const paths = ['services', 'about', 'pricing', 'faqs'];
+  const thin = '<!doctype html><html><head><title>Services</title></head><body><p>Soon.</p></body></html>';
+  const pages: Record<string, string> = { 'https://acme.com/': navHome(paths), 'https://acme.com/services': thin, 'https://acme.com/about': distinct(1), 'https://acme.com/pricing': distinct(2), 'https://acme.com/faqs': distinct(3) };
+  const snapshot = await crawlSite('acme.com', { ...site(pages).deps, maxPages: 4 });
+  assert.equal(snapshot.pages.length, 4);
+  assert.ok(!snapshot.pages.some((p) => p.url.endsWith('/services')));
+  assert.ok(snapshot.pageDecisions.find((d) => d.url.endsWith('/services'))?.reasons.some((r) => /too little text/.test(r)));
+});
+
+test('a duplicate page gives its place to the next best page, and pages beyond the budget say the budget was full', async () => {
+  const paths = ['services', 'about', 'pricing', 'faqs', 'contact'];
+  const same = distinct(9);
+  const pages: Record<string, string> = { 'https://acme.com/': navHome(paths), 'https://acme.com/services': same, 'https://acme.com/about': same, 'https://acme.com/pricing': distinct(2), 'https://acme.com/faqs': distinct(3), 'https://acme.com/contact': distinct(4) };
+  const snapshot = await crawlSite('acme.com', { ...site(pages).deps, maxPages: 4 });
+  assert.equal(snapshot.pages.length, 4);
+  assert.equal(snapshot.pages.filter((p) => p.url.endsWith('/services') || p.url.endsWith('/about')).length, 1);
+  const unread = snapshot.pageDecisions.filter((d) => !d.selected && /budget/.test(d.reasons.join(' ')));
+  assert.ok(unread.length >= 1);
 });

@@ -202,10 +202,10 @@ test('an ambiguous word is a utility page only when it is the page itself: "/my-
   const decision = (path: string): PageDecision | undefined => decisions.find((d) => pathOf(d) === path);
   for (const path of ['/services/linkedin-account-management', '/services/admin-support', '/jobs-board-software']) {
     assert.ok(decision(path)?.selected, `${path} is a page about the offer`);
-    assert.ok(!decision(path)?.reasons.some((r) => /legal or utility/.test(r)), path);
+    assert.ok(!decision(path)?.reasons.some((r) => /legal, account or utility/.test(r)), path);
   }
   for (const path of ['/account', '/my-account/orders', '/patient-portal', '/client-dashboard', '/register', '/jobs']) {
-    assert.ok(!decision(path)?.selected && decision(path)?.reasons.some((r) => /legal or utility/.test(r)), `${path} is housekeeping`);
+    assert.ok(!decision(path)?.selected && decision(path)?.reasons.some((r) => /legal, account or utility/.test(r)), `${path} is housekeeping`);
   }
 });
 
@@ -213,5 +213,109 @@ test('words that are always housekeeping flag a page wherever they sit in the ad
   const html = `<html lang="en"><body><nav><a href="/company/privacy-policy">x</a><a href="/about/terms-of-service">x</a><a href="/help/cookies">x</a><a href="/store/checkout">x</a></nav></body></html>`;
   const decisions = rankPages(html, new URL('https://acme.example'), 20);
   assert.equal(decisions.filter((d) => d.selected).length, 0);
-  assert.ok(decisions.every((d) => d.reasons.some((r) => /legal or utility/.test(r))));
+  assert.ok(decisions.every((d) => d.reasons.some((r) => /legal, account or utility/.test(r))));
+});
+
+const nav = (links: Array<[string, string]>): string => `<html lang="en"><body><header><nav>${links.map(([href, text]) => `<a href="${href}">${text}</a>`).join('')}</nav></header></body></html>`;
+
+test('pages about what is offered outrank a team or contact page when the budget is tight', () => {
+  const html = nav([['/meet-our-team', 'Meet our team'], ['/contact', 'Contact'], ['/services', 'Services'], ['/services/a', 'A'], ['/services/b', 'B'], ['/about', 'About']]);
+  const chosen = selectedPaths(rankPages(html, new URL('https://acme.example'), 4));
+  assert.deepEqual(chosen.sort(), ['/about', '/services', '/services/a', '/services/b']);
+});
+
+test('words the site repeats about itself lift unknown page names but never double-count a known page type', () => {
+  const html = `<html lang="en"><head><title>Team contact services</title></head><body><h1>Contact our team about services</h1><nav><a href="/contact">Contact</a><a href="/meet-our-team">Meet our team</a><a href="/tides">Tides</a></nav><p>Tides tides tides.</p></body></html>`;
+  const decisions = rankPages(html, new URL('https://acme.example'), LIMIT);
+  const score = (path: string): number => decisions.find((d) => pathOf(d) === path)?.score ?? -99;
+  assert.ok(!decisions.find((d) => d.url.endsWith('/contact'))?.reasons.some((r) => /homepage's own wording/.test(r)));
+  assert.ok(!decisions.find((d) => d.url.endsWith('/meet-our-team'))?.reasons.some((r) => /homepage's own wording/.test(r)));
+  assert.ok(decisions.find((d) => d.url.endsWith('/tides'))?.reasons.some((r) => /homepage's own wording \("tides"\)/.test(r)));
+  assert.ok(score('/tides') > 3);
+});
+
+test('a section cap never keeps out the pages that describe the offering, only the long tail of one section', () => {
+  const offerings = Array.from({ length: 6 }, (_, i) => [`/services/s${i}`, `Service ${i}`] as [string, string]);
+  const stories = Array.from({ length: 10 }, (_, i) => [`/case-studies/c${i}`, `Story ${i}`] as [string, string]);
+  const html = nav([['/services', 'Services'], ['/case-studies', 'Case studies'], ['/about', 'About'], ...offerings, ...stories]);
+  const chosen = selectedPaths(rankPages(html, new URL('https://acme.example'), 12));
+  for (const [path] of offerings) assert.ok(chosen.includes(path), `${path} describes the offering`);
+  assert.ok(chosen.filter((p) => p.startsWith('/case-studies/')).length <= 3, 'the long tail of one section is limited');
+});
+
+test('every kind of page the site has gets a place before any one kind gets several, so a big catalogue cannot crowd out About or FAQs', () => {
+  const leaves = Array.from({ length: 12 }, (_, i) => [`/services/s${i}`, `Service ${i}`] as [string, string]);
+  const html = nav([['/services', 'Services'], ...leaves, ['/about', 'About'], ['/faqs', 'FAQs'], ['/case-studies', 'Case studies']]);
+  const chosen = selectedPaths(rankPages(html, new URL('https://acme.example'), 7));
+  for (const path of ['/services', '/about', '/faqs', '/case-studies']) assert.ok(chosen.includes(path), `${path} should have a place`);
+  assert.equal(chosen.length, 7);
+  assert.ok(chosen.filter((p) => p.startsWith('/services/')).length >= 3, 'the rest of the budget goes deeper into the offering');
+});
+
+test('a low-value kind of page only takes a place once the pages that describe the business are in', () => {
+  const html = nav([['/contact', 'Contact'], ['/meet-our-team', 'Team'], ['/services', 'Services'], ['/about', 'About']]);
+  assert.deepEqual(selectedPaths(rankPages(html, new URL('https://acme.example'), 2)).sort(), ['/about', '/services']);
+  assert.equal(selectedPaths(rankPages(html, new URL('https://acme.example'), 4)).length, 4);
+});
+
+test('the thresholds for essential pages and coverage are settings, not constants', () => {
+  assert.equal(typeof defaultRankingConfig.essentialWeight, 'number');
+  assert.equal(typeof defaultRankingConfig.coverageMinWeight, 'number');
+  const html = nav([['/services', 'Services'], ['/services/a', 'A'], ['/services/b', 'B'], ['/services/c', 'C'], ['/services/d', 'D'], ['/about', 'About'], ['/faqs', 'FAQs'], ['/case-studies', 'Case studies'], ['/pricing', 'Pricing']]);
+  const relaxed = rankPages(html, new URL('https://acme.example'), 20);
+  const strict = rankPages(html, new URL('https://acme.example'), 20, { config: { essentialWeight: 99 } });
+  const leaves = (decisions: PageDecision[]): number => selectedPaths(decisions).filter((p) => p.startsWith('/services/')).length;
+  assert.equal(leaves(relaxed), 4, 'offering pages lose little to the section cap');
+  assert.ok(leaves(strict) < 4, 'with nothing essential, the full section cap applies to services too');
+});
+
+const BUDGET = 10;
+
+test('a site with only three useful pages gets three, never filler for an unused budget', () => {
+  const html = nav([['/services', 'Services'], ['/about', 'About'], ['/pricing', 'Pricing'], ['/zzz', 'zzz']]);
+  const body = html.replace('</body>', '<main><a href="/privacy">Privacy</a><a href="/q?x=1">q</a></main></body>');
+  const chosen = selectedPaths(rankPages(body, new URL('https://acme.example'), BUDGET));
+  assert.ok(chosen.includes('/services') && chosen.includes('/about') && chosen.includes('/pricing'));
+  assert.ok(chosen.length <= 4, `${chosen.join(', ')}`);
+  assert.ok(!chosen.includes('/privacy'));
+});
+
+test('a catalogue of a thousand look-alike pages cannot fill the budget, and About and FAQs still get their places', () => {
+  const products = Array.from({ length: 1000 }, (_, i) => `<a href="/products/item-${i}">Item ${i}</a>`).join('');
+  const html = `<html lang="en"><body><header><nav><a href="/products">Products</a><a href="/about">About</a><a href="/faqs">FAQs</a></nav></header><main>${products}</main></body></html>`;
+  const chosen = selectedPaths(rankPages(html, new URL('https://shop.example'), BUDGET));
+  assert.ok(chosen.includes('/about') && chosen.includes('/faqs') && chosen.includes('/products'));
+  assert.ok(chosen.filter((p) => p.startsWith('/products/item-')).length <= 5, `${chosen.length} chosen`);
+});
+
+test('pages that all sit under one shared prefix ("/en/", "/products/") are not treated as one crowded section', () => {
+  const english = nav([['/en/services', 'Services'], ['/en/about', 'About'], ['/en/faqs', 'FAQs'], ['/en/case-studies', 'Case studies'], ['/en/contact', 'Contact'], ['/en/pricing', 'Pricing']]);
+  assert.equal(selectedPaths(rankPages(english, new URL('https://acme.example'), BUDGET)).length, 6);
+  const offerings = nav([['/products/crm', 'CRM'], ['/products/billing', 'Billing'], ['/products/support', 'Support desk'], ['/products/analytics', 'Analytics'], ['/products/payroll', 'Payroll'], ['/products/hiring', 'Hiring']]);
+  assert.equal(selectedPaths(rankPages(offerings, new URL('https://acme.example'), BUDGET)).length, 6);
+});
+
+test('relevant deep service pages survive the generic penalties for depth and sections', () => {
+  const deep = [['/solutions/finance/lending/overview', 'Lending'], ['/solutions/finance/payments/overview', 'Payments'], ['/solutions/health/records/overview', 'Records'], ['/solutions/health/booking/overview', 'Booking']] as Array<[string, string]>;
+  const chosen = selectedPaths(rankPages(nav([['/about', 'About'], ...deep]), new URL('https://acme.example'), BUDGET));
+  for (const [path] of deep) assert.ok(chosen.includes(path), path);
+});
+
+test('the size at which a shared section becomes a catalogue is a setting', () => {
+  assert.equal(typeof defaultRankingConfig.catalogueSize, 'number');
+});
+
+test('while the budget lasts, every page that describes the offering is read before any team, contact or client-list page, even when the section is long', () => {
+  const inNav = ['website-development', 'ui-ux', 'seo', 'paid-ads'].map((p) => `<a href="/services/${p}">${p}</a>`).join('');
+  const inBody = ['software-development', 'ar-vr-solutions', 'linkedin-account-management'].map((p) => `<a href="/services/${p}">Read More</a>`).join('');
+  const html = `<html lang="en"><body><header><nav><a href="/about">About Us</a><a href="/meet-our-team">Meet Our Team</a><a href="/services">Services</a>${inNav}<a href="/clients">Clients</a><a href="/contact">Contact</a></nav></header><main>${inBody}</main></body></html>`;
+  const chosen = selectedPaths(rankPages(html, new URL('https://acme.example'), 9));
+  for (const p of ['website-development', 'ui-ux', 'seo', 'paid-ads', 'software-development', 'ar-vr-solutions', 'linkedin-account-management']) assert.ok(chosen.includes(`/services/${p}`), `/services/${p}`);
+  assert.ok(chosen.includes('/services') && chosen.includes('/about'));
+  assert.deepEqual(chosen.filter((p) => ['/meet-our-team', '/contact', '/clients'].includes(p)), []);
+});
+
+test('with room to spare the low-value pages still get in after the offering', () => {
+  const html = nav([['/services', 'Services'], ['/services/a', 'A'], ['/about', 'About'], ['/meet-our-team', 'Team'], ['/contact', 'Contact']]);
+  assert.equal(selectedPaths(rankPages(html, new URL('https://acme.example'), 9)).length, 5);
 });

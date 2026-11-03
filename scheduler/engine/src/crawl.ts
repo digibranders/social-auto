@@ -20,7 +20,12 @@ const THIN_CHARS = 300;
 const MIN_TOTAL_CHARS = 400;
 const MAX_RENDERS = 4;
 const RENDER_TIMEOUT_MS = 45_000;
-const MAX_PAGES = 8;
+/** The most pages read per site, the homepage included, unless a setting says otherwise. */
+export const DEFAULT_MAX_PAGES = 10;
+const MIN_BUDGET = 2;
+const MAX_BUDGET = 40;
+/** A page with less text than this, even after rendering, adds nothing and gives its place to the next best page. */
+const MIN_PAGE_CHARS = 200;
 const MAX_CHARS_PER_PAGE = 3_000;
 const MAX_STYLESHEETS = 4;
 
@@ -40,12 +45,25 @@ export class TooLittleContentError extends CrawlError {
 }
 
 /** What the crawler uses to reach the outside; tests replace it. */
+/** The page budget from the environment (CRAWL_MAX_PAGES, 2 to 40, homepage included), or the default. Nonsense is refused, not ignored. */
+export function crawlMaxPages(env: Record<string, string | undefined>): number {
+  const raw = env['CRAWL_MAX_PAGES'];
+  if (raw === undefined || raw === '') return DEFAULT_MAX_PAGES;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < MIN_BUDGET || value > MAX_BUDGET) throw new CrawlError(`CRAWL_MAX_PAGES must be a whole number from ${MIN_BUDGET} to ${MAX_BUDGET}, not "${raw}"`);
+  return value;
+}
+
 export interface CrawlDeps {
   fetchPage?: (url: string) => Promise<FetchedPage>;
   /** The page's text after its scripts have run (the HTML Chrome ends up with). */
   render?: (url: string) => Promise<string>;
   /** A client's own page vocabulary and thresholds for ranking pages; see `RankingConfig`. */
   ranking?: Partial<RankingConfig>;
+  /** The most pages to read, the homepage included. Defaults to CRAWL_MAX_PAGES, then to 10. */
+  maxPages?: number;
+  /** A page with less text than this is not worth a place. */
+  minPageChars?: number;
 }
 
 /** Opens a public page in headless Chrome and returns the page as it looks after its scripts ran. */
@@ -297,8 +315,17 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
   };
   addPage(base.href, homeBody);
 
-  const decisions = rankPages(homeBody, base, MAX_PAGES - 1, { allowed: (path) => robotsAllows(robots, path), ...(deps.ranking ? { config: deps.ranking } : {}) });
+  // Candidates are ranked past the budget, best first, so a page that turns out thin, repeated or unreachable can hand its place to the next one.
+  const maxPages = deps.maxPages ?? crawlMaxPages(process.env);
+  if (!Number.isInteger(maxPages) || maxPages < MIN_BUDGET || maxPages > MAX_BUDGET) throw new CrawlError(`The page budget must be a whole number from ${MIN_BUDGET} to ${MAX_BUDGET}, not ${maxPages}`);
+  const minChars = deps.minPageChars ?? MIN_PAGE_CHARS;
+  const decisions = rankPages(homeBody, base, (maxPages - 1) * 2, { allowed: (path) => robotsAllows(robots, path), ...(deps.ranking ? { config: deps.ranking } : {}) });
   for (const decision of decisions.filter((d) => d.selected)) {
+    if (pages.length >= maxPages) {
+      decision.selected = false;
+      decision.reasons.push(`not read: the page budget of ${maxPages} (the homepage included) was filled by better pages`);
+      continue;
+    }
     const page = await get(decision.url);
     if (!page?.type.includes('html')) {
       decision.selected = false;
@@ -307,6 +334,11 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     }
     const html = await readable(decision.url, page.body);
     const text = htmlToText(html).slice(0, MAX_CHARS_PER_PAGE);
+    if (text.length < minChars) {
+      decision.selected = false;
+      decision.reasons.push(`not read: it has too little text (${text.length} characters)`);
+      continue;
+    }
     const repeats = duplicateOf({ url: decision.url, canonical: canonicalOf(html, new URL(decision.url)), text }, pages);
     if (repeats) {
       decision.selected = false;
