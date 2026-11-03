@@ -193,3 +193,21 @@ test('the call-to-action label is plain text, not a pill that looks like a butto
   const html = shown(branded, 'type');
   assert.doesNotMatch(html, /\.cta \{[^}]*(border:|border-radius: 999px)/);
 });
+
+test('the prompt gives every post its pillar and brief, and a proof post its proof point to build on', () => {
+  const prompt = userPrompt({ ...brand, proofPoints: ['Open Saturdays'] }, 2, [], [
+    { pillar: 'education', brief: 'Teach one useful true thing.' },
+    { pillar: 'proof', brief: 'Build the post on one proof point.', anchor: 'Open Saturdays' },
+  ]);
+  assert.match(prompt, /Post 1[^\n]*education[^\n]*Teach one useful true thing/);
+  assert.match(prompt, /Post 2[^\n]*proof[^\n]*Open Saturdays/);
+  assert.doesNotMatch(userPrompt(brand, 2, []), /Post 1 \(/);
+});
+
+test('a post records its pillar, and a proof post that ignores its proof point is turned back', () => {
+  const built = buildPost({ draft: { ...goodDraft, subline: 'Acme x', caption: 'c' }, id: 'w01-d1', date: '2026-11-04T10:00:00+05:30', weekNumber: 1, index: 0, brand, pillar: 'education' });
+  assert.equal(built.pillar, 'education');
+  const proof = { pillar: 'proof', brief: 'b', anchor: 'Free first visit for new patients' };
+  assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme keeps it calm.', caption: 'We take our time.' }, 2, 'Acme Dental', ['Free first visit for new patients'], proof), /post 2 is a proof post/);
+  assert.doesNotThrow(() => validateDraft({ ...goodDraft, subline: 'Acme offers a free first visit.', caption: 'New patients start with a free first visit.' }, 2, 'Acme Dental', ['Free first visit for new patients'], proof));
+});

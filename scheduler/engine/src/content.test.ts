@@ -64,3 +64,12 @@ test('escapeHtml and seedFromId are safe and stable', () => {
   assert.equal(seedFromId('w01-d1'), seedFromId('w01-d1'));
   assert.ok(seedFromId('w01-d1') >= 0);
 });
+
+test('a planned post may carry its pillar, which must be text', () => {
+  const base = { id: 'w01-d1', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline: 'h', subline: 's', caption: 'c', hashtags: ['#a'] };
+  const plan = (post: object) => ({ brand: 'acme', timezone: '+05:30', posts: [post] });
+  assert.equal(parseWeekPlan(plan({ ...base, pillar: ' proof ' }), 'w').posts[0]?.pillar, 'proof');
+  assert.equal(parseWeekPlan(plan(base), 'w').posts[0]?.pillar, undefined);
+  assert.throws(() => parseWeekPlan(plan({ ...base, pillar: 3 }), 'w'), /pillar/);
+  assert.throws(() => parseWeekPlan(plan({ ...base, pillar: '  ' }), 'w'), /pillar/);
+});

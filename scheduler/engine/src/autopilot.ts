@@ -28,7 +28,7 @@ const BRANDS_ROOT = resolve('brands');
 const WEEK_FILE = /^week-(\d+)\.json$/;
 
 interface History {
-  weeks: Array<{ file: string; createdAt: string; painPoints: string[] }>;
+  weeks: Array<{ file: string; createdAt: string; painPoints: string[]; /** The pillar of each post; weeks written before pillars have none. */ pillars?: string[] }>;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -161,9 +161,10 @@ async function main(): Promise<void> {
       ...(weekdays ? { weekdays } : {}),
     },
     usedPainPoints: history.weeks.flatMap((w) => w.painPoints),
+    recentPillars: history.weeks.flatMap((w) => w.pillars ?? []),
   });
   await writeFile(join(brandDir, planFile), `${JSON.stringify(plan, null, 2)}\n`);
-  history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint) });
+  history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem') });
   await writeFile(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
   console.log('3/4 Rendering posters…');

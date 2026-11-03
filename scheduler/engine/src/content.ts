@@ -109,6 +109,8 @@ export interface PlannedPost {
   layout?: LayoutName;
   /** Poster format; absent on plans written before formats existed. */
   format?: FormatName;
+  /** The content pillar the post belongs to (problem, education, proof, ...); absent on older plans. */
+  pillar?: string;
   caption: string;
   hashtags: string[];
 }
@@ -308,6 +310,10 @@ function parsePost(raw: unknown, source: string): PlannedPost {
   if (raw['format'] !== undefined) {
     if (!isFormatName(raw['format'])) throw new ContentValidationError(where, `"format" must be one of ${FORMATS.join(', ')}`);
     post.format = raw['format'];
+  }
+  if (raw['pillar'] !== undefined) {
+    if (typeof raw['pillar'] !== 'string' || !raw['pillar'].trim()) throw new ContentValidationError(where, '"pillar" must be text');
+    post.pillar = raw['pillar'].trim();
   }
   if (composeCaption(post).length > INSTAGRAM_CAPTION_LIMIT) {
     throw new ContentValidationError(where, `caption exceeds ${INSTAGRAM_CAPTION_LIMIT} characters`);
