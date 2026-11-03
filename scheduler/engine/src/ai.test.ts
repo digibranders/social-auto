@@ -29,7 +29,7 @@ test('with an OpenAI key OpenAI is the main provider, with the recommended model
   const ai = both();
   assert.equal(ai.primary, 'openai');
   assert.equal(ai.fallback, true);
-  assert.equal(ai.textModel, 'gpt-6.1-terra');
+  assert.equal(ai.textModel, 'gpt-6-luna');
   assert.equal(ai.imageModel, 'gpt-image-2.5-flare');
   assert.equal(ai.imageQuality, 'medium');
   assert.equal(ai.maxOpenAiImages, 40);
@@ -39,10 +39,10 @@ test('with an OpenAI key OpenAI is the main provider, with the recommended model
 
 test('settings choose the provider, models, quality, limit and backup', () => {
   const ai = aiConfigFromEnv({
-    OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, OPENAI_TEXT_MODEL: 'gpt-6-luna', OPENAI_IMAGE_MODEL: 'gpt-image-2.5-sunburst',
+    OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, OPENAI_TEXT_MODEL: 'gpt-6.1-terra', OPENAI_IMAGE_MODEL: 'gpt-image-2.5-sunburst',
     OPENAI_IMAGE_QUALITY: 'low', OPENAI_MAX_IMAGES_PER_RUN: '5', AI_FALLBACK: 'off',
   });
-  assert.deepEqual([ai.textModel, ai.imageModel, ai.imageQuality, ai.maxOpenAiImages, ai.fallback], ['gpt-6-luna', 'gpt-image-2.5-sunburst', 'low', 5, false]);
+  assert.deepEqual([ai.textModel, ai.imageModel, ai.imageQuality, ai.maxOpenAiImages, ai.fallback], ['gpt-6.1-terra', 'gpt-image-2.5-sunburst', 'low', 5, false]);
   assert.equal(aiConfigFromEnv({ OPENAI_API_KEY: OPENAI, POLLINATIONS_API_KEY: POLL, AI_PROVIDER: 'pollinations' }).primary, 'pollinations');
   assert.equal(aiConfigFromEnv({ POLLINATIONS_API_KEY: POLL }).primary, 'pollinations');
 });
@@ -59,7 +59,7 @@ test('missing keys and unknown settings are refused with a clear message', () =>
 
 test('text goes to OpenAI first, then to the Pollinations models when the backup is on', () => {
   const labels = textCandidates(both()).map((c) => `${c.label}:${c.model}`);
-  assert.equal(labels[0], 'OpenAI:gpt-6.1-terra');
+  assert.equal(labels[0], 'OpenAI:gpt-6-luna');
   assert.ok(labels.slice(1).every((l) => l.startsWith('Pollinations:')) && labels.length > 1);
   assert.deepEqual(textCandidates(aiConfigFromEnv({ OPENAI_API_KEY: OPENAI })).map((c) => c.label), ['OpenAI']);
 });
@@ -71,7 +71,7 @@ test('chatJson asks OpenAI for JSON with the key and model, and returns the pars
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.url, 'https://api.openai.com/v1/chat/completions');
   assert.equal((calls[0]?.init.headers as Record<string, string>)['Authorization'], `Bearer ${OPENAI}`);
-  assert.equal(calls[0]?.body?.['model'], 'gpt-6.1-terra');
+  assert.equal(calls[0]?.body?.['model'], 'gpt-6-luna');
   assert.deepEqual(calls[0]?.body?.['response_format'], { type: 'json_object' });
 });
 

@@ -62,7 +62,7 @@ The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (
 | `SOCIAL_AUTO_ENV` | A keys file (`POLLINATIONS_API_KEY`, `SCHEDULER_API_KEY`, `ALERT_NTFY_TOPIC`). Keys already in the environment win, so a service can supply them directly. Default `scheduler/upstream/.env`. |
 | `SOCIAL_AUTO_LOG_HINT` | Where an alert tells you to look for the log. |
 | `OPENAI_API_KEY` | The organization's OpenAI key. When set, OpenAI writes the posts and draws the pictures. Never commit it. |
-| `OPENAI_TEXT_MODEL` | Default `gpt-6.1-terra`. |
+| `OPENAI_TEXT_MODEL` | Default `gpt-6-luna` (cheapest; `gpt-6.1-terra` is the next step up if the writing needs it). |
 | `OPENAI_IMAGE_MODEL` | Default `gpt-image-2.5-flare`. |
 | `OPENAI_IMAGE_QUALITY` | `low`, `medium` (default) or `high`. Higher costs more per picture. |
 | `OPENAI_MAX_IMAGES_PER_RUN` | Default 40: the most pictures one run may order from OpenAI. |

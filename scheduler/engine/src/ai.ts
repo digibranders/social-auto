@@ -60,7 +60,7 @@ export function aiConfigFromEnv(env: Env): AiConfig {
     openaiKey,
     pollinationsKey,
     openaiBase: (env['OPENAI_BASE_URL'] || 'https://api.openai.com/v1').replace(/\/+$/, ''),
-    textModel: env['OPENAI_TEXT_MODEL'] || 'gpt-6.1-terra',
+    textModel: env['OPENAI_TEXT_MODEL'] || 'gpt-6-luna',
     imageModel: env['OPENAI_IMAGE_MODEL'] || 'gpt-image-2.5-flare',
     imageQuality: quality as ImageQuality,
     maxOpenAiImages: limit,
