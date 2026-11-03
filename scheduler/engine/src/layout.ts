@@ -34,11 +34,11 @@ export function layoutFor(weekNumber: number, index: number): LayoutName {
 export function compositionFor(layout: LayoutName): string {
   switch (layout) {
     case 'left':
-      return 'the subject is placed on the right half of the frame, the entire left half of the image is clean empty soft warm cream background';
+      return 'the subject is confined to the right 40% of the frame, the entire left 60% of the image is clean empty soft warm cream background';
     case 'right':
-      return 'the subject is placed on the left half of the frame, the entire right half of the image is clean empty soft warm cream background';
+      return 'the subject is confined to the left 40% of the frame, the entire right 60% of the image is clean empty soft warm cream background';
     case 'bottom':
-      return 'the subject is centered in the upper half of the frame, the entire lower half of the image is clean empty soft warm cream background';
+      return 'the subject is centered in the upper 45% of the frame, the entire lower 55% of the image is clean empty soft warm cream background';
     case 'dark':
       return 'the subject fills the upper two thirds of the frame, the lower third is soft out-of-focus deep shadow background';
   }
@@ -89,7 +89,7 @@ function fontLink(font: string): string {
 /** Rules that turn the base ("left") poster into another layout; the base styles stay the same for all. */
 function layoutCss(layout: LayoutName, colors: Brand['colors'], cream: string): string {
   const fade = (direction: string): string =>
-    `linear-gradient(${direction}, ${cream} 0%, ${cream}F2 34%, ${cream}99 50%, ${cream}00 64%)`;
+    `linear-gradient(${direction}, ${cream} 0%, ${cream}F2 38%, ${cream}99 54%, ${cream}00 68%)`;
   switch (layout) {
     case 'left':
       return '';
@@ -101,6 +101,7 @@ function layoutCss(layout: LayoutName, colors: Brand['colors'], cream: string): 
     case 'bottom':
       return `
   .layout-bottom .wash { background: linear-gradient(180deg, ${cream}00 0%, ${cream}00 34%, ${cream}99 46%, ${cream}F2 58%, ${cream} 70%); }
+  .layout-bottom .logo { top: 44px; left: 52px; height: auto; padding: 12px 20px; border-radius: 16px; background: ${cream}E6; }
   .layout-bottom .copy { top: auto; bottom: 200px; width: 952px; }
   .layout-bottom p.sub { max-width: 780px; }`;
     case 'dark': {
@@ -109,7 +110,7 @@ function layoutCss(layout: LayoutName, colors: Brand['colors'], cream: string): 
       return `
   .layout-dark { background-color: ${ink}; }
   .layout-dark .wash { background: linear-gradient(180deg, ${ink}1A 0%, ${ink}4D 30%, ${ink}D9 62%, ${ink}F2 100%); }
-  .layout-dark .logo { top: 44px; left: 52px; padding: 12px 20px; border-radius: 16px; background: ${cream}; }
+  .layout-dark .logo { top: 44px; left: 52px; height: auto; padding: 12px 20px; border-radius: 16px; background: ${cream}; }
   .layout-dark .copy { top: auto; bottom: 200px; width: 952px; }
   .layout-dark h1 { color: #fff; }
   .layout-dark h1 .accent { color: ${accent}; }
@@ -154,7 +155,7 @@ export function renderPostHtml({ brand, post, painPointNumber, logoHtml, visualU
   }
   .wash {
     position: absolute; inset: 0;
-    background: linear-gradient(90deg, ${cream} 0%, ${cream}F2 34%, ${cream}99 50%, ${cream}00 64%);
+    background: linear-gradient(90deg, ${cream} 0%, ${cream}F2 38%, ${cream}99 54%, ${cream}00 68%);
   }
   .logo { position: absolute; left: 64px; top: 58px; height: 62px; }
   .logo svg, .logo img { height: 62px; width: auto; max-width: 420px; object-fit: contain; display: block; }

@@ -44,10 +44,10 @@ test('layoutFor never repeats a layout on neighbouring posts, within a week or a
 });
 
 test('each layout asks the picture for room where that layout puts its text', () => {
-  assert.match(compositionFor('left'), /right half.*left half.*empty/);
-  assert.match(compositionFor('right'), /left half.*right half.*empty/);
-  assert.match(compositionFor('bottom'), /upper half.*lower half.*empty/);
-  assert.match(compositionFor('dark'), /upper.*lower third/);
+  assert.match(compositionFor('left'), /right 40%.*left 60%.*empty/);
+  assert.match(compositionFor('right'), /left 40%.*right 60%.*empty/);
+  assert.match(compositionFor('bottom'), /upper 45%.*lower 55%.*empty/);
+  assert.match(compositionFor('dark'), /upper two thirds.*lower third/);
   for (const layout of LAYOUTS) assert.match(visualStyleFor(layout), /no text, no letters, no words, no logos/);
 });
 
@@ -63,10 +63,14 @@ test('a post without a layout renders as the original left layout', () => {
   assert.equal(html(), html('left'));
 });
 
-test('the dark layout uses light text and gives the logo its own light backing', () => {
-  const dark = html('dark');
-  assert.match(dark, /\.layout-dark h1 \{ color: #fff/);
-  assert.match(dark, /\.layout-dark \.logo \{[^}]*background/);
+test('the dark layout uses light text', () => {
+  assert.match(html('dark'), /\.layout-dark h1 \{ color: #fff/);
+});
+
+test('layouts whose logo sits over the photo give it a backing that grows with the logo, not a fixed height', () => {
+  for (const layout of ['bottom', 'dark'] as const) {
+    assert.match(html(layout), new RegExp(`\\.layout-${layout} \\.logo \\{[^}]*height: auto[^}]*background`), layout);
+  }
 });
 
 test('lighten moves a colour towards white', () => {
