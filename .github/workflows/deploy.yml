@@ -71,6 +71,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           # The server's own key is pinned, so this can only ever talk to the real server.
           printf '%s %s\n' "$DEPLOY_HOST" "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
-          # The key on the server can only run the deploy script, whatever is asked for.
+          # The server only allows SSH logins as root. The key there is restricted: whatever is asked for, the only thing that
+          # runs is the deploy script, as the unprivileged `social` user.
           ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20 \
-            "social@${DEPLOY_HOST}" deploy
+            "root@${DEPLOY_HOST}" deploy

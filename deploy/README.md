@@ -32,8 +32,10 @@ Merging into `main` deploys by itself (`.github/workflows/deploy.yml`):
 By hand (as the `social` user on the server): `deploy/scripts/deploy.sh`. Or from GitHub: Actions, "Test and deploy", Run workflow.
 
 How GitHub gets in: a dedicated key, kept in the repository's secrets as `DEPLOY_SSH_KEY`. On the server it sits in
-`/home/social/.ssh/authorized_keys` with `restrict,command="/home/social/social-auto/deploy/scripts/remote-deploy.sh"`, so it can
-run the deploy and nothing else. The repository variables `DEPLOY_HOST` and `DEPLOY_HOST_KEY` (the server's own public key,
+`/root/.ssh/authorized_keys` (the server only allows SSH logins as root) with
+`restrict,command="runuser -l social -c /home/social/social-auto/deploy/scripts/remote-deploy.sh"`, so whatever it asks for, the
+only thing that runs is the deploy, as the unprivileged `social` user. The script remembers the commit the running apps were started from
+(`/var/lib/social-auto/deployed-commit`), so a commit pulled by something else, like the weekly job, is still deployed. The repository variables `DEPLOY_HOST` and `DEPLOY_HOST_KEY` (the server's own public key,
 pinned) say where. To replace the key: make a new one, put its public half in `authorized_keys`, set the secret, remove the old line.
 
 ## Redirect addresses to add in the provider consoles

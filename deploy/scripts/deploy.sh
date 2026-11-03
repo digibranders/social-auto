@@ -9,6 +9,8 @@ set -uo pipefail
 export PATH="$HOME/.local/node/bin:$PATH"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE=/etc/social-auto/publisher.env
+# The commit the running apps were started from. Not the same as the checkout: the weekly job pulls main too.
+MARKER=/var/lib/social-auto/deployed-commit
 JOBS=(social-auto-weekly.service social-cron.service social-refresh.service)
 MAX_WAIT_SECONDS=900
 
@@ -61,17 +63,19 @@ main() {
     waited=$((waited + 15))
   done
 
-  local previous new
+  local previous new deployed
   previous="$(git rev-parse HEAD)"
+  deployed="$(cat "$MARKER" 2>/dev/null || true)"
   git pull --quiet --ff-only origin main || { echo "git pull failed" >&2; alert "Deploy failed: git pull did not work."; return 1; }
   new="$(git rev-parse HEAD)"
 
-  if [[ "$new" == "$previous" ]] && healthy; then
+  if [[ "$new" == "$deployed" ]] && healthy; then
     echo "already on $(git rev-parse --short HEAD) and healthy"
     return 0
   fi
 
   if install_and_restart; then
+    echo "$new" > "$MARKER"
     echo "deployed $(git rev-parse --short HEAD)"
     return 0
   fi
@@ -79,6 +83,7 @@ main() {
   echo "the apps did not come up healthy: going back to $(git rev-parse --short "$previous")" >&2
   git reset --hard --quiet "$previous"
   if install_and_restart; then
+    echo "$previous" > "$MARKER"
     alert "Deploy of $(git rev-parse --short "$new") failed; went back to $(git rev-parse --short "$previous") and the apps are running."
   else
     alert "Deploy failed and the previous version did not come back either. Check the server now."
