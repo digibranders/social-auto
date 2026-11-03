@@ -1,6 +1,7 @@
 /** Writes a week of pain-point posts for a brand with the text model. */
 import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
+import { assertCopySupported } from './copy-gate.ts';
 import { creativePrompt, formatFor } from './creative.ts';
 import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
@@ -67,7 +68,7 @@ ${JSON.stringify(
 Pain points already used in earlier weeks (do NOT repeat or rephrase these):
 ${usedPainPoints.length ? usedPainPoints.map((p) => `- ${p}`).join('\n') : '- none yet'}
 
-Write ${count} posts, each on a different pain point the audience really has. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the problem, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan. Return JSON:
+Write ${count} posts, each on a different pain point the audience really has. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the problem, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. A number, price, percentage, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if a proof point above states it, with that figure and wording unchanged; with no proof point for it, say the benefit in plain words instead. The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan. Return JSON:
 {
   "posts": [
     {
@@ -109,8 +110,12 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
 /** 70 is the target given to the model; allow some slack before forcing a retry. */
 const MAX_SUBLINE_CHARS = 90;
 
-/** Turns back a draft the poster cannot be made from, so the model is asked again with the reason. */
-export function validateDraft(draft: DraftPost, position: number, brandName?: string): void {
+/**
+ * Turns back a draft the poster cannot be made from, so the model is asked again with the reason. With the brand's verified proof
+ * points, it also turns back copy that states a figure, superlative, guarantee or deadline none of them supports; this runs before
+ * any picture is generated.
+ */
+export function validateDraft(draft: DraftPost, position: number, brandName?: string, proofPoints?: readonly string[]): void {
   if (typeof draft.visual !== 'string' || !draft.visual.trim()) throw new Error(`post ${position} needs a "visual"`);
   if (typeof draft.visualLink !== 'string' || !draft.visualLink.trim()) throw new Error(`post ${position} needs a "visualLink": how the picture connects to the headline`);
   if (brandName !== undefined) {
@@ -122,6 +127,7 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
   if (typeof draft.headline === 'string' && draft.headline.replaceAll('|', '').length > 60) {
     throw new Error(`post ${position} headline is too long; keep it under 45 characters`);
   }
+  if (proofPoints !== undefined) assertCopySupported({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, proofPoints, position);
 }
 
 /** Larger batches make the model repeat itself, so plans are written in chunks. */
@@ -160,7 +166,7 @@ export async function planWeek(options: {
           brand: options.brandSlug,
           timezone: schedule.utcOffset,
           posts: (drafts as DraftPost[]).map((d, i) => {
-            validateDraft(d, i + 1, brand.name);
+            validateDraft(d, i + 1, brand.name, brand.proofPoints);
             return buildPost({ draft: d, id: `w${week}-d${offset + i + 1}`, date: chunkDates[i] as string, weekNumber: options.weekNumber, index: offset + i, brand });
           }),
         };

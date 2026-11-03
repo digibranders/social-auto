@@ -103,7 +103,7 @@ function phrasePattern(phrase: string): RegExp {
 }
 
 /** The entries of a list that appear in the text (as the entry itself, whichever of its alternatives was used). */
-function present(list: readonly string[], text: string): string[] {
+export function present(list: readonly string[], text: string): string[] {
   const t = normalizeForQuote(text);
   return list.filter((entry) => alternatives(entry).some((a) => phrasePattern(a).test(t)));
 }
@@ -132,7 +132,7 @@ const CURRENCY = /(\$|€|£|₹|¥|\b(?:usd|eur|gbp|inr|jpy|cny|rs\.?)\b)\s*(\d
 
 const symbolOf = (raw: string): string => CURRENCY_SYMBOL[raw.toLowerCase()] ?? raw;
 const plain = (whole: string, fraction?: string): string => `${whole.replace(/,/g, '')}${fraction && /[1-9]/.test(fraction) ? `.${fraction.replace(/0+$/, '')}` : ''}`;
-const stem = (word: string): string => word.replace(/ies$/, 'y').replace(/(?:es|s)$/, '');
+export const stem = (word: string): string => word.replace(/ies$/, 'y').replace(/(?:es|s)$/, '');
 
 /** The numbers, prices, billing periods, units and qualifiers a text states, normalised so "12,500" and "12500" are the same. */
 export function extractFacts(text: string, config: ClaimConfig = defaultClaimConfig): Facts {

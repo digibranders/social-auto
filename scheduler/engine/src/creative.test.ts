@@ -144,3 +144,15 @@ test('a subline that does not name the brand is turned back, so a stranger alway
   assert.throws(() => validateDraft({ ...goodDraft, subline: 'x'.repeat(95) + ' Acme' }, 1, 'Acme Dental'), /subline is too long/);
   assert.doesNotThrow(() => validateDraft(goodDraft, 3));
 });
+
+test('validateDraft turns back copy whose figures no verified claim supports, once the proof points are given', () => {
+  const proof = ['Plans start from $29 per month.'];
+  assert.doesNotThrow(() => validateDraft({ ...goodDraft, subline: 'Acme plans start from $29 per month.' }, 1, 'Acme Dental', proof));
+  assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme saves you 12 hours.' }, 2, 'Acme Dental', proof), /post 2 states facts the brand profile does not support/);
+  assert.throws(() => validateDraft({ ...goodDraft, subline: 'Acme keeps it simple.', caption: 'The best clinic software.' }, 3, 'Acme Dental', proof), /caption/);
+});
+
+test('the prompt tells the model which figures it may use', () => {
+  const prompt = userPrompt({ ...brand, proofPoints: ['Plans start from $29 per month.'] }, 2, []);
+  assert.match(prompt, /superlative[^.]*guarantee or deadline[^.]*only if a proof point/i);
+});
