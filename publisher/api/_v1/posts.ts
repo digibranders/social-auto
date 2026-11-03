@@ -7,12 +7,13 @@
  * GET    /api/v1/posts?externalId=...[&from=YYYY-MM-DD&to=YYYY-MM-DD]
  *                                                   all of the customer's posts (planned and extra), earliest first, and where each stands on each channel;
  *                                                   from is the first day shown and to the last, both in India time
+ * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out
  * DELETE /api/v1/posts?externalId=...&postId=...    removes a post that has not gone out yet
  */
 import { schedule as scheduleData } from '../../data/schedule.js';
 import { findWorkspace, isExternalId } from '../../lib/clients.js';
 import { describeError, json } from '../../lib/http.js';
-import { removeNewPost, saveNewPost } from '../../lib/manual-service.js';
+import { removeNewPost, saveNewPost, updateNewPost } from '../../lib/manual-service.js';
 import { toScheduled } from '../../lib/manual.js';
 import { applyOverrides, EditError } from '../../lib/overrides.js';
 import { postView, scheduledView } from '../../lib/post-view.js';
@@ -86,6 +87,22 @@ export async function GET(request: Request): Promise<Response> {
     return json(200, { posts: posts.map((p) => scheduledView(p, channels, log, now, origin)) });
   } catch (error) {
     return failure(error, 'read the posts');
+  }
+}
+
+export async function PATCH(request: Request): Promise<Response> {
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'request too large' });
+  const params = new URL(request.url).searchParams;
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (typeof body !== 'object' || body === null) return json(400, { error: 'send JSON' });
+  const caller = await workspaceFor(request, params.get('externalId'));
+  if (caller instanceof Response) return caller;
+  try {
+    const post = await updateNewPost(params.get('postId'), { day: body['day'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'] }, Date.now(), caller.brand);
+    const [{ file: channels }, { log }] = await Promise.all([loadChannels(), loadPosted()]);
+    return json(200, { post: postView(post, channels, log, Date.now(), originOf(request)) });
+  } catch (error) {
+    return failure(error, 'change the post');
   }
 }
 

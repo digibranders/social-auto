@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { channelsFor } from './channels.js';
-import { buildManualPost, isManualId, MAX_MANUAL_POSTS, toScheduled, type ManualPost } from './manual.js';
+import { buildManualPost, dateOfNow, editManualPost, isManualId, pictureInUse, MAX_MANUAL_POSTS, toScheduled, type ManualChanges, type ManualPost } from './manual.js';
 import { EditError, isEditable, MAX_IMAGE_BYTES, validateJpeg } from './overrides.js';
 import { deleteImage, loadChannels, loadImage, loadManual, loadOverrides, saveImage, saveManual, saveOverrides } from './store.js';
 
@@ -53,14 +53,57 @@ export async function removeNewPost(id: unknown, now: number, brand?: string): P
   if (!post || (brand !== undefined && post.brand !== brand)) throw new EditError('no such post', 404);
   if (!isEditable(toScheduled(post), now)) throw new EditError('this post is already due or sent, so it can no longer be deleted', 409);
 
-  await saveManual({ posts: file.posts.filter((p) => p.id !== id) }, etag);
-  // Tidy up after the post is gone; a failure here only leaves an unused file behind.
+  const remaining = file.posts.filter((p) => p.id !== id);
+  await saveManual({ posts: remaining }, etag);
+  // Tidy up after the post is gone; a failure here only leaves an unused file behind. A picture another post still uses stays.
   const { overrides, etag: overridesEtag } = await loadOverrides();
   const edit = overrides[id];
-  if (edit) {
-    const { [id]: _removed, ...rest } = overrides;
-    await saveOverrides(rest, overridesEtag).catch(() => undefined);
-    if (edit.imageKey) await deleteImage(edit.imageKey).catch(() => undefined);
+  const { [id]: _removed, ...rest } = overrides;
+  if (edit) await saveOverrides(rest, overridesEtag).catch(() => undefined);
+  for (const key of new Set([post.imageKey, edit?.imageKey])) {
+    if (key !== undefined && !pictureInUse(key, remaining, rest)) await deleteImage(key).catch(() => undefined);
   }
-  await deleteImage(post.imageKey).catch(() => undefined);
+}
+
+/**
+ * Changes a hand-made post that has not gone out yet: its day, caption, picture or channels. `brand`, when given,
+ * must be the post's own client. A dashboard edit already on the post is folded in first, so it is not lost.
+ */
+export async function updateNewPost(id: unknown, changes: ManualChanges, now: number, brand?: string): Promise<ManualPost> {
+  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required');
+  const [{ file, etag }, { file: channels }, { overrides, etag: overridesEtag }] = await Promise.all([loadManual(), loadChannels(), loadOverrides()]);
+  const stored = file.posts.find((p) => p.id === id);
+  if (!stored || (brand !== undefined && stored.brand !== brand)) throw new EditError('no such post', 404);
+  if (!isEditable(toScheduled(stored), now)) throw new EditError('this post is already due or sent, so it can no longer be changed', 409);
+
+  const dashboardEdit = overrides[id];
+  const current: ManualPost = { ...stored, caption: dashboardEdit?.caption ?? stored.caption, imageKey: dashboardEdit?.imageKey ?? stored.imageKey };
+  const connected = channelsFor(channels, stored.brand).map((c) => c.id);
+  const edited = editManualPost(current, changes, connected, now);
+  if (edited.imageKey !== current.imageKey && !(await imageExists(edited.imageKey))) throw new EditError('the picture was not found. Add it again.');
+
+  const posts = file.posts.map((p) => (p.id === id ? edited : p));
+  await saveManual({ posts }, etag);
+  // Tidy up after the change is saved; a failure here only leaves an unused file behind. A picture another post still uses stays.
+  const { [id]: _folded, ...rest } = overrides;
+  if (dashboardEdit) await saveOverrides(rest, overridesEtag).catch(() => undefined);
+  for (const key of new Set([stored.imageKey, dashboardEdit?.imageKey])) {
+    if (key !== undefined && !pictureInUse(key, posts, rest)) await deleteImage(key).catch(() => undefined);
+  }
+  return edited;
+}
+
+/**
+ * Dates a hand-made post now, ahead of sending it now, and answers it as it will be sent (a dashboard edit folded in). The post
+ * keeps its place in the calendar as today's. `brand`, when given, must be the post's own client.
+ */
+export async function dateNewPostNow(id: unknown, now: number, brand?: string): Promise<ManualPost> {
+  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required');
+  const [{ file, etag }, { overrides }] = await Promise.all([loadManual(), loadOverrides()]);
+  const stored = file.posts.find((p) => p.id === id);
+  if (!stored || (brand !== undefined && stored.brand !== brand)) throw new EditError('no such post', 404);
+  const dashboardEdit = overrides[id];
+  const sending: ManualPost = { ...stored, date: dateOfNow(now), caption: dashboardEdit?.caption ?? stored.caption, imageKey: dashboardEdit?.imageKey ?? stored.imageKey };
+  await saveManual({ posts: file.posts.map((p) => (p.id === id ? { ...p, date: sending.date } : p)) }, etag);
+  return sending;
 }

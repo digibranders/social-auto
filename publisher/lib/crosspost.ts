@@ -268,6 +268,8 @@ export async function postToInstagram(options: {
 }
 
 export interface CrosspostStatus {
+  /** The channel's id, as a product names it when choosing where a post goes. */
+  id: string;
   platform: Channel['platform'];
   account: string;
   state: 'published' | 'scheduled' | 'due' | 'missed';
@@ -287,6 +289,6 @@ export function crosspostStatusFor(post: { id: string; brand?: string; date: str
       else if (at > now) state = 'scheduled';
       else if (now - at < DUE_WINDOW_MS) state = 'due';
       else state = 'missed';
-      return { platform: channel.platform, account: channelLabel(channel), state, permalink: done?.permalink ?? null };
+      return { id: channel.id, platform: channel.platform, account: channelLabel(channel), state, permalink: done?.permalink ?? null };
     });
 }

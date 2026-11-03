@@ -110,7 +110,7 @@ test('a picture-less post fails clearly, and a Page failure never blocks another
 test('crosspostStatusFor reports published, scheduled, due and missed per Page', () => {
   const log: PostedLog = { [postedKey('p1', 'facebook:77')]: { remoteId: 'r', permalink: 'https://f/b', postedAt: 'x' } };
   const status = (id: string, date: string, now: string) => crosspostStatusFor({ id, brand: 'brandbasket', date }, channels, log, Date.parse(now))[0];
-  assert.deepEqual(status('p1', '2026-10-31T10:00:00+05:30', '2026-10-31T06:00:00Z'), { platform: 'facebook', account: 'Brandbs', state: 'published', permalink: 'https://f/b' });
+  assert.deepEqual(status('p1', '2026-10-31T10:00:00+05:30', '2026-10-31T06:00:00Z'), { id: 'facebook:77', platform: 'facebook', account: 'Brandbs', state: 'published', permalink: 'https://f/b' });
   assert.equal(status('p2', '2026-11-02T10:00:00+05:30', '2026-10-31T06:00:00Z')?.state, 'scheduled');
   assert.equal(status('p2', '2026-10-31T10:00:00+05:30', '2026-10-31T06:00:00Z')?.state, 'due');
   assert.equal(status('p2', '2026-10-31T10:00:00+05:30', '2026-11-03T06:00:00Z')?.state, 'missed');

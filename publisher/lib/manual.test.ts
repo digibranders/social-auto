@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildManualPost, isManualId, parseManualFile, postDateFor, toScheduled } from './manual.ts';
+import { buildManualPost, dateOfNow, editManualPost, isManualId, pictureInUse, parseManualFile, postDateFor, toScheduled } from './manual.ts';
 import { applyOverrides } from './overrides.ts';
 import { buildStatus, dueManualPosts, isWantedOn, postsLeftByBrand, type ScheduledPost } from './schedule.ts';
 
@@ -75,4 +75,44 @@ test('edits apply to hand-made posts like any other', () => {
   const [edited] = applyOverrides([extra('manual-0123456789ab', planned.date)], { 'manual-0123456789ab': { caption: 'New words', updatedAt: 'x' } });
   assert.equal(edited?.caption, 'New words');
   assert.equal(edited?.manual, true);
+});
+
+test('an edit changes only what is sent and checks it like a new post', () => {
+  const post = buildManualPost(input, allowed, NOW);
+  const other = 'b'.repeat(32);
+  const moved = editManualPost(post, { day: '2026-11-09', caption: '  New words ', imageKey: other, channels: ['facebook:77'] }, allowed, NOW);
+  assert.equal(moved.date, '2026-11-09T10:00:00+05:30');
+  assert.equal(moved.caption, 'New words');
+  assert.equal(moved.imageKey, other);
+  assert.deepEqual(moved.channels, ['facebook:77']);
+  assert.equal(moved.id, post.id);
+  const same = editManualPost(post, { caption: 'Only words' }, allowed, NOW);
+  assert.equal(same.date, post.date);
+  assert.deepEqual(same.channels, post.channels);
+  assert.equal(editManualPost(post, { day: '2026-11-05' }, allowed, NOW).date, post.date);
+});
+
+test('an edit with nothing to change, or a bad day, picture, caption or channel, is refused', () => {
+  const post = buildManualPost(input, allowed, NOW);
+  assert.throws(() => editManualPost(post, {}, allowed, NOW), /nothing to change/);
+  assert.throws(() => editManualPost(post, { day: '2026-11-02' }, allowed, NOW), /already passed/);
+  assert.throws(() => editManualPost(post, { caption: ' ' }, allowed, NOW), /empty/);
+  assert.throws(() => editManualPost(post, { imageKey: 'x' }, allowed, NOW), /picture/);
+  assert.throws(() => editManualPost(post, { channels: [] }, allowed, NOW), /at least one channel/);
+  assert.throws(() => editManualPost(post, { channels: ['facebook:99'] }, allowed, NOW), /not connected/);
+});
+
+test('a post sent now is dated now, in India time', () => {
+  assert.equal(dateOfNow(Date.parse('2026-11-03T05:56:07Z')), '2026-11-03T11:26:07+05:30');
+  assert.equal(dateOfNow(Date.parse('2026-11-03T20:00:00Z')), '2026-11-04T01:30:00+05:30');
+  assert.equal(Date.parse(dateOfNow(NOW)), Math.floor(NOW / 1000) * 1000);
+});
+
+test('a picture shared by several posts is in use until the last of them lets it go', () => {
+  const a = buildManualPost(input, allowed, NOW);
+  const b = { ...buildManualPost(input, allowed, NOW), id: 'manual-bbbbbbbbbbbb' };
+  const c = { ...buildManualPost({ ...input, imageKey: 'c'.repeat(32) }, allowed, NOW), id: 'manual-cccccccccccc' };
+  assert.equal(pictureInUse(KEY, [b, c], {}), true);
+  assert.equal(pictureInUse(KEY, [c], {}), false);
+  assert.equal(pictureInUse('d'.repeat(32), [a, c], { [a.id]: { imageKey: 'd'.repeat(32), updatedAt: 'x' } }), true);
 });
