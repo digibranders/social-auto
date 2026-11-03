@@ -24,18 +24,12 @@ export function slugFromSite(site: string): string {
   return label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 }
 
-/** Downloads the best logo that works; null when none does. */
-async function downloadLogo(candidates: string[], assetsDir: string, fetchBytes: (url: string) => Promise<FetchedBytes>): Promise<string | null> {
+/** The first of these addresses that downloads as a picture; null when none does. */
+async function downloadImage(candidates: string[], fetchBytes: (url: string) => Promise<FetchedBytes>): Promise<{ url: string; bytes: Buffer; type: string } | null> {
   for (const url of candidates) {
     try {
       const { bytes, type } = await fetchBytes(url);
-      if (!type.startsWith('image/') || bytes.length === 0) continue;
-      const fromType = type.includes('svg') ? '.svg' : type.includes('png') ? '.png' : type.includes('webp') ? '.webp' : '.jpg';
-      const fromPath = extname(new URL(url).pathname).toLowerCase();
-      const ext = LOGO_EXTENSIONS.has(fromPath) ? fromPath : fromType;
-      const file = `logo${ext}`;
-      await writeFile(join(assetsDir, file), bytes);
-      return `assets/${file}`;
+      if (type.startsWith('image/') && bytes.length > 0) return { url, bytes, type };
     } catch {
       continue;
     }
@@ -43,7 +37,29 @@ async function downloadLogo(candidates: string[], assetsDir: string, fetchBytes:
   return null;
 }
 
+/** Saves the best logo that downloads; null when none does. */
+async function downloadLogo(candidates: string[], assetsDir: string, fetchBytes: (url: string) => Promise<FetchedBytes>): Promise<string | null> {
+  const image = await downloadImage(candidates, fetchBytes);
+  if (!image) return null;
+  const fromType = image.type.includes('svg') ? '.svg' : image.type.includes('png') ? '.png' : image.type.includes('webp') ? '.webp' : '.jpg';
+  const fromPath = extname(new URL(image.url).pathname).toLowerCase();
+  const ext = LOGO_EXTENSIONS.has(fromPath) ? fromPath : fromType;
+  const file = `logo${ext}`;
+  await writeFile(join(assetsDir, file), image.bytes);
+  return `assets/${file}`;
+}
+
 const MAX_LOGO_NAME_CHARS = 24;
+
+/** The site's icon with the brand's name beside it, as one self-contained logo, for sites with an icon but no logo picture. */
+export function iconLogoSvg(name: string, icon: { bytes: Buffer; type: string }, colors: Pick<BrandColors, 'ink'>): string {
+  const shown = name.trim().slice(0, MAX_LOGO_NAME_CHARS);
+  const label = escapeHtml(shown);
+  const width = 96 + Math.max(shown.length, 4) * 34;
+  const mime = icon.type.split(';')[0]?.trim() || 'image/png';
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} 96" role="img" aria-label="${label}"><image x="0" y="8" width="80" height="80" preserveAspectRatio="xMidYMid meet" href="data:${mime};base64,${icon.bytes.toString('base64')}"/><text x="96" y="66" font-family="Inter, Arial, Helvetica, sans-serif" font-size="52" font-weight="800" fill="${colors.ink}">${label}</text></svg>
+`;
+}
 
 /** A simple logo made of the brand's name, for sites whose own logo could not be downloaded. */
 export function textLogoSvg(name: string, colors: Pick<BrandColors, 'ink' | 'accent'>): string {
@@ -105,7 +121,8 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
   const dir = join(brandsRoot, slugFromSite(snapshot.origin));
   const assetsDir = join(dir, 'assets');
   await mkdir(assetsDir, { recursive: true });
-  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir, deps.fetchBytes ?? ((url: string) => safeFetchBytes(url, { maxBytes: 5_000_000, accept: 'image/*,*/*' })));
+  const fetchBytes = deps.fetchBytes ?? ((url: string) => safeFetchBytes(url, { maxBytes: 5_000_000, accept: 'image/*,*/*' }));
+  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir, fetchBytes);
   const logoPath = logo ?? 'assets/logo.svg';
 
   const brand = await chatJson({
@@ -120,8 +137,17 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
     },
   });
 
-  // No downloadable logo: the brand's name becomes its logo, so the run goes on.
-  if (!logo) await writeFile(join(assetsDir, 'logo.svg'), textLogoSvg(brand.name, brand.colors));
+  if (!logo) {
+    // No logo picture: the site's own icon with the name beside it, and only without an icon the name alone, so the run goes on.
+    const icon = await downloadImage(snapshot.iconCandidates, fetchBytes);
+    if (icon) {
+      const iconType = icon.type.includes('svg') ? '.svg' : icon.type.includes('png') ? '.png' : icon.type.includes('webp') ? '.webp' : icon.type.includes('icon') ? '.ico' : '.jpg';
+      await writeFile(join(assetsDir, `icon${iconType}`), icon.bytes);
+      await writeFile(join(assetsDir, 'logo.svg'), iconLogoSvg(brand.name, icon, brand.colors));
+    } else {
+      await writeFile(join(assetsDir, 'logo.svg'), textLogoSvg(brand.name, brand.colors));
+    }
+  }
   await writeFile(join(dir, 'brand.json'), `${JSON.stringify(brand, null, 2)}\n`);
   return { dir, brand };
 }

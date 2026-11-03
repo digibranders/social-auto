@@ -41,7 +41,7 @@ test('the text logo shows the name in the brand colours, with anything odd in th
   assert.ok(textLogoSvg('x'.repeat(80), { ink: '#000000', accent: '#111111' }).includes('x'.repeat(24)));
 });
 
-const snapshot: SiteSnapshot = { origin: 'https://acme.com', pages: [{ url: 'https://acme.com/', title: 'Acme', description: 'd', text: 'Dental care. '.repeat(50) }], logoCandidates: ['https://acme.com/logo.png'], colors: ['#0E8C8C'], fonts: ['Inter'] };
+const snapshot: SiteSnapshot = { origin: 'https://acme.com', pages: [{ url: 'https://acme.com/', title: 'Acme', description: 'd', text: 'Dental care. '.repeat(50) }], logoCandidates: ['https://acme.com/logo.png'], iconCandidates: ['https://acme.com/icon.png'], colors: ['#0E8C8C'], fonts: ['Inter'] };
 const modelAnswer = (): Response => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...brandJson, visualStyle: 'Deep teal and white' }) } }] }), { status: 200 });
 
 test('when no logo can be downloaded the brand still gets one: its name as a text logo', async () => {
@@ -73,6 +73,46 @@ test('a logo that downloads is kept as the logo', async () => {
     });
     assert.equal(brand.logo, 'assets/logo.png');
     assert.deepEqual([...(await readFile(join(brandDir, 'assets/logo.png')))], [1, 2, 3]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('with no logo but a site icon, the icon is used with the name beside it, not a plain text logo', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'analyze-test-'));
+  try {
+    const asked: string[] = [];
+    const { brand, dir: brandDir } = await analyzeSite('acme.com', dir, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), {
+      crawl: async () => ({ ...snapshot, logoCandidates: [] }),
+      fetchBytes: async (url: string) => {
+        asked.push(url);
+        return { finalUrl: url, bytes: Buffer.from([137, 80, 78, 71]), type: 'image/png' };
+      },
+      chatFetch: (async () => modelAnswer()) as typeof fetch,
+    });
+    assert.deepEqual(asked, ['https://acme.com/icon.png']);
+    assert.equal(brand.logo, 'assets/logo.svg');
+    const file = await readFile(join(brandDir, 'assets/logo.svg'), 'utf8');
+    assert.ok(file.includes('Acme Dental'));
+    assert.ok(file.includes('data:image/png;base64,iVBORw=='));
+    assert.deepEqual([...(await readFile(join(brandDir, 'assets/icon.png')))], [137, 80, 78, 71]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('an icon that will not download leaves the plain text logo', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'analyze-test-'));
+  try {
+    const { brand, dir: brandDir } = await analyzeSite('acme.com', dir, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), {
+      crawl: async () => ({ ...snapshot, logoCandidates: [] }),
+      fetchBytes: async () => {
+        throw new Error('404');
+      },
+      chatFetch: (async () => modelAnswer()) as typeof fetch,
+    });
+    assert.equal(brand.logo, 'assets/logo.svg');
+    assert.ok(!(await readFile(join(brandDir, 'assets/logo.svg'), 'utf8')).includes('data:image'));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

@@ -98,3 +98,10 @@ test('with only other companies\' logos or icons, there is no logo candidate, so
   const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': withLogos(onlyClients) }).deps);
   assert.deepEqual(snapshot.logoCandidates, []);
 });
+
+test('the site\'s own icons are kept as a second choice, biggest first, with the old .ico last', async () => {
+  const icons = '<link rel="icon" href="/favicon.ico" sizes="48x48" type="image/x-icon"><link rel="icon" href="/icon.png?v=3" sizes="512x512"><link rel="apple-touch-icon" href="/apple-icon.png" sizes="180x180"><link rel="icon" href="data:image/png;base64,AAAA">';
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': html(`<h1>Acme Dental</h1><p>${prose(7)}</p>`, icons) }).deps);
+  assert.deepEqual(snapshot.iconCandidates, ['https://acme.com/icon.png?v=3', 'https://acme.com/apple-icon.png', 'https://acme.com/favicon.ico']);
+  assert.deepEqual(snapshot.logoCandidates, []);
+});

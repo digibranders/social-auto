@@ -71,6 +71,8 @@ export interface SiteSnapshot {
   pages: CrawledPage[];
   /** Absolute URLs, most likely logo first. */
   logoCandidates: string[];
+  /** The site's own browser/app icons, best first; a second choice when no logo picture is found. */
+  iconCandidates: string[];
   /** #RRGGBB colours, most frequent first. */
   colors: string[];
   fonts: string[];
@@ -171,6 +173,36 @@ export function findLogoCandidates(html: string, base: URL): string[] {
   return [...scored.entries()].sort((a, b) => b[1] - a[1]).map(([url]) => url);
 }
 
+/** The size an icon link declares ("512x512" -> 512), or 0 when it declares none. */
+function declaredSize(tag: string): number {
+  const sizes = tag.match(/\ssizes=["'](\d+)x\d+/i);
+  return sizes?.[1] ? Number(sizes[1]) : 0;
+}
+
+/**
+ * The site's own icons (the page head's icon and apple-touch-icon links): the biggest first, and the old .ico
+ * format after everything else. A second choice for the logo, since nearly every site has one.
+ */
+export function findIconCandidates(html: string, base: URL): string[] {
+  const found = new Map<string, { size: number; ico: boolean }>();
+  for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
+    const tag = match[0];
+    if (!/\srel=["'][^"']*\bicon\b[^"']*["']/i.test(tag) && !/\srel=["'][^"']*apple-touch-icon[^"']*["']/i.test(tag)) continue;
+    const href = tag.match(/\shref=["']([^"']+)["']/i)?.[1];
+    if (!href || href.startsWith('data:')) continue;
+    let url: URL;
+    try {
+      url = new URL(decodeEntities(href), base);
+    } catch {
+      continue;
+    }
+    found.set(url.href, { size: declaredSize(tag), ico: /\.ico$/i.test(url.pathname) });
+  }
+  return [...found.entries()]
+    .sort(([, a], [, b]) => Number(a.ico) - Number(b.ico) || b.size - a.size)
+    .map(([url]) => url);
+}
+
 function expandHex(hex: string): string {
   const h = hex.slice(1);
   return `#${(h.length === 3 ? [...h].map((c) => c + c).join('') : h.slice(0, 6)).toUpperCase()}`;
@@ -267,6 +299,7 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     origin: base.origin,
     pages,
     logoCandidates,
+    iconCandidates: findIconCandidates(homeBody, base),
     // Logo colours count double: they are the most reliable brand signal.
     colors: collectColors([...logoSvgs, ...logoSvgs, themeColor, homeBody, ...stylesheets]),
     fonts: collectFonts([homeBody, ...stylesheets]),
