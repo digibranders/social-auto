@@ -2,6 +2,14 @@ import { writeFile } from 'node:fs/promises';
 
 const POLLINATIONS_IMAGE_ENDPOINT = 'https://gen.pollinations.ai/image/';
 const DEFAULT_MODEL = 'zimage';
+
+/**
+ * The picture model: the --image-model flag, else POLLINATIONS_IMAGE_MODEL, else the free default. Paid models such
+ * as openai/gpt-image-2.5-flare need credit on the Pollinations account.
+ */
+export function resolveImageModel(flag: string | undefined, env: Record<string, string | undefined>): string {
+  return flag || env['POLLINATIONS_IMAGE_MODEL'] || DEFAULT_MODEL;
+}
 const REQUEST_TIMEOUT_MS = 120_000;
 
 export class ImageGenerationError extends Error {

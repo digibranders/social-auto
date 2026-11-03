@@ -46,6 +46,14 @@ function requireStringArray(obj: Record<string, unknown>, key: string, source: s
 
 export type ImageMode = 'template' | 'ai';
 
+/** Where a poster puts its text. Posts rotate through these so a week does not look like one repeated image. */
+export const LAYOUTS = ['left', 'bottom', 'right', 'dark'] as const;
+export type LayoutName = (typeof LAYOUTS)[number];
+
+export function isLayoutName(value: unknown): value is LayoutName {
+  return typeof value === 'string' && (LAYOUTS as readonly string[]).includes(value);
+}
+
 export interface PlannedPost {
   id: string;
   date: string;
@@ -55,6 +63,8 @@ export interface PlannedPost {
   headline: string;
   subline: string;
   imagePrompt?: string;
+  /** Poster layout; plans written before layouts existed have none and render as 'left'. */
+  layout?: LayoutName;
   caption: string;
   hashtags: string[];
 }
@@ -173,6 +183,10 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     hashtags,
   };
   if (mode === 'ai') post.imagePrompt = requireString(raw, 'imagePrompt', where);
+  if (raw['layout'] !== undefined) {
+    if (!isLayoutName(raw['layout'])) throw new ContentValidationError(where, `"layout" must be one of ${LAYOUTS.join(', ')}`);
+    post.layout = raw['layout'];
+  }
   if (composeCaption(post).length > INSTAGRAM_CAPTION_LIMIT) {
     throw new ContentValidationError(where, `caption exceeds ${INSTAGRAM_CAPTION_LIMIT} characters`);
   }

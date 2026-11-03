@@ -19,7 +19,7 @@ import { parseBrand, parseWeekPlan, readJson } from './content.ts';
 import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { planWeek } from './planner.ts';
-import { DEFAULT_IMAGE_MODEL, renderPlan } from './render.ts';
+import { renderPlan } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
 
 const BRANDS_ROOT = resolve('brands');
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
       time: { type: 'string', default: '10:00' },
       start: { type: 'string' },
       'utc-offset': { type: 'string', default: '+05:30' },
-      'image-model': { type: 'string', default: DEFAULT_IMAGE_MODEL },
+      'image-model': { type: 'string' },
       env: { type: 'string' },
       'scheduler-url': { type: 'string', default: DEFAULT_SCHEDULER_URL },
       'refresh-brand': { type: 'boolean', default: false },

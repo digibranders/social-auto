@@ -12,13 +12,12 @@ import { parseArgs, promisify } from 'node:util';
 import { composeCaption, escapeHtml, parseBrand, parseWeekPlan, readJson, type PlannedPost } from './content.ts';
 import { CANVAS_SIZE, renderPostHtml } from './layout.ts';
 import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
-import { generateImage, seedFromId } from './pollinations.ts';
+import { generateImage, resolveImageModel, seedFromId } from './pollinations.ts';
 
 const run = promisify(execFile);
 const JPEG_QUALITY = 90;
 /** Some models (e.g. FLUX) need multiples of 32; the layout crops to the canvas. */
 const SCENE_SIZE = Math.ceil(CANVAS_SIZE / 32) * 32;
-export const DEFAULT_IMAGE_MODEL = 'zimage';
 
 async function exists(path: string): Promise<boolean> {
   try {
@@ -101,7 +100,7 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
           width: SCENE_SIZE,
           height: SCENE_SIZE,
           seed: seedFromId(post.id),
-          model: options.imageModel ?? DEFAULT_IMAGE_MODEL,
+          model: resolveImageModel(options.imageModel, process.env),
         });
       }
       visualUrl = pathToFileURL(scenePath).href;
