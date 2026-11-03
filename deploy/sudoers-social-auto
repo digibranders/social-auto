@@ -1,0 +1,2 @@
+# /etc/sudoers.d/social-auto  (mode 440). Lets the deploy script restart exactly these two services, nothing else.
+social ALL=(root) NOPASSWD: /bin/systemctl restart social-publisher.service social-dashboard.service

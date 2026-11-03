@@ -1,0 +1,11 @@
+[Unit]
+Description=Post the day's scheduled post at 10:01 India time
+
+[Timer]
+# Vercel ran this once a day somewhere in the 10:00 hour; here it is exact. Persistent runs a missed one after downtime.
+OnCalendar=*-*-* 10:01:00 Asia/Kolkata
+Persistent=true
+Unit=social-cron.service
+
+[Install]
+WantedBy=timers.target

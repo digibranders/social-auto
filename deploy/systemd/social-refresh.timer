@@ -1,0 +1,10 @@
+[Unit]
+Description=Renew Instagram tokens on Mondays at 10:30 India time
+
+[Timer]
+OnCalendar=Mon *-*-* 10:30:00 Asia/Kolkata
+Persistent=true
+Unit=social-refresh.service
+
+[Install]
+WantedBy=timers.target
