@@ -101,6 +101,8 @@ export interface SiteSnapshot {
   pageDecisions: PageDecision[];
   /** The homepage's internal links with their text and where they sit; the call to action is chosen from them. */
   links?: LinkInfo[];
+  /** The homepage's `<html lang>` as written, e.g. "en-GB"; null when it declares none. */
+  htmlLang?: string | null;
 }
 
 function decodeEntities(text: string): string {
@@ -376,5 +378,6 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     fonts: collectFonts([homeBody, ...stylesheets]),
     pageDecisions: decisions,
     links: extractLinkInfo(homeBody, base).links,
+    htmlLang: extractLinkInfo(homeBody, base).htmlLang,
   };
 }

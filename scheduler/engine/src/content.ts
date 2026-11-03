@@ -230,7 +230,9 @@ function parseIdentity(raw: unknown, source: string): BrandIdentity {
   const src = raw['source'];
   if (src !== null && !(isRecord(src) && typeof src['url'] === 'string' && typeof src['verbatimQuote'] === 'string')) throw new ContentValidationError(where, '"identity.source" must be null or give a url and quote');
   const sourceRecord = src === null ? null : { url: (src as Record<string, string>)['url'] as string, verbatimQuote: (src as Record<string, string>)['verbatimQuote'] as string, fetchedAt: ((src as Record<string, unknown>)['fetchedAt'] as string | null | undefined) ?? null, contentHash: ((src as Record<string, unknown>)['contentHash'] as string | null | undefined) ?? null };
-  return { line, kind: kind as BrandIdentity['kind'], source: sourceRecord, verification: { status: verification['status'] as BrandIdentity['verification']['status'], reasons: verification['reasons'] as string[] } };
+  const type = raw['type'];
+  if (type !== undefined && type !== null && type !== 'descriptive' && type !== 'uncertain') throw new ContentValidationError(where, '"identity.type" must be descriptive, uncertain or null');
+  return { line, kind: kind as BrandIdentity['kind'], type: (type as BrandIdentity['type'] | undefined) ?? null, source: sourceRecord, verification: { status: verification['status'] as BrandIdentity['verification']['status'], reasons: verification['reasons'] as string[] } };
 }
 
 function parseCta(raw: unknown, source: string): CallToAction {

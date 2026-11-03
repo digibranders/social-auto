@@ -85,7 +85,7 @@ function brandStrip(brand: Brand, format: FormatName): { html: string; css: stri
   };
   const css = `
   .identity { position: absolute; ${identityBox[format]} max-width: ${onRight ? 380 : 640}px; font-size: 26px; line-height: 1.3; font-weight: 600; color: #F1F4F7; ${format === 'type' ? '' : backing} }
-  .cta { position: absolute; ${ctaBox[format]} font-size: 24px; font-weight: 800; color: #fff; border: 2px solid rgba(255, 255, 255, 0.55); border-radius: 999px; padding: 10px 22px; background: rgba(8, 14, 22, 0.6); white-space: nowrap; }
+  .cta { position: absolute; ${ctaBox[format]} font-size: 26px; font-weight: 800; color: #fff; padding: 8px 16px; border-radius: 8px; background: rgba(8, 14, 22, 0.6); white-space: nowrap; }
   .cta span { font-weight: 600; opacity: 0.85; }`;
   const html = `${identity ? `<div class="identity">${escapeHtml(identity)}</div>` : ''}${cta ? `<div class="cta">${escapeHtml(cta.label)} <span>${escapeHtml(host || cta.text)}</span></div>` : ''}`;
   return { html, css: identity || cta ? css : '' };

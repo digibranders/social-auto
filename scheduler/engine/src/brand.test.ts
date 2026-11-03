@@ -300,7 +300,7 @@ test('an identity the site does not support falls back to the brand name alone',
 });
 
 test('the page title and description count as the last rung of the ladder', async () => {
-  const { brand } = await analyzeIdentity(identityAnswer({ identityCandidates: [{ line: 'Family dental care in town', sourceUrl: 'metadata:https://acme.com', quote: 'Family dental care in town' }] }), {
+  const { brand } = await analyzeIdentity(identityAnswer({ identityCandidates: [{ line: 'Family dental care in town', sourceUrl: 'metadata:description:https://acme.com/', quote: 'Family dental care in town' }] }), {
     pages: [{ url: 'https://acme.com/', title: 'Acme Dental', description: 'Family dental care in town', text: 'Welcome. '.repeat(40), fetchedAt: '2026-11-01T00:00:00Z' }],
   });
   assert.equal(brand.identity?.kind, 'metadata');
@@ -336,13 +336,13 @@ test('the brand reader is asked for identity candidates and no longer writes the
     await rm(dir, { recursive: true, force: true });
   }
   assert.match(asked[0] ?? '', /\\"identityCandidates\\"/);
-  assert.match(asked[0] ?? '', /metadata:https:\/\/acme\.com/);
+  assert.match(asked[0] ?? '', /metadata:title:<page address>/);
   assert.ok(!/short call to action/.test(asked[0] ?? ''));
 });
 
 test('profiles saved before identity and call-to-action records still load, and malformed records are refused', () => {
   assert.equal(parseBrand(withFiles, 'brand.json').identity, undefined);
-  const identity = { line: 'Acme', kind: 'name-only', source: null, verification: { status: 'unverified', reasons: ['x'] } };
+  const identity = { line: 'Acme', kind: 'name-only', type: null, source: null, verification: { status: 'unverified', reasons: ['x'] } };
   assert.deepEqual(parseBrand({ ...withFiles, identity }, 'brand.json').identity, identity);
   assert.throws(() => parseBrand({ ...withFiles, identity: { ...identity, kind: 'invented' } }, 'brand.json'), /identity/);
   const cta = { kind: 'visit-site', label: 'Visit the website', evidence: null, text: 'Visit acme.com (link in bio)' };

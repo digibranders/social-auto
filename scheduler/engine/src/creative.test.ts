@@ -188,3 +188,8 @@ test('identity and call to action are escaped, and the fallback reads "Visit" wi
   assert.match(html, /Tools for &lt;b&gt;R&amp;D&lt;\/b&gt;/);
   assert.match(html, /class="cta">Visit the website <span>acme\.com<\/span></);
 });
+
+test('the call-to-action label is plain text, not a pill that looks like a button an image cannot offer', () => {
+  const html = shown(branded, 'type');
+  assert.doesNotMatch(html, /\.cta \{[^}]*(border:|border-radius: 999px)/);
+});

@@ -5,7 +5,7 @@ import { extname, join } from 'node:path';
 import type { AiConfig } from './ai.ts';
 import { createHash } from 'node:crypto';
 import { chooseCallToAction } from './cta.ts';
-import { chooseIdentity, metadataSource, type IdentityCandidate } from './identity.ts';
+import { chooseIdentity, metadataSources, type IdentityCandidate } from './identity.ts';
 import { escapeHtml, parseBrand, type Brand, type BrandColors, type LogoSource } from './content.ts';
 import { crawlSite, type SiteSnapshot } from './crawl.ts';
 import { chatJson } from './llm.ts';
@@ -130,7 +130,7 @@ Return JSON with exactly these keys:
   "audience": "who the customers are",
   "tone": "how the brand speaks, 1-2 sentences",
   "proofPoints": [{"claim": "one short factual selling point", "sourceUrl": "the exact page address above that it comes from", "quote": "the exact words, copied unchanged, from that page that support it"}],  // 5-8 of them; only points a quote on the site supports, fewer is fine, never invent one
-  "identityCandidates": [{"line": "what this business is, in one plain sentence of at most 90 characters, using only the parts the site states (what it is, who it is for, what it does)", "sourceUrl": "the exact page address above it comes from, or metadata:${site.origin} for a page's Title or Description", "quote": "the exact words, copied unchanged, that support it"}],  // up to 3 candidates; fewer is fine; never invent a category, audience or capability the site does not state
+  "identityCandidates": [{"line": "what this business is, in one plain sentence of at most 90 characters, using only the parts the site states (what it is, who it is for, what it does)", "sourceUrl": "the exact page address above it comes from, or metadata:title:<page address> / metadata:description:<page address> for a page's Title or Description", "quote": "the exact words, copied unchanged, that support it"}],  // up to 3 candidates; fewer is fine; never invent a category, audience or capability the site does not state
   "rules": ["3-5 content rules, e.g. no invented statistics, prices exactly as on the site, plus industry-specific cautions (medical, legal, financial)"],
   "colors": {"background": "#RRGGBB light page colour", "ink": "#RRGGBB dark text colour", "accent": "#RRGGBB main brand accent", "tile": "#RRGGBB a dark brand shade"},
   "font": "a Google Font family name for headlines, preferably one of the candidates",
@@ -178,9 +178,9 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
   const logoPath = logo?.path ?? 'assets/logo.svg';
 
   const pageSources = snapshot.pages.map((p) => ({ url: p.url, text: p.text, ...(p.fetchedAt ? { fetchedAt: p.fetchedAt } : {}) }));
-  const metadata = [metadataSource(snapshot.origin, { title: snapshot.pages.map((p) => p.title).filter(Boolean).join('. '), description: snapshot.pages.map((p) => p.description).filter(Boolean).join('. ') })];
+  const metadata = metadataSources(snapshot.pages.map((p) => ({ url: p.url, title: p.title, description: p.description, ...(p.fetchedAt ? { fetchedAt: p.fetchedAt } : {}) })));
   const host = snapshot.origin.replace(/^https?:\/\/(www\.)?/, '');
-  const cta = chooseCallToAction(snapshot.links ?? [], snapshot.origin, host);
+  const cta = chooseCallToAction(snapshot.links ?? [], snapshot.origin, host, undefined, { language: snapshot.htmlLang ?? null });
   const { brand, claims } = await chatJson({
     ai,
     ...(deps.chatFetch ? { fetchFn: deps.chatFetch } : {}),
