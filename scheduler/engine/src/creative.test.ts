@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { parseWeekPlan, type Brand, type PlannedPost } from './content.ts';
 import { creativePrompt, formatFor, renderCreativePostHtml } from './creative.ts';
 import { FORMATS } from './content.ts';
-import { buildPost } from './planner.ts';
+import { buildPost, userPrompt, validateDraft } from './planner.ts';
 
 const brand = {
   name: 'Acme', colors: { background: '#FCFBF9', ink: '#102234', accent: '#E9AF88', tile: '#0C1E2E' }, font: 'Inter', features: [],
@@ -38,7 +38,7 @@ test('a picture prompt asks for the idea as an object, in the brand\'s colours, 
 });
 
 test('a type-only post needs no picture, the others get a prompt', () => {
-  const draft = { painPoint: 'p', headline: 'h', subline: 's', visual: 'A signpost.', caption: 'c', hashtags: ['#a'] };
+  const draft = { painPoint: 'p', headline: 'h', subline: 's', visual: 'A signpost.', visualLink: 'A signpost stands for the next step.', caption: 'c', hashtags: ['#a'] };
   const typed = buildPost({ draft, id: 'w01-d1', date: '2026-11-04T10:00:00+05:30', weekNumber: 1, index: 0, brand });
   const others = [1, 2, 3].map((index) => buildPost({ draft, id: `w01-d${index + 1}`, date: '2026-11-04T10:00:00+05:30', weekNumber: 1, index, brand }));
   const formats = [typed, ...others].map((p) => p.format);
@@ -101,4 +101,22 @@ test('on a type-only poster a pale logo sits straight on the dark background wit
     assert.doesNotMatch(logoRule('type', tone), /background: none|#14161C/);
     assert.match(logoRule('type', tone), /background: #[0-9A-Fa-f]{6}/);
   }
+});
+
+const goodDraft = { painPoint: 'p', headline: 'Big files, |less friction|', subline: 's', visual: 'A parcel slipping through a narrow door.', visualLink: 'A heavy parcel stands for big files.', caption: 'c', hashtags: ['#a'] };
+
+test('the model is asked for a picture a viewer can link to the headline, and to say how', () => {
+  const prompt = userPrompt(brand, 4, []);
+  assert.match(prompt, /"visualLink"/);
+  assert.match(prompt, /belongs to the (topic|subject)/i);
+  assert.match(prompt, /two seconds|2 seconds/i);
+  assert.match(prompt, /No people/i);
+});
+
+test('a draft needs a picture idea and a stated link to its headline, and a too-long headline is turned back', () => {
+  assert.doesNotThrow(() => validateDraft(goodDraft, 1));
+  assert.throws(() => validateDraft({ ...goodDraft, visual: '  ' }, 2), /post 2 needs a "visual"/);
+  assert.throws(() => validateDraft({ ...goodDraft, visualLink: '' }, 3), /post 3 needs a "visualLink"/);
+  assert.throws(() => validateDraft({ ...goodDraft, visualLink: undefined as unknown as string }, 1), /visualLink/);
+  assert.throws(() => validateDraft({ ...goodDraft, headline: 'x'.repeat(61) }, 1), /headline is too long/);
 });
