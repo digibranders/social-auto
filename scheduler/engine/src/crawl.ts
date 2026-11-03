@@ -119,35 +119,56 @@ function internalLinks(html: string, base: URL): string[] {
   return [...links].sort((a, b) => Number(PRIORITY_PATH.test(b)) - Number(PRIORITY_PATH.test(a)));
 }
 
+/** Words in an address or alt text that mean a picture shows somebody else's logo: a client, partner, customer or press logo. */
+const OTHER_COMPANY = /(^|[\/_.\- ])(clients?|customers?|partners?|testimonials?|portfolio|case-?stud(y|ies)|trusted|press|featured|brands?-?wall|sponsors?)([\/_.\- ]|$)/i;
+/** The score a picture needs to count as the business's own logo. */
+const LOGO_THRESHOLD = 6;
+
+function safeDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
+}
+
 function logoScore(src: string, alt: string, siteName: string): number {
-  const haystack = `${src} ${alt}`.toLowerCase();
+  const haystack = `${safeDecode(src)} ${alt}`.toLowerCase();
   let score = 0;
   if (haystack.includes('logo')) score += 4;
-  if (siteName && haystack.includes(siteName)) score += 2;
+  if (siteName.length >= 3 && haystack.includes(siteName)) score += 6;
   if (/\.svg(\?|$)/i.test(src)) score += 2;
   if (/horizontal|wordmark|full/i.test(src)) score += 1;
   if (/white|inverse|negative|footer/i.test(src)) score -= 3;
   if (/icon|favicon|apple-touch/i.test(src)) score -= 1;
+  if (OTHER_COMPANY.test(haystack)) score -= 10;
   return score;
 }
 
-function findLogoCandidates(html: string, base: URL): string[] {
+/**
+ * Pictures that could be the business's own logo, best first. Only a picture whose name or alt text carries the
+ * business's name, or one plainly called "logo" that is not in a clients/partners section, counts. Other companies'
+ * logos and the small browser icons never do: with no candidate the brand's name is drawn instead.
+ */
+export function findLogoCandidates(html: string, base: URL): string[] {
   const siteName = base.hostname.replace(/^www\./, '').split('.')[0] ?? '';
-  const scored: Array<{ url: string; score: number }> = [];
+  const scored = new Map<string, number>();
   for (const match of html.matchAll(/<img\b[^>]*>/gi)) {
     const tag = match[0];
     const src = tag.match(/\ssrc=["']([^"']+)["']/i)?.[1];
     if (!src || src.startsWith('data:')) continue;
     const alt = tag.match(/\salt=["']([^"']*)["']/i)?.[1] ?? '';
-    const score = logoScore(src, alt, siteName);
-    if (score > 0) scored.push({ url: new URL(decodeEntities(src), base).href, score });
+    const score = logoScore(src, alt, siteName.toLowerCase());
+    if (score < LOGO_THRESHOLD) continue;
+    let url: string;
+    try {
+      url = new URL(decodeEntities(src), base).href;
+    } catch {
+      continue;
+    }
+    scored.set(url, Math.max(score, scored.get(url) ?? -Infinity));
   }
-  for (const match of html.matchAll(/<link[^>]+rel=["'](?:icon|apple-touch-icon)["'][^>]*href=["']([^"']+)["']/gi)) {
-    if (match[1]) scored.push({ url: new URL(decodeEntities(match[1]), base).href, score: 0 });
-  }
-  const unique = new Map<string, number>();
-  for (const { url, score } of scored) unique.set(url, Math.max(score, unique.get(url) ?? -Infinity));
-  return [...unique.entries()].sort((a, b) => b[1] - a[1]).map(([url]) => url);
+  return [...scored.entries()].sort((a, b) => b[1] - a[1]).map(([url]) => url);
 }
 
 function expandHex(hex: string): string {

@@ -77,3 +77,24 @@ test('a home page that cannot be loaded says which address failed', async () => 
   const { deps } = site({});
   await assert.rejects(crawlSite('acme.com', deps), /acme\.com/);
 });
+
+const withLogos = (imgs: string): string =>
+  html(`<header>${imgs}</header><h1>Acme Dental</h1><p>${prose(7)}</p>`, '<link rel="icon" href="/favicon.ico"><link rel="apple-touch-icon" href="/apple-touch-icon.png">');
+
+test('the logo is the business\'s own: a client\'s or partner\'s logo is never taken for it', async () => {
+  const clientLogo = '<img src="/_next/image?url=%2Fclients%2Fphoton.webp&w=384&q=75" alt="Photon Matters logo">';
+  const partnerLogo = '<img src="/partners/globex-logo.svg" alt="Globex logo">';
+  const ownLogo = '<img src="/assets/acme-logo.svg" alt="Acme Dental">';
+
+  const mixed = await crawlSite('acme.com', site({ 'https://acme.com/': withLogos(`${clientLogo}${partnerLogo}${ownLogo}`) }).deps);
+  assert.deepEqual(mixed.logoCandidates, ['https://acme.com/assets/acme-logo.svg']);
+
+  const plainlyNamed = await crawlSite('acme.com', site({ 'https://acme.com/': withLogos('<img src="/img/logo.svg" alt="Home">') }).deps);
+  assert.deepEqual(plainlyNamed.logoCandidates, ['https://acme.com/img/logo.svg']);
+});
+
+test('with only other companies\' logos or icons, there is no logo candidate, so the brand\'s name is used', async () => {
+  const onlyClients = '<img src="/clients/one-logo.png" alt="One logo"><img src="/_next/image?url=%2Fclients%2Ftwo.webp&w=384" alt="Two logo"><img src="/customers/three.svg" alt="Three">';
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': withLogos(onlyClients) }).deps);
+  assert.deepEqual(snapshot.logoCandidates, []);
+});
