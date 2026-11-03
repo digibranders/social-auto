@@ -89,6 +89,8 @@ export async function planWeek(options: {
   weekNumber: number;
   schedule: PlanSchedule;
   usedPainPoints: string[];
+  /** Ask the picture for room where the layout puts its text (off by default; see IMAGE_COMPOSITION_HINT). */
+  compositionHints?: boolean;
   log?: (message: string) => void;
 }): Promise<WeekPlan> {
   const { brand, schedule } = options;
@@ -125,7 +127,7 @@ export async function planWeek(options: {
               mode: 'ai',
               headline: d.headline,
               subline: d.subline,
-              imagePrompt: d.visual.trim().replace(/\.$/, '') + visualStyleFor(layoutFor(options.weekNumber, offset + i)),
+              imagePrompt: d.visual.trim().replace(/\.$/, '') + visualStyleFor(layoutFor(options.weekNumber, offset + i), options.compositionHints ?? false),
               layout: layoutFor(options.weekNumber, offset + i),
               caption: d.caption,
               hashtags: d.hashtags,

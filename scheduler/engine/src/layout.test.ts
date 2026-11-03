@@ -43,12 +43,17 @@ test('layoutFor never repeats a layout on neighbouring posts, within a week or a
   }
 });
 
-test('each layout asks the picture for room where that layout puts its text', () => {
-  assert.match(compositionFor('left'), /right 40%.*left 60%.*empty/);
-  assert.match(compositionFor('right'), /left 40%.*right 60%.*empty/);
-  assert.match(compositionFor('bottom'), /upper 45%.*lower 55%.*empty/);
-  assert.match(compositionFor('dark'), /upper two thirds.*lower third/);
-  for (const layout of LAYOUTS) assert.match(visualStyleFor(layout), /no text, no letters, no words, no logos/);
+test('the picture prompt does not dictate where the subject goes unless a hint is asked for', () => {
+  for (const layout of LAYOUTS) {
+    const plain = visualStyleFor(layout);
+    assert.doesNotMatch(plain, /composed with|\b(left|right|upper|lower)\b/i, layout);
+    assert.match(plain, /no text, no letters, no words, no logos/);
+    assert.ok(visualStyleFor(layout, true).includes(compositionFor(layout)), layout);
+  }
+  assert.match(compositionFor('left'), /subject on the right.*space on the left/);
+  assert.match(compositionFor('right'), /subject on the left.*space on the right/);
+  assert.match(compositionFor('bottom'), /subject in the upper.*space in the lower/);
+  assert.match(compositionFor('dark'), /upper.*darker space in the lower/);
 });
 
 test('every layout renders the headline, the sub line and the feature bar, and marks itself', () => {

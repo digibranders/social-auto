@@ -142,6 +142,7 @@ async function main(): Promise<void> {
   console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
   const plan = await planWeek({
     apiKey: pollinationsKey,
+    compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
     brand,
     brandSlug: slug,
     weekNumber,

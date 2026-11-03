@@ -30,24 +30,28 @@ export function layoutFor(weekNumber: number, index: number): LayoutName {
   return LAYOUTS[(index + weekNumber * 3) % LAYOUTS.length] as LayoutName;
 }
 
-/** What the AI picture must leave empty so the text of this layout stays readable. */
+/** A mild hint about where the text of this layout goes, for picture models that can follow it. */
 export function compositionFor(layout: LayoutName): string {
   switch (layout) {
     case 'left':
-      return 'the subject is confined to the right 40% of the frame, the entire left 60% of the image is clean empty soft warm cream background';
+      return 'composed with the subject on the right side and open, uncluttered space on the left side';
     case 'right':
-      return 'the subject is confined to the left 40% of the frame, the entire right 60% of the image is clean empty soft warm cream background';
+      return 'composed with the subject on the left side and open, uncluttered space on the right side';
     case 'bottom':
-      return 'the subject is centered in the upper 45% of the frame, the entire lower 55% of the image is clean empty soft warm cream background';
+      return 'composed with the subject in the upper part and open, uncluttered space in the lower part';
     case 'dark':
-      return 'the subject fills the upper two thirds of the frame, the lower third is soft out-of-focus deep shadow background';
+      return 'composed with the subject in the upper part and softer, darker space in the lower part';
   }
 }
 
-/** The part appended to every scene prompt: composition for the layout, lighting, and the no-text rule. */
-export function visualStyleFor(layout: LayoutName): string {
+/**
+ * Appended to every scene prompt: lighting, style and the no-text rule. Where the subject sits is left to the
+ * picture model unless `withComposition` is set, so the prompt is not tuned to one model's habits.
+ */
+export function visualStyleFor(layout: LayoutName, withComposition = false): string {
   const light = layout === 'dark' ? 'moody warm natural light' : 'bright warm natural light';
-  return `, ${compositionFor(layout)}, ${light}, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere`;
+  const hint = withComposition ? `, ${compositionFor(layout)}` : '';
+  return `${hint}, ${light}, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere`;
 }
 
 /** Lightens a #RRGGBB colour by the given fraction towards white (used for accents on dark backgrounds). */
