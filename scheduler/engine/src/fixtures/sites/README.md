@@ -3,7 +3,7 @@
 Each folder holds `home.html` (the homepage as a site served it) and `expect.json`:
 
 ```json
-{ "base": "https://example.com", "mustSelect": ["/pricing"], "mustReject": ["/privacy"], "maxSelected": 7 }
+{ "base": "https://example.com", "mustSelect": ["/pricing"], "atLeast": [{ "from": ["/services/a", "/services/b", "/services/c"], "count": 2 }], "mustReject": ["/privacy"], "maxSelected": 7 }
 ```
 
 `pages.test.ts` ranks every folder here. Paths are matched against the page address without the host.
@@ -11,8 +11,10 @@ Each folder holds `home.html` (the homepage as a site served it) and `expect.jso
 The folders below are **synthetic**: hand-written to copy the structure of the kinds of sites we have seen (a SaaS site with a customer carousel,
 a shop with a region switcher, a regional business, a service business, a clinic, a very large menu). They contain no copied content.
 
-To add a real site, save its homepage HTML here and write its `expect.json` by hand from what the business really offers. Only do that for a
-site its owner (or Siddique) has approved; never fetch sites to fill this folder on a whim.
+**Real sites** (`*-real`) were saved with `node src/fixture-capture.ts --site <address> --name <folder>`. That script only accepts a host listed in
+`src/fixtures/approved-sites.json`, a file only the owner edits, and a test checks it refuses look-alikes and unlisted hosts. Each real folder has
+`home.html` (scripts, styles and inline graphics removed), `source.json` (address, time, whether it was read as the browser builds it) and a hand-written
+`expect.json`. Write the expectation from what the business really offers, never from the ranker's own output, or the test only agrees with itself.
 
 Fixtures cover different industries and content shapes on purpose: a business with prices and products, one with none (`nonprofit`), a
 restaurant whose vocabulary ("menu") is not in any built-in list, a clinic, a region switcher, a very large menu, and a one-page site with

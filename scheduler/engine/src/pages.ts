@@ -19,8 +19,10 @@ export interface PageDecision {
 export interface RankingConfig {
   /** Path words that name a generic kind of page, by how strongly they mark a page worth reading. Merged with any override. */
   weights: Readonly<Record<string, number>>;
-  /** Path words that mark legal, account or housekeeping pages. Replaced by an override. */
+  /** Path words that always mark a legal, account or housekeeping page, wherever they sit in the address. Replaced by an override. */
   utility: readonly string[];
+  /** Words that can also be part of what an organisation offers ("LinkedIn account management"): a housekeeping page only when one is the whole first part of the address ("/my-account"). */
+  utilityWhenShort: readonly string[];
   /** A page must score at least this to be read. */
   minScore: number;
   /** After this many pages from one section (the first part of the address), further ones lose points. */
@@ -41,13 +43,14 @@ export const defaultRankingConfig: RankingConfig = {
     pricing: 5, price: 5, prices: 5, plans: 5, product: 5, products: 5, service: 5, services: 5, solution: 5, solutions: 5, features: 5, platform: 5,
     about: 4, company: 4, story: 4, mission: 4, team: 3,
     how: 3, works: 3, process: 3, approach: 3, industries: 3, industry: 3, case: 3, studies: 3,
-    faq: 2, contact: 2, why: 2, work: 2, portfolio: 2,
+    faq: 4, contact: 1, why: 2, work: 2, portfolio: 2,
     customers: 1, testimonials: 1, reviews: 1,
   },
   utility: [
-    'privacy', 'terms', 'tos', 'legal', 'cookie', 'cookies', 'login', 'logout', 'signin', 'signup', 'register', 'password', 'cart', 'checkout',
-    'account', 'careers', 'jobs', 'sitemap', 'unsubscribe', 'portal', 'dashboard', 'admin', 'imprint', 'impressum', 'disclaimer', 'policy', 'policies',
+    'privacy', 'terms', 'tos', 'legal', 'cookie', 'cookies', 'login', 'logout', 'signin', 'signup', 'cart', 'checkout',
+    'careers', 'sitemap', 'unsubscribe', 'imprint', 'impressum', 'disclaimer', 'policy', 'policies',
   ],
+  utilityWhenShort: ['account', 'portal', 'dashboard', 'admin', 'register', 'password', 'jobs'],
   minScore: 2,
   freePerSection: 2,
   sectionPenalty: 2,
@@ -176,16 +179,27 @@ interface Candidate {
   keptRegional?: string;
 }
 
+/** A page type's weight whether the word is singular or plural ("faqs" is "faq", "case-study" is "case-studies"). */
+function weightOf(word: string, config: RankingConfig): number {
+  const direct = config.weights[word];
+  if (direct !== undefined) return direct;
+  const singular = word.endsWith('s') ? config.weights[word.slice(0, -1)] : undefined;
+  const plural = config.weights[`${word}s`];
+  const study = word.endsWith('y') ? config.weights[`${word.slice(0, -1)}ies`] : undefined;
+  return singular ?? plural ?? study ?? 0;
+}
+
 /** Scores a path for what it looks like, from its own words, its place on the page, its link text and the site's own vocabulary. */
-function score(link: Link, rest: string, config: RankingConfig, utility: ReadonlySet<string>, vocabulary: ReadonlySet<string>): { score: number; reasons: string[] } {
+function score(link: Link, rest: string, config: RankingConfig, utility: ReadonlySet<string>, utilityWhenShort: ReadonlySet<string>, vocabulary: ReadonlySet<string>): { score: number; reasons: string[] } {
   const reasons: string[] = [];
   let total = 0;
   const tokens = tokensOf(rest);
-  const flagged = tokens.find((t) => utility.has(t));
+  const sectionTokens = tokensOf(rest.split('/').filter(Boolean)[0] ?? '');
+  const flagged = tokens.find((t) => utility.has(t)) ?? (sectionTokens.length <= 2 ? sectionTokens.find((t) => utilityWhenShort.has(t)) : undefined);
   if (flagged || ARCHIVE.test(rest)) {
     return { score: -20, reasons: [`-20 legal or utility page (${flagged ?? 'archive'})`] };
   }
-  const best = tokens.map((t) => [t, config.weights[t] ?? 0] as const).sort((a, b) => b[1] - a[1])[0];
+  const best = tokens.map((t) => [t, weightOf(t, config)] as const).sort((a, b) => b[1] - a[1])[0];
   if (best && best[1] > 0) {
     total += best[1];
     reasons.push(`+${best[1]} "${best[0]}" page`);
@@ -198,7 +212,7 @@ function score(link: Link, rest: string, config: RankingConfig, utility: Readonl
     reasons.push(`-${config.footerPenalty} only in the footer`);
   }
   const linkTokens = tokensOf(link.text);
-  if (linkTokens.some((t) => (config.weights[t] ?? 0) >= 3)) {
+  if (linkTokens.some((t) => weightOf(t, config) >= 3)) {
     total += config.linkTextBonus;
     reasons.push(`+${config.linkTextBonus} link text "${link.text}"`);
   }
@@ -230,6 +244,7 @@ export interface RankOptions {
 export function rankPages(html: string, base: URL, limit: number, options: RankOptions = {}): PageDecision[] {
   const config: RankingConfig = { ...defaultRankingConfig, ...options.config, weights: { ...defaultRankingConfig.weights, ...options.config?.weights } };
   const utility = new Set(config.utility);
+  const utilityWhenShort = new Set(config.utilityWhenShort);
   const vocabulary = siteVocabulary(html);
   const links = collectLinks(html, base);
   const allowed = options.allowed ?? (() => true);
@@ -245,7 +260,7 @@ export function rankPages(html: string, base: URL, limit: number, options: RankO
     const first = link.path.split('/')[1]?.toLowerCase() ?? '';
     const root = switcher.has(first) ? first : null;
     const rest = root ? normalizedPath(link.path.slice(root.length + 1)) : link.path;
-    const { score: points, reasons } = score(link, rest || '/', config, utility, vocabulary);
+    const { score: points, reasons } = score(link, rest || '/', config, utility, utilityWhenShort, vocabulary);
     return { link, rest, root, score: points, reasons, rejected: false };
   });
 

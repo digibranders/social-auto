@@ -12,6 +12,8 @@ interface Expectation {
   mustSelect: string[];
   mustReject: string[];
   maxSelected: number;
+  /** At least `count` of these pages must be chosen: for a family of similar pages where any few will do. */
+  atLeast?: Array<{ from: string[]; count: number }>;
 }
 
 const pathOf = (decision: PageDecision): string => new URL(decision.url).pathname;
@@ -20,7 +22,7 @@ const selectedPaths = (decisions: PageDecision[]): string[] => decisions.filter(
 const fixtures = readdirSync(SITES, { withFileTypes: true }).filter((entry) => entry.isDirectory());
 
 test('there are fixtures to rank, so the data-driven test below cannot pass by checking nothing', () => {
-  assert.ok(fixtures.length >= 9);
+  assert.ok(fixtures.length >= 11);
 });
 
 for (const folder of fixtures) {
@@ -31,6 +33,10 @@ for (const folder of fixtures) {
     const chosen = selectedPaths(decisions);
     for (const path of expectation.mustSelect) assert.ok(chosen.includes(path), `${folder.name}: ${path} should be selected, got ${chosen.join(', ')}`);
     for (const path of expectation.mustReject) assert.ok(!chosen.includes(path), `${folder.name}: ${path} should be rejected`);
+    for (const group of expectation.atLeast ?? []) {
+      const found = group.from.filter((path) => chosen.includes(path));
+      assert.ok(found.length >= group.count, `${folder.name}: wanted at least ${group.count} of ${group.from.join(', ')}; got ${found.length} (${chosen.join(', ')})`);
+    }
     assert.ok(chosen.length <= Math.min(LIMIT, expectation.maxSelected), `${folder.name}: ${chosen.length} selected`);
   });
 }
@@ -131,7 +137,7 @@ const GENERIC_PAGE_TYPES = new Set([
 test('the built-in vocabulary holds only generic page types: no industry, product or trade is built in', () => {
   for (const word of Object.keys(defaultRankingConfig.weights)) assert.ok(GENERIC_PAGE_TYPES.has(word), `"${word}" is not a generic page type`);
   for (const word of ['treatments', 'doctors', 'hipaa', 'insurance', 'appointment', 'menu', 'store', 'shop', 'enterprise', 'booking', 'donate', 'programs']) {
-    assert.ok(!(word in defaultRankingConfig.weights) && !defaultRankingConfig.utility.includes(word), word);
+    assert.ok(!(word in defaultRankingConfig.weights) && !defaultRankingConfig.utility.includes(word) && !defaultRankingConfig.utilityWhenShort.includes(word), word);
   }
 });
 
@@ -170,4 +176,42 @@ test('a business with no prices, no products and no offers is ranked on what it 
   const nonprofit = rankPages(readFileSync(join(SITES, 'nonprofit', 'home.html'), 'utf8'), new URL('https://clearwater.example'), LIMIT);
   assert.ok(selectedPaths(nonprofit).includes('/donate') && selectedPaths(nonprofit).includes('/programs'));
   assert.deepEqual(rankPages(readFileSync(join(SITES, 'one-page', 'home.html'), 'utf8'), new URL('https://studionine.example'), LIMIT), []);
+});
+
+test('singular and plural forms of a page type score the same, so "/faqs" is "/faq" and "/case-study" is "/case-studies"', () => {
+  const html = '<html lang="en"><body><main><a href="/faqs">x</a><a href="/faq">x</a><a href="/service">x</a><a href="/services">x</a><a href="/case-study">x</a><a href="/feature">x</a></main></body></html>';
+  const decisions = rankPages(html, new URL('https://acme.example'), LIMIT);
+  const score = (path: string): number => decisions.find((d) => pathOf(d) === path)?.score ?? -99;
+  assert.equal(score('/faqs'), score('/faq'));
+  assert.equal(score('/service'), score('/services'));
+  assert.ok(score('/feature') > 0 && score('/case-study') > 0);
+});
+
+test('with room for one more page, an FAQ page, which holds facts about the offer, beats a bare contact page', () => {
+  const html = '<html lang="en"><body><header><nav><a href="/about">About</a><a href="/services">Services</a><a href="/contact">Contact</a></nav></header><footer><a href="/faqs">FAQs</a></footer></body></html>';
+  const chosen = selectedPaths(rankPages(html, new URL('https://acme.example'), 3));
+  assert.deepEqual(chosen.sort(), ['/about', '/faqs', '/services']);
+});
+
+test('an ambiguous word is a utility page only when it is the page itself: "/my-account" yes, "/services/linkedin-account-management" no', () => {
+  const html = `<html lang="en"><body><nav>
+    <a href="/services/linkedin-account-management">LinkedIn account management</a><a href="/services/admin-support">Admin support</a><a href="/jobs-board-software">Jobs board software</a>
+    <a href="/account">Account</a><a href="/my-account/orders">Orders</a><a href="/patient-portal">Portal</a><a href="/client-dashboard">Dashboard</a><a href="/register">Register</a><a href="/jobs">Jobs</a>
+  </nav></body></html>`;
+  const decisions = rankPages(html, new URL('https://acme.example'), 20);
+  const decision = (path: string): PageDecision | undefined => decisions.find((d) => pathOf(d) === path);
+  for (const path of ['/services/linkedin-account-management', '/services/admin-support', '/jobs-board-software']) {
+    assert.ok(decision(path)?.selected, `${path} is a page about the offer`);
+    assert.ok(!decision(path)?.reasons.some((r) => /legal or utility/.test(r)), path);
+  }
+  for (const path of ['/account', '/my-account/orders', '/patient-portal', '/client-dashboard', '/register', '/jobs']) {
+    assert.ok(!decision(path)?.selected && decision(path)?.reasons.some((r) => /legal or utility/.test(r)), `${path} is housekeeping`);
+  }
+});
+
+test('words that are always housekeeping flag a page wherever they sit in the address', () => {
+  const html = `<html lang="en"><body><nav><a href="/company/privacy-policy">x</a><a href="/about/terms-of-service">x</a><a href="/help/cookies">x</a><a href="/store/checkout">x</a></nav></body></html>`;
+  const decisions = rankPages(html, new URL('https://acme.example'), 20);
+  assert.equal(decisions.filter((d) => d.selected).length, 0);
+  assert.ok(decisions.every((d) => d.reasons.some((r) => /legal or utility/.test(r))));
 });
