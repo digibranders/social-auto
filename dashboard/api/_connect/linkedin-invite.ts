@@ -1,6 +1,7 @@
 /**
- * POST /api/linkedin-invite?brand=<client>[&channel=instagram]
- * Makes a link a client can open to connect their own LinkedIn (or Instagram). Signed-in people only, from this site's pages.
+ * POST /api/linkedin-invite?brand=<client>[&channel=instagram|facebook]
+ * Makes a link a client (or you, in another browser) can open to connect LinkedIn, Instagram or Facebook. Signed-in people only,
+ * from this site's pages. (The address keeps its first name so links and callers made earlier keep working.)
  */
 import { json } from '../../lib/http.js';
 import { isBrand } from '../../lib/facebook-flow.js';
@@ -12,15 +13,18 @@ export function POST(request: Request): Response {
   if (!isSignedIn(request, secret, Date.now())) return json(401, { error: 'Not signed in' });
   if (!isSameOrigin(request)) return json(403, { error: 'Request not allowed' });
   const params = new URL(request.url).searchParams;
-  const instagram = params.get('channel') === 'instagram';
-  if (!secret || !process.env[instagram ? 'INSTAGRAM_APP_ID' : 'LINKEDIN_CLIENT_ID']) return json(503, { error: `${instagram ? 'Instagram' : 'LinkedIn'} is not configured` });
+  const channel = params.get('channel');
+  const platform = channel === 'instagram' ? 'instagram' : channel === 'facebook' ? 'facebook' : 'linkedin';
+  const configured = { instagram: 'INSTAGRAM_APP_ID', facebook: 'FACEBOOK_APP_ID', linkedin: 'LINKEDIN_CLIENT_ID' }[platform];
+  const name = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn' }[platform];
+  if (!secret || !process.env[configured]) return json(503, { error: `${name} is not configured` });
 
   const brand = params.get('brand');
   if (!isBrand(brand)) return json(400, { error: 'Invalid client' });
 
   const invite = createInvite(secret, brand, Date.now());
   return json(200, {
-    link: `${siteOrigin(request)}/api/${instagram ? 'instagram' : 'linkedin'}-start?invite=${encodeURIComponent(invite)}`,
+    link: `${siteOrigin(request)}/api/${platform}-start?invite=${encodeURIComponent(invite)}`,
     expiresInDays: INVITE_TTL_SECONDS / 86_400,
   });
 }

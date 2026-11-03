@@ -4,7 +4,7 @@ import { button, h } from './ui.ts';
 /** What the Add client window needs from the page. */
 export interface AddClientDeps {
   /** Resolves to an explanation when the client could not be added. */
-  submit(name: string): Promise<string | null>;
+  submit(name: string, website: string): Promise<string | null>;
   close(): void;
 }
 
@@ -22,6 +22,7 @@ export function previewLabel(name: string): string {
 
 export function addClientForm(deps: AddClientDeps): HTMLElement {
   const input = h('input', { id: 'client-name', type: 'text', class: 'text-input', 'aria-label': 'Client name', maxlength: '60', autocomplete: 'off', placeholder: 'e.g. Brand Basket' });
+  const site = h('input', { id: 'client-website', type: 'text', class: 'text-input', 'aria-label': 'Client website', maxlength: '200', autocomplete: 'off', inputmode: 'url', placeholder: 'e.g. brandbasket.in' });
   const shown = h('p', { class: 'muted' });
   input.addEventListener('input', () => {
     const label = previewLabel(input.value);
@@ -37,16 +38,18 @@ export function addClientForm(deps: AddClientDeps): HTMLElement {
     save.disabled = true;
     message.textContent = 'Saving…';
     message.classList.remove('is-error');
-    void deps.submit(input.value).then((problem) => {
+    void deps.submit(input.value, site.value.trim()).then((problem) => {
       if (!problem) return;
       message.textContent = problem;
       message.classList.add('is-error');
       save.disabled = false;
     });
   });
-  input.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') save.click();
-  });
+  for (const field of [input, site]) {
+    field.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') save.click();
+    });
+  }
   return h(
     'div',
     { class: 'dialog-inner' },
@@ -54,7 +57,10 @@ export function addClientForm(deps: AddClientDeps): HTMLElement {
     h('label', { class: 'label', for: 'client-name' }, 'Client name'),
     input,
     shown,
-    h('p', { class: 'muted' }, 'This makes the client’s folder so you can connect their channels and write posts by hand. Posts planned from their website start when the content job on the Mac is set up for them.'),
+    h('label', { class: 'label', for: 'client-website' }, 'Website (optional)'),
+    site,
+    h('p', { class: 'muted' }, 'Posts are planned from this site. You can add or change it later on the client’s page.'),
+    h('p', { class: 'muted' }, 'This makes the client’s folder so you can connect their channels and write posts by hand.'),
     h('div', { class: 'actions' }, save, button('Cancel', 'btn btn-quiet', deps.close)),
     message,
   );

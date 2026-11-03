@@ -20,6 +20,8 @@ export interface ClientSummary {
   added: boolean;
   /** The product that created this client (e.g. "brandbasket"); null for your own. */
   product: string | null;
+  /** The client's website (https address) that posts are planned from; null when none was given. */
+  website: string | null;
 }
 
 const LOW_QUEUE_DAYS = 7;
@@ -49,6 +51,9 @@ export function schedulePattern(posts: readonly StatusPost[], now: number): stri
   return `${describeDays(days)}${time ? ` · ${time}` : ''}`;
 }
 
+/** A website address as people read it: without the https://. */
+export const websiteHost = (website: string | null): string => (website ?? '').replace(/^https?:\/\//, '');
+
 /** One entry per client, built only from what the status feed already says. */
 export function summarizeClients(data: StatusResponse, now: number): ClientSummary[] {
   const brands = [...new Set([...data.runway.map((r) => r.brand), ...data.posts.map((p) => p.brand)])].sort();
@@ -71,6 +76,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       queueLow: !added && postsLeft <= LOW_QUEUE_DAYS,
       added,
       product: entry?.product ?? null,
+      website: entry?.website ?? null,
     };
   });
 }

@@ -1,12 +1,13 @@
 /**
  * Clients added in the dashboard. Called only by the dashboard's server (EDIT_SECRET).
  *
- * POST /api/clients?action=add       body: {"name": "Brand Basket"}   answers {"brand": "brand-basket"}
+ * POST /api/clients?action=add       body: {"name": "Brand Basket", "website": "brandbasket.in"}   answers {"brand": "brand-basket"}  (website is optional)
+ * POST /api/clients?action=set-website  body: {"brand": "brand-basket", "website": "brandbasket.in"}  (an empty website clears it)
  * POST /api/clients?action=remove    body: {"brand": "brand-basket"}  (only an added client with no channels or extra posts)
  */
 import { scheduleData } from '../lib/schedule-source.js';
 import { channelsFor } from '../lib/channels.js';
-import { addClient, isBrandSlug } from '../lib/clients.js';
+import { addClient, isBrandSlug, setWebsite } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
@@ -19,9 +20,17 @@ const plannedBrands = (): Set<string> => new Set(parseSchedule(scheduleData).map
 async function add(body: Record<string, unknown>): Promise<Response> {
   const { file, etag } = await loadClients();
   const planned = plannedBrands();
-  const result = addClient(file, body['name'], new Set([...planned, ...file.clients.map((c) => c.brand)]), Date.now());
+  const result = addClient(file, body['name'], new Set([...planned, ...file.clients.map((c) => c.brand)]), Date.now(), body['website']);
   await saveClients(result.file, etag);
   return json(200, { brand: result.brand });
+}
+
+async function website(body: Record<string, unknown>): Promise<Response> {
+  const brand = body['brand'];
+  if (!isBrandSlug(brand)) throw new EditError('unknown client');
+  const { file, etag } = await loadClients();
+  await saveClients(setWebsite(file, brand, body['website']), etag);
+  return json(200, { ok: true });
 }
 
 async function remove(body: Record<string, unknown>): Promise<Response> {
@@ -45,6 +54,7 @@ export async function POST(request: Request): Promise<Response> {
   const action = new URL(request.url).searchParams.get('action');
   try {
     if (action === 'add') return await add(body);
+    if (action === 'set-website') return await website(body);
     if (action === 'remove') return await remove(body);
     return json(400, { error: 'unknown action' });
   } catch (error) {

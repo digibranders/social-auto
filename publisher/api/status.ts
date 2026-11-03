@@ -141,7 +141,7 @@ export async function GET(request: Request): Promise<Response> {
         })),
       ],
       ...summary,
-      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}) }))],
+      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}) }))],
       posts: summary.posts.map((p) => withCrossposts(p, channels, posted, now)),
     });
   } catch (error) {
