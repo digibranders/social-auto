@@ -12,6 +12,8 @@ export interface AddedClient {
   externalId?: string;
   /** The name to show, when the slug alone would read badly. */
   name?: string;
+  /** The client's own website (plain https address) that posts are planned from. */
+  website?: string;
 }
 
 export interface ClientsFile {
@@ -30,7 +32,7 @@ export function parseClientsFile(raw: unknown): ClientsFile {
     clients: list.map((c: Record<string, unknown>, i): AddedClient => {
       if (!isBrandSlug(c['brand'])) throw new Error(`clients[${i}].brand is malformed`);
       if (typeof c['createdAt'] !== 'string') throw new Error(`clients[${i}].createdAt must be a string`);
-      for (const key of ['product', 'externalId', 'name'] as const) {
+      for (const key of ['product', 'externalId', 'name', 'website'] as const) {
         if (c[key] !== undefined && typeof c[key] !== 'string') throw new Error(`clients[${i}].${key} must be a string`);
       }
       return c as unknown as AddedClient;
@@ -53,12 +55,56 @@ export function slugFor(name: unknown): string {
   return slug;
 }
 
+const REFUSED_SUFFIXES = ['.local', '.localhost', '.internal', '.lan', '.home', '.corp', '.intranet', '.test', '.invalid', '.example'];
+const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * The plain address of a client's website: https, host only. The content job fetches it from the server, so it must be
+ * a public web address: no logins, ports, local or private hosts, and no addresses written as numbers.
+ */
+export function normalizeWebsite(input: unknown): string {
+  if (typeof input !== 'string' || input.trim() === '') throw new EditError('write the website\'s address, like example.com');
+  const text = input.trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    throw new EditError('that is not a website address');
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new EditError('the website address must start with http or https');
+  if (url.username || url.password) throw new EditError('the website address must not contain a login');
+  if (url.port) throw new EditError('write the website address without a port number');
+  const host = url.hostname.toLowerCase();
+  const labels = host.split('.');
+  const bad =
+    host.length > 253 ||
+    host.includes(':') ||
+    labels.length < 2 ||
+    !labels.every((label) => LABEL.test(label)) ||
+    !/^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/.test(labels[labels.length - 1] as string) ||
+    REFUSED_SUFFIXES.some((suffix) => host.endsWith(suffix));
+  if (bad) throw new EditError('that is not a public website address');
+  return `https://${host}`;
+}
+
 /** Adds a client, refusing a name that is already a client (planned or added). */
-export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySet<string>, now: number): { file: ClientsFile; brand: string } {
+export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySet<string>, now: number, website?: unknown): { file: ClientsFile; brand: string } {
   const brand = slugFor(name);
+  const site = website === undefined || website === null || (typeof website === 'string' && website.trim() === '') ? undefined : normalizeWebsite(website);
   if (existing.has(brand) || file.clients.some((c) => c.brand === brand)) throw new EditError('there is already a client with that name', 409);
   if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many added clients; remove one first');
-  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString() }] }, brand };
+  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}) }] }, brand };
+}
+
+/** Sets or clears (empty) the website of a client added in the dashboard. */
+export function setWebsite(file: ClientsFile, brand: string, website: unknown): ClientsFile {
+  const index = file.clients.findIndex((c) => c.brand === brand);
+  if (index === -1) throw new EditError('only a client added in the dashboard has a website here', 404);
+  const clear = website === null || (typeof website === 'string' && website.trim() === '');
+  const site = clear ? undefined : normalizeWebsite(website);
+  const { website: _old, ...rest } = file.clients[index] as AddedClient;
+  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(site ? { website: site } : {}) } : c)) };
 }
 
 /** Every client the system knows: the planned ones from the content job, then the ones added by hand. */

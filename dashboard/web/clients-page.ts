@@ -1,6 +1,6 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
-import type { ClientSummary } from './clients.ts';
+import { websiteHost, type ClientSummary } from './clients.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { postChannelId } from './new-post.ts';
 import { stateLabel } from './calendar.ts';
@@ -17,6 +17,8 @@ export interface ClientsContext {
   newPost(brand: string | null, channel: string | null): void;
   addClient(): void;
   removeClient(client: ClientSummary): void;
+  /** Saves (or, when empty, clears) the website; resolves to an explanation when it could not be saved. */
+  saveWebsite(client: ClientSummary, website: string): Promise<string | null>;
   disconnect(channel: ChannelHealth): void;
 }
 
@@ -57,10 +59,11 @@ export function expiryNote(expiresAt: string | undefined, now: number): string |
 }
 
 /**
- * Makes a link the client opens to connect their own LinkedIn or Instagram (they press Allow on their own account).
+ * Makes a link to connect LinkedIn, Instagram or Facebook: a client opens it and presses Allow on their own account, or you
+ * open it in the browser where the right account is signed in.
  * Asking is one click; copying is a second, so the browser allows it.
  */
-export function inviteLinkBox(brand: string, label: string, platform: 'linkedin' | 'instagram' = 'linkedin'): HTMLElement {
+export function inviteLinkBox(brand: string, label: string, platform: 'linkedin' | 'instagram' | 'facebook' = 'linkedin'): HTMLElement {
   const box = h('div', { class: 'link-box' });
   const result = h('div', { class: 'link-result', hidden: '' });
   const message = h('p', { class: 'muted', hidden: '' });
@@ -69,7 +72,7 @@ export function inviteLinkBox(brand: string, label: string, platform: 'linkedin'
     message.hidden = true;
     void (async () => {
       try {
-        const response = await fetch(`/api/linkedin-invite?brand=${encodeURIComponent(brand)}${platform === 'instagram' ? '&channel=instagram' : ''}`, { method: 'POST', credentials: 'same-origin' });
+        const response = await fetch(`/api/linkedin-invite?brand=${encodeURIComponent(brand)}${platform === 'linkedin' ? '' : `&channel=${platform}`}`, { method: 'POST', credentials: 'same-origin' });
         if (response.status === 401) return void location.replace('/login');
         const body = (await response.json().catch(() => null)) as { link?: unknown; expiresInDays?: unknown; error?: unknown } | null;
         if (!response.ok || typeof body?.link !== 'string') throw new Error(typeof body?.error === 'string' ? body.error : `Could not make a link (${response.status}).`);
@@ -81,7 +84,7 @@ export function inviteLinkBox(brand: string, label: string, platform: 'linkedin'
             () => { copy.textContent = 'Press Ctrl+C to copy'; },
           );
         });
-        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their ${platform === 'instagram' ? 'Instagram' : 'LinkedIn'} for this client.`));
+        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their ${{ linkedin: 'LinkedIn', instagram: 'Instagram', facebook: 'Facebook' }[platform]} for this client.`));
         result.hidden = false;
       } catch (error) {
         message.textContent = error instanceof Error ? error.message : String(error);
@@ -118,6 +121,7 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
       expiry ? h('span', { class: 'muted' }, expiry) : null,
       channel.platform === 'linkedin' ? inviteLinkBox(client.brand, 'Get a new link for the client') : null,
       channel.platform === 'instagram' && channel.id !== null ? inviteLinkBox(client.brand, 'Get a new link for the client', 'instagram') : null,
+      channel.platform === 'facebook' ? inviteLinkBox(client.brand, 'Get a link to connect another Page', 'facebook') : null,
     ),
     h(
       'div',
@@ -136,6 +140,7 @@ function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext):
     h('span', { class: 'mark mark-big' }, brandMark(kind)),
     h('div', { class: 'channel-meta' }, h('b', {}, channelName(kind)), h('span', { class: 'muted' }, 'Not connected'),
       kind === 'linkedin' ? inviteLinkBox(brand, 'Get a link for the client') : null,
+      kind === 'facebook' ? inviteLinkBox(brand, 'Get a link for the client', 'facebook') : null,
     ),
     h(
       'div',
@@ -143,6 +148,34 @@ function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext):
       kind === 'google' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(brand)}`)) : null,
       button('How to connect', 'btn', () => ctx.go({ page: 'help', channel: GUIDE_FOR[kind] })),
     ),
+  );
+}
+
+/** For a client added in the dashboard: the website posts are planned from, with a box to set or change it. */
+function websiteCard(client: ClientSummary, ctx: ClientsContext): HTMLElement {
+  const input = h('input', { type: 'text', class: 'text-input', 'aria-label': 'Client website', maxlength: '200', autocomplete: 'off', inputmode: 'url', placeholder: 'e.g. brandbasket.in', value: websiteHost(client.website) });
+  const message = h('p', { class: 'form-message', role: 'status' });
+  const save = button('Save website', 'btn btn-primary', () => {
+    save.disabled = true;
+    message.textContent = 'Saving…';
+    message.classList.remove('is-error');
+    void ctx.saveWebsite(client, input.value.trim()).then((problem) => {
+      if (!problem) return;
+      message.textContent = problem;
+      message.classList.add('is-error');
+      save.disabled = false;
+    });
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') save.click();
+  });
+  return h(
+    'div',
+    { class: 'panel-card website-card' },
+    h('div', { class: 'card-head' }, h('h2', {}, 'Website')),
+    h('p', { class: 'muted' }, client.website ? `Posts for ${client.label} are planned from ${websiteHost(client.website)}.` : `Add ${client.label}’s website. Posts are planned from it.`),
+    h('div', { class: 'website-row' }, input, save),
+    message,
   );
 }
 
@@ -185,6 +218,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
       ` / ${client.label}`,
     ),
     h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
+    client.added ? websiteCard(client, ctx) : null,
     tabs,
     tab === 'channels' ? channels : posts,
   );
@@ -202,11 +236,15 @@ export function channelPicker(
   // With several clients and none chosen yet, the person says whom the channel is for.
   const who = dropdown(clients.map((c) => clientOption(c.brand, c.label)), brand ?? clients[0]?.brand ?? '', 'Client');
   const choose = (kind: ChannelKind): void => {
+    note.hidden = false;
     if (kind === 'facebook') {
-      location.assign(`/api/facebook-start?brand=${encodeURIComponent(who.value)}`);
+      note.replaceChildren(
+        'Facebook uses whichever account is signed in to the browser you connect from. Make a link and open it in the browser where the right Facebook account is signed in, or send it to the client. Or connect from this browser.',
+        inviteLinkBox(who.value, 'Get a link', 'facebook'),
+        button('Connect from this browser', 'btn', () => location.assign(`/api/facebook-start?brand=${encodeURIComponent(who.value)}`)),
+      );
       return;
     }
-    note.hidden = false;
     if (kind === 'linkedin') {
       note.replaceChildren(
         'LinkedIn is approved by the person who owns the profile. Make a link and send it to the client, or connect your own profile.',

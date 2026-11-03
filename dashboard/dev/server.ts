@@ -10,7 +10,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mockStatus } from './mock-status.ts';
 
-const PORT = 4010;
+const PORT = Number(process.env['PORT'] ?? 4010);
 const FEED_PORT = 4011;
 const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
 const POSTERS_DIR = fileURLToPath(new URL('../../publisher/public', import.meta.url));
@@ -35,6 +35,8 @@ const TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.jpg': 'image/jpeg',
   '.png': 'image/png',
+  '.svg': 'image/svg+xml',
+  '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
 };
 

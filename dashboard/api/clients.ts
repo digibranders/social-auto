@@ -1,5 +1,6 @@
 /**
- * POST /api/clients?action=add       body: {"name": "..."}
+ * POST /api/clients?action=add       body: {"name": "...", "website": "..."}   (website is optional)
+ * POST /api/clients?action=set-website  body: {"brand": "...", "website": "..."}  (empty clears it)
  * POST /api/clients?action=remove    body: {"brand": "..."}
  * Adds or removes a client in the dashboard. Signed-in people only, from this site's own pages only; the
  * publisher does the work through a secret the browser never sees.
@@ -7,7 +8,7 @@
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
-const ACTIONS = ['add', 'remove'] as const;
+const ACTIONS = ['add', 'set-website', 'remove'] as const;
 const MAX_BODY_BYTES = 2 * 1024;
 const TIMEOUT_MS = 25_000;
 

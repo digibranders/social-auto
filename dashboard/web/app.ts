@@ -676,7 +676,7 @@ function rail(): HTMLElement {
   return h(
     'nav',
     { class: 'rail', 'aria-label': 'Main' },
-    h('div', { class: 'logo', 'aria-hidden': 'true' }, 'C'),
+    h('div', { class: 'logo', 'aria-hidden': 'true' }, h('img', { src: '/logo.svg', alt: '', width: '44', height: '44' })),
     item('clients', 'folder', 'Clients'),
     item('calendar', 'calendar', 'Calendar'),
     h('span', { class: 'rail-spacer' }),
@@ -777,9 +777,9 @@ function openNewPost(brand: string | null, channel: string | null): void {
 }
 
 /** Adds a client, then opens its page so the channels can be connected. */
-async function submitNewClient(name: string): Promise<string | null> {
+async function submitNewClient(name: string, website: string): Promise<string | null> {
   try {
-    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) });
+    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}) }) });
     if (response.status === 401) {
       location.replace('/login');
       return 'You were signed out.';
@@ -799,6 +799,24 @@ async function submitNewClient(name: string): Promise<string | null> {
 function openAddClient(): void {
   picker.replaceChildren(addClientForm({ submit: submitNewClient, close: () => picker.close() }));
   picker.showModal();
+}
+
+/** Saves the website of a client added in the dashboard (empty clears it). Resolves to an explanation when it could not be saved. */
+async function saveWebsite(client: ClientSummary, website: string): Promise<string | null> {
+  try {
+    const response = await fetch('/api/clients?action=set-website', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: client.brand, website }) });
+    if (response.status === 401) {
+      location.replace('/login');
+      return 'You were signed out.';
+    }
+    const body: unknown = await response.json().catch(() => null);
+    if (!response.ok) return messageOf(body) ?? `The server answered ${response.status}`;
+    state.notice = { kind: 'ok', text: website ? 'Website saved.' : 'Website removed.' };
+    await load();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 /** Removes a client that was added in the dashboard, after asking. The server refuses while it still has channels. */
@@ -843,6 +861,7 @@ const clientsContext: ClientsContext = {
   newPost: openNewPost,
   addClient: openAddClient,
   removeClient: (client) => void removeClient(client),
+  saveWebsite,
   disconnect: (channel) => void disconnect(channel),
 };
 

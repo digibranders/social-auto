@@ -57,3 +57,9 @@ test('parseStatus drops fields it does not know, so nothing unexpected reaches t
   assert.ok(!('secret' in parsed));
   assert.ok(!('extra' in (parsed.posts[0] ?? {})));
 });
+
+test('a client added in the dashboard can carry its website', () => {
+  const parsed = parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://acme.com' }, { brand: 'b', postsLeft: 3 }] });
+  assert.equal(parsed.runway[0]?.website, 'https://acme.com');
+  assert.equal(parsed.runway[1]?.website, undefined);
+});

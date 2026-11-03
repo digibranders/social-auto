@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { StatusPost, StatusResponse } from '../shared/status.ts';
-import { describeDays, schedulePattern, summarizeClients } from './clients.ts';
+import { describeDays, schedulePattern, summarizeClients, websiteHost } from './clients.ts';
 
 const NOW = Date.parse('2026-11-02T00:00:00Z');
 const post = (brand: string, date: string, state: StatusPost['state'] = 'scheduled'): StatusPost => ({
@@ -62,4 +62,21 @@ test('a client added in the dashboard shows with no posts, is removable, and is 
   assert.equal(added?.queueLow, false);
   assert.equal(clients.find((c) => c.brand === 'acme')?.added, false);
   assert.equal(clients.find((c) => c.brand === 'acme')?.queueLow, true);
+});
+
+test('an added client shows its website, and a client without one has none', () => {
+  const data: StatusResponse = {
+    generatedAt: '2026-11-02T00:00:00Z',
+    channels: [],
+    posts: [],
+    runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://www.acme.com' }, { brand: 'plain', postsLeft: 0, added: true }],
+  };
+  const [acme, plain] = summarizeClients(data, NOW);
+  assert.equal(acme?.website, 'https://www.acme.com');
+  assert.equal(plain?.website, null);
+});
+
+test('websiteHost shows the address without the scheme', () => {
+  assert.equal(websiteHost('https://www.acme.com'), 'www.acme.com');
+  assert.equal(websiteHost(null), '');
 });

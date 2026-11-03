@@ -6,7 +6,7 @@
  */
 import { createServer, type IncomingMessage } from 'node:http';
 
-const PORT = 4020;
+const PORT = Number(process.env['PORT'] ?? 4020);
 
 if (!process.env['LOCAL_STORE_DIR']) {
   console.error('Set LOCAL_STORE_DIR so test data never reaches the real store.');
