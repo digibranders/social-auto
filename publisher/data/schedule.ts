@@ -6,35 +6,35 @@ export const schedule = {
       "id": "brandbasket-w01-d1",
       "date": "2026-10-29T10:00:00+05:30",
       "caption": "Your next customer is standing outside a shop right now, phone in hand, searching for you.\n\nThey want three things: are you open, where exactly are you, and how do they reach you.\n\nIf the answer is an old listing or nothing at all, they move on to someone who has a page.\n\nWe build your business website for ₹0. Live in 7 working days. We keep it running for ₹2,999 a month, GST included.\n\nStart yours at brandbasket.in (link in bio).\n\n#SmallBusinessIndia #LocalBusiness #BusinessWebsite #FreeWebsite #DigitalIndia #ShopOwner #Brandbasket",
-      "image": "/posts/brandbasket/95e039c088165b13b69f1a36e6187e67.jpg"
+      "image": null
     },
     {
       "brand": "brandbasket",
       "id": "brandbasket-w01-d2",
       "date": "2026-10-30T10:00:00+05:30",
       "caption": "Instagram is great for showing what you do. It is rented space, though.\n\nYour timings, address and services get buried under new posts. Google rarely shows them. And customers who are not on Instagram cannot see much at all.\n\nKeep posting. Then give customers one page that answers everything in a few seconds.\n\nFree build, live in 7 working days, ₹2,999 a month to keep it running.\n\nbrandbasket.in (link in bio)\n\n#InstagramForBusiness #SmallBusinessIndia #LocalSEO #BusinessWebsite #GoogleSearch #Brandbasket",
-      "image": "/posts/brandbasket/ecdea2b5021e53fac56598812e6dd809.jpg"
+      "image": null
     },
     {
       "brand": "brandbasket",
       "id": "brandbasket-w01-d3",
       "date": "2026-10-31T10:00:00+05:30",
       "caption": "Most website quotes start with a big number before you have seen anything.\n\nWe do it the other way round.\n\nWe build your website for ₹0: up to 10 pages, made for phones, with click-to-call, WhatsApp and an enquiry form.\n\nYou pay ₹2,999 a month, GST included, and we keep it hosted, secure and up to date. No lock-ins. Cancel anytime.\n\nStart at brandbasket.in (link in bio).\n\n#FreeWebsite #SmallBusinessIndia #WebsiteDesign #StartupIndia #LocalBusiness #Brandbasket",
-      "image": "/posts/brandbasket/24a352dd08540ce694a760c888331ac1.jpg"
+      "image": null
     },
     {
       "brand": "brandbasket",
       "id": "brandbasket-w01-d4",
       "date": "2026-11-01T10:00:00+05:30",
       "caption": "Your website was made. The freelancer moved on. Now it loads slowly, the contact form does nothing, or worse, it got hacked.\n\nA website is not a one-time job. It needs hosting, SSL, backups, updates and someone watching it.\n\nThat is exactly what our monthly plan covers, plus 2 small edits a month and a health report, with a real person to talk to.\n\nbrandbasket.in (link in bio)\n\n#WebsiteMaintenance #SmallBusinessIndia #WebsiteSecurity #BusinessWebsite #LocalBusiness #Brandbasket",
-      "image": "/posts/brandbasket/e00a2189274d2ab245a9062fd536cb3b.jpg"
+      "image": null
     },
     {
       "brand": "brandbasket",
       "id": "brandbasket-w01-d5",
       "date": "2026-11-02T10:00:00+05:30",
       "caption": "WhatsApp Business is brilliant once someone has your number.\n\nBut a new customer cannot browse WhatsApp to find a shop like yours. They search on Google, and land on a website.\n\nThe best setup uses both: a website people can find, with a WhatsApp button that starts the chat in one tap.\n\nWe build it free and run it for ₹2,999 a month, GST included.\n\nbrandbasket.in (link in bio)\n\n#WhatsAppBusiness #SmallBusinessIndia #ShopOwner #BusinessWebsite #LocalBusiness #Brandbasket",
-      "image": "/posts/brandbasket/12c389b1c940cf754131e55cebf43428.jpg"
+      "image": null
     },
     {
       "brand": "brandbasket",
@@ -308,6 +308,55 @@ export const schedule = {
       "date": "2026-12-11T10:00:00+05:30",
       "caption": "“How often should I water this?”\n\nA customer may remember the product they bought but forget the care instructions once they get home. If you have simple guidance to share, a website can keep it in one place for customers to revisit.\n\nBrandbasket builds professional websites for local businesses in India for ₹0, with up to 10 pages. The site can be live in 7 working days, then hosted and maintained for ₹2,999 a month incl. GST. That includes two edits a month, up to 15 minutes each.\n\nStart your free website at brandbasket.in (link in bio).\n\n#NeighbourhoodShop #SmallBusinessIndia #PlantShop #ProductCare #BusinessWebsite #Brandbasket",
       "image": "/posts/brandbasket/10c938554a16cf455bf3dd84f38867f9.jpg"
+    },
+    {
+      "brand": "brandbasket",
+      "id": "brandbasket-w04-d1",
+      "date": "2026-12-12T10:00:00+05:30",
+      "caption": "Before someone heads over, they may wonder: “Can I just walk in, or should I arrange a visit first?”\n\nIf that detail is hard to find, they may put off coming or call just to check. A clear website can explain how visits work, so people know what to expect before they leave home. Brandbasket builds professional websites with up to 10 pages for ₹0, live in 7 working days. Hosting, SSL, backups, security updates and uptime monitoring are covered for ₹2,999 a month incl. GST.\n\nStart your free website at brandbasket.in (link in bio).\n\n#LocalBusiness #SalonIndia #SmallBusinessIndia #BusinessWebsite #WebsiteForBusiness #IndiaBusiness #Brandbasket",
+      "image": "/posts/brandbasket/9c86eec4363c1b4158de324ccff6c3cb.jpg"
+    },
+    {
+      "brand": "brandbasket",
+      "id": "brandbasket-w04-d2",
+      "date": "2026-12-13T10:00:00+05:30",
+      "caption": "Some questions feel awkward to ask in a public comment.\n\nA person considering a clinic, salon or coaching institute may want to ask privately before deciding what to do next. A website with an enquiry form, WhatsApp and click-to-call gives them a direct route to the business instead of making a public post. Brandbasket builds professional websites for ₹0, with up to 10 pages, and they go live in 7 working days. Hosting, SSL, backups, security updates and uptime monitoring are ₹2,999 a month incl. GST.\n\nStart your free website at brandbasket.in (link in bio).\n\n#LocalBusinessIndia #CustomerEnquiries #SmallBusinessIndia #BusinessWebsite #WhatsAppBusiness #IndiaBusiness #Brandbasket",
+      "image": "/posts/brandbasket/1c74e22fd3200b2381008a1df4f59d1c.jpg"
+    },
+    {
+      "brand": "brandbasket",
+      "id": "brandbasket-w04-d3",
+      "date": "2026-12-14T10:00:00+05:30",
+      "caption": "“Are you taking new students right now?” It is a simple question, but a parent may hesitate to ask if they are not sure where to start.\n\nA website can make it easier to share whether enquiries are welcome and how to contact the institute. Brandbasket builds professional websites with up to 10 pages for ₹0, live in 7 working days. Click-to-call, WhatsApp and enquiry forms give visitors a clear way to get in touch. Hosting, SSL, backups, security updates and uptime monitoring are included for ₹2,999 a month incl. GST.\n\nStart your free website at brandbasket.in (link in bio).\n\n#CoachingInstitute #EducationIndia #LocalBusiness #SmallBusinessIndia #BusinessWebsite #IndiaBusiness #Brandbasket",
+      "image": "/posts/brandbasket/350eaab18484bbd85204aca5f2fb7111.jpg"
+    },
+    {
+      "brand": "brandbasket",
+      "id": "brandbasket-w04-d4",
+      "date": "2026-12-15T10:00:00+05:30",
+      "caption": "“What should I include in my message?”\n\nWhen someone has a specific question, a blank message window can feel like a hurdle. A website can give visitors a clear place to begin, with an enquiry form alongside WhatsApp and click-to-call options. The business can explain what information would help it respond. Brandbasket builds professional websites for ₹0, up to 10 pages, and gets them live in 7 working days. Hosting, SSL, backups, security updates and uptime monitoring are ₹2,999 a month incl. GST.\n\nStart your free website at brandbasket.in (link in bio).\n\n#CustomerEnquiries #LocalBusinessIndia #SmallBusinessIndia #WebsiteDesign #BusinessWebsite #IndiaBusiness #Brandbasket",
+      "image": "/posts/brandbasket/f4daefabeab863ad99846e437de334bc.jpg"
+    },
+    {
+      "brand": "brandbasket",
+      "id": "brandbasket-w04-d5",
+      "date": "2026-12-16T10:00:00+05:30",
+      "caption": "Sending an enquiry is easier when you know what happens next.\n\nA customer may wonder whether to wait for a reply, call the business, or visit in person. A website can explain the preferred way to get in touch and what the next step usually is. Brandbasket builds professional websites with click-to-call, WhatsApp and enquiry forms, for ₹0 and live in 7 working days. Hosting, SSL, backups, security updates and uptime monitoring are covered for ₹2,999 a month incl. GST.\n\nStart your free website at brandbasket.in (link in bio).\n\n#LocalBusiness #CustomerExperience #SmallBusinessIndia #BusinessWebsite #CustomerEnquiries #IndiaBusiness #Brandbasket",
+      "image": "/posts/brandbasket/0bca7ae3f2db7f9a641635b699f602a3.jpg"
+    },
+    {
+      "brand": "brandbasket",
+      "id": "brandbasket-w04-d6",
+      "date": "2026-12-17T10:00:00+05:30",
+      "caption": "A promotion shared weeks ago can leave someone wondering: “Is this still available?”\n\nWhen an old post keeps circulating, customers may not know which details are current. A website gives the business a place to point people for up-to-date information. Brandbasket includes 2 edits a month, 15 minutes each, and a monthly health report with its website service. The site is built for ₹0 and live in 7 working days; hosting, SSL, backups, security updates and uptime monitoring are ₹2,999 a month incl. GST.\n\nStart your free website at brandbasket.in (link in bio).\n\n#LocalBusinessIndia #SmallBusinessIndia #BusinessUpdates #BusinessWebsite #ShopLocalIndia #IndiaBusiness #Brandbasket",
+      "image": "/posts/brandbasket/4cea37f2c8760ad4939afbeeab924b80.jpg"
+    },
+    {
+      "brand": "brandbasket",
+      "id": "brandbasket-w04-d7",
+      "date": "2026-12-18T10:00:00+05:30",
+      "caption": "Planning a meal with friends often comes with one practical question: “Can we all come together?”\n\nIf people cannot find information about group visits, they may have to call before making plans. A website can share the details the cafe wants visitors to know and offer a clear way to ask a question. Brandbasket builds professional websites with up to 10 pages for ₹0, live in 7 working days. Click-to-call, WhatsApp and enquiry forms are included. Hosting, SSL, backups, security updates and uptime monitoring cost ₹2,999 a month incl. GST.\n\nStart your free website at brandbasket.in (link in bio).\n\n#CafeIndia #LocalBusiness #SmallBusinessIndia #RestaurantWebsite #BusinessWebsite #IndiaBusiness #Brandbasket",
+      "image": "/posts/brandbasket/2e99a12393a8ddc2034e203243301938.jpg"
     }
   ]
 };

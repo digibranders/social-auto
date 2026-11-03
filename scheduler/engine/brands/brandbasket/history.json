@@ -61,6 +61,19 @@
         "Customers may be surprised by a cancellation or rescheduling policy they only learn about after booking.",
         "Customers may forget how to care for a product after buying it from a neighbourhood shop."
       ]
+    },
+    {
+      "file": "week-04.json",
+      "createdAt": "2026-11-03T09:13:03.900Z",
+      "painPoints": [
+        "A potential visitor cannot tell whether to walk in or arrange a visit first.",
+        "A person has a question but does not want to ask it in a public social media comment.",
+        "A customer is unsure whether a local business is currently taking on new customers.",
+        "A customer does not know what details to include when asking a business about a specific need.",
+        "A customer is unsure what will happen after they send an enquiry.",
+        "A customer sees an old promotion shared online and cannot tell whether it is still valid.",
+        "A customer planning a group visit cannot tell whether the business can accommodate their party."
+      ]
     }
   ]
 }
