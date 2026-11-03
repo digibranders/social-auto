@@ -1,5 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { generateImage as generatePollinationsImage, ImageGenerationError, resolveImageModel } from './pollinations.ts';
+import { flatImageCost, UsageTally } from './usage.ts';
 
 /**
  * Which AI service writes the text and draws the pictures, and with what settings. OpenAI is the main provider when
@@ -22,6 +23,8 @@ export interface AiConfig {
   /** The most pictures one run may order from OpenAI, so a mistake cannot run up a bill. */
   maxOpenAiImages: number;
   pollinationsImageModel: string;
+  /** What this run has asked of the AI and what it cost; printed at the end of a run. */
+  usage: UsageTally;
 }
 
 export class AiConfigError extends Error {
@@ -65,6 +68,7 @@ export function aiConfigFromEnv(env: Env): AiConfig {
     imageQuality: quality as ImageQuality,
     maxOpenAiImages: limit,
     pollinationsImageModel: resolveImageModel(undefined, env),
+    usage: new UsageTally(),
   };
 }
 
@@ -117,12 +121,21 @@ async function openaiImage(ai: AiConfig, request: SceneRequest, budget: ImageBud
     body: JSON.stringify({ model: ai.imageModel, prompt: request.prompt, n: 1, size: '1024x1024', quality: ai.imageQuality, output_format: 'jpeg' }),
     signal: AbortSignal.timeout(180_000),
   });
-  const body = (await response.json().catch(() => null)) as { data?: Array<{ b64_json?: string }>; error?: { message?: string } } | null;
+  const body = (await response.json().catch(() => null)) as { data?: Array<{ b64_json?: string }>; usage?: { input_tokens?: number; output_tokens?: number }; error?: { message?: string } } | null;
   if (!response.ok) throw new ImageGenerationError(`OpenAI image request returned ${response.status}: ${redact(body?.error?.message ?? 'no details').slice(0, 300)}`);
   const encoded = body?.data?.[0]?.b64_json;
   if (!encoded) throw new ImageGenerationError('OpenAI returned no picture');
   await writeFile(request.outPath, Buffer.from(encoded, 'base64'));
   budget.openaiImages += 1;
+  const used = body?.usage;
+  const counted = typeof used?.output_tokens === 'number' && used.output_tokens > 0;
+  ai.usage.add({
+    kind: 'image',
+    model: ai.imageModel,
+    inputTokens: used?.input_tokens ?? 0,
+    outputTokens: used?.output_tokens ?? 0,
+    ...(counted ? {} : { flatCost: flatImageCost(ai.imageQuality) }),
+  });
 }
 
 /** Makes one scene picture with the main provider, then the backup if that fails. Returns who made it. */
@@ -135,6 +148,7 @@ export async function generateScene(ai: AiConfig, request: SceneRequest, budget:
         return 'OpenAI';
       }
       await generatePollinationsImage({ ...request, apiKey: ai.pollinationsKey as string, model: ai.pollinationsImageModel, fetchFn });
+      ai.usage.add({ kind: 'image', model: `pollinations/${ai.pollinationsImageModel}`, inputTokens: 0, outputTokens: 0 });
       return 'Pollinations';
     } catch (error) {
       failures.push(redact(error instanceof Error ? error.message : String(error)));

@@ -24,7 +24,7 @@ interface ChatMessage {
   content: string;
 }
 
-async function complete(candidate: TextCandidate, messages: ChatMessage[], fetchFn: typeof fetch): Promise<string> {
+async function complete(candidate: TextCandidate, messages: ChatMessage[], fetchFn: typeof fetch, ai: AiConfig): Promise<string> {
   const response = await fetchFn(candidate.endpoint, {
     method: 'POST',
     headers: { Authorization: `Bearer ${candidate.apiKey}`, 'Content-Type': 'application/json' },
@@ -34,8 +34,15 @@ async function complete(candidate: TextCandidate, messages: ChatMessage[], fetch
   const text = await response.text();
   const who = `${candidate.label} ${candidate.model}`;
   if (!response.ok) throw new LlmError(`${who} returned ${response.status}: ${redact(text).slice(0, 300)}`);
-  const content = (JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> }).choices?.[0]?.message?.content;
+  const answer = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+  const content = answer.choices?.[0]?.message?.content;
   if (!content) throw new LlmError(`${who} returned an empty response`);
+  ai.usage.add({
+    kind: 'text',
+    model: candidate.label === 'OpenAI' ? candidate.model : `pollinations/${candidate.model}`,
+    inputTokens: answer.usage?.prompt_tokens ?? 0,
+    outputTokens: answer.usage?.completion_tokens ?? 0,
+  });
   return content;
 }
 
@@ -61,7 +68,7 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       let content: string;
       try {
-        content = await complete(candidate, messages, fetchFn);
+        content = await complete(candidate, messages, fetchFn, options.ai);
       } catch (error) {
         failures.push(error instanceof Error ? error.message : String(error));
         break;

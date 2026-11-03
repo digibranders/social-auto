@@ -94,7 +94,10 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
       const scenePath = join(outDir, `${post.id}-bg.jpg`);
       if (!(await exists(scenePath))) {
         log(`${post.id}: generating AI scene…`);
-        const maker = await generateScene(options.ai, { prompt: post.imagePrompt, outPath: scenePath, width: SCENE_SIZE, height: SCENE_SIZE, seed: seedFromId(post.id) }, budget);
+        options.ai.usage.post = `${basename(options.brandDir)}-${post.id}`;
+        const maker = await generateScene(options.ai, { prompt: post.imagePrompt, outPath: scenePath, width: SCENE_SIZE, height: SCENE_SIZE, seed: seedFromId(post.id) }, budget).finally(() => {
+          options.ai.usage.post = null;
+        });
         log(`${post.id}: scene made by ${maker}`);
       }
       visualUrl = pathToFileURL(scenePath).href;

@@ -14,6 +14,7 @@ import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { aiConfigFromEnv } from './ai.ts';
+import { appendUsageLog } from './usage.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
 import { parseBrand, parseWeekPlan, readJson } from './content.ts';
@@ -129,6 +130,7 @@ async function main(): Promise<void> {
   let brandDir = join(BRANDS_ROOT, slug);
   if (values['refresh-brand'] || !(await fileExists(join(brandDir, 'brand.json')))) {
     console.log(`1/4 Reading ${values.site} and building the brand profile…`);
+    ai.usage.purpose = 'profile';
     brandDir = (await analyzeSite(values.site, BRANDS_ROOT, ai)).dir;
   } else {
     console.log(`1/4 Using saved brand profile ${join('brands', slug, 'brand.json')}`);
@@ -142,6 +144,7 @@ async function main(): Promise<void> {
   const startDate =
     values.start ?? chooseStartDate(await lastPlannedDate(brandDir), tomorrowAt(values['utc-offset']));
   const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
+  ai.usage.purpose = 'writing';
   console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
   const plan = await planWeek({
     ai,
@@ -170,6 +173,12 @@ async function main(): Promise<void> {
     ai,
     log: (m) => console.log(`    ${m}`),
   });
+  console.log(ai.usage.format());
+  const usageLog = process.env['USAGE_LOG_FILE'];
+  if (usageLog) {
+    await appendUsageLog(usageLog, ai.usage.records(slug, plan.posts.map((p) => `${slug}-${p.id}`)));
+    console.log(`Cost saved to ${usageLog} for the dashboard.`);
+  }
 
   if (values['dry-run']) {
     console.log(`4/4 Dry run: nothing scheduled. Preview: ${join(outDir, 'preview.html')}`);
