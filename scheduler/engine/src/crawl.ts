@@ -83,6 +83,8 @@ export interface CrawledPage {
   title: string;
   description: string;
   text: string;
+  /** When the page was read (ISO 8601), so a claim taken from it can be dated. */
+  fetchedAt?: string;
 }
 
 export interface SiteSnapshot {
@@ -311,6 +313,7 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
       title: decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? ''),
       description: metaContent(html, 'description') || metaContent(html, 'og:description'),
       text: htmlToText(html).slice(0, MAX_CHARS_PER_PAGE),
+      fetchedAt: new Date().toISOString(),
     });
   };
   addPage(base.href, homeBody);

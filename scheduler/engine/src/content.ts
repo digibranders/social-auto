@@ -38,10 +38,10 @@ export interface Brand {
   visualStyle?: string;
 }
 
-function requireStringArray(obj: Record<string, unknown>, key: string, source: string): string[] {
+function requireStringArray(obj: Record<string, unknown>, key: string, source: string, allowEmpty = false): string[] {
   const value = obj[key];
-  if (!Array.isArray(value) || value.length === 0 || !value.every((v) => typeof v === 'string' && v.trim())) {
-    throw new ContentValidationError(source, `"${key}" must be a non-empty array of strings`);
+  if (!Array.isArray(value) || (value.length === 0 && !allowEmpty) || !value.every((v) => typeof v === 'string' && v.trim())) {
+    throw new ContentValidationError(source, `"${key}" must be ${allowEmpty ? 'an array' : 'a non-empty array'} of strings`);
   }
   return value as string[];
 }
@@ -139,7 +139,8 @@ export function parseBrand(raw: unknown, source: string): Brand {
     offer: requireString(raw, 'offer', source),
     audience: requireString(raw, 'audience', source),
     tone: requireString(raw, 'tone', source),
-    proofPoints: requireStringArray(raw, 'proofPoints', source),
+    // Only claims the site really makes are kept (see claims.ts), so a site with nothing verifiable has none.
+    proofPoints: requireStringArray(raw, 'proofPoints', source, true),
     callToAction: requireString(raw, 'callToAction', source),
     rules: requireStringArray(raw, 'rules', source),
     colors: parsedColors,

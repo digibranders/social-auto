@@ -1,4 +1,5 @@
 /** Turns a website into brands/<slug>/brand.json plus a downloaded logo. */
+import { unsourcedClaim, verifyClaims, type ClaimBatch, type ClaimInput, type VerifiedClaim } from './claims.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { AiConfig } from './ai.ts';
@@ -71,6 +72,22 @@ export function textLogoSvg(name: string, colors: Pick<BrandColors, 'ink' | 'acc
 `;
 }
 
+/** The proof points the model proposed: sourced ones with their quote, and plain text, which has no source and cannot be checked. */
+function proofProposals(value: unknown): { inputs: ClaimInput[]; unsourced: string[] } {
+  const inputs: ClaimInput[] = [];
+  const unsourced: string[] = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    if (typeof item === 'string' && item.trim()) unsourced.push(item.trim());
+    else if (typeof item === 'object' && item !== null) {
+      const { claim, sourceUrl, quote } = item as Record<string, unknown>;
+      if (typeof claim !== 'string' || !claim.trim()) continue;
+      if (typeof sourceUrl === 'string' && typeof quote === 'string' && sourceUrl.trim() && quote.trim()) inputs.push({ text: claim.trim(), sourceUrl: sourceUrl.trim(), quote });
+      else unsourced.push(claim.trim());
+    }
+  }
+  return { inputs, unsourced };
+}
+
 const SYSTEM_PROMPT = `You are a brand strategist. From website content you build a factual brand profile used to write social media posts.
 Rules:
 - Use only facts stated on the website. Never invent prices, numbers, awards, clients or guarantees.
@@ -93,7 +110,7 @@ Return JSON with exactly these keys:
   "offer": "2-3 sentences: what they sell, to whom, key prices/terms exactly as stated",
   "audience": "who the customers are",
   "tone": "how the brand speaks, 1-2 sentences",
-  "proofPoints": ["5-8 short factual selling points taken from the site"],
+  "proofPoints": [{"claim": "one short factual selling point", "sourceUrl": "the exact page address above that it comes from", "quote": "the exact words, copied unchanged, from that page that support it"}],  // 5-8 of them; only points a quote on the site supports, fewer is fine, never invent one
   "callToAction": "short call to action pointing to the website, ending with (link in bio)",
   "rules": ["3-5 content rules, e.g. no invented statistics, prices exactly as on the site, plus industry-specific cautions (medical, legal, financial)"],
   "colors": {"background": "#RRGGBB light page colour", "ink": "#RRGGBB dark text colour", "accent": "#RRGGBB main brand accent", "tile": "#RRGGBB a dark brand shade"},
@@ -125,15 +142,22 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
   const logo = await downloadLogo(snapshot.logoCandidates, assetsDir, fetchBytes);
   const logoPath = logo ?? 'assets/logo.svg';
 
-  const brand = await chatJson({
+  const pageSources = snapshot.pages.map((p) => ({ url: p.url, text: p.text, ...(p.fetchedAt ? { fetchedAt: p.fetchedAt } : {}) }));
+  const { brand, claims } = await chatJson({
     ai,
     ...(deps.chatFetch ? { fetchFn: deps.chatFetch } : {}),
     system: SYSTEM_PROMPT,
     user: userPrompt(snapshot),
     parse: (value) => {
-      const raw = { ...(value as Record<string, unknown>), website: snapshot.origin, logo: logoPath, mark: logoPath };
+      const answer = value as Record<string, unknown>;
+      // Proof points are claims with a source: only those the site really makes, with the quote on a page that was read, are kept.
+      const proposed = proofProposals(answer['proofPoints']);
+      const checked = verifyClaims(proposed.inputs, pageSources, { now: new Date() });
+      const unsourced = proposed.unsourced.map((text) => unsourcedClaim(text));
+      const raw = { ...answer, proofPoints: checked.verified.map((c) => c.text), website: snapshot.origin, logo: logoPath, mark: logoPath };
       const parsed = parseBrand(raw, 'brand profile');
-      return { ...parsed, font: parsed.font.trim() || DEFAULT_FONT };
+      const claims: ClaimBatch = { ...checked, rejected: [...checked.rejected, ...unsourced], all: [...checked.all, ...unsourced] };
+      return { brand: { ...parsed, font: parsed.font.trim() || DEFAULT_FONT }, claims };
     },
   });
 
@@ -149,6 +173,9 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
     }
   }
   await writeFile(join(dir, 'brand.json'), `${JSON.stringify(brand, null, 2)}\n`);
+  // Every proof point the model proposed, with its source and the outcome of each check, so nothing in the profile is unexplained.
+  const evidence = { checkedAt: new Date().toISOString(), verified: claims.verified, uncertain: claims.uncertain, rejected: claims.rejected };
+  await writeFile(join(dir, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
   // Which pages the profile was built from and which were left out, with scores and reasons, so a wrong choice can be seen.
   const pages = { read: snapshot.pageDecisions.filter((d) => d.selected), skipped: snapshot.pageDecisions.filter((d) => !d.selected) };
   await writeFile(join(dir, 'pages.json'), `${JSON.stringify(pages, null, 2)}\n`);

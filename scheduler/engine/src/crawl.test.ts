@@ -233,3 +233,8 @@ test('a duplicate page gives its place to the next best page, and pages beyond t
   const unread = snapshot.pageDecisions.filter((d) => !d.selected && /budget/.test(d.reasons.join(' ')));
   assert.ok(unread.length >= 1);
 });
+
+test('every page read carries when it was fetched, so claims about it can be dated', async () => {
+  const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': home, 'https://acme.com/about': about, 'https://acme.com/pricing': pricing }).deps);
+  for (const page of snapshot.pages) assert.ok(page.fetchedAt && !Number.isNaN(Date.parse(page.fetchedAt)), page.url);
+});

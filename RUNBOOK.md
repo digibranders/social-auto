@@ -57,6 +57,15 @@ Regional copies of a page are consolidated, keeping the plain address, then the 
 
 A client's own vocabulary and thresholds (`RankingConfig`: weights, minimum score, section penalties, coverage share, catalogue size) can be passed as configuration without code changes. Real-site test fixtures can only be saved for sites on `scheduler/engine/src/fixtures/approved-sites.json`.
 
+### Claims about a client come with their source
+The brand profile's proof points are claims the site really makes (`scheduler/engine/src/claims.ts`). The model proposes each with the page it comes from and the exact words copied from that page; the engine then checks, with no AI involved, in three independent layers:
+
+1. **The source is real.** The page was read and the quote is on it (compared through spacing, case, curly quotes and dashes). The page's fingerprint and fetch time are recorded, and a page that changed since is flagged for re-checking.
+2. **The quote supports the claim.** Every number, unit, currency, billing period and qualifier ("from", "up to", "more than") of the claim matches the quote; a negation either way (the quote says "do not guarantee", or the claim says "never" against a plain quote) fails it; a claim that shares little wording with its quote is held for review.
+3. **The rules for that kind of claim hold.** A superlative or a guarantee must be made by the source itself; a claim about "now" needs a recently read page; list sizes like "3 ways" are not facts to prove; ordinary wording needs no measurable proof.
+
+Each claim ends `verified`, `uncertain` or `rejected`, with a confidence worked out from the checks that passed (never from the model) and the reasons. Only verified claims go into `brand.json`; all of them, with sources and reasons, are saved in `brands/<client>/evidence.json`. A site with nothing verifiable simply has no proof points. Every word list is a setting (`ClaimConfig`), none belongs to an industry, and a verbatim match alone is never enough: it proves the words are on the page, not that they support the claim.
+
 ### How a week's posters differ
 Each post gets a poster format from a fixed rotation in code (`scheduler/engine/src/creative.ts`), so a week never looks like one repeated image: **type** (a big headline, no picture, so it costs nothing), **illustration**, **still-life** and **isometric**. Neighbouring posts always differ, also across weeks. The model only suggests an idea per post (an object or abstract scene, never people); the code wraps it with the format's look, the brand's own colours and the no-text rule. The logo is the site's own logo picture, else its icon with the name beside it, else the name alone. Plans written before formats existed still render as the old photo posters.
 
