@@ -17,6 +17,7 @@ import { accountProfile, mediaSince, tokenHealth, type AccountMedia, type Accoun
 import { applyOverrides } from '../lib/overrides.js';
 import { toScheduled } from '../lib/manual.js';
 import { buildStatus, parseSchedule, type StatusPost } from '../lib/schedule.js';
+import { loadCosts } from '../lib/usage.js';
 import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted } from '../lib/store.js';
 
 /** Instagram is asked at most once a minute per warm function instance, however many people look. */
@@ -143,6 +144,11 @@ export async function GET(request: Request): Promise<Response> {
       ...summary,
       runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}) }))],
       posts: summary.posts.map((p) => withCrossposts(p, channels, posted, now)),
+      // The cost view is a nicety: if its log is unreadable the rest of the status must still load.
+      costs: await loadCosts(process.env['USAGE_LOG_FILE']).catch((error: unknown) => {
+        console.error(describeError(error));
+        return [];
+      }),
     });
   } catch (error) {
     console.error(describeError(error));

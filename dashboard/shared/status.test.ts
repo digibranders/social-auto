@@ -63,3 +63,12 @@ test('a client added in the dashboard can carry its website', () => {
   assert.equal(parsed.runway[0]?.website, 'https://acme.com');
   assert.equal(parsed.runway[1]?.website, undefined);
 });
+
+test('parseStatus keeps the AI cost entries, defaults to none, and rejects a negative or unknown one', () => {
+  assert.deepEqual(parseStatus(valid).costs, []);
+  const entry = { brand: 'brandbasket', post: 'brandbasket-w01-d1', purpose: 'picture', at: '2026-11-04T05:00:00.000Z', usd: 0.0138 };
+  assert.deepEqual(parseStatus({ ...valid, costs: [entry, { ...entry, post: null, purpose: 'profile' }] }).costs, [entry, { ...entry, post: null, purpose: 'profile' }]);
+  assert.throws(() => parseStatus({ ...valid, costs: [{ ...entry, usd: -1 }] }), StatusParseError);
+  assert.throws(() => parseStatus({ ...valid, costs: [{ ...entry, purpose: 'lunch' }] }), StatusParseError);
+  assert.throws(() => parseStatus({ ...valid, costs: [{ ...entry, at: 'soon' }] }), StatusParseError);
+});

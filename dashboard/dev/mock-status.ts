@@ -24,6 +24,24 @@ function invented(now: number): ScheduledPost[] {
   return posts;
 }
 
+/** Invented AI spending: each post's picture and writing, made three days before it goes out, plus one website reading per client. */
+function inventedCosts(posts: readonly ScheduledPost[]): Array<Record<string, unknown>> {
+  const brands = [...new Set(posts.map((p) => p.brand ?? 'default'))];
+  const readings = brands.map((brand) => {
+    const first = posts.filter((p) => (p.brand ?? 'default') === brand).map((p) => Date.parse(p.date)).sort((a, b) => a - b)[0] ?? Date.now();
+    return { brand, post: null, purpose: 'profile', at: new Date(first - 4 * DAY_MS).toISOString(), usd: 0.0021 };
+  });
+  const perPost = posts.flatMap((p, i) => {
+    const at = new Date(Date.parse(p.date) - 3 * DAY_MS).toISOString();
+    const brand = p.brand ?? 'default';
+    return [
+      { brand, post: p.id, purpose: 'picture', at, usd: 0.0134 + (i % 5) * 0.0002 },
+      { brand, post: p.id, purpose: 'writing', at, usd: 0.0004 },
+    ];
+  });
+  return [...readings, ...perPost];
+}
+
 export function mockStatus(scenario: string, origin: string, now = Date.now()): Record<string, unknown> {
   const posts = [...parseSchedule(schedule), ...invented(now)];
   const lostId = scenario === 'missed' ? 'currycook-d-3' : null;
@@ -53,5 +71,5 @@ export function mockStatus(scenario: string, origin: string, now = Date.now()): 
     },
     { platform: 'instagram', account: 'currycook_demo', avatar: null, brands: ['currycook'], ok: true },
   ];
-  return { generatedAt: new Date(now).toISOString(), channels, ...buildStatus(posts, media, now, origin) };
+  return { generatedAt: new Date(now).toISOString(), channels, ...buildStatus(posts, media, now, origin), costs: inventedCosts(posts) };
 }

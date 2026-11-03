@@ -1,6 +1,7 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import { websiteHost, type ClientSummary } from './clients.ts';
+import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { postChannelId } from './new-post.ts';
 import { stateLabel } from './calendar.ts';
@@ -12,6 +13,8 @@ export interface ClientsContext {
   openCalendar(brand: string): void;
   /** One upcoming post as a card; opens its window when clicked. */
   postCard(post: StatusPost): HTMLElement;
+  /** A post's picture as a small thumbnail. */
+  postThumb(post: StatusPost): HTMLElement;
   addChannel(brand: string | null): void;
   /** Opens the New post window; `channel` (a post channel id) is ticked in advance. */
   newPost(brand: string | null, channel: string | null): void;
@@ -25,6 +28,7 @@ export interface ClientsContext {
 const KINDS: readonly ChannelKind[] = ['facebook', 'instagram', 'google', 'linkedin'];
 const GUIDE_FOR: Record<ChannelKind, GuideKey> = { facebook: 'facebook', instagram: 'instagram', google: 'google', linkedin: 'linkedin' };
 const UPCOMING_SHOWN = 14;
+const TAB_LABELS: Record<ClientTab, string> = { channels: 'Channels', posts: 'Next posts', cost: 'Cost' };
 
 export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTMLElement {
   const add = h('div', { class: 'page-actions' }, button([icon('plus'), 'Add client'], 'btn btn-primary', () => ctx.addClient()));
@@ -185,8 +189,8 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
   const tabs = h(
     'div',
     { class: 'ctabs', role: 'tablist' },
-    ...(['channels', 'posts'] as const).map((key) =>
-      button(key === 'channels' ? 'Channels' : 'Next posts', `ctab${key === tab ? ' ctab-on' : ''}`, () => ctx.go({ page: 'client', brand: client.brand, tab: key })),
+    ...(['channels', 'posts', 'cost'] as const).map((key) =>
+      button(TAB_LABELS[key], `ctab${key === tab ? ' ctab-on' : ''}`, () => ctx.go({ page: 'client', brand: client.brand, tab: key })),
     ),
   );
 
@@ -220,7 +224,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
     client.added ? websiteCard(client, ctx) : null,
     tabs,
-    tab === 'channels' ? channels : posts,
+    tab === 'channels' ? channels : tab === 'posts' ? posts : costPage(client, ctx),
   );
 }
 

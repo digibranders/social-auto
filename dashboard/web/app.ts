@@ -688,7 +688,7 @@ function rail(): HTMLElement {
 const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', help: 'Help · Connect a channel' } as const;
 
 function clientPicker(): HTMLElement {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now());
+  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [], costs: [] }, Date.now());
   const select = dropdown([{ value: '', label: 'All clients' }, ...clients.map((c) => clientOption(c.brand, c.label))], state.calendarClient ?? '', 'Client');
   select.addEventListener('change', () => {
     state.calendarClient = select.value || null;
@@ -735,7 +735,7 @@ async function disconnect(channel: ChannelHealth): Promise<void> {
 
 /** Opens the Add channel window; with no client chosen it asks which one the channel is for. */
 function openPicker(brand: string | null): void {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
+  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [], costs: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
   const connected: Record<string, Platform[]> = {};
   for (const channel of state.data?.channels ?? []) for (const b of channel.brands) (connected[b] ??= []).push(channel.platform);
   picker.replaceChildren(channelPicker(brand, clients, connected, clientsContext, () => picker.close()));
@@ -770,7 +770,7 @@ async function submitNewPost(post: { brand: string; day: string; caption: string
 
 /** Opens the New post window; `channel` is ticked in advance. */
 function openNewPost(brand: string | null, channel: string | null): void {
-  const data = state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] };
+  const data = state.data ?? { generatedAt: '', channels: [], posts: [], runway: [], costs: [] };
   const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
   picker.replaceChildren(newPostForm(brand, channel, { clients, channels: data.channels, submit: submitNewPost, close: () => picker.close() }));
   picker.showModal();
@@ -857,6 +857,7 @@ const clientsContext: ClientsContext = {
     go({ page: 'calendar' });
   },
   postCard,
+  postThumb: thumbnail,
   addChannel: openPicker,
   newPost: openNewPost,
   addClient: openAddClient,

@@ -32,6 +32,7 @@ test('summarizeClients groups by client with channels, runway, problems and what
     ],
     posts: [...weekdays.map((d) => post('a', d)), post('a', '2026-10-30T10:00:00+05:30', 'missed'), post('b', weekdays[0] as string)],
     runway: [{ brand: 'a', postsLeft: 40 }, { brand: 'b', postsLeft: 3 }],
+    costs: [{ brand: 'a', post: null, purpose: 'profile', at: '2026-11-04T05:00:00.000Z', usd: 0.002 }],
   };
   const [a, b] = summarizeClients(data, NOW - 2 * 3_600_000);
   assert.equal(a?.brand, 'a');
@@ -42,19 +43,22 @@ test('summarizeClients groups by client with channels, runway, problems and what
   assert.equal(a?.upcoming[0]?.date, weekdays[0]);
   assert.equal(b?.queueLow, true);
   assert.equal(b?.channels.length, 1);
+  assert.equal(a?.costs.length, 1);
+  assert.equal(b?.costs.length, 0);
+  assert.equal(a?.posts.length, 6);
 });
 
 test('hand-made extra posts do not change the described schedule pattern', () => {
   const planned = weekdays.map((d) => post('acme', d));
   const extra = { ...post('acme', '2026-11-07T18:00:00+05:30'), id: 'manual-0123456789ab', manual: true };
-  const data: StatusResponse = { generatedAt: '', channels: [], runway: [{ brand: 'acme', postsLeft: 5 }], posts: [...planned, extra] };
+  const data: StatusResponse = { generatedAt: '', channels: [], costs: [], runway: [{ brand: 'acme', postsLeft: 5 }], posts: [...planned, extra] };
   const [client] = summarizeClients(data, NOW);
   assert.equal(client?.pattern, schedulePattern(planned, NOW));
   assert.equal(client?.upcoming.length, 6);
 });
 
 test('a client added in the dashboard shows with no posts, is removable, and is not flagged as running low', () => {
-  const data: StatusResponse = { generatedAt: '', channels: [], posts: [], runway: [{ brand: 'new-client', postsLeft: 0, added: true }, { brand: 'acme', postsLeft: 2 }] };
+  const data: StatusResponse = { generatedAt: '', channels: [], costs: [], posts: [], runway: [{ brand: 'new-client', postsLeft: 0, added: true }, { brand: 'acme', postsLeft: 2 }] };
   const clients = summarizeClients(data, NOW);
   const added = clients.find((c) => c.brand === 'new-client');
   assert.equal(added?.label, 'New Client');
@@ -69,6 +73,7 @@ test('an added client shows its website, and a client without one has none', () 
     generatedAt: '2026-11-02T00:00:00Z',
     channels: [],
     posts: [],
+    costs: [],
     runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://www.acme.com' }, { brand: 'plain', postsLeft: 0, added: true }],
   };
   const [acme, plain] = summarizeClients(data, NOW);

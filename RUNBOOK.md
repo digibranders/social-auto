@@ -66,6 +66,7 @@ The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (
 | `OPENAI_IMAGE_MODEL` | Default `gpt-image-2.5-flare`. |
 | `OPENAI_IMAGE_QUALITY` | `low`, `medium` (default) or `high`. Higher costs more per picture. |
 | `OPENAI_MAX_IMAGES_PER_RUN` | Default 40: the most pictures one run may order from OpenAI. |
+| `USAGE_LOG_FILE` | Where the engine adds one line per AI call (client, post, what it was for, tokens, dollars). The publisher reads the same file, which is how the dashboard's Cost tab shows each client's spend. On the server: `/var/lib/social-auto/usage.jsonl`, set both in the engine's keys file and in `social-publisher.service`. Unset, nothing is recorded. The amounts are estimates from OpenAI's token counts and published prices; the OpenAI usage page is the real bill. |
 | `AI_PROVIDER` | `openai` or `pollinations`. Default: OpenAI when its key is set, else Pollinations. |
 | `AI_FALLBACK` | `off` stops the other provider being used when the main one fails. Default on, when its key is set. |
 | `POLLINATIONS_API_KEY` | Pollinations key: the main provider when there is no OpenAI key, otherwise the backup. |

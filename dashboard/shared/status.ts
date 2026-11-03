@@ -55,12 +55,26 @@ export interface ChannelHealth {
   expiresAt?: string;
 }
 
+export type CostPurpose = 'picture' | 'writing' | 'profile';
+export const COST_PURPOSES: readonly CostPurpose[] = ['picture', 'writing', 'profile'];
+
+/** What the AI cost for one client and one thing, in dollars (estimated). `post` is null for reading the website. */
+export interface CostEntry {
+  brand: string;
+  post: string | null;
+  purpose: CostPurpose;
+  /** When the latest of these calls was made. */
+  at: string;
+  usd: number;
+}
+
 export interface StatusResponse {
   generatedAt: string;
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
   runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string }>;
+  costs: CostEntry[];
 }
 
 export class StatusParseError extends Error {
@@ -170,5 +184,15 @@ export function parseStatus(raw: unknown): StatusResponse {
     return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}) };
   });
 
-  return { generatedAt, channels, posts, runway };
+  const costs = list(root['costs'] ?? [], 'status.costs').map((item, i): CostEntry => {
+    const where = `costs[${i}]`;
+    const entry = record(item, where);
+    const at = text(entry, 'at', where);
+    if (Number.isNaN(Date.parse(at))) throw new StatusParseError(`${where}.at is not a date`);
+    const usd = entry['usd'];
+    if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0) throw new StatusParseError(`${where}.usd must be zero or more`);
+    return { brand: text(entry, 'brand', where), post: textOrNull(entry, 'post', where), purpose: oneOf(text(entry, 'purpose', where), COST_PURPOSES, `${where}.purpose`), at, usd };
+  });
+
+  return { generatedAt, channels, posts, runway, costs };
 }
