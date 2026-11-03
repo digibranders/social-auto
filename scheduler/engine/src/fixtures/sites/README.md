@@ -13,3 +13,7 @@ a shop with a region switcher, a regional business, a service business, a clinic
 
 To add a real site, save its homepage HTML here and write its `expect.json` by hand from what the business really offers. Only do that for a
 site its owner (or Siddique) has approved; never fetch sites to fill this folder on a whim.
+
+Fixtures cover different industries and content shapes on purpose: a business with prices and products, one with none (`nonprofit`), a
+restaurant whose vocabulary ("menu") is not in any built-in list, a clinic, a region switcher, a very large menu, and a one-page site with
+nowhere to go. Nothing in the engine may depend on which industry a fixture is.

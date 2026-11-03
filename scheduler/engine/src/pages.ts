@@ -12,34 +12,56 @@ export interface PageDecision {
   reasons: string[];
 }
 
-/** A page must score at least this to be read. */
-const MIN_SCORE = 2;
-/** After this many pages from one section (the first part of the address), further ones lose points. */
-const FREE_PER_SECTION = 2;
-const SECTION_PENALTY = 2;
+/**
+ * The ranking rules as settings. Nothing here belongs to an industry: the words are generic page types every kind of
+ * organisation has, and a client's own vocabulary comes from its homepage (see `siteVocabulary`) or from a configured override.
+ */
+export interface RankingConfig {
+  /** Path words that name a generic kind of page, by how strongly they mark a page worth reading. Merged with any override. */
+  weights: Readonly<Record<string, number>>;
+  /** Path words that mark legal, account or housekeeping pages. Replaced by an override. */
+  utility: readonly string[];
+  /** A page must score at least this to be read. */
+  minScore: number;
+  /** After this many pages from one section (the first part of the address), further ones lose points. */
+  freePerSection: number;
+  sectionPenalty: number;
+  /** A site with at least this many two-letter first path parts has a region switcher; with fewer they are ordinary pages ("/ai"). */
+  switcherRoots: number;
+  navigationBonus: number;
+  footerPenalty: number;
+  /** Link text that names a kind of page. */
+  linkTextBonus: number;
+  /** A word from the site's own homepage wording appears in the link's address or text. */
+  evidenceBonus: number;
+}
 
-/** Path words that name what a business offers or is, by how strongly they mark a page worth reading. */
-const WEIGHTS: Readonly<Record<string, number>> = {
-  pricing: 5, price: 5, prices: 5, plans: 5, product: 5, products: 5, service: 5, services: 5, solution: 5, solutions: 5,
-  features: 5, platform: 5, treatments: 5, store: 4, menu: 4,
-  about: 4, company: 4, story: 4, mission: 4, doctors: 4, team: 3, shop: 3,
-  how: 3, works: 3, process: 3, approach: 3, industries: 3, industry: 3, enterprise: 3, insurance: 3, appointment: 3, book: 3, booking: 3, case: 3, studies: 3, usecases: 3,
-  faq: 2, contact: 2, why: 2, work: 2, portfolio: 2,
-  customers: 1, testimonials: 1, reviews: 1,
+export const defaultRankingConfig: RankingConfig = {
+  weights: {
+    pricing: 5, price: 5, prices: 5, plans: 5, product: 5, products: 5, service: 5, services: 5, solution: 5, solutions: 5, features: 5, platform: 5,
+    about: 4, company: 4, story: 4, mission: 4, team: 3,
+    how: 3, works: 3, process: 3, approach: 3, industries: 3, industry: 3, case: 3, studies: 3,
+    faq: 2, contact: 2, why: 2, work: 2, portfolio: 2,
+    customers: 1, testimonials: 1, reviews: 1,
+  },
+  utility: [
+    'privacy', 'terms', 'tos', 'legal', 'cookie', 'cookies', 'login', 'logout', 'signin', 'signup', 'register', 'password', 'cart', 'checkout',
+    'account', 'careers', 'jobs', 'sitemap', 'unsubscribe', 'portal', 'dashboard', 'admin', 'imprint', 'impressum', 'disclaimer', 'policy', 'policies',
+  ],
+  minScore: 2,
+  freePerSection: 2,
+  sectionPenalty: 2,
+  switcherRoots: 3,
+  navigationBonus: 3,
+  footerPenalty: 1,
+  linkTextBonus: 2,
+  evidenceBonus: 2,
 };
-
-/** Path words that mark legal, account or housekeeping pages. */
-const UTILITY = new Set([
-  'privacy', 'terms', 'tos', 'legal', 'cookie', 'cookies', 'login', 'logout', 'signin', 'signup', 'register', 'password', 'cart', 'checkout',
-  'account', 'careers', 'jobs', 'sitemap', 'unsubscribe', 'portal', 'dashboard', 'admin', 'hipaa', 'imprint', 'impressum', 'disclaimer', 'policy', 'policies',
-]);
 
 /** Archive pages of a blog or catalogue. */
 const ARCHIVE = /(^|\/)(tag|tags|category|categories|author|archive|page)(\/|$)/i;
 const FILE = /\.(pdf|jpe?g|png|gif|svg|webp|xml|zip|docx?|xlsx?|mp4|mp3|ico|css|js)$/i;
 const LOCALE_ROOT = /^[a-z]{2}(?:-[a-z]{2,4})?$/i;
-/** A site with at least this many two-letter first path parts has a region switcher; with fewer they are ordinary pages ("/ai"). */
-const SWITCHER_ROOTS = 3;
 
 const tokensOf = (path: string): string[] => path.toLowerCase().split(/[\/\-_.]+/).filter(Boolean);
 const normalizedPath = (pathname: string): string => pathname.replace(/\/+$/, '');
@@ -120,6 +142,28 @@ function siteLocale(html: string): { language: string; region: string | null } {
   return { language, region };
 }
 
+const WORD = /[\p{L}\p{N}]{4,}/gu;
+/** A word repeated this often in a homepage's text counts as part of its own vocabulary. */
+const REPEATED_WORD = 3;
+
+/**
+ * The words a site uses about itself: those in its title, description and headings, and any repeated in its text (menus and footers
+ * left out). It is how the engine learns an industry's vocabulary from the client rather than from a built-in list.
+ */
+export function siteVocabulary(html: string): Set<string> {
+  const vocabulary = new Set<string>();
+  const wordsOf = (text: string): string[] => decodeEntities(text).toLowerCase().match(WORD) ?? [];
+  const title = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '';
+  const described = [...html.matchAll(/<meta\b[^>]*>/gi)].map((m) => m[0]).filter((tag) => /(?:name|property)=["'](?:description|og:title|og:description)["']/i.test(tag)).map((tag) => tag.match(/\scontent=["']([^"']*)["']/i)?.[1] ?? '');
+  const headings = [...html.matchAll(/<h[1-3]\b[^>]*>([\s\S]*?)<\/h[1-3]>/gi)].map((m) => (m[1] ?? '').replace(/<[^>]+>/g, ' '));
+  for (const text of [title, ...described, ...headings]) for (const word of wordsOf(text)) vocabulary.add(word);
+  const body = html.replace(/<(script|style|noscript|svg|template|nav|footer)[\s\S]*?<\/\1>/gi, ' ').replace(/<[^>]+>/g, ' ');
+  const counts = new Map<string, number>();
+  for (const word of wordsOf(body)) counts.set(word, (counts.get(word) ?? 0) + 1);
+  for (const [word, count] of counts) if (count >= REPEATED_WORD) vocabulary.add(word);
+  return vocabulary;
+}
+
 interface Candidate {
   link: Link;
   /** The path without any region prefix. */
@@ -132,31 +176,36 @@ interface Candidate {
   keptRegional?: string;
 }
 
-/** Scores a path for what it looks like, from its own words, its place on the page and its link text. */
-function score(link: Link, rest: string): { score: number; reasons: string[] } {
+/** Scores a path for what it looks like, from its own words, its place on the page, its link text and the site's own vocabulary. */
+function score(link: Link, rest: string, config: RankingConfig, utility: ReadonlySet<string>, vocabulary: ReadonlySet<string>): { score: number; reasons: string[] } {
   const reasons: string[] = [];
   let total = 0;
   const tokens = tokensOf(rest);
-  const utility = tokens.find((t) => UTILITY.has(t));
-  if (utility || ARCHIVE.test(rest)) {
-    return { score: -20, reasons: [`-20 legal or utility page (${utility ?? 'archive'})`] };
+  const flagged = tokens.find((t) => utility.has(t));
+  if (flagged || ARCHIVE.test(rest)) {
+    return { score: -20, reasons: [`-20 legal or utility page (${flagged ?? 'archive'})`] };
   }
-  const best = tokens.map((t) => [t, WEIGHTS[t] ?? 0] as const).sort((a, b) => b[1] - a[1])[0];
+  const best = tokens.map((t) => [t, config.weights[t] ?? 0] as const).sort((a, b) => b[1] - a[1])[0];
   if (best && best[1] > 0) {
     total += best[1];
     reasons.push(`+${best[1]} "${best[0]}" page`);
   }
   if (link.inNavigation) {
-    total += 3;
-    reasons.push('+3 in the navigation');
+    total += config.navigationBonus;
+    reasons.push(`+${config.navigationBonus} in the navigation`);
   } else if (link.onlyInFooter) {
-    total -= 1;
-    reasons.push('-1 only in the footer');
+    total -= config.footerPenalty;
+    reasons.push(`-${config.footerPenalty} only in the footer`);
   }
-  const word = tokensOf(link.text).find((t) => (WEIGHTS[t] ?? 0) >= 3);
-  if (word) {
-    total += 2;
-    reasons.push(`+2 link text "${link.text}"`);
+  const linkTokens = tokensOf(link.text);
+  if (linkTokens.some((t) => (config.weights[t] ?? 0) >= 3)) {
+    total += config.linkTextBonus;
+    reasons.push(`+${config.linkTextBonus} link text "${link.text}"`);
+  }
+  const shared = [...tokens, ...linkTokens].find((t) => [...t].length >= 4 && vocabulary.has(t));
+  if (shared) {
+    total += config.evidenceBonus;
+    reasons.push(`+${config.evidenceBonus} appears in the homepage's own wording ("${shared}")`);
   }
   const depth = Math.min(4, Math.max(0, tokens.length > 0 ? rest.split('/').filter(Boolean).length - 1 : 0));
   if (depth > 0) {
@@ -170,6 +219,8 @@ function score(link: Link, rest: string): { score: number; reasons: string[] } {
 export interface RankOptions {
   /** False for an address the site's robots.txt asks readers to skip. */
   allowed?: (pathname: string) => boolean;
+  /** Settings that replace the defaults: a client's own vocabulary and thresholds. `weights` are added to the defaults. */
+  config?: Partial<RankingConfig>;
 }
 
 /**
@@ -177,13 +228,16 @@ export interface RankOptions {
  * Links to other sites, files, mail and the homepage itself are not candidates and have no decision.
  */
 export function rankPages(html: string, base: URL, limit: number, options: RankOptions = {}): PageDecision[] {
+  const config: RankingConfig = { ...defaultRankingConfig, ...options.config, weights: { ...defaultRankingConfig.weights, ...options.config?.weights } };
+  const utility = new Set(config.utility);
+  const vocabulary = siteVocabulary(html);
   const links = collectLinks(html, base);
   const allowed = options.allowed ?? (() => true);
 
   // A region switcher: three or more two-letter first path parts, or any the homepage declares as alternates.
   const firstParts = links.map((l) => l.path.split('/')[1]?.toLowerCase() ?? '').filter((p) => LOCALE_ROOT.test(p));
   const declared = alternateRoots(html, base);
-  const switcher = new Set<string>(new Set(firstParts).size >= SWITCHER_ROOTS ? firstParts : []);
+  const switcher = new Set<string>(new Set(firstParts).size >= config.switcherRoots ? firstParts : []);
   for (const root of declared) switcher.add(root);
   const site = siteLocale(html);
 
@@ -191,7 +245,7 @@ export function rankPages(html: string, base: URL, limit: number, options: RankO
     const first = link.path.split('/')[1]?.toLowerCase() ?? '';
     const root = switcher.has(first) ? first : null;
     const rest = root ? normalizedPath(link.path.slice(root.length + 1)) : link.path;
-    const { score: points, reasons } = score(link, rest || '/');
+    const { score: points, reasons } = score(link, rest || '/', config, utility, vocabulary);
     return { link, rest, root, score: points, reasons, rejected: false };
   });
 
@@ -228,12 +282,12 @@ export function rankPages(html: string, base: URL, limit: number, options: RankO
   }
 
   // Choose the best, a little at a time so one section cannot fill the whole cap.
-  const pool = candidates.filter((c) => !c.rejected && c.score >= MIN_SCORE);
+  const pool = candidates.filter((c) => !c.rejected && c.score >= config.minScore);
   const chosen: Candidate[] = [];
   const sectionOf = (c: Candidate): string => c.rest.split('/')[1] ?? '';
-  const effective = (c: Candidate): number => c.score - SECTION_PENALTY * Math.max(0, chosen.filter((p) => sectionOf(p) === sectionOf(c)).length - (FREE_PER_SECTION - 1));
+  const effective = (c: Candidate): number => c.score - config.sectionPenalty * Math.max(0, chosen.filter((p) => sectionOf(p) === sectionOf(c)).length - (config.freePerSection - 1));
   while (chosen.length < limit) {
-    const next = pool.filter((c) => !chosen.includes(c) && effective(c) >= MIN_SCORE).sort((a, b) => effective(b) - effective(a) || a.link.order - b.link.order)[0];
+    const next = pool.filter((c) => !chosen.includes(c) && effective(c) >= config.minScore).sort((a, b) => effective(b) - effective(a) || a.link.order - b.link.order)[0];
     if (!next) break;
     chosen.push(next);
   }
@@ -243,8 +297,8 @@ export function rankPages(html: string, base: URL, limit: number, options: RankO
     const reasons = [...candidate.reasons];
     if (selected && candidate.keptRegional) reasons.push(candidate.keptRegional);
     if (!selected && !candidate.rejected) {
-      if (candidate.score < MIN_SCORE) reasons.push(`not selected: score ${candidate.score} is below the minimum of ${MIN_SCORE}`);
-      else if (effective(candidate) < MIN_SCORE) reasons.push(`not selected: its section (/${sectionOf(candidate)}) already has ${FREE_PER_SECTION} pages`);
+      if (candidate.score < config.minScore) reasons.push(`not selected: score ${candidate.score} is below the minimum of ${config.minScore}`);
+      else if (effective(candidate) < config.minScore) reasons.push(`not selected: its section (/${sectionOf(candidate)}) already has ${config.freePerSection} pages`);
       else reasons.push(`not selected: the cap of ${limit} pages was reached by higher-ranked pages`);
     }
     return { url: candidate.link.url, selected, score: candidate.score, reasons };

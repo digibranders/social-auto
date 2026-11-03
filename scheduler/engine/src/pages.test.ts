@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { canonicalOf, duplicateOf, rankPages, type PageDecision } from './pages.ts';
+import { canonicalOf, defaultRankingConfig, duplicateOf, rankPages, siteVocabulary, type PageDecision } from './pages.ts';
 
 const SITES = new URL('./fixtures/sites/', import.meta.url).pathname;
 const LIMIT = 7;
@@ -20,7 +20,7 @@ const selectedPaths = (decisions: PageDecision[]): string[] => decisions.filter(
 const fixtures = readdirSync(SITES, { withFileTypes: true }).filter((entry) => entry.isDirectory());
 
 test('there are fixtures to rank, so the data-driven test below cannot pass by checking nothing', () => {
-  assert.ok(fixtures.length >= 6);
+  assert.ok(fixtures.length >= 9);
 });
 
 for (const folder of fixtures) {
@@ -120,4 +120,54 @@ test('the canonical address is read from the page and resolved against its own a
   assert.equal(canonicalOf('<head><link rel="canonical" href="/pricing"></head>', new URL('https://acme.example/in/pricing')), 'https://acme.example/pricing');
   assert.equal(canonicalOf('<link href="https://acme.example/x" rel="canonical">', new URL('https://acme.example/y')), 'https://acme.example/x');
   assert.equal(canonicalOf('<head></head>', new URL('https://acme.example/')), null);
+});
+
+const GENERIC_PAGE_TYPES = new Set([
+  'pricing', 'price', 'prices', 'plans', 'product', 'products', 'service', 'services', 'solution', 'solutions', 'features', 'platform',
+  'about', 'company', 'story', 'mission', 'team', 'how', 'works', 'process', 'approach', 'industries', 'industry', 'case', 'studies',
+  'faq', 'contact', 'why', 'work', 'portfolio', 'customers', 'testimonials', 'reviews',
+]);
+
+test('the built-in vocabulary holds only generic page types: no industry, product or trade is built in', () => {
+  for (const word of Object.keys(defaultRankingConfig.weights)) assert.ok(GENERIC_PAGE_TYPES.has(word), `"${word}" is not a generic page type`);
+  for (const word of ['treatments', 'doctors', 'hipaa', 'insurance', 'appointment', 'menu', 'store', 'shop', 'enterprise', 'booking', 'donate', 'programs']) {
+    assert.ok(!(word in defaultRankingConfig.weights) && !defaultRankingConfig.utility.includes(word), word);
+  }
+});
+
+test('a client\'s own vocabulary can be configured without touching the code', () => {
+  const html = '<html lang="en"><body><main><a href="/donate">Give</a><a href="/gallery">Photos</a></main></body></html>';
+  const base = new URL('https://acme.example');
+  assert.ok(!selectedPaths(rankPages(html, base, LIMIT)).includes('/donate'));
+  const configured = rankPages(html, base, LIMIT, { config: { weights: { donate: 5 } } });
+  assert.deepEqual(selectedPaths(configured), ['/donate']);
+  assert.ok(configured.find((d) => d.url.endsWith('/donate'))?.reasons.some((r) => /\+5 "donate" page/.test(r)));
+  assert.ok(selectedPaths(rankPages(html, base, LIMIT, { config: { minScore: 6, weights: { donate: 5 } } })).length === 0);
+});
+
+test('words the site itself uses on its homepage lift matching pages, whatever the industry, with no word list', () => {
+  const html = `<html lang="en"><head><title>Maple Table</title><meta name="description" content="A seasonal tasting menu"></head><body><h1>Our tasting menu</h1><main><p>Menu menu menu.</p><a href="/menu">See it</a><a href="/gallery">Photos</a></main></body></html>`;
+  const decisions = rankPages(html, new URL('https://acme.example'), LIMIT);
+  assert.deepEqual(selectedPaths(decisions), ['/menu']);
+  assert.ok(decisions.find((d) => d.url.endsWith('/menu'))?.reasons.some((r) => /homepage's own wording \("menu"\)/.test(r)));
+  assert.ok(!decisions.find((d) => d.url.endsWith('/gallery'))?.selected);
+});
+
+test('the site\'s own words work in any language, and legal pages are never lifted by them', () => {
+  const html = `<html lang="de"><head><title>Praxis Lindenhof</title></head><body><h1>Zahnbehandlung ohne Angst</h1><main><a href="/zahnbehandlung">Mehr</a><a href="/datenschutz-zahnbehandlung">x</a><a href="/privacy-zahnbehandlung">x</a></main></body></html>`;
+  const decisions = rankPages(html, new URL('https://praxis.example'), LIMIT);
+  assert.ok(decisions.find((d) => d.url.endsWith('/zahnbehandlung'))?.selected);
+  assert.ok(!decisions.find((d) => d.url.endsWith('/privacy-zahnbehandlung'))?.selected);
+});
+
+test('the site vocabulary comes from its title, description, headings and repeated words, and ignores its menus', () => {
+  const vocab = siteVocabulary('<html><head><title>Blue Harbor Sailing</title><meta name="description" content="Learn to sail"></head><body><nav><a href="/x">Navigation</a></nav><h1>Sailing lessons</h1><p>harbor harbor harbor tides</p><footer>Copyright footer</footer></body></html>');
+  for (const word of ['harbor', 'sailing', 'sail', 'lessons', 'learn']) assert.ok(vocab.has(word), word);
+  assert.ok(!vocab.has('navigation') && !vocab.has('footer') && !vocab.has('copyright') && !vocab.has('tides'));
+});
+
+test('a business with no prices, no products and no offers is ranked on what it does have, and a one-page site yields no candidates', () => {
+  const nonprofit = rankPages(readFileSync(join(SITES, 'nonprofit', 'home.html'), 'utf8'), new URL('https://clearwater.example'), LIMIT);
+  assert.ok(selectedPaths(nonprofit).includes('/donate') && selectedPaths(nonprofit).includes('/programs'));
+  assert.deepEqual(rankPages(readFileSync(join(SITES, 'one-page', 'home.html'), 'utf8'), new URL('https://studionine.example'), LIMIT), []);
 });

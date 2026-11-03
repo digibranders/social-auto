@@ -169,3 +169,13 @@ test('links that only exist after the page builds itself in the browser are rank
   const snapshot = await crawlSite('acme.com', deps);
   assert.ok(snapshot.pages.some((p) => p.url.endsWith('/services')) && snapshot.pages.some((p) => p.url.endsWith('/about')));
 });
+
+test('a client\'s own page vocabulary can be passed to the crawler as configuration', async () => {
+  const body = html(`<h1>Acme Dental</h1><p>${prose(6)}</p><main><a href="/donate">Give</a></main>`);
+  const give = html(`<p>${'Every gift pays for wells in rural schools and we publish how each donation is spent. '.repeat(5)}</p>`);
+  const pages = { 'https://acme.com/': body, 'https://acme.com/donate': give };
+  const plain = await crawlSite('acme.com', site(pages).deps);
+  assert.ok(!plain.pages.some((p) => p.url.endsWith('/donate')));
+  const configured = await crawlSite('acme.com', { ...site(pages).deps, ranking: { weights: { donate: 5 } } });
+  assert.ok(configured.pages.some((p) => p.url.endsWith('/donate')));
+});

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { chromeDumpArgs, chromePath } from './platform.ts';
-import { canonicalOf, duplicateOf, rankPages, type PageDecision } from './pages.ts';
+import { canonicalOf, duplicateOf, rankPages, type PageDecision, type RankingConfig } from './pages.ts';
 import { assertPublicUrl, parseRobots, robotsAllows, safeFetch, type FetchedPage } from './safe-fetch.ts';
 
 const run = promisify(execFile);
@@ -44,6 +44,8 @@ export interface CrawlDeps {
   fetchPage?: (url: string) => Promise<FetchedPage>;
   /** The page's text after its scripts have run (the HTML Chrome ends up with). */
   render?: (url: string) => Promise<string>;
+  /** A client's own page vocabulary and thresholds for ranking pages; see `RankingConfig`. */
+  ranking?: Partial<RankingConfig>;
 }
 
 /** Opens a public page in headless Chrome and returns the page as it looks after its scripts ran. */
@@ -295,7 +297,7 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
   };
   addPage(base.href, homeBody);
 
-  const decisions = rankPages(homeBody, base, MAX_PAGES - 1, { allowed: (path) => robotsAllows(robots, path) });
+  const decisions = rankPages(homeBody, base, MAX_PAGES - 1, { allowed: (path) => robotsAllows(robots, path), ...(deps.ranking ? { config: deps.ranking } : {}) });
   for (const decision of decisions.filter((d) => d.selected)) {
     const page = await get(decision.url);
     if (!page?.type.includes('html')) {
