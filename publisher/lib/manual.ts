@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { EditError, imagePathFor, isImageKey, validateCaption } from './overrides.js';
+import { EditError, imagePathFor, isImageKey, validateCaption, type OverrideMap } from './overrides.js';
 import type { ScheduledPost } from './schedule.js';
 
 /** A post written by hand in the dashboard, kept apart from the posts the content job plans. */
@@ -105,4 +105,47 @@ export function buildManualPost(input: NewManualPost, allowedChannels: readonly 
     channels,
     createdAt: new Date(now).toISOString(),
   };
+}
+
+export interface ManualChanges {
+  day?: unknown;
+  caption?: unknown;
+  imageKey?: unknown;
+  channels?: unknown;
+}
+
+/**
+ * The post with the given changes made; anything left out stays as it is. A new day, picture or caption is checked
+ * like a new post's; new channels must be among `allowedChannels`. Throws EditError when nothing is changed or a
+ * change is not allowed.
+ */
+export function editManualPost(post: ManualPost, changes: ManualChanges, allowedChannels: readonly string[], now: number): ManualPost {
+  if (changes.day === undefined && changes.caption === undefined && changes.imageKey === undefined && changes.channels === undefined) {
+    throw new EditError('nothing to change');
+  }
+  const edited: ManualPost = { ...post, channels: [...post.channels] };
+  if (changes.day !== undefined && changes.day !== post.date.slice(0, 10)) edited.date = postDateFor(changes.day, now);
+  if (changes.caption !== undefined) edited.caption = validateCaption(changes.caption);
+  if (changes.imageKey !== undefined) {
+    if (!isImageKey(changes.imageKey)) throw new EditError('add a picture first');
+    edited.imageKey = changes.imageKey;
+  }
+  if (changes.channels !== undefined) {
+    if (!Array.isArray(changes.channels) || changes.channels.some((c) => typeof c !== 'string')) throw new EditError('choose where to post');
+    const channels = [...new Set(changes.channels as string[])];
+    if (channels.length === 0) throw new EditError('choose at least one channel');
+    if (channels.some((c) => !allowedChannels.includes(c))) throw new EditError('one of the chosen channels is not connected for this client');
+    edited.channels = channels;
+  }
+  return edited;
+}
+
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+
+/** The moment `now` as a post's date: India time with its offset, to the second. A post sent now is dated now. */
+export const dateOfNow = (now: number): string => `${new Date(now + IST_OFFSET_MS).toISOString().slice(0, 19)}+05:30`;
+
+/** Whether a picture is still the picture of one of these posts (as made, or as edited in the dashboard); a product may use one picture for several posts. */
+export function pictureInUse(key: string, posts: readonly ManualPost[], overrides: OverrideMap): boolean {
+  return posts.some((p) => p.imageKey === key || overrides[p.id]?.imageKey === key);
 }

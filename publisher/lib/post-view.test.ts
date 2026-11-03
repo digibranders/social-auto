@@ -14,7 +14,7 @@ test('a planned post is shown with its picture address, where it goes and where 
   assert.equal(view['imageUrl'], 'https://pub.example/posts/w1-d1.jpg');
   assert.equal(view['manual'], false);
   assert.equal(view['state'], 'scheduled');
-  assert.deepEqual(view['channels'], [{ platform: 'instagram', account: 'acme_foods', state: 'scheduled', permalink: null }]);
+  assert.deepEqual(view['channels'], [{ id: 'instagram:17841400000000001', platform: 'instagram', account: 'acme_foods', state: 'scheduled', permalink: null }]);
 });
 
 test('a hand-made post says so, and a post with no picture or no origin has no picture address', () => {

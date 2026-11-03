@@ -27,7 +27,7 @@ export function scheduledView(post: ScheduledPost, channels: ChannelFile, posted
     ...(post.image && origin ? { imageUrl: `${origin}${post.image}` } : {}),
     manual: post.manual === true,
     state: overallState(states, Date.parse(post.date), now),
-    channels: states.map((s) => ({ platform: s.platform, account: s.account, state: s.state, permalink: s.permalink })),
+    channels: states.map((s) => ({ id: s.id, platform: s.platform, account: s.account, state: s.state, permalink: s.permalink })),
   };
 }
 
