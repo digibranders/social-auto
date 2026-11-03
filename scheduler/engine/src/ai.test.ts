@@ -30,7 +30,7 @@ test('with an OpenAI key OpenAI is the main provider, with the recommended model
   assert.equal(ai.primary, 'openai');
   assert.equal(ai.fallback, true);
   assert.equal(ai.textModel, 'gpt-6-luna');
-  assert.equal(ai.imageModel, 'gpt-image-2.5-flare');
+  assert.equal(ai.imageModel, 'gpt-image-2.5-sunburst');
   assert.equal(ai.imageQuality, 'medium');
   assert.equal(ai.maxOpenAiImages, 40);
   const only = aiConfigFromEnv({ OPENAI_API_KEY: OPENAI });
@@ -111,7 +111,7 @@ test('a picture from OpenAI is requested as a square JPEG at the chosen quality 
     const used = await generateScene(both(), request(dir), { openaiImages: 0 }, fetchFn);
     assert.equal(used, 'OpenAI');
     assert.equal(calls[0]?.url, 'https://api.openai.com/v1/images/generations');
-    assert.deepEqual(calls[0]?.body, { model: 'gpt-image-2.5-flare', prompt: 'a shopkeeper', n: 1, size: '1024x1024', quality: 'medium', output_format: 'jpeg' });
+    assert.deepEqual(calls[0]?.body, { model: 'gpt-image-2.5-sunburst', prompt: 'a shopkeeper', n: 1, size: '1024x1024', quality: 'medium', output_format: 'jpeg' });
     assert.deepEqual(await readFile(join(dir, 'a.jpg')), PNG_OR_JPEG);
   } finally {
     await rm(dir, { recursive: true, force: true });

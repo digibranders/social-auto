@@ -23,7 +23,8 @@ type PictureFormat = Exclude<FormatName, 'type'>;
 const STYLES: Record<PictureFormat, { look: string; room: string }> = {
   illustration: {
     look: 'Flat geometric vector illustration, bold simple shapes, subtle grain, editorial poster style',
-    room: 'generous empty space along the bottom',
+    // The poster shows only the middle band of the picture (a wide strip), so the subject must sit in the middle of the square.
+    room: 'the subject centered both ways and filling most of the width, with nothing important near the top and bottom edges',
   },
   'still-life': {
     look: 'Minimal studio still life of a single object on a seamless backdrop, dramatic rim light, soft haze, cinematic product photography',

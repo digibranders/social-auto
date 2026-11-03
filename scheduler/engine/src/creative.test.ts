@@ -120,3 +120,10 @@ test('a draft needs a picture idea and a stated link to its headline, and a too-
   assert.throws(() => validateDraft({ ...goodDraft, visualLink: undefined as unknown as string }, 1), /visualLink/);
   assert.throws(() => validateDraft({ ...goodDraft, headline: 'x'.repeat(61) }, 1), /headline is too long/);
 });
+
+test('an illustration is composed for the wide band the poster shows, not for the whole square', () => {
+  const prompt = creativePrompt('illustration', 'x', brand);
+  assert.match(prompt, /centered/i);
+  assert.match(prompt, /top and bottom/i);
+  assert.doesNotMatch(prompt, /empty space along the bottom/i);
+});
