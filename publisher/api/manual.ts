@@ -5,7 +5,7 @@
  * POST /api/manual?action=create                 body: {"brand","day":"YYYY-MM-DD","caption","imageKey","channels":["instagram","linkedin:..."]}
  * POST /api/manual?action=delete&post=<id>       removes a hand-made post that has not gone out yet
  */
-import { schedule as scheduleData } from '../data/schedule.js';
+import { scheduleData } from '../lib/schedule-source.js';
 import { allBrands } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { removeNewPost, saveNewPost, storePicture } from '../lib/manual-service.js';

@@ -10,7 +10,7 @@
  * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out
  * DELETE /api/v1/posts?externalId=...&postId=...    removes a post that has not gone out yet
  */
-import { schedule as scheduleData } from '../../data/schedule.js';
+import { scheduleData } from '../../lib/schedule-source.js';
 import { findWorkspace, isExternalId } from '../../lib/clients.js';
 import { describeError, json } from '../../lib/http.js';
 import { removeNewPost, saveNewPost, updateNewPost } from '../../lib/manual-service.js';

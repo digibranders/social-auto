@@ -7,7 +7,7 @@
  * GET /api/cron?dryRun=1   prepares everything without publishing (no alerts)
  * GET /api/cron?dryRun=1&post=<id>   same, for a named post regardless of its date
  */
-import { schedule as scheduleData } from '../data/schedule.js';
+import { scheduleData } from '../lib/schedule-source.js';
 import { channelLabel, expiringSoon } from '../lib/channels.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { parseProducts } from '../lib/products.js';

@@ -17,26 +17,7 @@ if (process.env['BLOB_READ_WRITE_TOKEN']) {
   process.exit(1);
 }
 
-type Handler = (request: Request) => Response | Promise<Response>;
-const routes: Record<string, { method: string; load: () => Promise<Handler> } | undefined> = {
-  '/api/cron': { method: 'GET', load: () => import('../api/cron.ts').then((m) => m.GET) },
-  '/api/status': { method: 'GET', load: () => import('../api/status.ts').then((m) => m.GET) },
-  '/api/channels': { method: 'POST', load: () => import('../api/channels.ts').then((m) => m.POST) },
-  '/api/v1/workspaces': { method: 'ANY', load: async () => { const m = await import('../api/_v1/workspaces.ts'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
-  '/api/v1/pictures': { method: 'POST', load: () => import('../api/_v1/pictures.ts').then((m) => m.POST) },
-  '/api/v1/posts': { method: 'ANY', load: async () => { const m = await import('../api/_v1/posts.ts'); return (request) => (request.method === 'POST' ? m.POST(request) : request.method === 'DELETE' ? m.DELETE(request) : request.method === 'PATCH' ? m.PATCH(request) : m.GET(request)); } },
-  '/api/v1/send': { method: 'POST', load: () => import('../api/_v1/send.ts').then((m) => m.POST) },
-  '/api/v1/connect-link': { method: 'POST', load: () => import('../api/_v1/connect-link.ts').then((m) => m.POST) },
-  '/api/clients': { method: 'POST', load: () => import('../api/clients.ts').then((m) => m.POST) },
-  '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
-  '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
-  '/api/edited-image': { method: 'GET', load: () => import('../api/edited-image.ts').then((m) => m.GET) },
-  '/api/facebook-connect': { method: 'POST', load: () => import('../api/_connect/facebook.ts').then((m) => m.POST) },
-  '/api/instagram-connect': { method: 'POST', load: () => import('../api/_connect/instagram.ts').then((m) => m.POST) },
-  '/api/refresh': { method: 'GET', load: () => import('../api/refresh.ts').then((m) => m.GET) },
-  '/api/google-connect': { method: 'POST', load: () => import('../api/_connect/google.ts').then((m) => m.POST) },
-  '/api/linkedin-connect': { method: 'POST', load: () => import('../api/_connect/linkedin.ts').then((m) => m.POST) },
-};
+import { matchRoute } from '../server/routes.ts';
 
 async function toRequest(req: IncomingMessage): Promise<Request> {
   const chunks: Buffer[] = [];
@@ -48,12 +29,12 @@ async function toRequest(req: IncomingMessage): Promise<Request> {
 }
 
 createServer(async (req, res) => {
-  const route = routes[new URL(req.url ?? '/', `http://${req.headers.host}`).pathname];
-  if (!route || (route.method !== 'ANY' && req.method !== route.method)) {
-    res.statusCode = route ? 405 : 404;
+  const match = matchRoute(req.method ?? 'GET', new URL(req.url ?? '/', `http://${req.headers.host}`).pathname);
+  if (match.kind !== 'ok') {
+    res.statusCode = match.kind === 'not-found' ? 404 : 405;
     return void res.end();
   }
-  const response = await (await route.load())(await toRequest(req));
+  const response = await (await match.route.load())(await toRequest(req));
   res.statusCode = response.status;
   response.headers.forEach((value, name) => res.setHeader(name, value));
   res.end(Buffer.from(await response.arrayBuffer()));

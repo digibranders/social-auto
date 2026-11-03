@@ -4,7 +4,7 @@
  * POST /api/clients?action=add       body: {"name": "Brand Basket"}   answers {"brand": "brand-basket"}
  * POST /api/clients?action=remove    body: {"brand": "brand-basket"}  (only an added client with no channels or extra posts)
  */
-import { schedule as scheduleData } from '../data/schedule.js';
+import { scheduleData } from '../lib/schedule-source.js';
 import { channelsFor } from '../lib/channels.js';
 import { addClient, isBrandSlug } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';

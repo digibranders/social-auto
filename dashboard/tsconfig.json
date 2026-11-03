@@ -13,5 +13,5 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["api", "lib", "shared", "dev", "web/calendar.ts", "web/calendar.test.ts"]
+  "include": ["api", "lib", "shared", "dev", "server", "web/calendar.ts", "web/calendar.test.ts"]
 }

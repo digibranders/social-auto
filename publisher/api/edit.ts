@@ -6,7 +6,7 @@
  * POST /api/edit?post=<id>&action=image     body: the JPG file
  * POST /api/edit?post=<id>&action=revert
  */
-import { schedule as scheduleData } from '../data/schedule.js';
+import { scheduleData } from '../lib/schedule-source.js';
 import { toScheduled } from '../lib/manual.js';
 import { editPost, type EditAction } from '../lib/editing.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';

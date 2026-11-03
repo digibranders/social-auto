@@ -5,7 +5,7 @@
  *
  * GET /api/status   (Authorization: Bearer $STATUS_SECRET)
  */
-import { schedule as scheduleData } from '../data/schedule.js';
+import { scheduleData } from '../lib/schedule-source.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import { parseKey } from '../lib/crypto.js';
 import { crosspostStatusFor } from '../lib/crosspost.js';

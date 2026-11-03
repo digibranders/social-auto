@@ -8,7 +8,7 @@
  * POST /api/google-connect?action=locations  {"sealed","brand"}              the locations to choose from
  * POST /api/google-connect?action=save       {"sealed","brand","location"}   saves the chosen one
  */
-import { schedule as scheduleData } from '../../data/schedule.js';
+import { scheduleData } from '../../lib/schedule-source.js';
 import { addGoogleLocation } from '../../lib/channels.js';
 import { allBrands } from '../../lib/clients.js';
 import { parseKey } from '../../lib/crypto.js';
