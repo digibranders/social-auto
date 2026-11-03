@@ -41,6 +41,9 @@ The client first makes your Facebook account an admin of their Page (Page settin
 `~/social-auto-runner/scheduler/engine/scripts/weekly.sh`, or `launchctl kickstart gui/$(id -u)/com.56steve.social-auto.weekly`. The log is `~/Library/Logs/social-auto/weekly.log`.
 The job works in `~/social-auto-runner`, a separate checkout of `main`; it refuses to run if that checkout has local changes or is not on `main`.
 
+### Everything on the VPS
+Publisher and dashboard can run as two Node servers on the VPS instead of Vercel (see `deploy/README.md`): systemd services `social-publisher` and `social-dashboard`, timers `social-cron` and `social-refresh` (replacing Vercel Cron), data in `/var/lib/social-auto`, settings in `/etc/social-auto/*.env`. Logs: `journalctl -u social-publisher -u social-dashboard -u social-cron`. Update with `deploy/scripts/deploy.sh`. Never run the Vercel crons and the server timers together, or a post can go out twice.
+
 ### Run the content engine on a Linux server
 The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (`google-chrome`) and ImageMagick (`convert`, which replaces the Mac's `sips`). Settings are environment variables, so a server needs no edits to the code:
 

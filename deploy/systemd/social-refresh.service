@@ -1,0 +1,11 @@
+[Unit]
+Description=Social Auto refresh job (calls the publisher on this server)
+After=social-publisher.service
+
+[Service]
+Type=oneshot
+User=social
+Group=social
+EnvironmentFile=/etc/social-auto/publisher.env
+ExecStart=/home/social/social-auto/deploy/scripts/call-publisher.sh /api/refresh
+TimeoutStartSec=10min

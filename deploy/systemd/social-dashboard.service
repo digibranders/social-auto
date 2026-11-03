@@ -1,0 +1,21 @@
+[Unit]
+Description=Social Auto dashboard (web app and its API)
+After=network-online.target social-publisher.service
+Wants=network-online.target
+
+[Service]
+User=social
+Group=social
+WorkingDirectory=/home/social/social-auto/dashboard
+EnvironmentFile=/etc/social-auto/dashboard.env
+Environment=PORT=4011
+ExecStart=/home/social/.local/node/bin/node --import ./dev/resolver.ts server/main.ts
+Restart=always
+RestartSec=3
+MemoryMax=256M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

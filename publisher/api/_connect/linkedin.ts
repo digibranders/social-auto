@@ -5,7 +5,7 @@
  *
  * POST /api/linkedin-connect   {"code": "...", "redirectUri": "...", "brand": "brandbasket"}
  */
-import { schedule as scheduleData } from '../../data/schedule.js';
+import { scheduleData } from '../../lib/schedule-source.js';
 import { addLinkedInMember } from '../../lib/channels.js';
 import { parseKey } from '../../lib/crypto.js';
 import { describeError, isAuthorized, json, requireEnv } from '../../lib/http.js';

@@ -1,0 +1,24 @@
+[Unit]
+Description=Social Auto publisher (posting, status feed, product API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=social
+Group=social
+WorkingDirectory=/home/social/social-auto/publisher
+EnvironmentFile=/etc/social-auto/publisher.env
+Environment=PORT=4021
+Environment=SCHEDULE_FILE=/home/social/social-auto/publisher/data/schedule.ts
+Environment=LOCAL_STORE_DIR=/var/lib/social-auto
+ExecStart=/home/social/.local/node/bin/node --import ./dev/resolver.ts server/main.ts
+Restart=always
+RestartSec=3
+MemoryMax=512M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/social-auto
+
+[Install]
+WantedBy=multi-user.target

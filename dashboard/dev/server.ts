@@ -70,26 +70,7 @@ async function serveFile(res: ServerResponse, root: string, relative: string): P
   }
 }
 
-type Handler = (request: Request) => Response | Promise<Response>;
-const routes: Record<string, { method: string | string[]; load: () => Promise<Handler> } | undefined> = {
-  '/api/auth/login': { method: 'POST', load: () => import('../api/auth/[step].ts').then((m) => m.POST) },
-  '/api/auth/logout': { method: 'POST', load: () => import('../api/auth/[step].ts').then((m) => m.POST as Handler) },
-  '/api/data': { method: 'GET', load: () => import('../api/data.ts').then((m) => m.GET) },
-  '/api/facebook-start': { method: 'GET', load: () => import('../api/_connect/facebook-start.ts').then((m) => m.GET as Handler) },
-  '/api/facebook-callback': { method: 'GET', load: () => import('../api/_connect/facebook-callback.ts').then((m) => m.GET) },
-  '/api/instagram-start': { method: 'GET', load: () => import('../api/_connect/instagram-start.ts').then((m) => m.GET as Handler) },
-  '/api/instagram-callback': { method: 'GET', load: () => import('../api/_connect/instagram-callback.ts').then((m) => m.GET) },
-  '/api/linkedin-invite': { method: 'POST', load: () => import('../api/_connect/linkedin-invite.ts').then((m) => m.POST as Handler) },
-  '/api/linkedin-start': { method: 'GET', load: () => import('../api/_connect/linkedin-start.ts').then((m) => m.GET as Handler) },
-  '/api/linkedin-callback': { method: 'GET', load: () => import('../api/_connect/linkedin-callback.ts').then((m) => m.GET) },
-  '/api/google/start': { method: 'GET', load: () => import('../api/google/[step].ts').then((m) => m.GET) },
-  '/api/google/callback': { method: 'GET', load: () => import('../api/google/[step].ts').then((m) => m.GET) },
-  '/api/google/pick': { method: ['GET', 'POST'], load: () => import('../api/google/[step].ts').then((m) => (request: Request) => (request.method === 'POST' ? m.POST(request) : m.GET(request))) },
-  '/api/disconnect': { method: 'POST', load: () => import('../api/disconnect.ts').then((m) => m.POST) },
-  '/api/clients': { method: 'POST', load: () => import('../api/clients.ts').then((m) => m.POST) },
-  '/api/manual': { method: 'POST', load: () => import('../api/manual.ts').then((m) => m.POST) },
-  '/api/edit': { method: 'POST', load: () => import('../api/edit.ts').then((m) => m.POST) },
-};
+import { matchRoute } from '../server/routes.ts';
 
 const app = createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
@@ -100,12 +81,12 @@ const app = createServer(async (req, res) => {
     return send(res, relayed);
   }
   if (path.startsWith('/api/')) {
-    const route = routes[path];
-    if (!route || ![route.method].flat().includes(req.method ?? '')) {
-      res.statusCode = route ? 405 : 404;
+    const match = matchRoute(req.method ?? 'GET', path);
+    if (match.kind !== 'ok') {
+      res.statusCode = match.kind === 'not-found' ? 404 : 405;
       return void res.end();
     }
-    const handler = await route.load();
+    const handler = await match.route.load();
     return send(res, await handler(await toRequest(req)));
   }
   if (path.startsWith('/posts/')) return serveFile(res, join(POSTERS_DIR), path.slice(1));
