@@ -6,13 +6,13 @@ Everyday chores and what to do when an alert arrives. Written so anyone can foll
 
 | Piece | Where | Does what |
 |---|---|---|
-| **Content engine** | `scheduler/engine` (runs on the Mac) | Reads a client's website, writes posts, draws posters. Weekly job: Mondays 10:00. |
-| **Publisher** | `publisher/` → Vercel project `social-publisher` | Posts to Instagram every day 10:00-10:59 IST, renews the token weekly, sends alerts, serves the private status feed. |
-| **Dashboard** | `dashboard/` → Vercel project `social-dashboard` | Calendar behind a login: what is scheduled, published, missed. Posts that have not gone out yet can be edited (caption, hashtags, picture) or reverted. |
-| **Local scheduler** (optional) | `scheduler/upstream` (Docker) | The old self-hosted dashboard. Not needed for posting. |
+| **Content engine** | `scheduler/engine`, on the server (timer `social-auto-weekly`, Mondays 10:00 IST) | Reads a client's website, writes posts, draws posters, saves them to GitHub `main`. |
+| **Publisher** | `publisher/`, service `social-publisher` | Posts every day, renews tokens, sends alerts, serves the private status feed and the product API. |
+| **Dashboard** | `dashboard/`, service `social-dashboard`, at `https://social.digibranders.com` | Calendar behind a login: what is scheduled, published, missed. Posts that have not gone out yet can be edited (caption, hashtags, picture) or reverted. |
+| **Old Vercel projects** | `social-publisher`, `social-dashboard` on Vercel | Being retired. Never let their cron and the server's timers post at the same time. |
 
-Flow: Monday job → commits posts to GitHub `main` → Vercel deploys → publisher posts daily → dashboard reads the publisher's status feed.
-Work on `development`, open a pull request, merge into `main`. Merging to `main` deploys both Vercel projects.
+Flow: weekly job writes the posts into the repo checkout on the server and pushes to GitHub `main` → the publisher reads the new schedule from the same folder (no deploy) → the publisher posts daily → the dashboard reads the publisher's status feed.
+Work on a branch, open a pull request, merge into `main`, then run `deploy/scripts/deploy.sh` on the server. See `deploy/README.md`.
 
 ## Alerts (push, via ntfy: topic in `ALERT_NTFY_TOPIC`)
 
