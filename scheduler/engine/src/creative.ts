@@ -61,6 +61,36 @@ function headlineSize(post: PlannedPost, sizes: readonly [number, number, number
 /** A colour that reads on a dark poster: the brand's accent, lightened when it is itself dark. */
 const onDark = (accent: string): string => (luminance(accent) > 0.35 ? accent : lighten(accent, 0.4));
 
+/**
+ * What a stranger needs from one poster: what the brand is (its identity line, when the site supports one) and one plain action with the real
+ * address. Each sits where its format has room: under the logo and in the opposite top corner, with a dark backing so it reads on a picture.
+ */
+function brandStrip(brand: Brand, format: FormatName): { html: string; css: string } {
+  const identity = brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : '';
+  const cta = brand.cta;
+  const host = brand.handleUrl?.trim() ?? '';
+  const backing = 'background: rgba(8, 14, 22, 0.55); padding: 8px 16px; border-radius: 12px;';
+  const onRight = format === 'isometric';
+  const identityBox: Record<FormatName, string> = {
+    type: 'left: 72px; top: 156px;',
+    illustration: 'left: 52px; top: 138px;',
+    'still-life': 'left: 64px; top: 154px;',
+    isometric: 'right: 64px; top: 154px; text-align: right;',
+  };
+  const ctaBox: Record<FormatName, string> = {
+    type: 'right: 72px; top: 66px;',
+    illustration: 'right: 52px; top: 52px;',
+    'still-life': 'right: 64px; top: 62px;',
+    isometric: 'left: 64px; top: 62px;',
+  };
+  const css = `
+  .identity { position: absolute; ${identityBox[format]} max-width: ${onRight ? 380 : 640}px; font-size: 26px; line-height: 1.3; font-weight: 600; color: #F1F4F7; ${format === 'type' ? '' : backing} }
+  .cta { position: absolute; ${ctaBox[format]} font-size: 24px; font-weight: 800; color: #fff; border: 2px solid rgba(255, 255, 255, 0.55); border-radius: 999px; padding: 10px 22px; background: rgba(8, 14, 22, 0.6); white-space: nowrap; }
+  .cta span { font-weight: 600; opacity: 0.85; }`;
+  const html = `${identity ? `<div class="identity">${escapeHtml(identity)}</div>` : ''}${cta ? `<div class="cta">${escapeHtml(cta.label)} <span>${escapeHtml(host || cta.text)}</span></div>` : ''}`;
+  return { html, css: identity || cta ? css : '' };
+}
+
 export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl, logoTone }: LayoutInput): string {
   const format = post.format ?? 'type';
   const { colors } = brand;
@@ -117,6 +147,7 @@ export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl, logoT
       : format === 'still-life'
         ? `<div class="stack"><h1>${headlineHtml(post)}</h1><p class="sub">${escapeHtml(post.subline)}</p></div>`
         : `<h1>${headlineHtml(post)}</h1><p class="sub">${escapeHtml(post.subline)}</p>${format === 'type' ? '<div class="dot"></div>' : ''}`;
+  const strip = brandStrip(brand, format);
   const picturePieces = format === 'illustration' ? '<div class="art"></div>' : format === 'type' ? '' : '<div class="art"></div><div class="shade"></div>';
 
   return `<!doctype html>
@@ -127,11 +158,12 @@ export function renderCreativePostHtml({ brand, post, logoHtml, visualUrl, logoT
   html, body { width: ${CANVAS_SIZE}px; height: ${CANVAS_SIZE}px; overflow: hidden; }
   body { font-family: '${brand.font}', system-ui, sans-serif; position: relative; }
   .logo { position: absolute; ${logoBox} }
-  .logo svg, .logo img { height: 54px; width: auto; max-width: 420px; object-fit: contain; display: block; }${layouts[format]}
+  .logo svg, .logo img { height: 54px; width: auto; max-width: 420px; object-fit: contain; display: block; }${layouts[format]}${strip.css}
 </style></head>
 <body class="format-${format}">
   ${picturePieces}
   <div class="logo">${logoHtml}</div>
+  ${strip.html}
   ${copy}
 </body></html>`;
 }

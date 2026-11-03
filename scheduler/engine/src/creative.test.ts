@@ -156,3 +156,35 @@ test('the prompt tells the model which figures it may use', () => {
   const prompt = userPrompt({ ...brand, proofPoints: ['Plans start from $29 per month.'] }, 2, []);
   assert.match(prompt, /superlative[^.]*guarantee or deadline[^.]*only if a proof point/i);
 });
+
+const branded = {
+  ...brand,
+  handleUrl: 'acme.com',
+  identity: { line: 'Family dental care for the whole town', kind: 'homepage', source: null, verification: { status: 'verified', reasons: [] } },
+  cta: { kind: 'site-action', label: 'Book an appointment', evidence: null, text: 'Book an appointment at acme.com (link in bio)' },
+} as unknown as Brand;
+const shown = (b: Brand, format: PlannedPost['format']): string => renderCreativePostHtml({ brand: b, post: post(format), painPointNumber: 1, logoHtml: '<svg></svg>', visualUrl: 'file:///x.jpg' });
+
+test('every poster format shows what the brand is and one plain call to action with the real address', () => {
+  for (const format of FORMATS) {
+    const html = shown(branded, format);
+    assert.match(html, /class="identity">Family dental care for the whole town</, format);
+    assert.match(html, /class="cta">Book an appointment <span>acme\.com<\/span></, format);
+  }
+});
+
+test('a brand known only by its name shows no identity line, and an older profile shows neither', () => {
+  const nameOnly = { ...branded, identity: { line: 'Acme Dental', kind: 'name-only', source: null, verification: { status: 'unverified', reasons: [] } } } as unknown as Brand;
+  assert.doesNotMatch(shown(nameOnly, 'type'), /class="identity"/);
+  assert.match(shown(nameOnly, 'type'), /class="cta"/);
+  const old = shown(brand, 'type');
+  assert.doesNotMatch(old, /class="identity"/);
+  assert.doesNotMatch(old, /class="cta"/);
+});
+
+test('identity and call to action are escaped, and the fallback reads "Visit" with the address', () => {
+  const risky = { ...branded, identity: { ...(branded.identity as object), line: 'Tools for <b>R&D</b>' }, cta: { kind: 'visit-site', label: 'Visit the website', evidence: null, text: 'Visit acme.com (link in bio)' } } as unknown as Brand;
+  const html = shown(risky, 'illustration');
+  assert.match(html, /Tools for &lt;b&gt;R&amp;D&lt;\/b&gt;/);
+  assert.match(html, /class="cta">Visit the website <span>acme\.com<\/span></);
+});

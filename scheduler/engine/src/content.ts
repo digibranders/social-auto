@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import type { CallToAction } from './cta.ts';
+import type { BrandIdentity } from './identity.ts';
 
 export interface BrandColors {
   background: string;
@@ -58,6 +60,10 @@ export interface Brand {
   visualStyle?: string;
   /** Where the logo was taken from. Older profiles have none. */
   logoSource?: LogoSource;
+  /** What the business is in one plain line, with the source that supports it. Older profiles have none. */
+  identity?: BrandIdentity;
+  /** The action the posters invite, and the link on the site that shows it is real. Older profiles have none. */
+  cta?: CallToAction;
 }
 
 function requireStringArray(obj: Record<string, unknown>, key: string, source: string, allowEmpty = false): string[] {
@@ -156,6 +162,8 @@ export function parseBrand(raw: unknown, source: string): Brand {
   return {
     ...(visualStyle ? { visualStyle } : {}),
     ...(raw['logoSource'] !== undefined ? { logoSource: parseLogoSource(raw['logoSource'], source) } : {}),
+    ...(raw['identity'] !== undefined ? { identity: parseIdentity(raw['identity'], source) } : {}),
+    ...(raw['cta'] !== undefined ? { cta: parseCta(raw['cta'], source) } : {}),
     name: requireString(raw, 'name', source),
     website: requireString(raw, 'website', source),
     handleUrl: requireString(raw, 'handleUrl', source),
@@ -205,6 +213,36 @@ function parseLogoSource(raw: unknown, source: string): LogoSource {
     fetchedAt,
     tried: (tried as Array<Record<string, string>>).map((t) => ({ url: t['url'] as string, outcome: t['outcome'] as string })),
   };
+}
+
+const IDENTITY_KINDS = ['approved', 'homepage', 'about', 'offering', 'metadata', 'name-only'];
+const IDENTITY_STATUSES = ['verified', 'approved', 'unverified'];
+
+function parseIdentity(raw: unknown, source: string): BrandIdentity {
+  const where = `${source} identity`;
+  if (!isRecord(raw)) throw new ContentValidationError(where, '"identity" must be an object');
+  const { line, kind, verification } = raw;
+  if (typeof line !== 'string' || !line.trim()) throw new ContentValidationError(where, '"identity.line" must be text');
+  if (typeof kind !== 'string' || !IDENTITY_KINDS.includes(kind)) throw new ContentValidationError(where, `"identity.kind" must be one of ${IDENTITY_KINDS.join(', ')}`);
+  if (!isRecord(verification) || typeof verification['status'] !== 'string' || !IDENTITY_STATUSES.includes(verification['status']) || !Array.isArray(verification['reasons']) || !verification['reasons'].every((r) => typeof r === 'string')) {
+    throw new ContentValidationError(where, '"identity.verification" must give a status and reasons');
+  }
+  const src = raw['source'];
+  if (src !== null && !(isRecord(src) && typeof src['url'] === 'string' && typeof src['verbatimQuote'] === 'string')) throw new ContentValidationError(where, '"identity.source" must be null or give a url and quote');
+  const sourceRecord = src === null ? null : { url: (src as Record<string, string>)['url'] as string, verbatimQuote: (src as Record<string, string>)['verbatimQuote'] as string, fetchedAt: ((src as Record<string, unknown>)['fetchedAt'] as string | null | undefined) ?? null, contentHash: ((src as Record<string, unknown>)['contentHash'] as string | null | undefined) ?? null };
+  return { line, kind: kind as BrandIdentity['kind'], source: sourceRecord, verification: { status: verification['status'] as BrandIdentity['verification']['status'], reasons: verification['reasons'] as string[] } };
+}
+
+function parseCta(raw: unknown, source: string): CallToAction {
+  const where = `${source} cta`;
+  if (!isRecord(raw)) throw new ContentValidationError(where, '"cta" must be an object');
+  const { kind, label, text, evidence } = raw;
+  if (kind !== 'site-action' && kind !== 'visit-site') throw new ContentValidationError(where, '"cta.kind" must be site-action or visit-site');
+  if (typeof label !== 'string' || typeof text !== 'string' || !label.trim() || !text.trim()) throw new ContentValidationError(where, '"cta" needs a label and text');
+  if (evidence !== null && !(isRecord(evidence) && typeof evidence['url'] === 'string' && typeof evidence['linkText'] === 'string' && ['nav', 'body', 'footer'].includes(evidence['region'] as string))) {
+    throw new ContentValidationError(where, '"cta.evidence" must be null or give linkText, url and region');
+  }
+  return { kind, label, text, evidence: evidence === null ? null : { linkText: (evidence as Record<string, string>)['linkText'] as string, url: (evidence as Record<string, string>)['url'] as string, region: (evidence as Record<string, string>)['region'] as 'nav' | 'body' | 'footer' } };
 }
 
 function parseFeatures(raw: unknown, source: string): BrandFeature[] {

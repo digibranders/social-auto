@@ -263,3 +263,89 @@ test('older profiles without a logo source still load, and a malformed one is re
   assert.throws(() => parseBrand({ ...withFiles, logoSource: { ...source, kind: 'stolen' } }, 'brand.json'), /logoSource/);
   assert.throws(() => parseBrand({ ...withFiles, logoSource: 'x' }, 'brand.json'), /logoSource/);
 });
+
+const identityAnswer = (extra: object): (() => Response) => () =>
+  new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...brandJson, callToAction: 'Book at acme.com (link in bio)', ...extra }) } }] }), { status: 200 });
+const identitySnapshot: SiteSnapshot = {
+  ...snapshot,
+  pages: [{ url: 'https://acme.com/', title: 'Acme Dental', description: 'Family dental care in town', text: 'Family dental care for the whole town. '.repeat(10), fetchedAt: '2026-11-01T00:00:00Z' }],
+  links: [{ url: 'https://acme.com/pricing', text: 'Pricing', region: 'nav' }],
+};
+const analyzeIdentity = async (answer: () => Response, over: Partial<SiteSnapshot> = {}) => {
+  const dir = await mkdtemp(join(tmpdir(), 'analyze-test-'));
+  try {
+    const out = await analyzeSite('acme.com', dir, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), {
+      crawl: async () => ({ ...identitySnapshot, ...over }),
+      fetchBytes: async (url: string) => ({ finalUrl: url, bytes: png, type: 'image/png' }),
+      chatFetch: (async () => answer()) as typeof fetch,
+    });
+    return { brand: out.brand, saved: JSON.parse(await readFile(join(out.dir, 'brand.json'), 'utf8')) as Record<string, unknown> };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+};
+
+test('the identity line is read from the site with its quote, stored apart from the claims, and saved in the profile', async () => {
+  const { brand, saved } = await analyzeIdentity(identityAnswer({ identityCandidates: [{ line: 'Family dental care for the whole town', sourceUrl: 'https://acme.com/', quote: 'Family dental care for the whole town.' }] }));
+  assert.equal(brand.identity?.kind, 'homepage');
+  assert.equal(brand.identity?.line, 'Family dental care for the whole town');
+  assert.equal(brand.identity?.verification.status, 'verified');
+  assert.deepEqual(saved['identity'], JSON.parse(JSON.stringify(brand.identity)));
+});
+
+test('an identity the site does not support falls back to the brand name alone', async () => {
+  const { brand } = await analyzeIdentity(identityAnswer({ identityCandidates: [{ line: 'The leading dental group in the country', sourceUrl: 'https://acme.com/', quote: 'The leading dental group in the country' }] }));
+  assert.equal(brand.identity?.kind, 'name-only');
+  assert.equal(brand.identity?.line, 'Acme Dental');
+});
+
+test('the page title and description count as the last rung of the ladder', async () => {
+  const { brand } = await analyzeIdentity(identityAnswer({ identityCandidates: [{ line: 'Family dental care in town', sourceUrl: 'metadata:https://acme.com', quote: 'Family dental care in town' }] }), {
+    pages: [{ url: 'https://acme.com/', title: 'Acme Dental', description: 'Family dental care in town', text: 'Welcome. '.repeat(40), fetchedAt: '2026-11-01T00:00:00Z' }],
+  });
+  assert.equal(brand.identity?.kind, 'metadata');
+});
+
+test('the call to action comes from a real link of the site, not from the model, and its evidence is saved', async () => {
+  const { brand, saved } = await analyzeIdentity(identityAnswer({ identityCandidates: [] }));
+  assert.equal(brand.callToAction, 'See pricing at acme.com (link in bio)');
+  assert.equal(brand.cta?.kind, 'site-action');
+  assert.equal(brand.cta?.evidence?.url, 'https://acme.com/pricing');
+  assert.deepEqual(saved['cta'], JSON.parse(JSON.stringify(brand.cta)));
+});
+
+test('a site with no recognisable action gets "Visit" and its real address', async () => {
+  const { brand } = await analyzeIdentity(identityAnswer({ identityCandidates: [] }), { links: [{ url: 'https://acme.com/people', text: 'Our people', region: 'nav' }] });
+  assert.equal(brand.callToAction, 'Visit acme.com (link in bio)');
+  assert.equal(brand.cta?.kind, 'visit-site');
+});
+
+test('the brand reader is asked for identity candidates and no longer writes the call to action', async () => {
+  const asked: string[] = [];
+  const dir = await mkdtemp(join(tmpdir(), 'analyze-test-'));
+  try {
+    await analyzeSite('acme.com', dir, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), {
+      crawl: async () => identitySnapshot,
+      fetchBytes: async (url: string) => ({ finalUrl: url, bytes: png, type: 'image/png' }),
+      chatFetch: (async (_url: string, init?: RequestInit) => {
+        asked.push(String(init?.body));
+        return identityAnswer({ identityCandidates: [] })();
+      }) as typeof fetch,
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+  assert.match(asked[0] ?? '', /\\"identityCandidates\\"/);
+  assert.match(asked[0] ?? '', /metadata:https:\/\/acme\.com/);
+  assert.ok(!/short call to action/.test(asked[0] ?? ''));
+});
+
+test('profiles saved before identity and call-to-action records still load, and malformed records are refused', () => {
+  assert.equal(parseBrand(withFiles, 'brand.json').identity, undefined);
+  const identity = { line: 'Acme', kind: 'name-only', source: null, verification: { status: 'unverified', reasons: ['x'] } };
+  assert.deepEqual(parseBrand({ ...withFiles, identity }, 'brand.json').identity, identity);
+  assert.throws(() => parseBrand({ ...withFiles, identity: { ...identity, kind: 'invented' } }, 'brand.json'), /identity/);
+  const cta = { kind: 'visit-site', label: 'Visit the website', evidence: null, text: 'Visit acme.com (link in bio)' };
+  assert.deepEqual(parseBrand({ ...withFiles, cta }, 'brand.json').cta, cta);
+  assert.throws(() => parseBrand({ ...withFiles, cta: { ...cta, kind: 'x' } }, 'brand.json'), /cta/);
+});

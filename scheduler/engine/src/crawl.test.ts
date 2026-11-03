@@ -238,3 +238,12 @@ test('every page read carries when it was fetched, so claims about it can be dat
   const snapshot = await crawlSite('acme.com', site({ 'https://acme.com/': home, 'https://acme.com/about': about, 'https://acme.com/pricing': pricing }).deps);
   for (const page of snapshot.pages) assert.ok(page.fetchedAt && !Number.isNaN(Date.parse(page.fetchedAt)), page.url);
 });
+
+test('the snapshot keeps the homepage links with their text and where they sit, so the poster can offer a real action', async () => {
+  const withNav = html(`<nav><a href="/book">Book a visit</a></nav><h1>Acme Dental</h1><p>${prose(6)}</p><a href="/about">About</a><footer><a href="/privacy">Privacy</a></footer>`);
+  const { deps } = site({ 'https://acme.com/': withNav, 'https://acme.com/about': about, 'https://acme.com/book': pricing });
+  const snapshot = await crawlSite('acme.com', deps);
+  const book = snapshot.links?.find((l) => l.url === 'https://acme.com/book');
+  assert.deepEqual(book, { url: 'https://acme.com/book', text: 'Book a visit', region: 'nav' });
+  assert.equal(snapshot.links?.find((l) => l.url === 'https://acme.com/privacy')?.region, 'footer');
+});

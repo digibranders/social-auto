@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { chromeDumpArgs, chromePath } from './platform.ts';
-import { canonicalOf, duplicateOf, rankPages, type PageDecision, type RankingConfig } from './pages.ts';
+import { canonicalOf, duplicateOf, extractLinkInfo, rankPages, type LinkInfo, type PageDecision, type RankingConfig } from './pages.ts';
 import { assertPublicUrl, parseRobots, robotsAllows, safeFetch, type FetchedPage } from './safe-fetch.ts';
 
 const run = promisify(execFile);
@@ -99,6 +99,8 @@ export interface SiteSnapshot {
   fonts: string[];
   /** Every internal link of the homepage with its score and the reason it was or was not read, for review. */
   pageDecisions: PageDecision[];
+  /** The homepage's internal links with their text and where they sit; the call to action is chosen from them. */
+  links?: LinkInfo[];
 }
 
 function decodeEntities(text: string): string {
@@ -373,5 +375,6 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     colors: collectColors([...logoSvgs, ...logoSvgs, themeColor, homeBody, ...stylesheets]),
     fonts: collectFonts([homeBody, ...stylesheets]),
     pageDecisions: decisions,
+    links: extractLinkInfo(homeBody, base).links,
   };
 }
