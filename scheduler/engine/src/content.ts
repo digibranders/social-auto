@@ -19,6 +19,26 @@ export interface BrandFeature {
   detail: string;
 }
 
+export const LOGO_KINDS = ['site-logo', 'site-icon', 'name-only'] as const;
+export type LogoKind = (typeof LOGO_KINDS)[number];
+
+/** Where a brand's logo came from, so a wrong one can be traced to the address it was taken from. */
+export interface LogoSource {
+  kind: LogoKind;
+  /** The page the candidates were found on. */
+  foundOn: string;
+  /** The exact picture address that was used; null for a logo made from the name alone. */
+  imageUrl: string | null;
+  /** The file in the brand folder that holds the picture (the icon, when the logo was built around it); null for name-only. */
+  savedAs: string | null;
+  contentType: string | null;
+  bytes: number | null;
+  contentHash: string | null;
+  fetchedAt: string;
+  /** Every address tried, in order, with what happened. */
+  tried: Array<{ url: string; outcome: string }>;
+}
+
 export interface Brand {
   name: string;
   website: string;
@@ -36,6 +56,8 @@ export interface Brand {
   features: BrandFeature[];
   /** One sentence for picture makers: the palette in words, the mood and setting, what to avoid. Older profiles have none. */
   visualStyle?: string;
+  /** Where the logo was taken from. Older profiles have none. */
+  logoSource?: LogoSource;
 }
 
 function requireStringArray(obj: Record<string, unknown>, key: string, source: string, allowEmpty = false): string[] {
@@ -133,6 +155,7 @@ export function parseBrand(raw: unknown, source: string): Brand {
   const visualStyle = typeof raw['visualStyle'] === 'string' && raw['visualStyle'].trim() ? raw['visualStyle'].trim().slice(0, 400) : undefined;
   return {
     ...(visualStyle ? { visualStyle } : {}),
+    ...(raw['logoSource'] !== undefined ? { logoSource: parseLogoSource(raw['logoSource'], source) } : {}),
     name: requireString(raw, 'name', source),
     website: requireString(raw, 'website', source),
     handleUrl: requireString(raw, 'handleUrl', source),
@@ -148,6 +171,39 @@ export function parseBrand(raw: unknown, source: string): Brand {
     logo: requireString(raw, 'logo', source),
     mark: requireString(raw, 'mark', source),
     features: parseFeatures(raw['features'], source),
+  };
+}
+
+function parseLogoSource(raw: unknown, source: string): LogoSource {
+  const where = `${source} logoSource`;
+  if (!isRecord(raw)) throw new ContentValidationError(where, '"logoSource" must be an object');
+  const kind = raw['kind'];
+  if (typeof kind !== 'string' || !(LOGO_KINDS as readonly string[]).includes(kind)) throw new ContentValidationError(where, `"logoSource.kind" must be one of ${LOGO_KINDS.join(', ')}`);
+  const text = (key: string): string | null => {
+    const value = raw[key];
+    if (value === null) return null;
+    if (typeof value !== 'string') throw new ContentValidationError(where, `"logoSource.${key}" must be text or null`);
+    return value;
+  };
+  const bytes = raw['bytes'];
+  if (bytes !== null && (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0)) throw new ContentValidationError(where, '"logoSource.bytes" must be a number or null');
+  const tried = raw['tried'];
+  if (!Array.isArray(tried) || !tried.every((t) => isRecord(t) && typeof t['url'] === 'string' && typeof t['outcome'] === 'string')) {
+    throw new ContentValidationError(where, '"logoSource.tried" must be a list of {url, outcome}');
+  }
+  const foundOn = text('foundOn');
+  const fetchedAt = text('fetchedAt');
+  if (!foundOn || !fetchedAt) throw new ContentValidationError(where, '"logoSource" needs foundOn and fetchedAt');
+  return {
+    kind: kind as LogoKind,
+    foundOn,
+    imageUrl: text('imageUrl'),
+    savedAs: text('savedAs'),
+    contentType: text('contentType'),
+    bytes: bytes as number | null,
+    contentHash: text('contentHash'),
+    fetchedAt,
+    tried: (tried as Array<Record<string, string>>).map((t) => ({ url: t['url'] as string, outcome: t['outcome'] as string })),
   };
 }
 

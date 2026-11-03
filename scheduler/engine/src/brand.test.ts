@@ -200,3 +200,66 @@ test('a saved profile may have no proof points, but still needs content rules', 
   assert.throws(() => parseBrand({ ...withFiles, rules: [] }, 'brand.json'), /rules/);
   assert.deepEqual(parseBrand(withFiles, 'brand.json').proofPoints, ['Open Saturdays']);
 });
+
+const png = Buffer.from([137, 80, 78, 71, 1, 2, 3]);
+const analyzeWith = async (crawlOver: Partial<SiteSnapshot>, fetchBytes: (url: string) => Promise<{ finalUrl: string; bytes: Buffer; type: string }>) => {
+  const dir = await mkdtemp(join(tmpdir(), 'analyze-test-'));
+  try {
+    const out = await analyzeSite('acme.com', dir, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), {
+      crawl: async () => ({ ...snapshot, ...crawlOver }),
+      fetchBytes,
+      chatFetch: (async () => modelAnswer()) as typeof fetch,
+    });
+    return { brand: out.brand, saved: JSON.parse(await readFile(join(out.dir, 'brand.json'), 'utf8')) as { logoSource?: unknown } };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+};
+
+test('the profile records where the logo came from: page, exact address, hash, time and every address tried', async () => {
+  const { brand, saved } = await analyzeWith({ logoCandidates: ['https://acme.com/promo.png', 'https://acme.com/logo.png'] }, async (url) => {
+    if (url.endsWith('promo.png')) throw new Error('404');
+    return { finalUrl: url, bytes: png, type: 'image/png' };
+  });
+  const source = brand.logoSource;
+  assert.ok(source);
+  assert.equal(source.kind, 'site-logo');
+  assert.equal(source.foundOn, 'https://acme.com');
+  assert.equal(source.imageUrl, 'https://acme.com/logo.png');
+  assert.equal(source.savedAs, 'assets/logo.png');
+  assert.equal(source.contentType, 'image/png');
+  assert.equal(source.bytes, png.length);
+  assert.match(source.contentHash ?? '', /^sha256:[0-9a-f]{64}$/);
+  assert.ok(!Number.isNaN(Date.parse(source.fetchedAt)));
+  assert.deepEqual(source.tried.map((t) => [t.url, t.outcome]), [['https://acme.com/promo.png', 'failed: 404'], ['https://acme.com/logo.png', 'used']]);
+  assert.deepEqual(saved.logoSource, JSON.parse(JSON.stringify(source)));
+});
+
+test('a logo made from the site icon says so, with the icon address and what was tried first', async () => {
+  const { brand } = await analyzeWith({ logoCandidates: ['https://acme.com/banner.png'] }, async (url) => {
+    if (url.includes('banner')) return { finalUrl: url, bytes: Buffer.from('<html>'), type: 'text/html' };
+    return { finalUrl: url, bytes: png, type: 'image/png' };
+  });
+  assert.equal(brand.logoSource?.kind, 'site-icon');
+  assert.equal(brand.logoSource?.imageUrl, 'https://acme.com/icon.png');
+  assert.equal(brand.logoSource?.savedAs, 'assets/icon.png');
+  assert.deepEqual(brand.logoSource?.tried.map((t) => [t.url, t.outcome]), [['https://acme.com/banner.png', 'failed: not an image (text/html)'], ['https://acme.com/icon.png', 'used']]);
+});
+
+test('a name-only logo is recorded as such, with no image address', async () => {
+  const { brand } = await analyzeWith({}, async () => {
+    throw new Error('timeout');
+  });
+  assert.equal(brand.logoSource?.kind, 'name-only');
+  assert.equal(brand.logoSource?.imageUrl, null);
+  assert.equal(brand.logoSource?.contentHash, null);
+  assert.equal(brand.logoSource?.tried.length, 2);
+});
+
+test('older profiles without a logo source still load, and a malformed one is refused', () => {
+  assert.equal(parseBrand(withFiles, 'brand.json').logoSource, undefined);
+  const source = { kind: 'site-logo', foundOn: 'https://acme.com', imageUrl: 'https://acme.com/logo.png', savedAs: 'assets/logo.png', contentType: 'image/png', bytes: 7, contentHash: 'sha256:abc', fetchedAt: '2026-11-03T00:00:00Z', tried: [{ url: 'https://acme.com/logo.png', outcome: 'used' }] };
+  assert.deepEqual(parseBrand({ ...withFiles, logoSource: source }, 'brand.json').logoSource, source);
+  assert.throws(() => parseBrand({ ...withFiles, logoSource: { ...source, kind: 'stolen' } }, 'brand.json'), /logoSource/);
+  assert.throws(() => parseBrand({ ...withFiles, logoSource: 'x' }, 'brand.json'), /logoSource/);
+});

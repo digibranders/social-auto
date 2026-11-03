@@ -3,7 +3,8 @@ import { unsourcedClaim, verifyClaims, type ClaimBatch, type ClaimInput, type Ve
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import type { AiConfig } from './ai.ts';
-import { escapeHtml, parseBrand, type Brand, type BrandColors } from './content.ts';
+import { createHash } from 'node:crypto';
+import { escapeHtml, parseBrand, type Brand, type BrandColors, type LogoSource } from './content.ts';
 import { crawlSite, type SiteSnapshot } from './crawl.ts';
 import { chatJson } from './llm.ts';
 import { safeFetchBytes, type FetchedBytes } from './safe-fetch.ts';
@@ -26,28 +27,33 @@ export function slugFromSite(site: string): string {
 }
 
 /** The first of these addresses that downloads as a picture; null when none does. */
-async function downloadImage(candidates: string[], fetchBytes: (url: string) => Promise<FetchedBytes>): Promise<{ url: string; bytes: Buffer; type: string } | null> {
+async function downloadImage(candidates: string[], fetchBytes: (url: string) => Promise<FetchedBytes>, tried: LogoSource['tried'] = []): Promise<{ url: string; bytes: Buffer; type: string } | null> {
   for (const url of candidates) {
     try {
       const { bytes, type } = await fetchBytes(url);
-      if (type.startsWith('image/') && bytes.length > 0) return { url, bytes, type };
-    } catch {
-      continue;
+      if (!type.startsWith('image/')) tried.push({ url, outcome: `failed: not an image (${type || 'unknown type'})` });
+      else if (bytes.length === 0) tried.push({ url, outcome: 'failed: empty file' });
+      else {
+        tried.push({ url, outcome: 'used' });
+        return { url, bytes, type };
+      }
+    } catch (error) {
+      tried.push({ url, outcome: `failed: ${error instanceof Error ? error.message : String(error)}` });
     }
   }
   return null;
 }
 
 /** Saves the best logo that downloads; null when none does. */
-async function downloadLogo(candidates: string[], assetsDir: string, fetchBytes: (url: string) => Promise<FetchedBytes>): Promise<string | null> {
-  const image = await downloadImage(candidates, fetchBytes);
+async function downloadLogo(candidates: string[], assetsDir: string, fetchBytes: (url: string) => Promise<FetchedBytes>, tried: LogoSource['tried']): Promise<{ path: string; image: { url: string; bytes: Buffer; type: string } } | null> {
+  const image = await downloadImage(candidates, fetchBytes, tried);
   if (!image) return null;
   const fromType = image.type.includes('svg') ? '.svg' : image.type.includes('png') ? '.png' : image.type.includes('webp') ? '.webp' : '.jpg';
   const fromPath = extname(new URL(image.url).pathname).toLowerCase();
   const ext = LOGO_EXTENSIONS.has(fromPath) ? fromPath : fromType;
   const file = `logo${ext}`;
   await writeFile(join(assetsDir, file), image.bytes);
-  return `assets/${file}`;
+  return { path: `assets/${file}`, image };
 }
 
 const MAX_LOGO_NAME_CHARS = 24;
@@ -133,14 +139,30 @@ export interface AnalyzeDeps {
   chatFetch?: typeof fetch;
 }
 
+/** The record of where a logo came from. */
+function sourceOf(kind: LogoSource['kind'], foundOn: string, image: { url: string; bytes: Buffer; type: string } | null, savedAs: string | null, tried: LogoSource['tried']): LogoSource {
+  return {
+    kind,
+    foundOn,
+    imageUrl: image?.url ?? null,
+    savedAs,
+    contentType: image ? (image.type.split(';')[0]?.trim() ?? image.type) : null,
+    bytes: image?.bytes.length ?? null,
+    contentHash: image ? `sha256:${createHash('sha256').update(image.bytes).digest('hex')}` : null,
+    fetchedAt: new Date().toISOString(),
+    tried: tried.map((t) => ({ ...t })),
+  };
+}
+
 export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig, deps: AnalyzeDeps = {}): Promise<{ dir: string; brand: Brand }> {
   const snapshot = await (deps.crawl ?? crawlSite)(site);
   const dir = join(brandsRoot, slugFromSite(snapshot.origin));
   const assetsDir = join(dir, 'assets');
   await mkdir(assetsDir, { recursive: true });
   const fetchBytes = deps.fetchBytes ?? ((url: string) => safeFetchBytes(url, { maxBytes: 5_000_000, accept: 'image/*,*/*' }));
-  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir, fetchBytes);
-  const logoPath = logo ?? 'assets/logo.svg';
+  const tried: LogoSource['tried'] = [];
+  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir, fetchBytes, tried);
+  const logoPath = logo?.path ?? 'assets/logo.svg';
 
   const pageSources = snapshot.pages.map((p) => ({ url: p.url, text: p.text, ...(p.fetchedAt ? { fetchedAt: p.fetchedAt } : {}) }));
   const { brand, claims } = await chatJson({
@@ -161,23 +183,27 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
     },
   });
 
+  let logoSource: LogoSource = logo ? sourceOf('site-logo', snapshot.origin, logo.image, logo.path, tried) : sourceOf('name-only', snapshot.origin, null, null, tried);
   if (!logo) {
     // No logo picture: the site's own icon with the name beside it, and only without an icon the name alone, so the run goes on.
-    const icon = await downloadImage(snapshot.iconCandidates, fetchBytes);
+    const icon = await downloadImage(snapshot.iconCandidates, fetchBytes, tried);
     if (icon) {
       const iconType = icon.type.includes('svg') ? '.svg' : icon.type.includes('png') ? '.png' : icon.type.includes('webp') ? '.webp' : icon.type.includes('icon') ? '.ico' : '.jpg';
       await writeFile(join(assetsDir, `icon${iconType}`), icon.bytes);
+      logoSource = sourceOf('site-icon', snapshot.origin, icon, `assets/icon${iconType}`, tried);
       await writeFile(join(assetsDir, 'logo.svg'), iconLogoSvg(brand.name, icon, brand.colors));
     } else {
+      logoSource = sourceOf('name-only', snapshot.origin, null, null, tried);
       await writeFile(join(assetsDir, 'logo.svg'), textLogoSvg(brand.name, brand.colors));
     }
   }
-  await writeFile(join(dir, 'brand.json'), `${JSON.stringify(brand, null, 2)}\n`);
+  const profile: Brand = { ...brand, logoSource };
+  await writeFile(join(dir, 'brand.json'), `${JSON.stringify(profile, null, 2)}\n`);
   // Every proof point the model proposed, with its source and the outcome of each check, so nothing in the profile is unexplained.
   const evidence = { checkedAt: new Date().toISOString(), verified: claims.verified, uncertain: claims.uncertain, rejected: claims.rejected };
   await writeFile(join(dir, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
   // Which pages the profile was built from and which were left out, with scores and reasons, so a wrong choice can be seen.
   const pages = { read: snapshot.pageDecisions.filter((d) => d.selected), skipped: snapshot.pageDecisions.filter((d) => !d.selected) };
   await writeFile(join(dir, 'pages.json'), `${JSON.stringify(pages, null, 2)}\n`);
-  return { dir, brand };
+  return { dir, brand: profile };
 }
