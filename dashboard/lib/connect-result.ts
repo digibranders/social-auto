@@ -39,7 +39,7 @@ export function finishConnect(options: {
   if (options.returnUrl) {
     const back = new URL(options.returnUrl);
     // A product only knows connected, denied or failed.
-    back.searchParams.set('social', outcome === 'expired' ? 'failed' : outcome);
+    back.searchParams.set('social', outcome === 'expired' || outcome === 'nolocation' ? 'failed' : outcome);
     back.searchParams.set('channel', platform);
     return new Response(null, { status: 302, headers: { ...headers, Location: back.toString() } });
   }

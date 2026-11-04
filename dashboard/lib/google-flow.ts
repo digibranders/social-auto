@@ -1,4 +1,4 @@
-import { isBrand } from './facebook-flow.js';
+import { isBrand, isSafeReturnUrl } from './facebook-flow.js';
 import { siteOrigin } from './linkedin-flow.js';
 
 /**
@@ -16,35 +16,54 @@ const SCOPE = 'https://www.googleapis.com/auth/business.manage';
 const secureFlag = (secure: boolean): string => (secure ? 'Secure; ' : '');
 const insecure = (): boolean => process.env['COOKIE_INSECURE'] === '1';
 
-export function connectCookie(state: string, brand: string, secure = !insecure()): string {
-  return `${GOOGLE_COOKIE}=${state}.${brand}; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=${COOKIE_TTL_SECONDS}`;
+/** A returnUrl travels in the cookies as base64url, so it can never contain the characters the cookies are split on. */
+const encodeReturn = (returnUrl: string | null): string => (returnUrl ? Buffer.from(returnUrl).toString('base64url') : '');
+const RETURN_TAIL = '[A-Za-z0-9_-]{1,700}';
+
+function decodeReturn(encoded: string | undefined): string | null | undefined {
+  if (!encoded) return null;
+  const url = Buffer.from(encoded, 'base64url').toString('utf8');
+  // A return address that is not a safe one makes the whole cookie unusable, never a redirect somewhere else.
+  return isSafeReturnUrl(url) ? url : undefined;
+}
+
+export function connectCookie(state: string, brand: string, returnUrl: string | null = null, secure = !insecure()): string {
+  const tail = returnUrl ? `.${encodeReturn(returnUrl)}` : '';
+  return `${GOOGLE_COOKIE}=${state}.${brand}${tail}; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=${COOKIE_TTL_SECONDS}`;
 }
 
 export function clearedConnectCookie(secure = !insecure()): string {
   return `${GOOGLE_COOKIE}=; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=0`;
 }
 
-/** The state and client stored in the cookie, or null when it is missing or malformed. */
-export function parseConnectCookie(value: string | undefined): { state: string; brand: string } | null {
-  const match = /^([0-9a-f]{32})\.([a-z0-9][a-z0-9-]{0,40})$/.exec(value ?? '');
-  return match ? { state: match[1] as string, brand: match[2] as string } : null;
+/** The state, client and (for a person sent by a product) the address to return to, or null when missing or malformed. */
+export function parseConnectCookie(value: string | undefined): { state: string; brand: string; returnUrl: string | null } | null {
+  const match = new RegExp(`^([0-9a-f]{32})\\.([a-z0-9][a-z0-9-]{0,40})(?:\\.(${RETURN_TAIL}))?$`).exec(value ?? '');
+  if (!match) return null;
+  const returnUrl = decodeReturn(match[3]);
+  return returnUrl === undefined ? null : { state: match[1] as string, brand: match[2] as string, returnUrl };
 }
 
 const SEALED = /^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
 
-/** Keeps the publisher's sealed token and the client it is for in one cookie: "<client>~<sealed>". */
-export function pickCookie(brand: string, sealed: string, secure = !insecure()): string {
+/** Keeps the publisher's sealed token, the client it is for and (for a person sent by a product) where to return, in one cookie: "<client>~<sealed>[~<return>]". */
+export function pickCookie(brand: string, sealed: string, returnUrl: string | null = null, secure = !insecure()): string {
   if (!isBrand(brand) || !SEALED.test(sealed)) throw new Error('not a valid waiting connection');
-  return `${PICK_COOKIE}=${brand}~${sealed}; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=${PICK_TTL_SECONDS}`;
+  if (returnUrl !== null && !isSafeReturnUrl(returnUrl)) throw new Error('not a valid return address');
+  const tail = returnUrl ? `~${encodeReturn(returnUrl)}` : '';
+  return `${PICK_COOKIE}=${brand}~${sealed}${tail}; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=${PICK_TTL_SECONDS}`;
 }
 
 export function clearedPickCookie(secure = !insecure()): string {
   return `${PICK_COOKIE}=; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=0`;
 }
 
-export function parsePickCookie(value: string | undefined): { brand: string; sealed: string } | null {
-  const [brand, sealed, ...rest] = (value ?? '').split('~');
-  return rest.length === 0 && brand && sealed && isBrand(brand) && SEALED.test(sealed) ? { brand, sealed } : null;
+export function parsePickCookie(value: string | undefined): { brand: string; sealed: string; returnUrl: string | null } | null {
+  const [brand, sealed, encoded, ...rest] = (value ?? '').split('~');
+  if (rest.length > 0 || !brand || !sealed || !isBrand(brand) || !SEALED.test(sealed)) return null;
+  if (encoded !== undefined && !new RegExp(`^${RETURN_TAIL}$`).test(encoded)) return null;
+  const returnUrl = decodeReturn(encoded);
+  return returnUrl === undefined ? null : { brand, sealed, returnUrl };
 }
 
 /** Where Google sends the person back to. It must match, exactly, an address saved on the Google OAuth client. */

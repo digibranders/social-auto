@@ -1,7 +1,7 @@
 /**
  * A link a product's customer opens to connect their own channel (they sign in on the platform and press Allow).
  *
- * POST /api/v1/connect-link   {"externalId": "<your id for the customer>", "channel": "linkedin" | "facebook" | "instagram", "returnUrl": "https://..."}
+ * POST /api/v1/connect-link   {"externalId": "<your id for the customer>", "channel": "linkedin" | "facebook" | "instagram" | "google", "returnUrl": "https://..."}
  *                             answers {"url": "...", "expiresInMinutes": 60}
  *
  * returnUrl must be one of the addresses registered for the product. Afterwards the customer is sent there with
@@ -15,9 +15,9 @@ import { isReturnUrl } from '../../lib/products.js';
 import { loadClients, storeConfigured } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 2 * 1024;
-const CHANNELS = ['linkedin', 'facebook', 'instagram'] as const;
+const CHANNELS = ['linkedin', 'facebook', 'instagram', 'google'] as const;
 /** Each platform has its own start page on the dashboard. */
-const START_PAGE: Record<(typeof CHANNELS)[number], string> = { linkedin: '/api/linkedin-start', facebook: '/api/facebook-start', instagram: '/api/instagram-start' };
+const START_PAGE: Record<(typeof CHANNELS)[number], string> = { linkedin: '/api/linkedin-start', facebook: '/api/facebook-start', instagram: '/api/instagram-start', google: '/api/google/start' };
 
 export async function POST(request: Request): Promise<Response> {
   const product = productOf(request);
