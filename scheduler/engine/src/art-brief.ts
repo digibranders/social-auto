@@ -31,8 +31,13 @@ export type PictureBrief =
   | {
       role: Exclude<PictureRole, 'none'>;
       medium: PictureMedium;
+      /** From the accepted concept. */
       subject: string;
+      /** From the accepted concept. */
       action: string;
+      /** The setting and background around the subject. */
+      scene: string;
+      /** Camera angle and arrangement. */
       composition: string;
       mood: string;
       paletteUse: PaletteUse;
@@ -89,6 +94,7 @@ function parsePicture(raw: unknown, where: string): PictureBrief {
     medium: requireOne(raw, 'medium', PICTURE_MEDIUMS, where, 'picture.medium'),
     subject: field('subject'),
     action: field('action'),
+    scene: field('scene'),
     composition: field('composition'),
     mood: field('mood'),
     paletteUse: requireOne(raw, 'paletteUse', PALETTE_USES, where, 'picture.paletteUse'),

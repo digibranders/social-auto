@@ -12,7 +12,7 @@ const briefFor = (layout: string, over: Record<string, unknown> = {}): ArtBrief 
       headlineScale: 'large',
       alignment: 'start',
       textZone: 'left',
-      picture: { role: 'hero', medium: 'illustration', subject: 's', action: 'a', composition: 'c', mood: 'm', paletteUse: 'balanced' },
+      picture: { role: 'hero', medium: 'illustration', subject: 's', action: 'a', scene: 'sc', composition: 'c', mood: 'm', paletteUse: 'balanced' },
       logoSlot: 'top-left',
       identitySlot: 'under-logo',
       ctaSlot: 'top-right',
@@ -110,7 +110,7 @@ test('hierarchy, text zone, picture role and medium must be ones the family allo
 test('a family that forbids a medium rejects it', () => {
   const picky: LayoutFamily = { ...(layoutRegistry[1] as LayoutFamily), allowedMediums: ['illustration'] };
   const brief = briefFor('split-composition', {
-    picture: { role: 'hero', medium: 'photo-like', subject: 's', action: 'a', composition: 'c', mood: 'm', paletteUse: 'balanced' },
+    picture: { role: 'hero', medium: 'photo-like', subject: 's', action: 'a', scene: 'sc', composition: 'c', mood: 'm', paletteUse: 'balanced' },
   });
   assert.ok(kinds(brief, [picky]).includes('picture_medium_not_allowed'));
 });

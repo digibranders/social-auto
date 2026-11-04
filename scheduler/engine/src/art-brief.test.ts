@@ -13,6 +13,7 @@ const brief = (over: Record<string, unknown> = {}): Record<string, unknown> => (
     medium: 'illustration',
     subject: 'a project dashboard',
     action: 'highlighting overdue work',
+    scene: 'a quiet modern workspace',
     composition: 'close-up from the front',
     mood: 'calm and focused',
     paletteUse: 'balanced',
@@ -76,7 +77,7 @@ test('missing or empty required fields are refused', () => {
 });
 
 test('a picture role other than none needs every picture field', () => {
-  for (const field of ['medium', 'subject', 'action', 'composition', 'mood', 'paletteUse']) {
+  for (const field of ['medium', 'subject', 'action', 'scene', 'composition', 'mood', 'paletteUse']) {
     const picture = { ...(brief()['picture'] as Record<string, unknown>) };
     delete picture[field];
     assert.match(problemOf(brief({ picture })), new RegExp(`"picture.${field}"`), field);
