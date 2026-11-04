@@ -30,6 +30,9 @@ export type ReasonCode =
   | 'tax_scope_unconfirmed'
   | 'scope_unconfirmed'
   | 'too_long'
+  | 'table_axis_unconfirmed'
+  | 'billing_variant_unconfirmed'
+  | 'styles_not_applied'
   | 'flat_text_only';
 
 export interface EvidenceFact {
@@ -72,6 +75,8 @@ export interface PageSnapshot {
   title: string;
   pageRole: PageRole;
   contentHash: string;
+  /** Hash of the exact HTML that was read, when known. */
+  htmlHash: string;
   /** The text the quotes are checked against: every block of the page, in order. */
   text: string;
 }
@@ -85,6 +90,8 @@ export interface EvidenceConfig {
   targetWords: readonly string[];
   /** Words that mark a value as an illustration. */
   demoWords: readonly string[];
+  /** A heading with one of these words (or any figure) is a statement, not a label. */
+  headingFactWords: readonly string[];
   taxWords: readonly string[];
   commercialWords: readonly string[];
   processWords: readonly string[];
@@ -107,6 +114,7 @@ export const defaultEvidenceConfig: EvidenceConfig = {
   ],
   targetWords: ['target', 'goal', 'aim', 'aims', 'projected', 'expected', 'estimated', 'forecast', 'objective'],
   demoWords: ['sample', 'demo', 'mock', 'mockup', 'example', 'placeholder', 'dummy', 'lorem'],
+  headingFactWords: ['free', 'trial', 'credit card', 'per month', 'per year', 'refund', 'guarantee', 'guaranteed', 'starting at', 'starts at'],
   taxWords: ['gst', 'vat', 'tax', 'taxes'],
   commercialWords: ['free', 'trial', 'credit card', 'per month', 'per year', 'billed', 'billing', 'refund', 'discount', 'plan', 'plans', 'pricing', 'price', 'prices', 'subscription', 'checkout', 'cancel'],
   processWords: ['install', 'installation', 'setup', 'set up', 'onboard', 'get started', 'go live', 'live bot', 'signup', 'sign up', 'migrate', 'script tag'],
@@ -165,11 +173,12 @@ interface Candidate {
   quote: string;
 }
 
-function candidatesOf(structure: PageStructure, excluded: ExcludedBlock[], repeated: ReadonlySet<string>): Candidate[] {
+function candidatesOf(structure: PageStructure, excluded: ExcludedBlock[], repeated: ReadonlySet<string>, config: EvidenceConfig): Candidate[] {
   const out: Candidate[] = [];
   for (const block of structure.blocks) {
     if (block.chrome) { excluded.push({ url: structure.url, text: block.text, reason: block.chrome }); continue; }
-    if (block.isHeading || (block.region === 'table' && block.tableHeader)) { excluded.push({ url: structure.url, text: block.text, reason: 'heading' }); continue; }
+    const headingFact = block.isHeading && (hasDigit(block.text) || wordPattern(config.headingFactWords).test(block.text));
+    if ((block.isHeading && !headingFact) || (block.region === 'table' && block.tableHeader)) { excluded.push({ url: structure.url, text: block.text, reason: 'heading' }); continue; }
     const pieces = block.region === 'table' ? [block.text] : sentencesOf(block.text);
     for (const piece of pieces) {
       const confirmedCell = block.region === 'table' && block.rowLabel !== '' && block.colLabel !== '';
@@ -196,7 +205,7 @@ function repeatedTexts(structures: readonly PageStructure[], config: EvidenceCon
   return new Set([...pagesOf].filter(([, urls]) => urls.size >= config.repeatedAcrossPages).map(([key]) => key));
 }
 
-/** Card ids that belong to a real set of parallel cards: at least two sibling cards, at least two of which carry a figure (a price, a limit, a count). */
+/** Card ids that belong to a set of parallel cards: at least two sibling cards, one of which carries a figure (a free or contact-sales card may carry none). */
 function planCards(structure: PageStructure): Set<string> {
   const figures = new Map<string, Set<string>>();
   for (const block of structure.blocks) {
@@ -204,16 +213,27 @@ function planCards(structure: PageStructure): Set<string> {
     figures.set(block.cardGroup, (figures.get(block.cardGroup) ?? new Set()).add(block.cardId));
   }
   const cards = new Set<string>();
-  for (const block of structure.blocks) if (block.cardId !== '' && (figures.get(block.cardGroup)?.size ?? 0) >= 2) cards.add(block.cardId);
+  for (const block of structure.blocks) if (block.cardId !== '' && (figures.get(block.cardGroup)?.size ?? 0) >= 1) cards.add(block.cardId);
   return cards;
 }
 
-export function factsOfPage(structure: PageStructure, now: Date, config: EvidenceConfig, repeated: ReadonlySet<string>): { facts: EvidenceFact[]; excluded: ExcludedBlock[]; snapshot: PageSnapshot } {
+/** Names the site itself shows as a heading or a card title anywhere: an entity named like this is corroborated as an entity, not an attribute. */
+export function entityNamesOf(structures: readonly PageStructure[]): Set<string> {
+  const names = new Set<string>();
+  for (const structure of structures) for (const block of structure.blocks) {
+    if (block.region === 'table') continue;
+    if (block.isHeading) names.add(normalizeForQuote(block.text));
+    if (block.cardTitle !== '') names.add(normalizeForQuote(block.cardTitle));
+  }
+  return names;
+}
+
+export function factsOfPage(structure: PageStructure, now: Date, config: EvidenceConfig, repeated: ReadonlySet<string>, entityNames: ReadonlySet<string> = new Set()): { facts: EvidenceFact[]; excluded: ExcludedBlock[]; snapshot: PageSnapshot } {
   const excluded: ExcludedBlock[] = [];
   const text = structure.blocks.map((b) => b.text).join('\n');
   const contentHash = `sha256:${sha(normalizeForQuote(text))}`;
   const pageRole = pageRoleOf(structure.url, config);
-  const snapshot: PageSnapshot = { url: structure.url, title: structure.title, pageRole, contentHash, text };
+  const snapshot: PageSnapshot = { url: structure.url, title: structure.title, pageRole, contentHash, htmlHash: structure.htmlHash, text };
   const demoPattern = wordPattern(config.demoWords);
   const targetPattern = wordPattern(config.targetWords);
   const taxPattern = wordPattern(config.taxWords);
@@ -221,7 +241,7 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
   const facts: EvidenceFact[] = [];
   const seen = new Set<string>();
 
-  for (const { block, quote } of candidatesOf(structure, excluded, repeated)) {
+  for (const { block, quote } of candidatesOf(structure, excluded, repeated, config)) {
     const values = extractFacts(quote, config.claim);
     const hasNumbers = values.numbers.length > 0;
     const cell = block.region === 'table' && block.rowLabel !== '' && block.colLabel !== '';
@@ -230,6 +250,10 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
     const label = cell ? block.rowLabel : undefined;
     const reasons: ReasonCode[] = [];
 
+    if (structure.unstyled) reasons.push('styles_not_applied');
+    const axisConfirmed = cell && entityNames.has(normalizeForQuote(block.colLabel));
+    if (cell && !axisConfirmed) reasons.push('table_axis_unconfirmed');
+    if (structure.variantSwitch && values.prices.length > 0 && values.periods.length === 0) reasons.push('billing_variant_unconfirmed');
     const language = (block.lang || structure.lang || '').toLowerCase().split('-')[0] ?? '';
     if (language !== '' && !config.supportedLanguages.includes(language)) reasons.push('language_unsupported');
     const demo = block.demo || demoPattern.test(quote) || demoPattern.test(block.text);
@@ -252,7 +276,7 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
 
     const { category, intent, attribution } = classify(quote, pageRole, hasNumbers, values.prices.length > 0, config, target, demo);
     const needsScope = fragment && (hasNumbers || values.prices.length > 0);
-    const association: Association = scope !== undefined ? 'confirmed' : needsScope || taxPattern.test(quote) ? 'unknown' : 'confirmed';
+    const association: Association = cell && !axisConfirmed ? 'inferred' : scope !== undefined ? 'confirmed' : needsScope || taxPattern.test(quote) ? 'unknown' : 'confirmed';
     const context = [block.headingText, cell ? `${block.rowLabel} / ${block.colLabel}` : '', inCard ? block.cardTitle : ''].filter(Boolean).join(' > ');
     facts.push({
       id: sha(`${structure.url}|${scope ?? ''}|${label ?? ''}|${normalizeForQuote(quote)}`).slice(0, 12),
@@ -285,9 +309,10 @@ export interface EvidenceSet {
 export function buildEvidence(structures: readonly PageStructure[], now: Date, options: Partial<EvidenceConfig> = {}): EvidenceSet {
   const config = { ...defaultEvidenceConfig, ...options };
   const repeated = repeatedTexts(structures, config);
+  const entities = entityNamesOf(structures);
   const set: EvidenceSet = { facts: [], excluded: [], snapshots: [] };
   for (const structure of structures) {
-    const page = factsOfPage(structure, now, config, repeated);
+    const page = factsOfPage(structure, now, config, repeated, entities);
     set.facts.push(...page.facts);
     set.excluded.push(...page.excluded);
     set.snapshots.push(page.snapshot);
@@ -315,6 +340,9 @@ export function flatTextEvidence(url: string, text: string, now: Date, options: 
     title: '',
     lang: '',
     truncated: false,
+    unstyled: false,
+    variantSwitch: false,
+    htmlHash: '',
     blocks: text.split(/\n+/).filter((line) => line.trim() !== '').map((line, i) => ({
       id: `f${i}`, text: line.trim(), tag: 'p', region: 'prose' as const, isHeading: false, headingText: '', chrome: '' as const, cardId: '', cardGroup: '', cardTitle: '', rowLabel: '', colLabel: '', tableHeader: false, demo: false, strip: false, lang: '',
     })),

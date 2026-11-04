@@ -9,7 +9,7 @@ export const EVIDENCE_ELEMENT_ID = 'evidence-blocks';
 
 export const EVIDENCE_SCRIPT = String.raw`
 (function () {
-  var out = { done: false, errors: [], title: document.title || '', lang: document.documentElement.getAttribute('lang') || '', blocks: [], truncated: false };
+  var out = { done: false, errors: [], title: document.title || '', lang: document.documentElement.getAttribute('lang') || '', blocks: [], truncated: false, externalStyles: document.querySelectorAll('link[rel~=stylesheet]').length, variantSwitch: false };
   var MAX_BLOCKS = 1500;
   var SKIP = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, SVG: 1, CANVAS: 1, IFRAME: 1, HEAD: 1, OBJECT: 1, EMBED: 1, SELECT: 1, OPTION: 1, TEXTAREA: 1 };
   var DEMO = /(^|[^a-z])(demo|mock|mockup|sample|preview|example|placeholder|screenshot|illustration)([^a-z]|$)/i;
@@ -125,6 +125,12 @@ export const EVIDENCE_SCRIPT = String.raw`
     });
     flush(el, buffer, false);
   }
+
+  var SWITCH = /(monthly|yearly|annual|annually|billed (monthly|yearly|annually))/i;
+  Array.prototype.forEach.call(document.querySelectorAll('[role=switch],[role=tab],input[type=checkbox],input[type=radio],button'), function (el) {
+    var probe = (el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.getAttribute('value') || '') + ' ' + (el.getAttribute('id') || '');
+    if (SWITCH.test(probe)) out.variantSwitch = true;
+  });
 
   try {
     walk(document.body);

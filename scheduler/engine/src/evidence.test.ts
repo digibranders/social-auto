@@ -33,7 +33,7 @@ const same = (fact: EvidenceFact, item: { page: string; quote: string }): boolea
 };
 
 const block = (over: Partial<PageBlock>): PageBlock => ({ id: 'b', text: '', tag: 'p', region: 'prose', isHeading: false, headingText: '', chrome: '', cardId: '', cardGroup: '', cardTitle: '', rowLabel: '', colLabel: '', tableHeader: false, demo: false, strip: false, lang: 'en', ...over });
-const structure = (blocks: Array<Partial<PageBlock>>, url = 'https://acme.example/features'): PageStructure => ({ url, title: '', lang: 'en', truncated: false, blocks: blocks.map((b, i) => block({ id: `b${i}`, ...b })) });
+const structure = (blocks: Array<Partial<PageBlock>>, url = 'https://acme.example/features'): PageStructure => ({ url, title: '', lang: 'en', truncated: false, unstyled: false, variantSwitch: false, htmlHash: '', blocks: blocks.map((b, i) => block({ id: `b${i}`, ...b })) });
 
 test('fixture site: precision and recall against the gold labels, forbidden items never usable', real, async () => {
   const gold = JSON.parse(await readFile(join(dir, 'gold.json'), 'utf8')) as Gold;
@@ -185,4 +185,60 @@ test('unit: sentence splitting and page roles', () => {
   assert.equal(pageRoleOf('https://x.example/pricing'), 'pricing');
   assert.equal(pageRoleOf('https://x.example/case-studies/acme'), 'case_study');
   assert.equal(pageRoleOf('https://x.example/blog/post'), 'other');
+});
+
+const adversarial = async (name: string, deps: { styles?: string[] } = {}): Promise<EvidenceSet> => {
+  const html = await readFile(join(dir, `${name}.html`), 'utf8');
+  return buildEvidence([await extractStructure(html, `https://zeta.example/${name}`, deps)], NOW);
+};
+
+test('adversarial: a transposed table is never trusted as plan, price and users; the toggle is noticed', real, async () => {
+  const set = await adversarial('adv-transposed');
+  const cells = set.facts.filter((f) => f.label !== undefined);
+  assert.ok(cells.length >= 4);
+  // The column header "Price" is not an entity named anywhere else on the site, so every derived cell is held and marked inferred.
+  assert.ok(cells.every((f) => f.status === 'needs_review' && f.associationStatus === 'inferred' && f.reasonCodes.includes('table_axis_unconfirmed')));
+  assert.ok(set.facts.find((f) => f.text === '₹599')?.reasonCodes.includes('billing_variant_unconfirmed'));
+  assert.ok(!set.facts.find((f) => f.text === '₹1,299 /mo')?.reasonCodes.includes('billing_variant_unconfirmed'));
+});
+
+test('adversarial: a table whose entities are named elsewhere on the site is confirmed', real, async () => {
+  const withNames = buildEvidence([
+    await extractStructure(await readFile(join(dir, 'pricing-table.html'), 'utf8'), 'https://acme.example/pricing-table'),
+    await extractStructure('<html lang="en"><body><main><h2>Starter</h2><h2>Standard</h2><h2>Professional</h2></main></body></html>', 'https://acme.example/plans'),
+  ], NOW);
+  const cell = withNames.facts.find((f) => f.scope === 'Standard' && f.label === 'Price per month');
+  assert.equal(cell?.associationStatus, 'confirmed');
+  assert.equal(cell?.status, 'usable');
+});
+
+test('adversarial: a grid of nested plan wrappers with free and contact-sales cards keeps each fact with its own plan', real, async () => {
+  const set = await adversarial('adv-grid');
+  const scopeOf = (text: string): string | undefined => set.facts.find((f) => f.text === text)?.scope;
+  assert.equal(scopeOf('₹999 /mo'), 'Pro');
+  assert.equal(scopeOf('14-day trial'), 'Pro');
+  assert.equal(scopeOf('Core features for one person.'), 'Free');
+  assert.equal(scopeOf('Contact sales for a quote.'), 'Enterprise');
+});
+
+test('adversarial: a price hidden by the page stylesheet is dropped once the stylesheet is applied, and held when it is not', real, async () => {
+  const unstyled = await adversarial('adv-hidden');
+  assert.ok(unstyled.facts.length >= 2);
+  assert.ok(unstyled.facts.every((f) => f.status === 'needs_review' && f.reasonCodes.includes('styles_not_applied')));
+  const styled = await adversarial('adv-hidden', { styles: ['.old{display:none}'] });
+  assert.deepEqual(styled.facts.map((f) => f.text), ['The plan costs ₹599 per month.']);
+  assert.equal(styled.facts[0]?.status, 'usable');
+  assert.match(styled.snapshots[0]?.htmlHash ?? '', /^sha256:/);
+});
+
+test('headings with a figure or commercial wording are candidates; plain labels are not', () => {
+  const set = buildEvidence([structure([
+    { text: 'Plans from ₹599/month', isHeading: true },
+    { text: 'Free forever', isHeading: true },
+    { text: 'Features', isHeading: true },
+    { text: 'Simple pricing for teams', isHeading: true },
+  ])], NOW);
+  assert.deepEqual(set.facts.map((f) => f.text).sort(), ['Free forever', 'Plans from ₹599/month'].sort());
+  assert.ok(set.excluded.some((e) => e.text === 'Features' && e.reason === 'heading'));
+  assert.ok(set.excluded.some((e) => e.text === 'Simple pricing for teams' && e.reason === 'heading'));
 });

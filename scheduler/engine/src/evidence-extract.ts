@@ -7,7 +7,7 @@
  * Known limit: the page is opened without its external stylesheets, so content hidden only by an external stylesheet shows up as visible.
  * Hidden attributes, aria-hidden and inline styles are respected.
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { measureHtml, type ChromeDeps } from './chrome-render.ts';
 import { EVIDENCE_ELEMENT_ID, EVIDENCE_SCRIPT } from './evidence-script.ts';
 
@@ -40,6 +40,12 @@ export interface PageStructure {
   lang: string;
   blocks: PageBlock[];
   truncated: boolean;
+  /** Stylesheets the page links (not inlined by the caller): without them hidden content may look visible. */
+  unstyled: boolean;
+  /** The page has a switch between billing variants (monthly/yearly); only the shown one was read. */
+  variantSwitch: boolean;
+  /** Hash of the exact HTML that was read. */
+  htmlHash: string;
 }
 
 export class StructureError extends Error {
@@ -72,7 +78,7 @@ function parseBlock(raw: unknown): PageBlock {
 }
 
 /** Finds and validates the structure in a dumped page. */
-export function parseStructure(dom: string, url: string): PageStructure {
+export function parseStructure(dom: string, url: string, htmlHash = '', stylesInlined = false): PageStructure {
   const match = new RegExp(`<script[^>]*\\sid="${EVIDENCE_ELEMENT_ID}"[^>]*>([\\s\\S]*?)</script>`).exec(dom);
   if (!match) throw new StructureError('the page wrote no structure');
   let raw: unknown;
@@ -84,16 +90,23 @@ export function parseStructure(dom: string, url: string): PageStructure {
   if (!isRecord(raw) || raw['done'] !== true || !Array.isArray(raw['blocks']) || !Array.isArray(raw['errors'])) {
     throw new StructureError(`the structure is incomplete${isRecord(raw) && Array.isArray(raw['errors']) && raw['errors'].length ? `: ${String(raw['errors'][0])}` : ''}`);
   }
-  return { url, title: str(raw['title']) ?? '', lang: str(raw['lang']) ?? '', blocks: raw['blocks'].map(parseBlock), truncated: raw['truncated'] === true };
+  const externalStyles = typeof raw['externalStyles'] === 'number' ? raw['externalStyles'] : 0;
+  return {
+    url, title: str(raw['title']) ?? '', lang: str(raw['lang']) ?? '', blocks: raw['blocks'].map(parseBlock), truncated: raw['truncated'] === true,
+    unstyled: externalStyles > 0 && !stylesInlined, variantSwitch: raw['variantSwitch'] === true, htmlHash,
+  };
 }
 
 /** The page wrapped so only the structure script can run: no scripts of its own, no network, inline styles only. */
-export function wrapForExtraction(html: string, nonce: string): string {
+export function wrapForExtraction(html: string, nonce: string, styles: readonly string[] = []): string {
   const policy = `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; font-src data:`;
-  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${html}<script nonce="${nonce}">${EVIDENCE_SCRIPT}</script>`;
+  const sheets = styles.map((css) => `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`).join('');
+  return `<!doctype html><meta http-equiv="Content-Security-Policy" content="${policy}">${sheets}${html}<script nonce="${nonce}">${EVIDENCE_SCRIPT}</script>`;
 }
 
-export async function extractStructure(html: string, url: string, deps: ChromeDeps = {}): Promise<PageStructure> {
-  const dom = await measureHtml(wrapForExtraction(html, randomUUID().replace(/-/g, '')), deps);
-  return parseStructure(dom, url);
+/** `styles` are the page's stylesheets, fetched by the caller and applied inline, so visibility is judged as a browser would judge it. */
+export async function extractStructure(html: string, url: string, deps: ChromeDeps & { styles?: readonly string[] } = {}): Promise<PageStructure> {
+  const styles = deps.styles ?? [];
+  const dom = await measureHtml(wrapForExtraction(html, randomUUID().replace(/-/g, ''), styles), deps);
+  return parseStructure(dom, url, `sha256:${createHash('sha256').update(html).digest('hex')}`, styles.length > 0);
 }
