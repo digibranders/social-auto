@@ -17,6 +17,7 @@ import {
   SAFE_FAMILY,
   enabledFamilies,
   layoutRegistry,
+  coversPicture,
   familyById,
   seatedCleanly,
   type ContentNeed,
@@ -402,7 +403,8 @@ export function chooseBrandSlots(
     for (const identity of family.identitySlots) {
       for (const cta of family.ctaSlots) {
         if (!seatedCleanly(zone, logo, identity, cta)) continue;
-        const penalty = recent.filter((r) => r.logoSlot === logo.id).length + recent.filter((r) => r.ctaSlot === cta.id).length;
+        // A CTA over the picture can hide its subject, so a seat clear of the picture always beats a rotation preference (at most 4 points).
+        const penalty = recent.filter((r) => r.logoSlot === logo.id).length + recent.filter((r) => r.ctaSlot === cta.id).length + (coversPicture(zone, cta) ? 10 : 0);
         if (!best || penalty < best.penalty) best = { logoSlot: logo.id, identitySlot: identity.id, ctaSlot: cta.id, penalty };
       }
     }

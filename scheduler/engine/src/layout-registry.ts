@@ -244,6 +244,11 @@ export function seatedCleanly(zone: ZoneLayout, logo: SlotDefinition, identity: 
   return brand.every((placed) => zone.textSlots.every((textSlot) => !overlaps(placed, textSlot.rect)));
 }
 
+/** True when the slot lies over a hero or supporting picture of the zone, where it could hide part of the subject. */
+export function coversPicture(zone: ZoneLayout, placed: SlotDefinition): boolean {
+  return zone.imageSlots.some((image) => image.id !== 'texture' && overlaps(placed.rect, image.rect));
+}
+
 /** Reports every way the registry itself is inconsistent; an empty list means it can be trusted. */
 export function validateRegistry(registry: readonly LayoutFamily[]): string[] {
   const problems: string[] = [];

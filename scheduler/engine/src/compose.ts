@@ -326,12 +326,8 @@ const composers: Record<string, Composer> = {
     c.css.push(`body{background:${light};}`);
     c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'light');
     const rect = c.picture('hero');
-    if (rect) {
-      c.surface(rect, 'picture');
-      const vertical = rect.h >= CANVAS_SIZE;
-      const edge = vertical ? { x: rect.x === 0 ? rect.w - 5 : rect.x - 5, y: 0, w: 10, h: CANVAS_SIZE } : { x: 0, y: rect.y === 0 ? rect.h - 5 : rect.y - 5, w: CANVAS_SIZE, h: 10 };
-      c.decor(edge, `background:${c.palette.accent};`);
-    }
+    // No divider between the picture and the page: the picture's own edge already separates them, and a rule added nothing.
+    if (rect) c.surface(rect, 'picture');
     headlineAndSubline(c, 'light');
   },
 

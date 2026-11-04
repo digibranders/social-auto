@@ -12,7 +12,7 @@ import {
   type PostFacts,
 } from './art-options.ts';
 import type { Brand, PlannedPost } from './content.ts';
-import { familyById, layoutRegistry, SAFE_FAMILY } from './layout-registry.ts';
+import { coversPicture, familyById, layoutRegistry, SAFE_FAMILY } from './layout-registry.ts';
 
 const facts = (over: Partial<PostFacts> = {}): PostFacts => ({
   headline: 'Keep every |project| visible',
@@ -181,9 +181,10 @@ test('the picture medium never blocks a repeat: mediums are only ordered, least 
 test('brand elements rotate away from the last placements when a clean alternative exists, as a minor preference', () => {
   const split = familyById(layoutRegistry, 'split-composition');
   assert.ok(split);
-  const first = chooseBrandSlots(split, 'left', []);
+  // The right zone puts the picture on the left, so the CTA stays top-right and only the logo seat can rotate.
+  const first = chooseBrandSlots(split, 'right', []);
   assert.ok(first);
-  const next = chooseBrandSlots(split, 'left', [{ ...record('split-composition'), logoSlot: first.logoSlot, ctaSlot: first.ctaSlot }]);
+  const next = chooseBrandSlots(split, 'right', [{ ...record('split-composition'), logoSlot: first.logoSlot, ctaSlot: first.ctaSlot }]);
   assert.ok(next);
   assert.ok(next.logoSlot !== first.logoSlot || next.ctaSlot !== first.ctaSlot);
   const none = chooseBrandSlots({ ...split, logoSlots: [{ id: 'x', rect: { x: 64, y: 200, w: 400, h: 72 } }] }, 'left', []);
@@ -287,4 +288,18 @@ test('a poster with the same kind of surface as the one before it scores lower, 
   // After a dark poster a light one is preferred to another dark one of equal standing; after a light one the reverse.
   assert.ok(scoreOf('center', 'bottom') > scoreOf('center', 'top'), 'light after dark');
   assert.ok(scoreOf('bottom', 'top') > scoreOf('bottom', 'left'), 'dark after light');
+});
+
+test('a CTA seat clear of the picture is chosen over one on top of it, even against the rotation preference', () => {
+  const split = familyById(layoutRegistry, 'split-composition');
+  assert.ok(split);
+  const zone = split.zones.top;
+  assert.ok(zone);
+  const worn = split.ctaSlots.map((cta) => ({ ...record('split-composition'), ctaSlot: cta.id }));
+  for (const history of [[], worn.slice(0, 1), worn.slice(1)]) {
+    const chosen = chooseBrandSlots(split, 'top', history);
+    assert.ok(chosen);
+    const cta = split.ctaSlots.find((s) => s.id === chosen.ctaSlot);
+    assert.ok(cta && !coversPicture(zone, cta), `CTA "${chosen.ctaSlot}" must stay off the picture`);
+  }
 });
