@@ -110,9 +110,9 @@ export function boundOf(text: string, value: number): Bound {
 export interface TermConflict { a: string; b: string; reason: string }
 
 /** Prices of one plan, in one currency and billing period, that differ; trial lengths of one plan that differ. Only usable terms with a plan are compared. */
-export function findConflicts(terms: readonly CommercialTerm[]): TermConflict[] {
+export function findConflicts(terms: readonly CommercialTerm[], options: { includeHeld?: boolean } = {}): TermConflict[] {
   const out: TermConflict[] = [];
-  const usable = terms.filter((t) => t.plan !== undefined && t.status === 'usable');
+  const usable = terms.filter((t) => t.plan !== undefined && (options.includeHeld === true || t.status === 'usable'));
   for (const [i, a] of usable.entries()) {
     for (const b of usable.slice(i + 1)) {
       if (norm(a.plan ?? '') !== norm(b.plan ?? '') || a.kind !== b.kind || a.factId === b.factId) continue;
@@ -130,10 +130,14 @@ export function findConflicts(terms: readonly CommercialTerm[]): TermConflict[] 
 const withReason = (fact: EvidenceFact, code: ReasonCode): EvidenceFact => ({ ...fact, status: 'needs_review', reasonCodes: [...new Set<ReasonCode>([...fact.reasonCodes, code])] });
 
 /** Facts with every fact in a conflict held for review. */
-export function applyConflicts(facts: readonly EvidenceFact[]): { facts: EvidenceFact[]; conflicts: TermConflict[] } {
-  const conflicts = findConflicts(deriveTerms(facts));
+/** `conflictsWithHeld` are the conflicts that involve a fact already held for review: reported so that a filtered result is never mistaken for a site with no conflicts. */
+export function applyConflicts(facts: readonly EvidenceFact[]): { facts: EvidenceFact[]; conflicts: TermConflict[]; conflictsWithHeld: TermConflict[] } {
+  const terms = deriveTerms(facts);
+  const conflicts = findConflicts(terms);
+  const seen = new Set(conflicts.map((c) => `${c.a}|${c.b}`));
+  const conflictsWithHeld = findConflicts(terms, { includeHeld: true }).filter((c) => !seen.has(`${c.a}|${c.b}`));
   const hit = new Set(conflicts.flatMap((c) => [c.a, c.b]));
-  return { facts: facts.map((f) => (hit.has(f.id) ? withReason(f, 'conflicting_values') : f)), conflicts };
+  return { facts: facts.map((f) => (hit.has(f.id) ? withReason(f, 'conflicting_values') : f)), conflicts, conflictsWithHeld };
 }
 
 /** Commercial facts read longer ago than `maxAgeDays` are not treated as current. */

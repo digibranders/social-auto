@@ -10,6 +10,7 @@ import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
 import { validateEditorial } from './editorial.ts';
+import { memoryCache, verifyCopySupport, type Judge, type VerdictCache } from './semantic-verifier.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
 import { assignFacts, offerableFacts, rankFacts } from './fact-assignment.ts';
 
@@ -271,6 +272,8 @@ export async function planWeek(options: {
   conceptConfig?: Partial<ConceptConfig>;
   /** Evidence facts of the brand. With usable facts the writer is given facts per post instead of the free-text offer, rules and proof points, and the claim gate checks the copy against the post's own facts. */
   evidence?: { facts: readonly EvidenceFact[]; recentFactIds?: readonly string[] };
+  /** Optional: a judge that reads the week's copy once against its facts. A post it finds stronger than its facts is left out; one it cannot decide stays with a note. Only used with evidence facts. */
+  copyJudge?: { judge: Judge; cache?: VerdictCache };
   log?: (message: string) => void;
   /** Replaces the network for the text model; tests use it. */
   fetchFn?: typeof fetch;
@@ -374,6 +377,11 @@ export async function planWeek(options: {
           const cited = evidenceMode ? (factsPerPost[offset + i] ?? []).map((f) => ({ text: f.text, category: f.category })) : [];
           const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: brand.callToAction, citedFacts: cited });
           if (editorial.hard.length > 0 && attempt < 2) throw new Error(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
+          // A subline that is exactly the headline or the identity line is not copy: on the last try the post is left out. A near-identical one stays, with the note.
+          if (editorial.hard.some((h) => h.code === 'subline_restates_headline' || h.code === 'subline_restates_identity')) {
+            droppedHere.push(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
+            return;
+          }
           const editorialNotes = [...editorial.hard, ...editorial.warnings].map((issue) => `editorial: ${issue.code}`);
           const earlier = [...(options.recentHeadlines ?? []), ...posts.map((p) => p.headline), ...builtSoFar.map((p) => p.headline)].map(normalizeHeadline);
           const warnings = [...repetitionWarnings(draft.headline, earlier).map((w) => `${w.kind}: ${w.detail}`), ...decision.warnings.map((w) => `concept: ${w}`), ...editorialNotes, ...(decision.status === 'unchecked' ? decision.reasons.map((r) => `concept: unchecked, ${r}`) : [])];
@@ -397,6 +405,21 @@ export async function planWeek(options: {
     usedPainPoints.push(...chunk.map((p) => p.painPoint));
   }
 
+  if (evidenceMode && options.copyJudge && posts.length > 0) {
+    const byId = new Map(offerable.map((f) => [f.id, f]));
+    const results = await verifyCopySupport(
+      posts.map((p) => ({ copy: { headline: p.headline, subline: p.subline, caption: p.caption }, facts: (p.factIds ?? []).flatMap((id) => byId.get(id) ?? []) })),
+      options.copyJudge.judge, options.copyJudge.cache ?? memoryCache(), { tenant: options.brandSlug },
+    );
+    const kept: typeof posts = [];
+    posts.forEach((p, i) => {
+      const r = results[i] as (typeof results)[number];
+      if (r.status === 'rejected') { dropped.push(`${p.id}: ${r.reasons.join('; ')}`); return; }
+      const checks = (p.evidenceChecks ?? []).filter((c) => c !== 'semantic_support_unverified');
+      kept.push({ ...p, evidenceChecks: [...checks, r.status === 'supported_by_model' ? 'semantic_support_model_judged' : 'semantic_support_unverified'], ...(r.status === 'uncertain' ? { hookWarnings: [...(p.hookWarnings ?? []), `evidence: ${r.reasons.join('; ')}`] } : {}) });
+    });
+    posts.splice(0, posts.length, ...kept);
+  }
   if (posts.length === 0) throw new InsufficientConceptsError(dates.length, dropped);
   const plan = parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts }, `week-${week}`);
   const coverage: EvidenceCoverage = evidenceMode ? 'facts' : 'legacy';

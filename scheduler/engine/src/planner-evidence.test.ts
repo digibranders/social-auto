@@ -148,10 +148,14 @@ test('editorial: a subline that repeats the headline goes back to the writer onc
   assert.ok(!(plan.posts[0]?.hookWarnings ?? []).some((w) => /editorial/.test(w)));
 });
 
-test('editorial: a repeat that survives the second try stays in the plan with the reason noted for the reviewer', async () => {
-  const plan = await run(model((_slot, _prompt, headline) => ({ subline: `Acme Replies: ${headline}`, caption: 'A short note.' })), undefined, 1);
+test('editorial: a subline that is exactly the headline after the second try leaves the post out', async () => {
+  await assert.rejects(run(model((_slot, _prompt, headline) => ({ subline: `Acme Replies: ${headline}`, caption: 'A short note.' })), undefined, 1), InsufficientConceptsError);
+});
+
+test('editorial: a near-identical subline that survives the second try stays with the reason noted for the reviewer', async () => {
+  const plan = await run(model((_slot, _prompt, headline) => ({ subline: `Acme Replies: ${headline} the`, caption: 'A short note.' })), undefined, 1);
   assert.equal(plan.posts.length, 1);
-  assert.ok(plan.posts[0]?.hookWarnings?.includes('editorial: subline_restates_headline'));
+  assert.ok(plan.posts[0]?.hookWarnings?.includes('editorial: subline_adds_nothing'));
 });
 
 test('editorial: a subline that shares words with the headline but adds a fact is not touched', async () => {
@@ -161,4 +165,41 @@ test('editorial: a subline that shares words with the headline but adds a fact i
   assert.ok(plan instanceof Error);
   assert.match((plan as Error).message, /2/);
   assert.ok(!/editorial|says the headline again/.test((plan as Error).message));
+});
+
+import { memoryCache, type Judge } from './semantic-verifier.ts';
+import { modelJudge } from './semantic-judge.ts';
+
+test('copy judge: a post found stronger than its facts is left out, an undecided one stays with a note, a supported one is marked model-judged', async () => {
+  const all = facts();
+  const requests: string[] = [];
+  const judge: Judge = async (items) => { requests.push(String(items.length)); return items.map((i, n) => ({ key: i.key, answer: (['supported', 'unsupported', 'unclear'] as const)[n % 3] as 'supported' | 'unsupported' | 'unclear' })); };
+  const plan = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 3 }, usedPainPoints: [], fetchFn: model().fetchFn, evidence: { facts: all }, copyJudge: { judge, cache: memoryCache() } });
+  assert.deepEqual(requests, ['3']);
+  assert.equal(plan.posts.length, 2);
+  assert.equal(plan.insufficientConcepts?.produced, 2);
+  assert.ok(plan.posts[0]?.evidenceChecks?.includes('semantic_support_model_judged'));
+  assert.ok(!plan.posts[0]?.evidenceChecks?.includes('semantic_support_unverified'));
+  assert.ok(plan.posts[1]?.evidenceChecks?.includes('semantic_support_unverified'));
+  assert.ok(plan.posts[1]?.hookWarnings?.some((w) => /evidence:/.test(w)));
+});
+
+test('copy judge: ignored without evidence facts', async () => {
+  let called = false;
+  const judge: Judge = async () => { called = true; return []; };
+  const plan = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 3 }, usedPainPoints: [], fetchFn: model().fetchFn, copyJudge: { judge } });
+  assert.equal(called, false);
+  assert.equal(plan.evidenceCoverage, 'legacy');
+});
+
+test('the model judge sends one request for the batch, with source and copy, and reads the verdicts', async () => {
+  const bodies: string[] = [];
+  const fetchFn = (async (_url: string, init?: RequestInit) => {
+    bodies.push(String(init?.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdicts: [{ key: 'k1', answer: 'unsupported' }, { key: 'k2', answer: 'supported' }, { key: 'k3', answer: 'bogus' }] }) } }] }), { status: 200 });
+  }) as typeof fetch;
+  const verdicts = await modelJudge(ai, fetchFn)([{ key: 'k1', claim: 'Automatically resolves everything', quote: 'The chatbot can suggest responses.', context: 'Features' }, { key: 'k2', claim: 'c2', quote: 'q2', context: '' }, { key: 'k3', claim: 'c3', quote: 'q3', context: '' }]);
+  assert.equal(bodies.length, 1);
+  assert.match(bodies[0] ?? '', /can suggest responses/);
+  assert.deepEqual(verdicts, [{ key: 'k1', answer: 'unsupported' }, { key: 'k2', answer: 'supported' }]);
 });

@@ -116,3 +116,41 @@ test('the file cache survives a restart and ignores a damaged file', async () =>
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+import { copyCacheKey, verifyCopySupport } from './semantic-verifier.ts';
+
+const copyOf = (headline: string, subline: string, caption = 'A short note.') => ({ headline, subline, caption });
+
+test('copy check: one request for the whole batch, answers mapped to posts, supported is model-judged only', async () => {
+  const fact = factOf('The chatbot can suggest responses.');
+  const sizes: number[] = [];
+  const judge: Judge = async (items) => { sizes.push(items.length); return items.map((i) => ({ key: i.key, answer: /automatically/.test(i.claim) ? 'unsupported' as const : /maybe/.test(i.claim) ? 'unclear' as const : 'supported' as const })); };
+  const inputs = [
+    { copy: copyOf('Replies, suggested', 'Acme Replies can suggest responses.'), facts: [fact] },
+    { copy: copyOf('Resolves every request', 'Acme Replies automatically resolves them.'), facts: [fact] },
+    { copy: copyOf('Maybe helpful', 'maybe'), facts: [fact] },
+  ];
+  const results = await verifyCopySupport(inputs, judge, memoryCache(), { tenant: 'acme' });
+  assert.deepEqual(sizes, [3]);
+  assert.deepEqual(results.map((r) => r.status), ['supported_by_model', 'rejected', 'uncertain']);
+  assert.match(results[0]?.reasons.join(' ') ?? '', /not verified by code/);
+});
+
+test('copy check: cached answers are not asked again, a failing judge leaves posts uncertain and caches nothing', async () => {
+  const fact = factOf('The chatbot can suggest responses.');
+  const input = { copy: copyOf('Replies, suggested', 'Acme Replies can suggest responses.'), facts: [fact] };
+  const cache = memoryCache();
+  let calls = 0;
+  const ok: Judge = async (items) => { calls += 1; return items.map((i) => ({ key: i.key, answer: 'supported' as const })); };
+  await verifyCopySupport([input], ok, cache, { tenant: 'acme' });
+  const again = await verifyCopySupport([input], ok, cache, { tenant: 'acme' });
+  assert.equal(calls, 1);
+  assert.equal(again[0]?.cached, true);
+  const other = memoryCache();
+  const failing: Judge = async () => { throw new Error('timeout'); };
+  const [r] = await verifyCopySupport([input], failing, other, { tenant: 'acme' });
+  assert.equal(r?.status, 'uncertain');
+  assert.match(r?.reasons.join(' ') ?? '', /timeout/);
+  assert.equal(other.get(copyCacheKey('acme', input)), undefined);
+  assert.notEqual(copyCacheKey('acme', input), copyCacheKey('other', input));
+});

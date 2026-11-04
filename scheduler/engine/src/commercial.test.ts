@@ -115,3 +115,12 @@ test('a fact that is held for review never creates a conflict with a usable one'
   assert.deepEqual(findConflicts(deriveTerms([...a, ...held])), []);
   assert.ok(applyConflicts([...a, ...held]).facts.filter((f) => f.status === 'usable').length >= 2);
 });
+
+test('conflicts that involve a held fact are reported separately, not hidden by filtering', () => {
+  const a = buildEvidence([page('https://x.example/pricing', [card('Pro', 'c0', '₹999 /mo'), card('Team', 'c1', '₹1,999 /mo')])], NOW).facts;
+  const held = buildEvidence([page('https://x.example/docs', [{ text: 'The Pro plan costs ₹499 per month, as shown in the sample.' }])], NOW).facts;
+  const result = applyConflicts([...a, ...held]);
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.conflictsWithHeld.length, 1);
+  assert.match(result.conflictsWithHeld[0]?.reason ?? '', /Pro: ₹999 against ₹499/);
+});

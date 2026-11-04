@@ -165,6 +165,10 @@ With usable facts, `autopilot` gives the writer each post's own one or two facts
 
 A subline that only restates the headline or the identity line goes back to the writer once; after that it stays with a note (`editorial: ...`) for the reviewer. Other editorial findings are warnings only.
 
+Owner review of facts: `node src/facts-review.ts --brand <slug> --list 25` shows the best-ranked candidates with ids; `--approve id,id` and `--reject id` record decisions in `brands/<slug>/facts-review.json`. Once anything is approved, posts are written from approved facts only; a rejected fact is never used; with no decisions every usable fact is eligible. Decisions are keyed by fact id, so a fact whose wording changed on the site is no longer approved.
+
+Optional semantic check: `autopilot --semantic-check` (with `--dry-run` it also needs `--allow-paid-ai`) asks a model once per batch of posts whether each post's copy says more than the facts it was written from; a post judged stronger is left out, an undecided one stays with a note, a supported one is marked `semantic_support_model_judged` (still not proof). Answers are cached in `semantic-verdicts.json`. A post whose subline is exactly its headline or identity line after the second try is left out.
+
 Known limits: a table is trusted as plan and attribute only when the plan name also appears as a heading or card title on the site; a monthly/yearly switch is noticed but only the shown variant is read; content hidden only by a stylesheet that could not be fetched may be read (those facts are held); headings count as facts only with a figure or commercial wording; the semantic verifier exists as a pure layer with an injected judge and is not connected to a live model.
 
 ## Where the secrets live (names only, never values)

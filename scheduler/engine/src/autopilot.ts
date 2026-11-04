@@ -4,7 +4,7 @@
  *   node src/autopilot.ts --site example.com --channel their_insta [--days 7] [--time 10:00]
  *                         [--weekdays mon,wed,fri] [--start YYYY-MM-DD] [--utc-offset +05:30] [--image-model zimage]
  *                         [--refresh-brand] [--dry-run] [--target scheduler|publisher]
- *                         [--art] [--allow-paid-ai]
+ *                         [--art] [--semantic-check] [--allow-paid-ai]
  *
  * First run for a site builds brands/<slug>/brand.json from the website. Every run writes the
  * next week-NN.json with new pain points (history.json prevents repeats) and renders the posters.
@@ -16,6 +16,9 @@
  * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
  */
 import { loadFacts } from './evidence-pipeline.ts';
+import { applyReview, loadReview } from './fact-review.ts';
+import { modelJudge } from './semantic-judge.ts';
+import { fileCache } from './semantic-verifier.ts';
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -117,6 +120,7 @@ async function main(): Promise<void> {
       'refresh-brand': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       art: { type: 'boolean', default: false },
+      'semantic-check': { type: 'boolean', default: false },
       'allow-paid-ai': { type: 'boolean', default: false },
       target: { type: 'string', default: 'scheduler' },
       publisher: { type: 'string', default: '../../publisher' },
@@ -167,8 +171,11 @@ async function main(): Promise<void> {
     ai.usage.purpose = 'writing';
     console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
     const loaded = await loadFacts(brandDir);
-    if (loaded) console.log(`    Evidence facts: ${loaded.facts.filter((f) => f.status === 'usable').length} usable of ${loaded.facts.length} (built ${loaded.file.builtAt.slice(0, 10)}).`);
+    const reviewed = loaded ? applyReview(loaded.facts.filter((f) => f.status === 'usable'), await loadReview(brandDir)) : undefined;
+    if (loaded && reviewed) console.log(`    Evidence facts: ${loaded.facts.filter((f) => f.status === 'usable').length} usable of ${loaded.facts.length} (built ${loaded.file.builtAt.slice(0, 10)}); ${reviewed.mode === 'approved_only' ? `${reviewed.approved} approved by the owner are used` : 'none approved yet, all usable are eligible'}.`);
     else console.log('    No evidence facts for this brand: writing from the profile\'s proof points (legacy evidence coverage).');
+    if (values['semantic-check'] && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--semantic-check makes one model request per batch of posts: with --dry-run it needs --allow-paid-ai');
+    const verdicts = values['semantic-check'] ? await fileCache(join(brandDir, 'semantic-verdicts.json')) : undefined;
     const plan = await planWeek({
       ai,
       compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
@@ -188,9 +195,11 @@ async function main(): Promise<void> {
       recentHooks: history.weeks.flatMap((w) => w.hooks ?? []),
       recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
       recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
-      ...(loaded ? { evidence: { facts: loaded.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []) } } : {}),
+      ...(verdicts ? { copyJudge: { judge: modelJudge(ai), cache: verdicts } } : {}),
+      ...(reviewed ? { evidence: { facts: reviewed.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []) } } : {}),
     });
-    console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}.`);
+    await verdicts?.save();
+    console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}${verdicts ? (plan.evidenceCoverage === 'facts' ? ', copy checked against its facts by a model' : ' (the semantic check needs evidence facts and was not used)') : ''}.`);
     if (plan.insufficientConcepts) {
       const { requested, produced, reasons } = plan.insufficientConcepts;
       console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);

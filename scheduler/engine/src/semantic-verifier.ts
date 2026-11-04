@@ -118,3 +118,52 @@ function fromAnswer(input: ParaphraseInput, answer: JudgeAnswer, cached: boolean
   const reasons = answer === 'supported' ? ['a model judged the claim supported by the quote (semantic support is not verified by code)'] : answer === 'unsupported' ? ['a model judged the claim not supported by the quote'] : ['a model could not tell whether the quote supports the claim'];
   return { claim: input.claim, factId: input.fact.id, status, reasons, cached };
 }
+
+export interface CopySupportInput { copy: { headline: string; subline: string; caption: string }; facts: readonly EvidenceFact[] }
+export interface CopySupportResult { status: SemanticStatus; reasons: string[]; cached: boolean }
+
+/** Cache key of a post's copy against its facts. */
+export function copyCacheKey(tenant: string, input: CopySupportInput): string {
+  const claim = normalizeForQuote(`${input.copy.headline}\n${input.copy.subline}\n${input.copy.caption}`);
+  const sources = input.facts.map((f) => `${f.source.contentHash}${normalizeForQuote(f.source.quote)}${normalizeForQuote(f.source.context)}`).join('␞');
+  return createHash('sha256').update([tenant, claim, sources, String(VERIFIER_VERSION)].join('␟')).digest('hex');
+}
+
+/**
+ * Asks the judge once for a batch of whole posts whether their copy says more than the facts they were written from say. Deterministic checks
+ * (figures, qualifiers, attribution) are the claim gate's job and are not repeated here. A failing judge leaves every post uncertain.
+ */
+export async function verifyCopySupport(inputs: readonly CopySupportInput[], judge: Judge, cache: VerdictCache, options: { tenant: string; batchSize?: number }): Promise<CopySupportResult[]> {
+  const batchSize = options.batchSize ?? 20;
+  const results = new Array<CopySupportResult>(inputs.length);
+  const asked = new Map<string, JudgeItem>();
+  const keys = inputs.map((input) => copyCacheKey(options.tenant, input));
+  inputs.forEach((input, index) => {
+    const known = cache.get(keys[index] as string);
+    if (known !== undefined) { results[index] = copyFromAnswer(known, true); return; }
+    asked.set(keys[index] as string, { key: keys[index] as string, claim: `${input.copy.headline}\n${input.copy.subline}\n${input.copy.caption}`, quote: input.facts.map((f) => f.source.quote).join('\n'), context: input.facts.map((f) => f.source.context).join(' | ') });
+  });
+  const items = [...asked.values()];
+  const answers = new Map<string, JudgeAnswer>();
+  let failed: string | null = null;
+  for (let i = 0; i < items.length && failed === null; i += batchSize) {
+    try {
+      for (const v of await judge(items.slice(i, i + batchSize))) if (ANSWERS.includes(v.answer) && asked.has(v.key)) answers.set(v.key, v.answer);
+    } catch (error) {
+      failed = error instanceof Error ? error.message : String(error);
+    }
+  }
+  for (const [key, answer] of answers) cache.set(key, answer);
+  inputs.forEach((_, index) => {
+    if (results[index] !== undefined) return;
+    const answer = answers.get(keys[index] as string);
+    results[index] = answer !== undefined ? copyFromAnswer(answer, false) : { status: 'uncertain', reasons: [failed !== null ? `the judge failed: ${failed}` : 'the judge gave no answer for this post'], cached: false };
+  });
+  return results;
+}
+
+function copyFromAnswer(answer: JudgeAnswer, cached: boolean): CopySupportResult {
+  if (answer === 'supported') return { status: 'supported_by_model', reasons: ['a model judged the copy no stronger than its source facts (not verified by code)'], cached };
+  if (answer === 'unsupported') return { status: 'rejected', reasons: ['a model judged the copy to claim more than its source facts say'], cached };
+  return { status: 'uncertain', reasons: ['a model could not tell whether the copy goes beyond its source facts'], cached };
+}

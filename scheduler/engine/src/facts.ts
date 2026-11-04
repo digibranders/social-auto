@@ -22,3 +22,4 @@ const c = file.coverage;
 console.log(`${path}: ${c.usable} usable, ${c.needsReview} held for review, ${file.conflicts.length} conflict${file.conflicts.length === 1 ? '' : 's'}, ${c.structured}/${c.pages} pages read with structure.`);
 for (const note of c.notes) console.log(`  note: ${note}`);
 for (const conflict of file.conflicts) console.log(`  conflict: ${conflict.reason}`);
+for (const conflict of file.conflictsWithHeld ?? []) console.log(`  conflict involving a held fact: ${conflict.reason}`);

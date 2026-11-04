@@ -22,6 +22,8 @@ export interface FactsFile {
   site: string;
   facts: EvidenceFact[];
   conflicts: TermConflict[];
+  /** Conflicts that involve a fact already held for review. */
+  conflictsWithHeld?: TermConflict[];
   snapshots: PageSnapshot[];
   coverage: { pages: number; structured: number; flatText: number; usable: number; needsReview: number; excluded: number; notes: string[] };
 }
@@ -50,9 +52,9 @@ export async function buildSiteFacts(snapshot: SiteSnapshot, deps: BuildDeps = {
   const structured = buildEvidence(structures, now);
   const all = { facts: [...structured.facts, ...flat.flatMap((s) => s.facts)], excluded: [...structured.excluded, ...flat.flatMap((s) => s.excluded)], snapshots: [...structured.snapshots, ...flat.flatMap((s) => s.snapshots)] };
   for (const s of structures) if (s.unstyled) notes.push(`${s.url}: its stylesheets were not available, so hidden content may have been read; its facts are held for review`);
-  const { facts, conflicts } = applyConflicts(all.facts);
+  const { facts, conflicts, conflictsWithHeld } = applyConflicts(all.facts);
   return {
-    version: FACTS_VERSION, builtAt: now.toISOString(), site: snapshot.origin, facts, conflicts, snapshots: all.snapshots,
+    version: FACTS_VERSION, builtAt: now.toISOString(), site: snapshot.origin, facts, conflicts, conflictsWithHeld, snapshots: all.snapshots,
     coverage: { pages: (snapshot.sources ?? []).length, structured: structures.length, flatText: flat.length, usable: facts.filter((f) => f.status === 'usable').length, needsReview: facts.filter((f) => f.status === 'needs_review').length, excluded: all.excluded.length, notes },
   };
 }
