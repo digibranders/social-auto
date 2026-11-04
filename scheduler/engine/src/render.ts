@@ -3,6 +3,7 @@
  *
  *   node src/render.ts --brand brands/brandbasket --plan week-01.json [--env <keys file>] [--model <id>]
  */
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -16,6 +17,11 @@ import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } fr
 import { measureLogoTone } from './logo-tone.ts';
 import { aiConfigFromEnv, generateScene, type AiConfig, type ImageBudget } from './ai.ts';
 import { seedFromId } from './pollinations.ts';
+import { loadFontManifest, resolveFont, type FontManifest } from './fonts.ts';
+import { renderPoster, type RenderOutcome } from './render-poster.ts';
+import type { PosterBrand } from './compose.ts';
+import type { RenderCandidate } from './art-resolve.ts';
+import type { Brand } from './content.ts';
 
 const run = promisify(execFile);
 const JPEG_QUALITY = 90;
@@ -78,6 +84,33 @@ export interface RenderOptions {
   planFile: string;
   ai: AiConfig;
   log?: (message: string) => void;
+  /** Directory of verified local fonts (with manifest.json); without it posters use system fonts and say so. Defaults to FONTS_DIR. */
+  fontsDir?: string;
+}
+
+/** What the art-directed poster needs from a brand profile. */
+function posterBrand(brand: Brand, logoHtml: string | undefined, logoTone: PosterBrand['logoTone']): PosterBrand {
+  const identity = brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
+  const host = brand.handleUrl?.trim();
+  return {
+    name: brand.name,
+    colors: brand.colors,
+    ...(identity ? { identityLine: identity } : {}),
+    ...(brand.cta ? { cta: { label: brand.cta.label, host: host || brand.cta.text } } : {}),
+    ...(logoHtml ? { logoHtml } : {}),
+    ...(logoTone ? { logoTone } : {}),
+  };
+}
+
+export interface PostRenderRecord {
+  postId: string;
+  status: RenderOutcome['status'];
+  optionId?: string;
+  solved?: Record<string, number>;
+  warnings: RenderOutcome['warnings'];
+  attempts: RenderOutcome['attempts'];
+  chromeVersion: string;
+  failure?: string;
 }
 
 /** Renders every post of a plan; AI scenes are cached per post id. Returns the output folder. */
@@ -90,8 +123,47 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
   const logoHtml = await logoMarkup(join(options.brandDir, brand.logo));
   const logoTone = await measureLogoTone(join(options.brandDir, brand.logo));
   const budget: ImageBudget = { openaiImages: 0 };
+  const fontsDir = options.fontsDir ?? process.env['FONTS_DIR'];
+  const manifest: FontManifest | undefined = fontsDir ? await loadFontManifest(fontsDir) : undefined;
+  const font = resolveFont(brand.font, manifest);
+  const records: PostRenderRecord[] = [];
 
   for (const [index, post] of plan.posts.entries()) {
+    if (post.art) {
+      const { art } = post;
+      const makePicture = async (candidate: RenderCandidate): Promise<string | undefined> => {
+        if (!candidate.imagePrompt) return undefined;
+        const key = createHash('sha256').update(candidate.imagePrompt).digest('hex').slice(0, 12);
+        const scenePath = join(outDir, `${post.id}-${key}-bg.jpg`);
+        if (!(await exists(scenePath))) {
+          log(`${post.id}: generating AI scene for ${candidate.optionId}…`);
+          options.ai.usage.post = `${basename(options.brandDir)}-${post.id}`;
+          const maker = await generateScene(options.ai, { prompt: candidate.imagePrompt, outPath: scenePath, width: SCENE_SIZE, height: SCENE_SIZE, seed: seedFromId(post.id) }, budget).finally(() => {
+            options.ai.usage.post = null;
+          });
+          log(`${post.id}: scene made by ${maker}`);
+        }
+        return pathToFileURL(scenePath).href;
+      };
+      const pngPath = join(outDir, `${post.id}.png`);
+      const outcome = await renderPoster({
+        copy: { headline: post.headline, subline: post.subline, ...(post.listItems?.length ? { listItems: post.listItems } : {}), ...(art.figure ? { figure: art.figure } : {}), ...(art.quote ? { quote: art.quote } : {}) },
+        brand: posterBrand(brand, logoHtml, logoTone),
+        font,
+        candidates: art.candidates,
+        makePicture,
+        outPng: pngPath,
+      });
+      records.push({ postId: post.id, status: outcome.status, ...(outcome.optionId ? { optionId: outcome.optionId } : {}), ...(outcome.solved ? { solved: outcome.solved } : {}), warnings: outcome.warnings, attempts: outcome.attempts, chromeVersion: outcome.chromeVersion, ...(outcome.failure ? { failure: outcome.failure } : {}) });
+      if (outcome.status === 'render_failed') {
+        log(`${post.id}: render failed (${outcome.failure ?? 'unknown'})`);
+        continue;
+      }
+      await toJpeg(pngPath, join(outDir, `${post.id}.jpg`));
+      await rm(pngPath);
+      log(`${post.id}: rendered (${outcome.status}${outcome.warnings.length ? `, ${outcome.warnings.map((w) => w.code).join(', ')}` : ''})`);
+      continue;
+    }
     let visualUrl: string | undefined;
     if (post.mode === 'ai' && post.imagePrompt) {
       const scenePath = join(outDir, `${post.id}-bg.jpg`);
@@ -114,7 +186,10 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
     log(`${post.id}: rendered`);
   }
 
-  await writeFile(join(outDir, 'preview.html'), previewHtml(brand.name, plan.posts));
+  await writeFile(join(outDir, 'preview.html'), previewHtml(brand.name, plan.posts.filter((p) => !records.some((r) => r.postId === p.id && r.status === 'render_failed'))));
+  if (records.length > 0) await writeFile(join(outDir, 'render-report.json'), `${JSON.stringify(records, null, 2)}\n`);
+  const failed = records.filter((r) => r.status === 'render_failed');
+  if (failed.length > 0) throw new Error(`${failed.length} poster(s) could not be rendered: ${failed.map((r) => `${r.postId} (${r.failure ?? 'failed'})`).join('; ')}`);
   return outDir;
 }
 

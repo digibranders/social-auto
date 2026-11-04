@@ -25,15 +25,15 @@ export const SOLVER_SCRIPT = String.raw`
   }
 
   function contentRect(el) {
+    // Horizontal extent from the glyphs themselves; vertical extent from the laid-out block, whose line boxes are what the layout planned for.
+    var block = el.getBoundingClientRect();
     var range = document.createRange();
     range.selectNodeContents(el);
     var rects = Array.prototype.filter.call(range.getClientRects(), function (r) { return r.width > 0 && r.height > 0; });
-    if (!rects.length) { var b = el.getBoundingClientRect(); return { x: b.left, y: b.top, w: b.width, h: b.height }; }
+    if (!rects.length) return { x: block.left, y: block.top, w: block.width, h: block.height };
     var x0 = Math.min.apply(null, rects.map(function (r) { return r.left; }));
-    var y0 = Math.min.apply(null, rects.map(function (r) { return r.top; }));
     var x1 = Math.max.apply(null, rects.map(function (r) { return r.right; }));
-    var y1 = Math.max.apply(null, rects.map(function (r) { return r.bottom; }));
-    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+    return { x: x0, y: block.top, w: x1 - x0, h: block.height };
   }
 
   function solve(el) {
@@ -54,7 +54,7 @@ export const SOLVER_SCRIPT = String.raw`
     }
     var size = best === null ? min : best;
     var m = measure(size);
-    return { slot: el.getAttribute('data-slot'), role: el.getAttribute('data-role'), layer: 'text', fontSize: size, min: min, max: max, lines: m.lines, maxLines: maxLines, height: m.height, slotH: slotH, slotW: slotW, fits: best !== null, rect: contentRect(el) };
+    return { slot: el.getAttribute('data-slot'), role: el.getAttribute('data-role'), layer: el.getAttribute('data-layer') || 'text', fontSize: size, min: min, max: max, lines: m.lines, maxLines: maxLines, height: m.height, slotH: slotH, slotW: slotW, fits: best !== null, rect: contentRect(el) };
   }
 
   function overlaps(a, b, gap) {
@@ -89,15 +89,23 @@ export const SOLVER_SCRIPT = String.raw`
         }
       }
       var text = Array.prototype.map.call(document.querySelectorAll('[data-fit],[data-layer="brand"]'), function (el) { return el.textContent || ''; }).join('');
-      var ctx = document.createElement('canvas').getContext('2d');
+      var surface = document.createElement('canvas');
+      surface.width = 64; surface.height = 64;
+      var ctx = surface.getContext('2d', { willReadFrequently: true });
       ctx.font = '40px ' + getComputedStyle(document.body).fontFamily;
-      var reference = ctx.measureText(String.fromCodePoint(0x10ffff)).width;
+      ctx.textBaseline = 'alphabetic';
+      function ink(ch) {
+        ctx.clearRect(0, 0, 64, 64);
+        ctx.fillText(ch, 8, 48);
+        return Array.prototype.join.call(ctx.getImageData(0, 0, 64, 64).data, ',');
+      }
+      var reference = ink(String.fromCodePoint(0x10ffff));
       var seen = {};
       Array.from(text).forEach(function (ch) {
         var cp = ch.codePointAt(0);
-        if (seen[ch] || /\s/.test(ch) || (cp >= 0x200b && cp <= 0x200f) || (cp >= 0x2028 && cp <= 0x202e)) return;
+        if (seen[ch] || /\s/.test(ch) || /\p{M}/u.test(ch) || (cp >= 0x200b && cp <= 0x200f) || (cp >= 0x2028 && cp <= 0x202e)) return;
         seen[ch] = true;
-        if (ctx.measureText(ch).width === reference) report.missingGlyphs.push(ch);
+        if (ink(ch) === reference) report.missingGlyphs.push(ch);
       });
       report.fonts.status = document.fonts ? document.fonts.status : 'unsupported';
       report.fonts.faces = document.fonts ? Array.from(document.fonts).map(function (f) { return { family: f.family, status: f.status }; }) : [];

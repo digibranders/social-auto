@@ -215,7 +215,7 @@ class Canvas {
     const url = this.input.pictureUrl;
     if (url !== undefined) {
       if (!isLocalFileUrl(url)) throw new ComposeError('the picture must be a local file: URL');
-      this.parts.push(`<img data-layer="picture" data-slot="picture" alt="" src="${escapeHtml(url)}" style="${rectCss(slot.rect)}object-fit:cover;${extra.opacity !== undefined ? `opacity:${extra.opacity};` : ''}${extra.radius ? `border-radius:${extra.radius}px;` : ''}${extra.style ?? ''}">`);
+      this.parts.push(`<img data-layer="picture" data-slot="picture" alt="" decoding="sync" loading="eager" src="${escapeHtml(url)}" style="${rectCss(slot.rect)}object-fit:cover;${extra.opacity !== undefined ? `opacity:${extra.opacity};` : ''}${extra.radius ? `border-radius:${extra.radius}px;` : ''}${extra.style ?? ''}">`);
     } else if (this.input.mode.kind === 'frozen') {
       throw new ComposeError('a frozen poster needs its picture');
     } else {

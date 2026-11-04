@@ -409,3 +409,50 @@ function summarise(posts: readonly DirectedPost[], ready: readonly ReadyPost[], 
     },
   };
 }
+
+export interface RenderCandidate {
+  optionId: string;
+  brief: ArtBrief;
+  /** Absent when the brief wants no picture. */
+  imagePrompt?: string;
+  /** The art record to commit if this candidate is the one that renders. */
+  record: ArtRecord;
+}
+
+/**
+ * The candidates the renderer may try for a post, best first: the resolved brief, then other eligible options (those not
+ * estimated to overflow first, other families before the same family) and finally the safe family. Each carries its own
+ * brief, image prompt and record, so a change of family during rendering updates the art record and the picture's text zone.
+ */
+export function renderCandidates(input: {
+  post: DirectedPost;
+  ready: ReadyPost;
+  history: readonly ArtRecord[];
+  brand: Pick<Brand, 'colors'>;
+  settings?: FinalizeSettings;
+  limit?: number;
+}): RenderCandidate[] {
+  const { post, ready } = input;
+  const settings = input.settings ?? {};
+  const first: RenderCandidate = { optionId: ready.actualOptionId, brief: ready.brief, ...(ready.imagePrompt ? { imagePrompt: ready.imagePrompt } : {}), record: ready.record };
+  const others = uniqueOptions(post).filter((o) => optionId(o) !== ready.actualOptionId);
+  const sameFamily = (o: ScoredOption): number => (o.layout === ready.brief.layout ? 1 : 0);
+  const fits = (o: ScoredOption): number => (o.fit === 'likely_overflow' ? 1 : 0);
+  const ordered = [...others].sort((a, b) => fits(a) - fits(b) || sameFamily(a) - sameFamily(b));
+  const safe = ordered.filter((o) => o.layout === SAFE_FAMILY && o.pictureRole === 'none');
+  const picks = [...ordered.filter((o) => o.layout !== SAFE_FAMILY), ...safe];
+  const out: RenderCandidate[] = [first];
+  const running = input.history.filter((r) => r !== ready.record);
+  for (const option of picks) {
+    if (out.length >= (input.limit ?? 4)) break;
+    const built = buildFor(post, option, running, input.brand, settings, { kind: 'code' });
+    if (isReason(built)) continue;
+    out.push({ optionId: optionId(option), brief: built.brief, ...(built.imagePrompt ? { imagePrompt: built.imagePrompt } : {}), record: built.record });
+  }
+  if (!out.some((c) => c.brief.layout === SAFE_FAMILY)) {
+    const lastResort = uniqueOptions(post).find((o) => o.layout === SAFE_FAMILY && o.pictureRole === 'none');
+    const built = lastResort ? buildFor(post, lastResort, running, input.brand, settings, { kind: 'code' }) : undefined;
+    if (lastResort && built && !isReason(built)) out.push({ optionId: optionId(lastResort), brief: built.brief, record: built.record });
+  }
+  return out;
+}

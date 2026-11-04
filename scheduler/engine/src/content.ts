@@ -1,4 +1,6 @@
 import { readFile } from 'node:fs/promises';
+import { ArtDirectionError, HIERARCHIES, PICTURE_ROLES, TEXT_ZONES, parseArtBrief, type ArtBrief } from './art-brief.ts';
+import type { ArtRecord } from './art-options.ts';
 import { parseConcept, type Concept } from './concepts.ts';
 import type { CallToAction } from './cta.ts';
 import type { BrandIdentity } from './identity.ts';
@@ -97,6 +99,23 @@ export function isFormatName(value: unknown): value is FormatName {
   return typeof value === 'string' && (FORMATS as readonly string[]).includes(value);
 }
 
+/** One art direction the renderer may try for a post: the brief, its image prompt (none without a picture) and the art record to commit if it renders. */
+export interface PostArtCandidate {
+  optionId: string;
+  brief: ArtBrief;
+  imagePrompt?: string;
+  record: ArtRecord;
+}
+
+/** The art direction of a post: how it was resolved and the candidates in the order the renderer tries them (the first is the chosen one). */
+export interface PostArt {
+  resolution: 'directed' | 'repaired' | 'fallback';
+  candidates: PostArtCandidate[];
+  /** A verified figure or quotation the evidence layout may show large. */
+  figure?: string;
+  quote?: string;
+}
+
 export interface PlannedPost {
   id: string;
   date: string;
@@ -123,6 +142,8 @@ export interface PlannedPost {
   concept?: Concept;
   /** The proof point the post was built on. */
   anchor?: string;
+  /** The art direction (layout, picture, placements) for posts planned with the art director; older posts have none and render as before. */
+  art?: PostArt;
   /** The older concept the post deliberately returns to with a different message. */
   revisitOf?: string;
   caption: string;
@@ -341,6 +362,7 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"${key}" must be text`);
     post[key] = value.trim();
   }
+  if (raw['art'] !== undefined) post.art = parseArt(raw['art'], where);
   if (raw['concept'] !== undefined) {
     try {
       post.concept = parseConcept(raw['concept']);
@@ -391,6 +413,42 @@ export function parseHeadline(headline: string): HeadlineSegment[] {
     .split('|')
     .map((text, index) => ({ text, accent: index % 2 === 1 }))
     .filter((segment) => segment.text.length > 0);
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
+
+function parseArt(raw: unknown, where: string): PostArt {
+  if (!isObject(raw)) throw new ContentValidationError(where, '"art" must be an object');
+  const resolution = raw['resolution'];
+  if (resolution !== 'directed' && resolution !== 'repaired' && resolution !== 'fallback') throw new ContentValidationError(where, '"art.resolution" must be directed, repaired or fallback');
+  const list = raw['candidates'];
+  if (!Array.isArray(list) || list.length === 0 || list.length > 8) throw new ContentValidationError(where, '"art.candidates" must hold 1 to 8 candidates');
+  const candidates = list.map((entry, i): PostArtCandidate => {
+    const at = `${where} art candidate ${i + 1}`;
+    if (!isObject(entry) || typeof entry['optionId'] !== 'string' || !entry['optionId'].trim()) throw new ContentValidationError(at, '"optionId" must be text');
+    let brief: ArtBrief;
+    try {
+      brief = parseArtBrief(entry['brief'], at);
+    } catch (error) {
+      throw new ContentValidationError(at, error instanceof ArtDirectionError ? error.message.replace(`${at}: `, '') : String(error));
+    }
+    const record = entry['record'];
+    if (!isObject(record) || typeof record['layout'] !== 'string' || !(HIERARCHIES as readonly string[]).includes(String(record['hierarchy'])) || !(TEXT_ZONES as readonly string[]).includes(String(record['textZone'])) || !(PICTURE_ROLES as readonly string[]).includes(String(record['pictureRole']))) {
+      throw new ContentValidationError(at, '"record" must name layout, hierarchy, textZone and pictureRole');
+    }
+    const imagePrompt = entry['imagePrompt'];
+    if (imagePrompt !== undefined && (typeof imagePrompt !== 'string' || !imagePrompt.trim() || imagePrompt.length > 4000)) throw new ContentValidationError(at, '"imagePrompt" must be text of at most 4000 characters');
+    if (brief.picture.role !== 'none' && imagePrompt === undefined) throw new ContentValidationError(at, 'a candidate with a picture needs its "imagePrompt"');
+    return { optionId: entry['optionId'].trim(), brief, ...(typeof imagePrompt === 'string' ? { imagePrompt: imagePrompt.trim() } : {}), record: record as unknown as ArtRecord };
+  });
+  const art: PostArt = { resolution, candidates };
+  for (const key of ['figure', 'quote'] as const) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"art.${key}" must be text`);
+    art[key] = value.trim();
+  }
+  return art;
 }
 
 export function escapeHtml(text: string): string {

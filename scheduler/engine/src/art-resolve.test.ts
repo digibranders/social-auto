@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { optionId, type DirectedPost, type DirectedResult, type DirectionOutcome, type DirectionReason, type DirectionReasonCode } from './art-director.ts';
-import { finalizeDirections, SEVERITY, type FinalizeSettings } from './art-resolve.ts';
+import { finalizeDirections, renderCandidates, SEVERITY, type FinalizeSettings } from './art-resolve.ts';
 import { parseArtBrief } from './art-brief.ts';
 import { planShortlists, type ArtRecord, type PostFacts, type ScoredOption } from './art-options.ts';
 import { checkBriefAgainstFamily, layoutRegistry, SAFE_FAMILY } from './layout-registry.ts';
@@ -289,4 +289,23 @@ test('the safe family is the last resort and is always usable', () => {
   const done = run([changed], { ...empty(), unresolved: [{ postId: post.id, reasons: [reason('model_failed')] }] });
   assert.equal(done.ready[0]?.brief.layout, SAFE_FAMILY);
   assert.equal(done.status === 'pending_render_validation' || done.status === 'complete', true);
+});
+
+test('render candidates: the resolved brief first, then other eligible options ending with the safe family, each with its own prompt and record', () => {
+  const list = posts();
+  const post = pictured(list);
+  const done = run([post], { ...empty(), resolved: [directedFor(post)] });
+  const ready = done.ready[0];
+  assert.ok(ready);
+  const candidates = renderCandidates({ post, ready, history: [], brand, limit: 5 });
+  assert.equal(candidates[0]?.optionId, ready.actualOptionId);
+  assert.ok(candidates.length >= 2);
+  assert.equal(new Set(candidates.map((c) => c.optionId)).size, candidates.length, 'no duplicates');
+  assert.ok(candidates.some((c) => c.brief.layout === SAFE_FAMILY), 'the safe family is among them');
+  for (const c of candidates) {
+    assert.equal(checkBriefAgainstFamily(c.brief, layoutRegistry).ok, true, c.optionId);
+    assert.equal(`${c.record.layout}:${c.record.textZone}:${c.record.hierarchy}:${c.record.pictureRole}`, c.optionId);
+    if (c.brief.picture.role === 'none') assert.equal(c.imagePrompt, undefined);
+    else assert.ok(c.imagePrompt);
+  }
 });

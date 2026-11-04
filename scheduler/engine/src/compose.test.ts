@@ -86,6 +86,10 @@ test('picture role none has no image element and no placeholder', () => {
   assert.doesNotMatch(html, /data-placeholder/);
 });
 
+test('a picture is decoded before the page paints, so a capture never shows a half-drawn picture', () => {
+  assert.match(compose(FAMILY_BRIEFS[1]![1], FAMILY_BRIEFS[1]![2]).html, /<img data-layer="picture"[^>]*decoding="sync"/);
+});
+
 test('a measuring page shows a placeholder when the picture does not exist yet, and a frozen page refuses', () => {
   const brief = FAMILY_BRIEFS[1]![1];
   assert.match(compose(brief).html, /data-placeholder="1"/);
