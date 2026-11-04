@@ -18,7 +18,7 @@
 import { loadFacts } from './evidence-pipeline.ts';
 import { applyReview, loadReview } from './fact-review.ts';
 import { modelJudge, modelPictureJudge, modelWorthJudge } from './semantic-judge.ts';
-import { loadWorth, MIN_WORTH, saveWorth, scoreFacts, WORTH_VERSION, type WorthScore } from './worth.ts';
+import { effectiveTotal, loadWorth, MIN_WORTH, saveWorth, scoreFacts, WORTH_VERSION, type WorthScore } from './worth.ts';
 import { offerableFacts, rankFacts } from './fact-assignment.ts';
 import { fileCache } from './semantic-verifier.ts';
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
@@ -186,7 +186,7 @@ async function main(): Promise<void> {
       const result = await scoreFacts(candidates, worthFile.scores, modelWorthJudge(ai));
       if (result.judged > 0) await saveWorth(brandDir, { version: WORTH_VERSION, scores: result.scores });
       if (result.failure) console.log(`    Poster-worthiness could not be judged (${result.failure}); facts are used unscored.`);
-      else console.log(`    Poster-worthiness: ${candidates.filter((f) => (result.scores[f.id]?.total ?? 0) >= MIN_WORTH).length} of ${candidates.length} top candidates are worth a post of their own.`);
+      else console.log(`    Poster-worthiness: ${candidates.filter((f) => (result.scores[f.id] ? effectiveTotal(result.scores[f.id] as WorthScore) : 0) >= MIN_WORTH).length} of ${candidates.length} top candidates are worth a post of their own.`);
       worthScores = result.failure ? undefined : result.scores;
     }
     const plan = await planWeek({
@@ -209,7 +209,7 @@ async function main(): Promise<void> {
       recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
       recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
       ...(verdicts ? { copyJudge: { judge: modelJudge(ai), cache: verdicts } } : {}),
-      ...(reviewed ? { evidence: { facts: reviewed.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []), ...(worthScores ? { worth: Object.fromEntries(Object.entries(worthScores).map(([id, sc]) => [id, sc.total])) } : {}) } } : {}),
+      ...(reviewed ? { evidence: { facts: reviewed.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []), ...(worthScores ? { worth: Object.fromEntries(Object.entries(worthScores).map(([id, sc]) => [id, effectiveTotal(sc)])) } : {}) } } : {}),
     });
     await verdicts?.save();
     console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}${verdicts ? (plan.evidenceCoverage === 'facts' ? ', copy checked against its facts by a model' : ' (the semantic check needs evidence facts and was not used)') : ''}.`);

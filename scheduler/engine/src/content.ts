@@ -365,7 +365,7 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     painPoint: requireString(raw, 'painPoint', where),
     mode,
     headline: requireString(raw, 'headline', where),
-    subline: requireString(raw, 'subline', where),
+    subline: raw['subline'] === '' ? '' : requireString(raw, 'subline', where),
     caption: requireString(raw, 'caption', where),
     hashtags,
   };

@@ -87,3 +87,8 @@ test('a planned post may carry its hook, the hook that was requested, warnings a
   assert.throws(() => parseWeekPlan(plan({ ...base, hook: ' ' }), 'w'), /hook/);
   assert.throws(() => parseWeekPlan(plan({ ...base, listItems: 'a' }), 'w'), /listItems/);
 });
+
+test('a plan post may have an empty subline (a poster needs none when the facts have nothing to add)', () => {
+  const plan = { brand: 'acme', timezone: '+05:30', posts: [{ id: 'p1', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline: 'A |clear| line', subline: '', caption: 'c', hashtags: ['#a'] }] };
+  assert.equal(parseWeekPlan(plan, 'week-01').posts[0]?.subline, '');
+});

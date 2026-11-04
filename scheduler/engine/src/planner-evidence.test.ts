@@ -358,3 +358,21 @@ test('the writer is told to write one clear reader-relevant message and not a fe
   assert.match(m.prompts[0] ?? '', /Write one clear, reader-relevant statement or question/);
   assert.match(m.prompts[0] ?? '', /must not read like a menu item or a specification line/);
 });
+
+test('in fact mode the subline is optional: an empty one is accepted, and the writer is told to leave it empty unless it adds something', async () => {
+  const m = model(() => ({ subline: '', caption: 'A short note.' }));
+  const plan = await run(m, { facts: facts() }, 1);
+  assert.equal(plan.posts[0]?.subline, '');
+  assert.match(m.prompts[0] ?? '', /return an empty string unless it adds a detail, condition or fact/);
+  const legacy = model(() => ({ subline: '', caption: 'A short note.' }));
+  await assert.rejects(run(legacy, undefined, 1));
+});
+
+test('in fact mode a subline that restates the headline is taken away on the last try and the post stays; without facts the post is left out', async () => {
+  const restate = (_slot: number, _prompt: string, headline: string) => ({ subline: `Acme Replies: ${headline}`, caption: 'A short note.' });
+  const plan = await run(model(restate), { facts: facts() }, 1);
+  assert.equal(plan.posts.length, 1);
+  assert.equal(plan.posts[0]?.subline, '');
+  assert.ok(plan.posts[0]?.hookWarnings?.includes('editorial: subline_removed_as_redundant'));
+  await assert.rejects(run(model(restate), undefined, 1), InsufficientConceptsError);
+});

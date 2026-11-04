@@ -23,6 +23,11 @@ export type WorthJudge = (items: WorthItem[]) => Promise<WorthVerdict[]>;
 
 const clamp = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) ? Math.max(0, Math.min(2, Math.round(n))) : 0);
 
+/** The total that counts for ranking: a fact with a zero in any dimension cannot be a post on its own, so its total is capped at the supporting level. */
+export function effectiveTotal(score: WorthScore): number {
+  return score.relevance === 0 || score.clarity === 0 || score.value === 0 ? Math.min(score.total, MIN_WORTH - 1) : score.total;
+}
+
 export function toScore(v: Pick<WorthVerdict, 'relevance' | 'clarity' | 'value'>): WorthScore {
   const [relevance, clarity, value] = [clamp(v.relevance), clamp(v.clarity), clamp(v.value)];
   return { relevance, clarity, value, total: relevance + clarity + value };

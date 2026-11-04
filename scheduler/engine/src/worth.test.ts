@@ -87,3 +87,12 @@ test('the worth judge sends one request for the batch and reads three scores per
   assert.match(bodies[0] ?? '', /Custom instructions/);
   assert.deepEqual(out, [{ key: 'a', relevance: 2, clarity: 1, value: 0 }]);
 });
+
+import { effectiveTotal, MIN_WORTH } from './worth.ts';
+
+test('a fact with a zero in any dimension cannot lead a post, however high its total; a fact with no zero keeps its total', () => {
+  assert.equal(effectiveTotal(toScore({ relevance: 2, clarity: 2, value: 0 })), MIN_WORTH - 1);
+  assert.equal(effectiveTotal(toScore({ relevance: 0, clarity: 2, value: 2 })), MIN_WORTH - 1);
+  assert.equal(effectiveTotal(toScore({ relevance: 1, clarity: 2, value: 2 })), 5);
+  assert.equal(effectiveTotal(toScore({ relevance: 0, clarity: 1, value: 1 })), 2);
+});

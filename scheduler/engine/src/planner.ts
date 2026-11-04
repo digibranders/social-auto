@@ -126,7 +126,7 @@ Return JSON:
     {
       "painPoint": "one sentence describing what the post is about (for a problem post, the customer's problem)",
       "headline": "max 45 characters, a punchy question or statement about the pain in everyday words; wrap the 2-4 most important words in |pipes| for the accent colour, e.g. 'Is your website |costing you customers?|'",
-      "subline": "max 70 characters, plain words, no jargon: it names the brand (${brand.name}) and says what it does about this pain, e.g. '${brand.name} keeps all of this in one place.' Use only facts from the profile.",
+      "subline": ${withFacts ? `"optional, max 70 characters: return an empty string unless it adds a detail, condition or fact from the post's facts that the headline does not already say; never restate the headline in other words"` : `"max 70 characters, plain words, no jargon: it names the brand (${brand.name}) and says what it does about this pain, e.g. '${brand.name} keeps all of this in one place.' Use only facts from the profile."`},
       "visual": "one fresh visual idea for this pain point: a single symbolic object or abstract scene, in the way a clever magazine cover would. It must contain one object that belongs to the topic of the headline (a calendar for scheduling, a file or parcel for uploads, chat bubbles for conversation, a stack of tasks for repeated work), so a viewer links the picture to the headline within two seconds, plus one simple metaphor for the pain (a knot that unravels, a maze with one lit path). No people, no faces, no hands, no offices, desks or meeting rooms, no screens, no text. Max 30 words.",
       "visualLink": "one short sentence: how a viewer connects this picture to the headline, e.g. 'the parcel stands for big files and the narrow door for friction'",
       "concept": {"subject": "what the post is about, 2-5 words", "angle": "the particular angle on that subject", "message": "the one thing the post asserts", "visualSubject": "the main object in the picture", "visualAction": "what happens to it", "visualComposition": "the framing, e.g. close-up, overhead, wide"},
@@ -213,13 +213,15 @@ function withoutListCount<T extends { headline: string; subline: string; caption
  * points, it also turns back copy that states a figure, superlative, guarantee or deadline none of them supports; this runs before
  * any picture is generated.
  */
-export function validateDraft(draft: DraftPost, position: number, brandName?: string, proofPoints?: readonly string[], assignment?: PostPlan): void {
+export function validateDraft(draft: DraftPost, position: number, brandName?: string, proofPoints?: readonly string[], assignment?: PostPlan, options: { optionalSubline?: boolean } = {}): void {
   if (typeof draft.visual !== 'string' || !draft.visual.trim()) throw new Error(`post ${position} needs a "visual"`);
   if (typeof draft.visualLink !== 'string' || !draft.visualLink.trim()) throw new Error(`post ${position} needs a "visualLink": how the picture connects to the headline`);
   if (brandName !== undefined) {
     const first = brandName.trim().split(/\s+/)[0] ?? '';
+    const none = options.optionalSubline === true && typeof draft.subline === 'string' && draft.subline.trim() === '';
     if (typeof draft.subline !== 'string' || draft.subline.length > MAX_SUBLINE_CHARS) throw new Error(`post ${position} subline is too long; keep it under 70 characters`);
-    if (first && !draft.subline.toLowerCase().includes(first.toLowerCase())) throw new Error(`post ${position} subline must name the brand (${first}) so a stranger knows whose post it is`);
+    // With facts the subline is optional: a poster whose logo and identity line already say whose it is needs no line that names the brand, and a redundant subline is worse than none.
+    if (!none && !(options.optionalSubline === true) && first && !draft.subline.toLowerCase().includes(first.toLowerCase())) throw new Error(`post ${position} subline must name the brand (${first}) so a stranger knows whose post it is`);
   }
   // 45 is the target given to the model; allow some slack before forcing a retry.
   if (typeof draft.headline === 'string' && draft.headline.replaceAll('|', '').length > 60) {
@@ -373,7 +375,7 @@ export async function planWeek(options: {
           let draft = d;
           let used = assigned.hook as string;
           try {
-            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned);
+            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode });
           } catch (error) {
             // On the last try a post whose copy the claim gate still turns back, or that does not stay with its fact, is left out (fewer posts, never unsupported copy); the others stay.
             if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point/.test(error.message)) {
@@ -385,7 +387,7 @@ export async function planWeek(options: {
             if (!headline) throw error;
             draft = { ...d, headline };
             used = 'direct_statement';
-            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), { ...assigned, hook: used });
+            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), { ...assigned, hook: used }, { optionalSubline: evidenceMode });
           }
           let concept: Concept;
           try {
@@ -410,14 +412,20 @@ export async function planWeek(options: {
           }
           // Editorial: a subline that only says the headline or identity line again goes back to the writer; on the last try it stays, with the reason noted for the reviewer.
           const cited = evidenceMode ? (factsPerPost[offset + i] ?? []).map((f) => ({ text: f.text, category: f.category })) : [];
-          const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: assigned.cta?.text ?? brand.callToAction, citedFacts: cited });
+          const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: assigned.cta?.text ?? brand.callToAction, citedFacts: cited }, evidenceMode ? { nearIdentical: 0.5 } : { nearIdentical: 0.6 });
           if (editorial.hard.length > 0 && attempt < 2) throw new Error(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
-          // A subline that says the headline again, exactly or in nearly the same words with nothing new supported, is not copy: on the last try the post is left out.
+          // A subline that says the headline again, exactly or in nearly the same words with nothing new supported, is not copy. With facts the subline is optional, so on the last
+          // try it is taken away and the post stays (a redundant subline is worse than none); without facts the post is left out.
+          let removedSubline = false;
           if (editorial.hard.length > 0) {
-            droppedHere.push(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
-            return;
+            if (!evidenceMode) {
+              droppedHere.push(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
+              return;
+            }
+            draft = { ...draft, subline: '' };
+            removedSubline = true;
           }
-          const editorialNotes = [...editorial.hard, ...editorial.warnings].map((issue) => `editorial: ${issue.code}`);
+          const editorialNotes = [...(removedSubline ? ['editorial: subline_removed_as_redundant'] : []), ...editorial.warnings.map((issue) => `editorial: ${issue.code}`)];
           const earlier = [...(options.recentHeadlines ?? []), ...posts.map((p) => p.headline), ...builtSoFar.map((p) => p.headline)].map(normalizeHeadline);
           const warnings = [...repetitionWarnings(draft.headline, earlier).map((w) => `${w.kind}: ${w.detail}`), ...decision.warnings.map((w) => `concept: ${w}`), ...editorialNotes, ...(decision.status === 'unchecked' ? decision.reasons.map((r) => `concept: unchecked, ${r}`) : [])];
           const built = buildPost({
