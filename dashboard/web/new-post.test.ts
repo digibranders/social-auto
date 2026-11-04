@@ -1,11 +1,20 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { earliestDay, postChannelId } from './new-post.ts';
+import { earliestDay, postChannelId, timeProblem } from './new-post.ts';
 
-test('the earliest day is tomorrow in the person\'s own calendar', () => {
-  const now = new Date(2026, 10, 30, 22, 15).getTime();
-  assert.equal(earliestDay(now), '2026-12-01');
-  assert.equal(earliestDay(new Date(2026, 11, 31, 9, 0).getTime()), '2027-01-01');
+test('the earliest day is today in the person\'s own calendar', () => {
+  assert.equal(earliestDay(new Date(2026, 10, 30, 9, 0).getTime()), '2026-11-30');
+  assert.equal(earliestDay(new Date(2026, 11, 31, 23, 59).getTime()), '2026-12-31');
+});
+
+test('a time is refused when it is malformed or has already passed, and accepted when it is still ahead', () => {
+  const now = new Date(2026, 10, 4, 12, 0).getTime();
+  assert.equal(timeProblem('2026-11-04', '12:05', now), null);
+  assert.equal(timeProblem('2026-11-05', '08:00', now), null);
+  assert.match(timeProblem('2026-11-04', '12:00', now) ?? '', /already passed/);
+  assert.match(timeProblem('2026-11-04', '09:30', now) ?? '', /already passed/);
+  assert.match(timeProblem('2026-11-04', '25:00', now) ?? '', /like 12:05/);
+  assert.match(timeProblem('2026-11-04', '', now) ?? '', /like 12:05/);
 });
 
 test('Instagram goes by its own name in a post, other channels by their id, and a channel with no id cannot be chosen', () => {

@@ -21,6 +21,7 @@ content job writes into the same checkout the publisher reads (`SCHEDULE_FILE`),
 6. nginx: copy `deploy/nginx/social-auto.conf` to `/etc/nginx/sites-available/`, link it into `sites-enabled`, `nginx -t`, `systemctl reload nginx`, then `certbot --nginx -d <host>`.
 7. Check from the server: `curl -s http://127.0.0.1:4021/healthz` and `curl -s http://127.0.0.1:4011/healthz`.
 8. Only when ready to switch posting: enable `social-cron.timer` and `social-refresh.timer`, and stop the Vercel crons (never both).
+9. Hand-made posts with their own time (New post, "Time") are sent by `social-cron-frequent.timer`, every 5 minutes. On a server that is already running, copy the two new `social-cron-frequent.*` files (and the updated `social-cron.service`) to `/etc/systemd/system/`, then `systemctl daemon-reload` and `systemctl enable --now social-cron-frequent.timer`. Both cron services share the lock `/var/lib/social-auto/cron.lock`, so two runs never overlap.
 
 ## Update (automatic)
 Merging into `main` deploys by itself (`.github/workflows/deploy.yml`):

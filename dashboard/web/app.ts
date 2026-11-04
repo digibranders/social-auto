@@ -743,7 +743,7 @@ function openPicker(brand: string | null): void {
 }
 
 /** Saves a hand-made post: the picture first, then the post that points to it. */
-async function submitNewPost(post: { brand: string; day: string; caption: string; picture: File; channels: string[] }): Promise<string | null> {
+async function submitNewPost(post: { brand: string; day: string; time: string; caption: string; picture: File; channels: string[] }): Promise<string | null> {
   const call = async (query: string, body: BodyInit, contentType: string): Promise<{ answer: Record<string, unknown> | null; problem: string | null }> => {
     try {
       const response = await fetch(`/api/manual?${query}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': contentType }, body });
@@ -760,10 +760,10 @@ async function submitNewPost(post: { brand: string; day: string; caption: string
   const uploaded = await call('action=image', post.picture, 'image/jpeg');
   const imageKey = uploaded.answer?.['imageKey'];
   if (uploaded.problem || typeof imageKey !== 'string') return uploaded.problem ?? 'The picture could not be saved.';
-  const created = await call('action=create', JSON.stringify({ brand: post.brand, day: post.day, caption: post.caption, imageKey, channels: post.channels }), 'application/json');
+  const created = await call('action=create', JSON.stringify({ brand: post.brand, day: post.day, time: post.time, caption: post.caption, imageKey, channels: post.channels }), 'application/json');
   if (created.problem) return created.problem;
   picker.close();
-  state.notice = { kind: 'ok', text: `Post scheduled for ${post.day} at 10:00 AM. It shows under Next posts.` };
+  state.notice = { kind: 'ok', text: `Post scheduled for ${post.day} at ${post.time} India time. It shows under Next posts.` };
   await load();
   return null;
 }

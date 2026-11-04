@@ -7,5 +7,6 @@ Type=oneshot
 User=social
 Group=social
 EnvironmentFile=/etc/social-auto/publisher.env
-ExecStart=/home/social/social-auto/deploy/scripts/call-publisher.sh /api/cron
+# One run at a time: shares its lock with the frequent run, so a post is never sent twice by two runs at once.
+ExecStart=/usr/bin/flock -w 600 /var/lib/social-auto/cron.lock /home/social/social-auto/deploy/scripts/call-publisher.sh /api/cron
 TimeoutStartSec=10min

@@ -35,6 +35,26 @@ test('a post with no channel, an unconnected channel, a bad day, picture or capt
   assert.equal(isManualId('../x'), false);
 });
 
+test('a hand-made post can carry its own time of day, which defaults to the daily 10:00', () => {
+  assert.equal(postDateFor('2026-11-05', NOW, '12:05'), '2026-11-05T12:05:00+05:30');
+  assert.equal(postDateFor('2026-11-05', NOW, undefined), '2026-11-05T10:00:00+05:30');
+  assert.equal(buildManualPost({ ...input, time: '17:30' }, allowed, NOW).date, '2026-11-05T17:30:00+05:30');
+  // Today works when the time is still ahead (NOW is 13:30 in India), but not when it has passed or is about to.
+  assert.equal(postDateFor('2026-11-02', NOW, '15:00'), '2026-11-02T15:00:00+05:30');
+  assert.throws(() => postDateFor('2026-11-02', NOW, '13:00'), /already passed/);
+  assert.throws(() => postDateFor('2026-11-02', NOW, '13:30'), /already passed/);
+  for (const bad of ['25:00', '12:60', '9:5', 'noon', '12:05:00', 5]) assert.throws(() => postDateFor('2026-11-05', NOW, bad), /time/);
+});
+
+test('editing a post can move its time, alone or with the day, and leaves it alone when nothing differs', () => {
+  const post = buildManualPost({ ...input, time: '12:05' }, allowed, NOW);
+  assert.equal(editManualPost(post, { time: '16:45' }, allowed, NOW).date, '2026-11-05T16:45:00+05:30');
+  assert.equal(editManualPost(post, { day: '2026-11-09' }, allowed, NOW).date, '2026-11-09T12:05:00+05:30');
+  assert.equal(editManualPost(post, { day: '2026-11-09', time: '08:00' }, allowed, NOW).date, '2026-11-09T08:00:00+05:30');
+  assert.equal(editManualPost(post, { time: '12:05' }, allowed, NOW).date, post.date);
+  assert.throws(() => editManualPost(post, { time: 'late' }, allowed, NOW), /time/);
+});
+
 test('malformed manual files are rejected', () => {
   assert.throws(() => parseManualFile({}), /posts/);
   assert.throws(() => parseManualFile({ posts: [{ id: 'manual-0123456789ab' }] }), /non-empty string/);
@@ -42,6 +62,13 @@ test('malformed manual files are rejected', () => {
 
 const planned: ScheduledPost = { id: 'p1', brand: 'brandbasket', date: '2026-11-02T10:00:00+05:30', caption: 'Planned', image: '/posts/a.jpg' };
 const extra = (id: string, date: string, channels?: string[]): ScheduledPost => ({ id, brand: 'brandbasket', date, caption: id, image: '/posts/b.jpg', manual: true, ...(channels ? { channels } : {}) });
+
+test('the frequent run only picks up hand-made posts that became due in its short window', () => {
+  const now = Date.parse('2026-11-03T06:40:00Z'); // 12:10 in India
+  const posts = [planned, extra('fresh', '2026-11-03T12:05:00+05:30'), extra('stale', '2026-11-03T10:00:00+05:30'), extra('later', '2026-11-03T12:30:00+05:30')];
+  assert.deepEqual(dueManualPosts(posts, now, 15 * 60 * 1000).map((p) => p.id), ['fresh']);
+  assert.deepEqual(dueManualPosts(posts, now).map((p) => p.id), ['stale', 'fresh']);
+});
 
 test('several hand-made posts can be due together; they are oldest first, only inside the window, and planned ones are excluded', () => {
   const now = Date.parse('2026-11-03T05:00:00Z');
