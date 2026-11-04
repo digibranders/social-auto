@@ -56,13 +56,18 @@ export interface FactAssignmentInput {
   perPost?: number;
 }
 
-/** The facts of each post: its anchor or the best ranked fact not yet used this week, then a second fact of another category when one exists. */
+/**
+ * The facts of each post: its anchor or the best ranked fact not yet used this week, then a second fact when the page ties it to the first.
+ * Facts a pillar fixed as anchors are reserved first, so a post with no anchor never takes the fact a later post is built on: two posts of one
+ * batch do not share a primary fact while there are other facts to use.
+ */
 export function assignFacts(input: FactAssignmentInput): EvidenceFact[][] {
   const perPost = Math.min(Math.max(input.perPost ?? 2, 1), 2);
   const ranked = rankFacts(input.facts, input.recentFactIds);
+  const reserved = new Set(input.anchors.flatMap((a) => (a ? [a.id] : [])));
   const usedThisWeek = new Set<string>();
   return input.anchors.map((anchor) => {
-    const fresh = ranked.filter((f) => !usedThisWeek.has(f.id));
+    const fresh = ranked.filter((f) => !usedThisWeek.has(f.id) && (anchor?.id === f.id || !reserved.has(f.id)));
     const pool = fresh.length > 0 ? fresh : ranked;
     const first = anchor ?? pool[0];
     if (first === undefined) return [];

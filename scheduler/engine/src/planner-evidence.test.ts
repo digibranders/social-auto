@@ -281,3 +281,20 @@ test('in fact mode the caption is told to stay within the facts; legacy keeps th
   const legacy = await planWith(brand, undefined);
   assert.match(legacy.m.prompts[0] ?? '', /the problem in the customer's words/);
 });
+
+test('a post with no anchor never takes the fact a later post is anchored on, so no two posts of a batch share a primary fact', () => {
+  const offered = offerableFacts(facts());
+  const [a, b] = [offered[0] as EvidenceFact, offered[1] as EvidenceFact];
+  const perPost = assignFacts({ facts: offered, anchors: [undefined, a, undefined, b], recentFactIds: [] });
+  const firsts = perPost.map((p) => p[0]?.id);
+  assert.equal(new Set(firsts).size, firsts.length, firsts.join(','));
+  assert.equal(perPost[1]?.[0]?.id, a.id);
+  assert.equal(perPost[3]?.[0]?.id, b.id);
+  assert.ok(!firsts.slice(0, 1).includes(a.id) && !firsts.slice(0, 1).includes(b.id));
+});
+
+test('when the evidence cannot support more distinct posts, facts are reused rather than refused', () => {
+  const only = offerableFacts(facts()).slice(0, 1);
+  const perPost = assignFacts({ facts: only, anchors: [undefined, undefined], recentFactIds: [] });
+  assert.deepEqual(perPost.map((p) => p[0]?.id), [only[0]?.id, only[0]?.id]);
+});
