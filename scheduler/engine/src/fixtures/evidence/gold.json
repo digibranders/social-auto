@@ -347,6 +347,16 @@
       "page": "mockups",
       "quote": "Read the case study",
       "why": "link label"
+    },
+    {
+      "page": "mockups",
+      "quote": "→ crawled docs.acme.com · indexed 1,247 passages",
+      "why": "terminal output in a mock-up"
+    },
+    {
+      "page": "mockups",
+      "quote": "// paste one script tag, we crawl the rest",
+      "why": "code comment"
     }
   ],
   "associations": [

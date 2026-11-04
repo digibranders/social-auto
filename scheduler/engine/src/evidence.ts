@@ -275,6 +275,8 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
     if (quote.length > config.maxSentenceChars) reasons.push('too_long');
     // A bracketed tag is the mark of a chat or log shown as an example, not of something the brand says about itself.
     if (/\[[^\]]{1,60}\]/.test(block.text)) reasons.push('demo_context');
+    // A line that begins like terminal or code output (an arrow, a comment marker, a prompt) belongs to a pictured interface or a snippet.
+    if (/^\s*(?:→|➜|>>?|\$\s|\/\/|#!|<!--)/u.test(block.text)) reasons.push('demo_context');
     // A short label with no figure and no commercial wording, outside any card or cell, is interface text, not a claim.
     if (fragment && !hasNumbers && scope === undefined && !wordPattern(config.commercialWords).test(quote)) reasons.push('fragment_unscoped');
 
