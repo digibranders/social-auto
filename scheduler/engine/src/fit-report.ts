@@ -84,7 +84,8 @@ export type IssueCode =
   | 'missing_glyphs'
   | 'image_failed'
   | 'contrast'
-  | 'identity_omitted';
+  | 'identity_omitted'
+  | 'possible_unbalanced_composition';
 
 export interface Issue {
   code: IssueCode;
@@ -107,6 +108,16 @@ export interface Expectations {
   /** Pictures the page must have loaded. */
   images: number;
   contrast: readonly ContrastCheck[];
+  /** Where pictures sit; what a picture fills is not empty. */
+  pictureRects?: ReadonlyArray<{ y: number; h: number }>;
+  /** Content should reach this share of the canvas height (text, brand strip or picture) before the poster is called unbalanced. Advisory only. */
+  minContentReach?: number;
+}
+
+/** The share of the canvas height the lowest piece of content (text, brand element or picture) reaches. */
+export function contentReach(report: RenderReport, pictureRects: ReadonlyArray<{ y: number; h: number }> = [], canvas = 1080): number {
+  const bottoms = [...report.elements.map((e) => e.rect.y + e.rect.h), ...pictureRects.map((r) => r.y + r.h)];
+  return bottoms.length === 0 ? 1 : Math.max(...bottoms) / canvas;
 }
 
 export function judgeReport(report: RenderReport, expect: Expectations): Judgement {
@@ -144,6 +155,14 @@ export function judgeReport(report: RenderReport, expect: Expectations): Judgeme
   if (report.missingGlyphs.length > 0) add({ code: 'missing_glyphs', severity: 'hard', message: `no font draws these characters: ${report.missingGlyphs.join(' ')}` });
   if (report.images.length < expect.images || report.images.some((i) => !i.ok)) add({ code: 'image_failed', severity: 'hard', message: 'a picture did not load' });
   for (const c of expect.contrast) if (!c.ok) add({ code: 'contrast', severity: 'hard', message: `"${c.slot}" has contrast ${c.ratio}:1, below ${c.target}:1`, slot: c.slot });
+
+  // Advisory: a poster whose content stops well above the bottom edge, with no picture or brand element filling it, may look unfinished. Negative space can be
+  // intended, so this only warns and records the number; it never changes the outcome.
+  const reach = contentReach(report, expect.pictureRects ?? []);
+  const minReach = expect.minContentReach ?? 0.85;
+  if (report.done && report.elements.length > 0 && reach < minReach) {
+    add({ code: 'possible_unbalanced_composition', severity: 'warning', message: `content ends at ${Math.round(reach * 100)}% of the poster height with nothing below it; this may look unfinished (checked only for empty space, not for a cropped picture subject)` });
+  }
 
   return { ok: hard.length === 0, hard, warnings, solved };
 }

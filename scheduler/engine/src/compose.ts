@@ -66,6 +66,8 @@ export interface ComposeInput {
 export interface ComposeResult {
   html: string;
   contrast: ContrastCheck[];
+  /** Where pictures were placed, so the judge knows what fills the poster besides text. */
+  pictureRects: Rect[];
 }
 
 type SurfaceKind = 'dark' | 'light' | 'picture' | 'scrim';
@@ -122,6 +124,7 @@ class Canvas {
   readonly css: string[] = [];
   readonly surfaces: Surface[] = [];
   readonly contrast: ContrastCheck[] = [];
+  readonly pictureRects: Rect[] = [];
 
   readonly input: ComposeInput;
   readonly family: LayoutFamily;
@@ -221,6 +224,7 @@ class Canvas {
     } else {
       this.parts.push(`<div data-layer="picture" data-placeholder="1" style="${rectCss(slot.rect)}background:linear-gradient(135deg,#9AA3AD,#5C6670);${extra.opacity !== undefined ? `opacity:${extra.opacity};` : ''}${extra.radius ? `border-radius:${extra.radius}px;` : ''}${extra.style ?? ''}"></div>`);
     }
+    this.pictureRects.push(slot.rect);
     return slot.rect;
   }
 
@@ -433,5 +437,5 @@ ${canvas.css.join('\n')}
 ${canvas.parts.join('\n')}
 ${measuring ? `<script>${SOLVER_SCRIPT}</script>` : ''}
 </body></html>`;
-  return { html, contrast: canvas.contrast };
+  return { html, contrast: canvas.contrast, pictureRects: canvas.pictureRects };
 }

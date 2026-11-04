@@ -66,7 +66,7 @@ async function measure(candidate: RenderCandidate, input: RenderInput, pictureUr
     if (error instanceof MeasurementError) return { issues: [fail(error.message)], warnings: [], solved: {} };
     throw error;
   }
-  const judged = judgeReport(report, { slots: ['headline'], images: expectImages, contrast: composed.contrast });
+  const judged = judgeReport(report, { slots: ['headline'], images: expectImages, contrast: composed.contrast, pictureRects: composed.pictureRects });
   return { issues: judged.hard, warnings: judged.warnings, solved: judged.solved };
 }
 

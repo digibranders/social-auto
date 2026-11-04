@@ -6,7 +6,7 @@ const element = (slot: string, over: Partial<ElementReport> = {}): ElementReport
   slot, role: slot, layer: 'text', fontSize: 100, min: 72, max: 124, lines: 2, maxLines: 4, height: 200, slotH: 420, slotW: 952, fits: true, rect: { x: 64, y: 260, w: 800, h: 200 }, ...over,
 });
 const report = (over: Partial<RenderReport> = {}): RenderReport => ({
-  done: true, errors: [], fontSource: 'local', fonts: { status: 'loaded', faces: [{ family: 'Inter', status: 'loaded' }] }, images: [], elements: [element('headline'), element('subline', { rect: { x: 64, y: 700, w: 500, h: 40 } })], collisions: [], outside: [], missingGlyphs: [], ...over,
+  done: true, errors: [], fontSource: 'local', fonts: { status: 'loaded', faces: [{ family: 'Inter', status: 'loaded' }] }, images: [], elements: [element('headline'), element('subline', { rect: { x: 64, y: 700, w: 500, h: 40 } }), element('identity', { role: 'identity', layer: 'brand', rect: { x: 64, y: 980, w: 600, h: 40 } })], collisions: [], outside: [], missingGlyphs: [], ...over,
 });
 const wrap = (r: unknown): string => `<html><head><script id="fit-report" type="application/json">${JSON.stringify(r)}</script></head></html>`;
 const expectations = { slots: ['headline'], images: 0, contrast: [] };
@@ -65,4 +65,23 @@ test('collisions, content outside the margins, missing glyphs and failed picture
 test('a failing contrast check is a hard failure', () => {
   const judged = judgeReport(report(), { ...expectations, contrast: [{ slot: 'headline', ratio: 3.1, target: 4.5, ok: false }] });
   assert.equal(judged.hard[0]?.code, 'contrast');
+});
+
+import { contentReach } from './fit-report.ts';
+
+test('content that stops well above the bottom edge, with no picture or brand element below it, is a warning and never a failure', () => {
+  const short = report({ elements: [element('headline'), element('subline', { rect: { x: 64, y: 700, w: 500, h: 40 } })] });
+  const judged = judgeReport(short, expectations);
+  assert.equal(judged.ok, true);
+  assert.deepEqual(judged.hard, []);
+  assert.deepEqual(judged.warnings.map((w) => w.code), ['possible_unbalanced_composition']);
+  assert.match(judged.warnings[0]?.message ?? '', /not for a cropped picture subject/);
+  assert.ok(contentReach(short) < 0.85);
+});
+
+test('a picture that fills the lower part, a brand element near the bottom, or a lower threshold removes the warning', () => {
+  const short = report({ elements: [element('headline'), element('subline', { rect: { x: 64, y: 700, w: 500, h: 40 } })] });
+  assert.deepEqual(judgeReport(short, { ...expectations, pictureRects: [{ y: 780, h: 250 }] }).warnings, []);
+  assert.deepEqual(judgeReport(short, { ...expectations, minContentReach: 0.6 }).warnings, []);
+  assert.deepEqual(judgeReport(report(), expectations).warnings, []);
 });

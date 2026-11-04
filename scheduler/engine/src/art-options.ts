@@ -5,6 +5,7 @@
  * deterministic and takes the brand's history as an argument, so tenants cannot leak into each other and no model or
  * image call is needed.
  */
+import { pictureEligibility } from './visual-strategy.ts';
 import { extractFacts, stem } from './claims.ts';
 import type { Hierarchy, PictureMedium, PictureRole, TextZone } from './art-brief.ts';
 import type { Brand, PlannedPost } from './content.ts';
@@ -33,6 +34,8 @@ export interface PostFacts {
   quote?: string;
   /** The post concerns an offering the brand profile states. */
   concernsOffering: boolean;
+  /** Whether an AI picture is allowed for the post at all (see visual-strategy.ts); undefined means allowed. */
+  picture?: { eligible: boolean; reasons: readonly string[] };
 }
 
 /** One recorded art direction of an accepted (or provisionally chosen) post. */
@@ -89,6 +92,8 @@ export interface ArtSettings {
   contentBonus?: Readonly<Record<ContentNeed, number>>;
   hierarchyBonus?: number;
   typeLedBonus?: number;
+  /** Posts whose concept gives no concrete, related picture subject get no AI picture (default on). */
+  pictureGate?: boolean;
   shortHeadlineChars?: number;
   /** Average glyph width as a share of the font size, for scripts written with Latin letters and for others. */
   glyphWidth?: number;
@@ -111,6 +116,7 @@ export const defaultArtSettings: Required<Omit<ArtSettings, 'disabled' | 'family
   contentBonus: { list: 0.5, evidence: 0.5, offering: 0.25 },
   hierarchyBonus: 0.25,
   typeLedBonus: 0.3,
+  pictureGate: true,
   shortHeadlineChars: 28,
   glyphWidth: 0.55,
   nonLatinGlyphWidth: 1,
@@ -149,7 +155,8 @@ export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'featu
   const postWords = words([post.headline, post.subline, post.concept?.subject ?? '', post.concept?.message ?? ''].join(' '));
   const concernsOffering = brand.offer.trim().length > 0 && postWords.some((w) => offerWords.has(w));
 
-  return { headline: post.headline, subline: post.subline, listItems, ...(figure ? { figure } : {}), concernsOffering };
+  const picture = pictureEligibility({ headline: plain(post.headline), subline: plain(post.subline), caption: post.caption, ...(post.concept ? { concept: post.concept } : {}) });
+  return { headline: post.headline, subline: post.subline, listItems, ...(figure ? { figure } : {}), concernsOffering, picture };
 }
 
 const isNonLatin = (text: string): boolean => [...text].some((c) => /\p{L}/u.test(c) && !/\p{Script=Latin}/u.test(c));
@@ -224,6 +231,7 @@ export function eligibleOptions(
   const open = enabledFamilies(registry, { disabled: settings.disabled ?? [] });
   const options: ArtOption[] = [];
   const ineligible: IneligibleFamily[] = [];
+  const noPicture = settings.pictureGate !== false && post.picture !== undefined && !post.picture.eligible;
   for (const family of registry) {
     if (!open.includes(family)) {
       ineligible.push({ layout: family.id, reason: 'switched off for this brand' });
@@ -241,7 +249,7 @@ export function eligibleOptions(
     const before = options.length;
     for (const [zoneName, zone] of Object.entries(family.zones) as [TextZone, ZoneLayout][]) {
       const fit = estimateFit(post, family, zone, settings);
-      const roles = family.allowedPictureRoles.filter((role) => role === 'none' || zone.imageSlots.some((slot) => slot.id === role));
+      const roles = family.allowedPictureRoles.filter((role) => (role === 'none' || zone.imageSlots.some((slot) => slot.id === role)) && (!noPicture || role === 'none'));
       for (const hierarchy of family.allowedHierarchies) {
         for (const role of roles) {
           if (!hierarchyAllowed(hierarchy, role, zone, post)) continue;
@@ -249,7 +257,7 @@ export function eligibleOptions(
         }
       }
     }
-    if (options.length === before) ineligible.push({ layout: family.id, reason: 'no zone can show this post' });
+    if (options.length === before) ineligible.push({ layout: family.id, reason: noPicture ? `no picture is allowed (${post.picture?.reasons.join('; ')}) and this layout needs one` : 'no zone can show this post' });
   }
   return { options, ineligible };
 }
