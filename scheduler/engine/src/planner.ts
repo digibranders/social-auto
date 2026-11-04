@@ -367,8 +367,8 @@ export async function planWeek(options: {
           try {
             validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned);
           } catch (error) {
-            // On the last try a post whose copy the claim gate still turns back is left out (fewer posts, never unsupported copy); the others stay.
-            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back/.test(error.message)) {
+            // On the last try a post whose copy the claim gate still turns back, or that does not stay with its fact, is left out (fewer posts, never unsupported copy); the others stay.
+            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point/.test(error.message)) {
               droppedHere.push(error.message);
               return;
             }

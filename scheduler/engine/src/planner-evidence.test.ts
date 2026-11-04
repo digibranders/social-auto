@@ -298,3 +298,15 @@ test('when the evidence cannot support more distinct posts, facts are reused rat
   const perPost = assignFacts({ facts: only, anchors: [undefined, undefined], recentFactIds: [] });
   assert.deepEqual(perPost.map((p) => p[0]?.id), [only[0]?.id, only[0]?.id]);
 });
+
+test('a post that invents a figure its fact does not state is turned back, and on the last try only that post is left out, not the whole batch', async () => {
+  const all = facts();
+  const setup = all.find((f) => f.text === SETUP) as EvidenceFact;
+  const sources = all.find((f) => f.text === SOURCES) as EvidenceFact;
+  // Post 1 invents "go live in 10 minutes" against a fact with no such figure; the others write plainly from their facts.
+  const m = model((slot) => (slot === 0 ? { subline: 'Acme Replies: go live in 10 minutes.', caption: 'Go live fast.' } : { subline: 'Acme Replies keeps it simple.', caption: 'A short note.' }));
+  const plan = await run(m, { facts: [sources, setup] }, 2);
+  assert.ok(plan.posts.length >= 1);
+  assert.ok(plan.insufficientConcepts !== undefined);
+  assert.ok(plan.insufficientConcepts.reasons.length >= 1);
+});
