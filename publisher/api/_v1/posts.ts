@@ -2,12 +2,12 @@
  * A customer's scheduled posts. Called by a product's server with its own key; a product only reaches posts of
  * workspaces it created.
  *
- * POST   /api/v1/posts                              {"externalId", "day": "2026-11-20", "caption", "pictureId", "channels"?: ["linkedin:..."]}
- *                                                   goes out at 10:00 IST on that day, to the chosen channels (default: all connected)
+ * POST   /api/v1/posts                              {"externalId", "day": "2026-11-20", "time"?: "14:30", "caption", "pictureId", "channels"?: ["linkedin:..."]}
+ *                                                   goes out on that day at the time given (India time; 10:00 when left out), to the chosen channels (default: all connected)
  * GET    /api/v1/posts?externalId=...[&from=YYYY-MM-DD&to=YYYY-MM-DD]
  *                                                   all of the customer's posts (planned and extra), earliest first, and where each stands on each channel;
  *                                                   from is the first day shown and to the last, both in India time
- * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out
+ * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "time"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out
  * DELETE /api/v1/posts?externalId=...&postId=...    removes a post that has not gone out yet
  */
 import { scheduleData } from '../../lib/schedule-source.js';
@@ -60,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
   const caller = await workspaceFor(request, body['externalId']);
   if (caller instanceof Response) return caller;
   try {
-    const post = await saveNewPost({ brand: caller.brand, day: body['day'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], allowInstagram: false }, Date.now());
+    const post = await saveNewPost({ brand: caller.brand, day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], allowInstagram: false }, Date.now());
     const [{ file: channels }, { log }] = await Promise.all([loadChannels(), loadPosted()]);
     return json(201, { post: postView(post, channels, log, Date.now(), originOf(request)) });
   } catch (error) {
@@ -98,7 +98,7 @@ export async function PATCH(request: Request): Promise<Response> {
   const caller = await workspaceFor(request, params.get('externalId'));
   if (caller instanceof Response) return caller;
   try {
-    const post = await updateNewPost(params.get('postId'), { day: body['day'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'] }, Date.now(), caller.brand);
+    const post = await updateNewPost(params.get('postId'), { day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'] }, Date.now(), caller.brand);
     const [{ file: channels }, { log }] = await Promise.all([loadChannels(), loadPosted()]);
     return json(200, { post: postView(post, channels, log, Date.now(), originOf(request)) });
   } catch (error) {
