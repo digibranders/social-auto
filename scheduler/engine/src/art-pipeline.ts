@@ -6,6 +6,8 @@
  * nothing slips back to the older renderer unnoticed. Rendered posters wait for human approval before they are scheduled,
  * and only reviewed posters count towards the brand's accepted art history.
  */
+import { judgePictures } from './visual-strategy.ts';
+import type { Judge } from './semantic-verifier.ts';
 import type { EvidenceFact } from './evidence.ts';
 import { open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -88,9 +90,13 @@ export async function artDirectPlan(input: {
   director?: DirectorSettings;
   /** The brand's evidence facts, so a post built on a commercial fact may show it as an offer. */
   facts?: readonly EvidenceFact[];
+  /** Optional: a judge asked once, before any picture is bought, whether each picture idea explains its post's message. */
+  pictureJudge?: Judge;
 }): Promise<{ plan: WeekPlan; report: ArtReport }> {
   const { plan, brand, history } = input;
-  const facts = plan.posts.map((post) => postFacts(post, brand, input.facts ?? []));
+  const basic = plan.posts.map((post) => postFacts(post, brand, input.facts ?? []));
+  // Optional, before any picture is paid for: a post whose picture idea a model cannot see explaining its message goes to a picture-free treatment.
+  const facts = input.pictureJudge ? await judgePictures(plan.posts.map((post) => ({ id: post.id, headline: post.headline, subline: post.subline, ...(post.concept ? { concept: post.concept } : {}) })), basic, input.pictureJudge) : basic;
   const planned = planShortlists({ posts: facts, history });
   const posts: DirectedPost[] = plan.posts.map((post, i) => ({
     id: post.id,

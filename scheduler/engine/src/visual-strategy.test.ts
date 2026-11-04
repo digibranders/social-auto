@@ -59,3 +59,55 @@ test('postFacts records the gate result from the post\'s copy and concept', () =
   assert.equal(postFacts(post, brand).picture?.eligible, false);
   assert.equal(postFacts({ ...post, concept: concept({ visualSubject: 'a speech bubble for a buyer', visualAction: 'routing' }) } as PlannedPost, brand).picture?.eligible, true);
 });
+
+import { judgePictures } from './visual-strategy.ts';
+import { modelPictureJudge } from './semantic-judge.ts';
+import { aiConfigFromEnv } from './ai.ts';
+
+const posts = [
+  { id: 'a', headline: 'Need every visitor |scored, routed, and reported|?', subline: 'OyeChats adds to your site in under 10 minutes.', concept: { visualSubject: 'a maze with a lanyard badge', visualAction: 'a path opens' } },
+  { id: 'b', headline: 'Answers appear |word by word|', subline: 'OyeChats shows answers as they are written.', concept: { visualSubject: 'a chat window', visualAction: 'text appearing line by line' } },
+  { id: 'c', headline: 'No |credit card|', subline: 'Free plan forever.' },
+  { id: 'd', headline: 'Docs ground answers', subline: 'x', concept: { visualSubject: 'a page', visualAction: 'in a bowl' } },
+];
+const base = [{ picture: { eligible: true, reasons: [] as string[] } }, { picture: { eligible: true, reasons: [] as string[] } }, { picture: { eligible: false, reasons: ['no concept'] } }, { picture: { eligible: true, reasons: [] as string[] } }];
+
+test('a picture idea a model cannot see explaining the message is taken away before any picture is paid for; a supported one stays', async () => {
+  const seen: string[][] = [];
+  const judge = async (items: Array<{ key: string; claim: string; quote: string; context: string }>) => {
+    seen.push(items.map((i) => i.key));
+    return items.map((i) => ({ key: i.key, answer: (i.key === 'b' ? 'supported' : i.key === 'a' ? 'unsupported' : 'unclear') as 'supported' | 'unsupported' | 'unclear', ...(i.key === 'a' ? { reason: 'a maze is not routing' } : {}) }));
+  };
+  const out = await judgePictures(posts, base, judge);
+  assert.deepEqual(seen, [['a', 'b', 'd']]);
+  assert.equal(out[0]?.picture?.eligible, false);
+  assert.match(out[0]?.picture?.reasons.join(' ') ?? '', /does not explain the message: a maze is not routing/);
+  assert.equal(out[1]?.picture?.eligible, true);
+  assert.deepEqual(out[2]?.picture?.reasons, ['no concept']);
+  assert.match(out[3]?.picture?.reasons.join(' ') ?? '', /could not tell/);
+});
+
+test('a failing picture judge takes the pictures away rather than assuming they are fine; nothing is asked when no post has a picture to check', async () => {
+  const failing = async (): Promise<never> => { throw new Error('timeout'); };
+  const out = await judgePictures(posts, base, failing);
+  assert.ok([0, 1, 3].every((i) => out[i]?.picture?.eligible === false && /picture check failed \(timeout\)/.test(out[i]?.picture?.reasons.join(' ') ?? '')));
+  let asked = false;
+  const never = async () => { asked = true; return []; };
+  const none = await judgePictures([posts[2] as (typeof posts)[number]], [base[2] as (typeof base)[number]], never);
+  assert.equal(asked, false);
+  assert.equal(none[0]?.picture?.eligible, false);
+});
+
+test('the picture judge sends one request for the batch, with the message and the picture idea, and reads verdicts with reasons', async () => {
+  const bodies: string[] = [];
+  const fetchFn = (async (_u: string, init?: RequestInit) => {
+    bodies.push(String(init?.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ verdicts: [{ key: 'a', answer: 'unsupported', reason: 'a maze is not routing' }, { key: 'b', answer: 'supported' }, { key: 'c', answer: 'nonsense' }] }) } }] }), { status: 200 });
+  }) as typeof fetch;
+  const verdicts = await modelPictureJudge(aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), fetchFn)([
+    { key: 'a', claim: 'Need every visitor scored?', quote: 'Picture: a maze; a path opens', context: '' }, { key: 'b', claim: 'm', quote: 'p', context: '' }, { key: 'c', claim: 'm', quote: 'p', context: '' },
+  ]);
+  assert.equal(bodies.length, 1);
+  assert.match(bodies[0] ?? '', /a maze; a path opens/);
+  assert.deepEqual(verdicts, [{ key: 'a', answer: 'unsupported', reason: 'a maze is not routing' }, { key: 'b', answer: 'supported' }]);
+});

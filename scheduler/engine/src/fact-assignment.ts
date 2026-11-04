@@ -39,13 +39,12 @@ export function rankFacts(facts: readonly EvidenceFact[], recentFactIds: readonl
 }
 
 /**
- * Two facts may share a post only when the page itself ties them together: the same plan or card, or the same heading on the same page.
- * Shared words or a shared page are not enough, and when no tie is established the post gets one fact.
+ * Two facts may share a post only when the page itself ties them to the same thing: the same plan or card (or table column) on the same page.
+ * A shared heading is not enough (a long page puts unrelated facts under one heading), nor are shared words or a shared page. When no tie is
+ * established the post gets one fact, and one message.
  */
 export function related(a: EvidenceFact, b: EvidenceFact): boolean {
-  if (a.source.url !== b.source.url) return false;
-  if (a.scope !== undefined && a.scope === b.scope) return true;
-  return a.source.heading !== '' && a.source.heading === b.source.heading;
+  return a.source.url === b.source.url && a.scope !== undefined && a.scope === b.scope;
 }
 
 export interface FactAssignmentInput {

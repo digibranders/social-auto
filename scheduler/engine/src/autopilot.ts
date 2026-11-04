@@ -17,7 +17,7 @@
  */
 import { loadFacts } from './evidence-pipeline.ts';
 import { applyReview, loadReview } from './fact-review.ts';
-import { modelJudge } from './semantic-judge.ts';
+import { modelJudge, modelPictureJudge } from './semantic-judge.ts';
 import { fileCache } from './semantic-verifier.ts';
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -207,7 +207,7 @@ async function main(): Promise<void> {
     let finalPlan: WeekPlan = plan;
     if (artSettings) {
       console.log('2b/4 Art direction (one batched model call)…');
-      const directed = await artDirectPlan({ ai, plan, brand, history: readArtHistory(history), settings: artSettings, ...(loaded ? { facts: loaded.facts } : {}) });
+      const directed = await artDirectPlan({ ai, plan, brand, history: readArtHistory(history), settings: artSettings, ...(loaded ? { facts: loaded.facts } : {}), ...(values['semantic-check'] ? { pictureJudge: modelPictureJudge(ai) } : {}) });
       finalPlan = directed.plan;
       const { counts, flags, requests, status } = directed.report;
       console.log(`    ${status}: ${counts.directed} directed, ${counts.repaired} repaired, ${counts.fallback} fell back, ${counts.failed} without art direction (${requests} request${requests === 1 ? '' : 's'}).`);

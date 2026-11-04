@@ -67,7 +67,8 @@ function assignmentLines(assignments: readonly PostPlan[], facts: ReadonlyArray<
   if (assignments.length === 0) return '';
   const lines = assignments.map((a, i) => {
     const mine = facts[i] ?? [];
-    const allowed = mine.length > 0 ? ` Facts you may use for this post, in the website's exact words (use no other figure, price, plan, trial or term):${mine.map((f) => ` - "${displayFact(f)}"`).join('')}.` : '';
+    const factLines = mine.map((f, n) => (n === 0 ? ` Main fact (the one message of this post): "${displayFact(f)}"` : ` Supporting detail (it may qualify or explain the main fact; it is never a second message): \"${displayFact(f)}\"`));
+    const allowed = mine.length > 0 ? ` Facts you may use for this post, in the website's exact words (use no other figure, price, plan, trial or term; write one proposition, and say nothing that is not in these facts):${factLines.join('')}.` : '';
     const target = mine.length > 0 ? ` Caption length for this post: ${captionTarget(mine.length)}; say each fact once and add no claim that is not in the facts; do not repeat a point to fill space.` : '';
     const cta = a.cta ? ` Call to action for this post (use this one, not the profile's): "${a.cta.text}".` : '';
     return `Post ${i + 1} (${a.hook ? `${a.pillar}, ${a.hook}` : a.pillar}): ${a.brief}${a.anchor ? ` Build it on this proof point: "${a.anchor}".` : ''}${allowed}${target}${cta}${a.hookBrief ? ` Headline hook: ${a.hookBrief}` : ''}`;

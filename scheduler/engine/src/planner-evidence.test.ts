@@ -226,7 +226,7 @@ test('categories: a sentence that merely mentions a pricing page or a plan is no
   assert.equal(cat('14-day trial'), 'commercial_term');
 });
 
-test('a second fact is added only when the page ties it to the first: the same plan or the same heading on the same page', () => {
+test('a second fact is added only when the page ties it to the first: the same plan or card on the same page, never just a shared heading', () => {
   const base = structure('https://acme.example/pricing', []);
   const set = buildEvidence([{ ...base, blocks: [
     block({ text: '₹599 /mo', cardId: 'c1', cardGroup: 'g', cardTitle: 'Starter' }),
@@ -240,6 +240,8 @@ test('a second fact is added only when the page ties it to the first: the same p
   assert.equal(assignFacts({ facts: [starterPrice, trial, standardPrice], anchors: [starterPrice], recentFactIds: [] })[0]?.map((f) => f.text).join('|'), '₹599 /mo|14-day free trial');
   assert.equal(assignFacts({ facts: [starterPrice, standardPrice], anchors: [starterPrice], recentFactIds: [] })[0]?.length, 1);
   assert.equal(assignFacts({ facts: [answers, setup], anchors: [answers], recentFactIds: [] })[0]?.length, 1);
+  const sameHeading = buildEvidence([{ ...base, blocks: [block({ text: 'Answers come from your own pages and documents.', headingText: 'Features' }), block({ text: 'Installation takes under 10 minutes and uses one script tag.', headingText: 'Features' })] }], NOW).facts;
+  assert.equal(assignFacts({ facts: sameHeading, anchors: [sameHeading[0]], recentFactIds: [] })[0]?.length, 1, 'a shared heading does not tie two facts');
 });
 
 const pricingBrand = { ...brand, callToAction: 'See pricing at acme.example (link in bio)', handleUrl: 'acme.example' } as Brand;
@@ -320,4 +322,15 @@ test('in fact mode the numbered-list hook is never assigned; legacy brands keep 
   }
   assert.ok(hooks.size > 0);
   assert.ok(!hooks.has('numbered_list'));
+});
+
+
+test('the writer is told which fact is the post\'s one message and that a second is only a supporting detail', async () => {
+  const all = facts();
+  const starter = all.find((f) => f.scope === 'Starter') as EvidenceFact;
+  const m = model();
+  await run(m, { facts: [starter, ...all.filter((f) => f.scope === undefined).slice(0, 1)] }, 1).catch(() => undefined);
+  const prompt = m.prompts[0] ?? '';
+  assert.match(prompt, /Main fact \(the one message of this post\)/);
+  assert.match(prompt, /write one proposition, and say nothing that is not in these facts/);
 });

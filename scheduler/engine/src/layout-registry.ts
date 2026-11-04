@@ -87,7 +87,8 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     requiredContent: [],
     zones: {
       top: { textSlots: text(slot('headline', MARGIN, 200, WIDE, 400), slot('subline', MARGIN, 620, WIDE, 150)), imageSlots: [FULL_IMAGE('texture')] },
-      center: { textSlots: text(slot('headline', MARGIN, 260, WIDE, 420), slot('subline', MARGIN, 720, WIDE, 150)), imageSlots: [FULL_IMAGE('texture')] },
+      // The block of headline and subline sits a little below the middle of the canvas, which is the optical centre once the brand strip above it is counted.
+      center: { textSlots: text(slot('headline', MARGIN, 310, WIDE, 420), slot('subline', MARGIN, 770, WIDE, 150)), imageSlots: [FULL_IMAGE('texture')] },
       bottom: { textSlots: text(slot('headline', MARGIN, 330, WIDE, 430), slot('subline', MARGIN, 800, WIDE, 150)), imageSlots: [FULL_IMAGE('texture')] },
       // The light editorial variant: text starts clear of the accent rail on the canvas edge; no picture.
       left: { textSlots: text(slot('headline', 96, 250, WIDE - 32, 450), slot('subline', 96, 730, 800, 170)), imageSlots: NO_IMAGE },
