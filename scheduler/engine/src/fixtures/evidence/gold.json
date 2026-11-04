@@ -1,44 +1,322 @@
 {
   "note": "Synthetic site 'Acme Replies'. Quotes are verbatim visible text. status: usable | needs_review. forbidden: must never be usable.",
   "facts": [
-    { "page": "pricing-cards", "quote": "14-day free trial on every paid plan.", "status": "usable", "category": "commercial_term" },
-    { "page": "pricing-cards", "quote": "No credit card required.", "status": "usable", "category": "commercial_term" },
-    { "page": "pricing-cards", "quote": "Free forever", "status": "usable", "category": "commercial_term", "scope": "Free" },
-    { "page": "pricing-cards", "quote": "₹599", "status": "usable", "category": "commercial_term", "scope": "Starter" },
-    { "page": "pricing-cards", "quote": "₹1,199", "status": "usable", "category": "commercial_term", "scope": "Standard" },
-    { "page": "pricing-cards", "quote": "₹2,999", "status": "usable", "category": "commercial_term", "scope": "Professional" },
-    { "page": "pricing-cards", "quote": "Up to 50 users", "status": "usable", "category": "capability", "scope": "Standard" },
-    { "page": "pricing-cards", "quote": "Prices exclude GST. 18% GST is added at checkout.", "status": "needs_review", "category": "commercial_term", "why": "shared footnote, scope not confirmed by structure" },
-    { "page": "pricing-table", "quote": "₹599", "status": "usable", "category": "commercial_term", "scope": "Starter" },
-    { "page": "pricing-table", "quote": "₹1,199", "status": "usable", "category": "commercial_term", "scope": "Standard" },
-    { "page": "pricing-table", "quote": "₹2,999", "status": "usable", "category": "commercial_term", "scope": "Professional" },
-    { "page": "pricing-table", "quote": "7 days", "status": "usable", "category": "commercial_term", "scope": "Professional", "why": "trial differs per plan" },
-    { "page": "features", "quote": "Acme Replies answers visitor questions using only passages retrieved from your own pages and documents.", "status": "usable", "category": "capability" },
-    { "page": "features", "quote": "When a visitor asks for a human, the chat moves to an operator in the same thread with the full transcript attached.", "status": "usable", "category": "capability" },
-    { "page": "features", "quote": "Installation takes under 10 minutes and uses one script tag.", "status": "usable", "category": "process" },
-    { "page": "features", "quote": "Most teams go from signup to a live bot in 5 minutes.", "status": "usable", "category": "process" },
-    { "page": "features", "quote": "Plans start at ₹599 per month and include 2,000 credits, with a 14-day free trial.", "status": "needs_review", "category": "commercial_term", "why": "several number-bearing claims in one sentence" },
-    { "page": "features", "quote": "Acme Replies responde a las preguntas de los visitantes con el contenido de tu propio sitio.", "status": "needs_review", "category": "capability", "why": "language not supported for automatic use" },
-    { "page": "case-studies", "quote": "Northwind Dental handled 18,742 conversations in its first quarter and booked 241 appointments.", "status": "needs_review", "category": "outcome", "why": "customer result, attribution required" },
-    { "page": "docs", "quote": "Crawl your website or upload PDF, DOCX, TXT and Markdown files.", "status": "usable", "category": "capability" },
-    { "page": "docs", "quote": "Webhooks are signed with HMAC.", "status": "usable", "category": "capability" },
-    { "page": "home", "quote": "Acme Replies cut first-reply time to 20 seconds and resolved 40% of tickets, for teams on the Standard plan.", "status": "needs_review", "category": "outcome", "why": "multi-claim result" }
+    {
+      "page": "pricing-cards",
+      "quote": "14-day free trial on every paid plan.",
+      "status": "usable",
+      "category": "commercial_term"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "No credit card required.",
+      "status": "usable",
+      "category": "commercial_term"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "Free forever",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Free"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "₹599",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Starter"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "₹1,199",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Standard"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "₹2,999",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Professional"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "Up to 50 users",
+      "status": "usable",
+      "category": "capability",
+      "scope": "Standard"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "Prices exclude GST. 18% GST is added at checkout.",
+      "status": "needs_review",
+      "category": "commercial_term",
+      "why": "shared footnote, scope not confirmed by structure"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "₹599",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Starter"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "₹1,199",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Standard"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "₹2,999",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Professional"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "7 days",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Professional",
+      "why": "trial differs per plan"
+    },
+    {
+      "page": "features",
+      "quote": "Acme Replies answers visitor questions using only passages retrieved from your own pages and documents.",
+      "status": "usable",
+      "category": "capability"
+    },
+    {
+      "page": "features",
+      "quote": "When a visitor asks for a human, the chat moves to an operator in the same thread with the full transcript attached.",
+      "status": "usable",
+      "category": "capability"
+    },
+    {
+      "page": "features",
+      "quote": "Installation takes under 10 minutes and uses one script tag.",
+      "status": "usable",
+      "category": "process"
+    },
+    {
+      "page": "features",
+      "quote": "Most teams go from signup to a live bot in 5 minutes.",
+      "status": "usable",
+      "category": "process"
+    },
+    {
+      "page": "features",
+      "quote": "Plans start at ₹599 per month and include 2,000 credits, with a 14-day free trial.",
+      "status": "needs_review",
+      "category": "commercial_term",
+      "why": "several number-bearing claims in one sentence"
+    },
+    {
+      "page": "features",
+      "quote": "Acme Replies responde a las preguntas de los visitantes con el contenido de tu propio sitio.",
+      "status": "needs_review",
+      "category": "capability",
+      "why": "language not supported for automatic use"
+    },
+    {
+      "page": "case-studies",
+      "quote": "Northwind Dental handled 18,742 conversations in its first quarter and booked 241 appointments.",
+      "status": "needs_review",
+      "category": "outcome",
+      "why": "customer result, attribution required"
+    },
+    {
+      "page": "docs",
+      "quote": "Crawl your website or upload PDF, DOCX, TXT and Markdown files.",
+      "status": "usable",
+      "category": "capability"
+    },
+    {
+      "page": "docs",
+      "quote": "Webhooks are signed with HMAC.",
+      "status": "usable",
+      "category": "capability"
+    },
+    {
+      "page": "home",
+      "quote": "Acme Replies cut first-reply time to 20 seconds and resolved 40% of tickets, for teams on the Standard plan.",
+      "status": "needs_review",
+      "category": "outcome",
+      "why": "multi-claim result"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "1 chatbot",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Free"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "100 credits per month",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Free"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "3 chatbots",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Starter"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "2,000 credits per month",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Starter"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "Lead scoring included",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Standard"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "Unlimited chatbots",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Professional"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "Priority support",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Professional"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "14 days",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Starter"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "Up to 50",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Standard"
+    },
+    {
+      "page": "home",
+      "quote": "A support chatbot for small websites.",
+      "status": "usable",
+      "category": "capability"
+    },
+    {
+      "page": "pricing-cards",
+      "quote": "₹0",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Free"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "2",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Starter"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "Unlimited",
+      "status": "usable",
+      "category": "capability",
+      "scope": "Professional"
+    },
+    {
+      "page": "docs",
+      "quote": "The Standard plan costs ₹1,499 per month.",
+      "status": "usable",
+      "category": "commercial_term",
+      "why": "usable on its own; step 3 flags the conflict with the pricing pages"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "14 days",
+      "status": "usable",
+      "category": "commercial_term",
+      "scope": "Standard"
+    }
   ],
   "forbidden": [
-    { "page": "features", "quote": "99.9% uptime target across all regions.", "why": "target, not a guarantee" },
-    { "page": "features", "quote": "87 leads", "why": "demo data" },
-    { "page": "features", "quote": "Sample dashboard", "why": "demo data" },
-    { "page": "features", "quote": "12,000+", "why": "stat strip without context" },
-    { "page": "features", "quote": "4.8/5", "why": "stat strip without context" },
-    { "page": "features", "quote": "98%", "why": "stat strip without context" },
-    { "page": "docs", "quote": "The Standard plan costs ₹1,499 per month.", "why": "contradicts pricing pages (₹1,199)" }
+    {
+      "page": "features",
+      "quote": "99.9% uptime target across all regions.",
+      "why": "target, not a guarantee"
+    },
+    {
+      "page": "features",
+      "quote": "87 leads",
+      "why": "demo data"
+    },
+    {
+      "page": "features",
+      "quote": "Sample dashboard",
+      "why": "demo data"
+    },
+    {
+      "page": "features",
+      "quote": "12,000+",
+      "why": "stat strip without context"
+    },
+    {
+      "page": "features",
+      "quote": "4.8/5",
+      "why": "stat strip without context"
+    },
+    {
+      "page": "features",
+      "quote": "98%",
+      "why": "stat strip without context"
+    }
   ],
   "associations": [
-    { "page": "pricing-cards", "quote": "₹1,199", "scope": "Standard", "period": "month" },
-    { "page": "pricing-table", "quote": "7 days", "scope": "Professional", "label": "Free trial" }
+    {
+      "page": "pricing-cards",
+      "quote": "₹1,199",
+      "scope": "Standard",
+      "period": "month"
+    },
+    {
+      "page": "pricing-table",
+      "quote": "7 days",
+      "scope": "Professional",
+      "label": "Free trial"
+    }
   ],
   "conflicts": {
-    "true": [ { "quotes": ["₹1,199", "The Standard plan costs ₹1,499 per month."], "scope": "Standard" } ],
-    "notConflicts": [ { "quotes": ["Installation takes under 10 minutes and uses one script tag.", "Most teams go from signup to a live bot in 5 minutes."], "why": "range vs point" } ]
+    "true": [
+      {
+        "quotes": [
+          "₹1,199",
+          "The Standard plan costs ₹1,499 per month."
+        ],
+        "scope": "Standard"
+      }
+    ],
+    "notConflicts": [
+      {
+        "quotes": [
+          "Installation takes under 10 minutes and uses one script tag.",
+          "Most teams go from signup to a live bot in 5 minutes."
+        ],
+        "why": "range vs point"
+      }
+    ]
   }
 }

@@ -111,7 +111,7 @@ export function present(list: readonly string[], text: string): string[] {
 const CURRENCY_SYMBOL: Readonly<Record<string, string>> = { usd: '$', eur: '€', gbp: '£', inr: '₹', jpy: '¥', cny: '¥', rs: '₹', 'rs.': '₹' };
 const PERIOD_WORDS: Readonly<Record<string, string>> = {
   month: 'month', monthly: 'month', months: 'month', year: 'year', yearly: 'year', annual: 'year', annually: 'year', annum: 'year', years: 'year',
-  week: 'week', weekly: 'week', weeks: 'week', day: 'day', daily: 'day', days: 'day', hour: 'hour', hourly: 'hour', hours: 'hour', quarter: 'quarter', quarterly: 'quarter',
+  week: 'week', weekly: 'week', weeks: 'week', day: 'day', daily: 'day', days: 'day', hour: 'hour', hourly: 'hour', hours: 'hour', quarter: 'quarter', quarterly: 'quarter', mo: 'month', yr: 'year',
 };
 const UNIT_STOP = new Set(['and', 'or', 'the', 'for', 'with', 'out', 'of', 'in', 'on', 'at', 'by', 'to', 'per', 'from', 'is', 'are', 'a', 'an', 'that', 'who', 'which', 'as', 'it', 'its', 'our', 'we', 'you', 'your', 'plus']);
 
