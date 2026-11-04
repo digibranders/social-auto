@@ -321,3 +321,19 @@ test('with a priced model and room under the cap the batch runs normally', async
   const out = await directWeek({ ai: priced, posts: list, brand, history: [], fetchFn, settings: { maxCostUsd: 5 } });
   assert.equal(out.resolved.length, 2);
 });
+
+test('a scene, composition or mood that runs past the limit is cut at a word boundary with a warning, not refused', async () => {
+  const list = posts(2);
+  const long = 'wide view with the subject small and centred, soft light from the left, a plain background, plenty of empty space around it for text, and a gentle shadow under the object so it sits on the surface';
+  assert.ok(long.length > 160);
+  const { fetchFn } = scripted(() => reply(list.map((p) => directionFor(p, p.shortlist[0]?.pictureRole === 'none' ? {} : { picture: { medium: p.shortlist[0]?.mediums[0], scene: 'a quiet workspace', composition: long, mood: 'calm', paletteUse: 'balanced' } }))));
+  const out = await run(list, fetchFn);
+  assert.deepEqual(out.unresolved, []);
+  assert.equal(out.resolved.length, 2);
+  for (const r of out.resolved) {
+    if (r.brief.picture.role === 'none') continue;
+    assert.ok(r.brief.picture.composition.length <= 160);
+    assert.ok(long.startsWith(r.brief.picture.composition.slice(0, 40)));
+    assert.ok(r.warnings.some((w) => /composition.*was \d+ characters and was cut/.test(w)));
+  }
+});

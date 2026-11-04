@@ -57,7 +57,16 @@ export interface ArtBrief {
   ctaSlot: string;
 }
 
-const PICTURE_TEXT_LIMIT = 160;
+export const PICTURE_TEXT_LIMIT = 160;
+
+/** Text cut to the limit at a word boundary; a direction is never refused for being a little long. */
+export function clipToLimit(text: string, limit: number = PICTURE_TEXT_LIMIT): string {
+  const clean = text.trim();
+  if (clean.length <= limit) return clean;
+  const cut = clean.slice(0, limit);
+  const space = cut.lastIndexOf(' ');
+  return (space > limit * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:.\-–—]+$/u, '');
+}
 
 export class ArtDirectionError extends Error {
   constructor(where: string, problem: string) {

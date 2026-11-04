@@ -101,3 +101,15 @@ test('the brief cannot carry colours, coordinates, accent words or copy: those a
   ) as unknown as Record<string, unknown>;
   for (const key of ['colors', 'x', 'accentWords', 'headline', 'css']) assert.equal(parsed[key], undefined, key);
 });
+
+import { clipToLimit } from './art-brief.ts';
+
+test('clipToLimit keeps short text, cuts long text at a word and drops trailing punctuation', () => {
+  assert.equal(clipToLimit('  short text  '), 'short text');
+  const long = `${'word '.repeat(60)}end`;
+  const clipped = clipToLimit(long);
+  assert.ok(clipped.length <= 160);
+  assert.ok(!clipped.endsWith(' '));
+  assert.ok(clipped.split(' ').every((w) => w === 'word'));
+  assert.equal(clipToLimit('alpha, beta, gamma, delta', 12), 'alpha, beta');
+});
