@@ -33,6 +33,8 @@ export type ReasonCode =
   | 'table_axis_unconfirmed'
   | 'billing_variant_unconfirmed'
   | 'styles_not_applied'
+  | 'conflicting_values'
+  | 'stale_commercial_term'
   | 'flat_text_only';
 
 export interface EvidenceFact {
