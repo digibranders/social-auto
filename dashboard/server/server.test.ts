@@ -35,6 +35,8 @@ test('matchRoute distinguishes not found from a wrong method, including routes w
   assert.equal(matchRoute('GET', '/api/auth/login').kind, 'method-not-allowed');
   assert.equal(matchRoute('GET', '/api/google/pick').kind, 'ok');
   assert.equal(matchRoute('POST', '/api/google/pick').kind, 'ok');
+  assert.equal(matchRoute('GET', '/api/google/choose').kind, 'ok');
+  assert.equal(matchRoute('POST', '/api/google/choose').kind, 'ok');
   assert.equal(matchRoute('GET', '/api/nothing').kind, 'not-found');
   assert.equal(matchRoute('GET', '/api/linkedin-callback/').kind, 'ok');
 });

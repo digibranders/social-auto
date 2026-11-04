@@ -1,9 +1,9 @@
 import { isSignedIn } from './security.js';
 
-export type Platform = 'facebook' | 'linkedin' | 'instagram';
-export type Outcome = 'connected' | 'denied' | 'failed' | 'expired';
+export type Platform = 'facebook' | 'linkedin' | 'instagram' | 'google';
+export type Outcome = 'connected' | 'denied' | 'failed' | 'expired' | 'nolocation';
 
-const NAME: Record<Platform, string> = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram' };
+const NAME: Record<Platform, string> = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', google: 'Google Business listing' };
 
 function messageFor(platform: Platform, outcome: Outcome): { title: string; body: string } {
   const name = NAME[platform];
@@ -14,6 +14,8 @@ function messageFor(platform: Platform, outcome: Outcome): { title: string; body
       return { title: 'Nothing was connected', body: 'You chose not to allow it, so nothing was linked. If that was a mistake, open the link again and press Allow.' };
     case 'expired':
       return { title: 'This link has run out of time', body: 'Please open the link you were sent again and press Allow. If it keeps failing, tell the person who sent it.' };
+    case 'nolocation':
+      return { title: 'No business listing found', body: 'That Google account does not manage a business listing. Please open the link again and sign in with the account that manages it. If it keeps failing, tell the person who sent it.' };
     case 'failed':
       return { title: 'That did not work', body: 'The connection could not be completed. Please open the link again and press Allow. If it keeps failing, tell the person who sent it.' };
   }
