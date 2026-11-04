@@ -54,3 +54,28 @@ export function modelPictureJudge(ai: AiConfig, fetchFn?: typeof fetch): Judge {
     });
   };
 }
+
+
+const WORTH_SYSTEM = `You rate how well a verified fact about a business would work as the single message of a social media poster that a stranger sees while scrolling.
+Score each fact 0, 1 or 2 on three things. relevance: 0 = an internal or technical detail with no clear point for the reader, 1 = partly, 2 = it clearly describes something a reader can do, get or evaluate. clarity: 0 = needs context or unexplained jargon, 1 = partly, 2 = understandable on its own as one message. value: 0 = a generic or trivial feature, 1 = partly, 2 = specific and meaningful (a distinct capability, an offer, a stated outcome). Do not judge whether the fact is true or whether it would make a good picture. Return JSON only: {"scores":[{"key":"...","relevance":0,"clarity":0,"value":0}]}`;
+
+/** The judge behind poster-worthiness: one request for a batch of facts, three 0-to-2 scores each. */
+export function modelWorthJudge(ai: AiConfig, fetchFn?: typeof fetch): (items: Array<{ key: string; text: string; context: string }>) => Promise<Array<{ key: string; relevance: number; clarity: number; value: number }>> {
+  return async (items) => {
+    const user = `Facts:\n${JSON.stringify(items.map((i) => ({ key: i.key, fact: i.text, section: i.context })), null, 2)}`;
+    return chatJson({
+      ai,
+      ...(fetchFn ? { fetchFn } : {}),
+      system: WORTH_SYSTEM,
+      user,
+      parse: (value) => {
+        const scores = (value as { scores?: unknown }).scores;
+        if (!Array.isArray(scores)) throw new Error('"scores" must be a list');
+        return scores.flatMap((v) => {
+          const r = v as { key?: unknown; relevance?: unknown; clarity?: unknown; value?: unknown };
+          return typeof r.key === 'string' && [r.relevance, r.clarity, r.value].every((n) => typeof n === 'number') ? [{ key: r.key, relevance: r.relevance as number, clarity: r.clarity as number, value: r.value as number }] : [];
+        });
+      },
+    });
+  };
+}

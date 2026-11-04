@@ -14,6 +14,7 @@ import { neutralCta } from './cta.ts';
 import type { CallToAction } from './cta.ts';
 import { memoryCache, verifyCopySupport, type Judge, type VerdictCache } from './semantic-verifier.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
+import { MIN_WORTH } from './worth.ts';
 import { assignFacts, offerableFacts, rankFacts } from './fact-assignment.ts';
 
 /**
@@ -109,7 +110,7 @@ export function profileForPrompt(brand: Brand, withFacts: boolean): Record<strin
 export function userPrompt(brand: Brand, count: number, usedPainPoints: string[], assignments: readonly PostPlan[] = [], recentConcepts: readonly ConceptRecord[] = [], facts?: ReadonlyArray<readonly EvidenceFact[]>): string {
   const withFacts = facts !== undefined;
   const figureRule = withFacts
-    ? 'A number, price, percentage, plan, trial, tax term, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if one of the facts listed for that post states it, with that figure, plan, qualifier and wording unchanged; with no fact for it, say the benefit in plain words instead.'
+    ? 'A number, price, percentage, plan, trial, tax term, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if one of the facts listed for that post states it, with that figure, plan, qualifier and wording unchanged; with no fact for it, say the benefit in plain words instead. Write one clear, reader-relevant statement or question using only the meaning of the post\'s main fact: prefer a concrete action, capability, offer or stated outcome; do not turn a list of features into a headline, do not introduce benefits the fact does not state, and use plain wording instead of technical shorthand when it keeps the claim. A headline needs no verb, but it must not read like a menu item or a specification line (no semicolon-separated fragments).'
     : 'A number, price, percentage, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if a proof point above states it, with that figure and wording unchanged; with no proof point for it, say the benefit in plain words instead.';
   return `Brand profile:
 ${JSON.stringify(profileForPrompt(brand, withFacts), null, 2)}
@@ -292,7 +293,7 @@ export async function planWeek(options: {
   /** Thresholds and word lists of the repeat check. */
   conceptConfig?: Partial<ConceptConfig>;
   /** Evidence facts of the brand. With usable facts the writer is given facts per post instead of the free-text offer, rules and proof points, and the claim gate checks the copy against the post's own facts. */
-  evidence?: { facts: readonly EvidenceFact[]; recentFactIds?: readonly string[] };
+  evidence?: { facts: readonly EvidenceFact[]; recentFactIds?: readonly string[]; /** Poster-worthiness totals (0 to 6) by fact id; with them, weak facts are held back and fewer posts are written when too few facts are worth a post. */ worth?: Readonly<Record<string, number>> };
   /** Optional: a judge that reads the week's copy once against its facts. A post it finds stronger than its facts is left out; one it cannot decide stays with a note. Only used with evidence facts. */
   copyJudge?: { judge: Judge; cache?: VerdictCache };
   log?: (message: string) => void;
@@ -300,7 +301,7 @@ export async function planWeek(options: {
   fetchFn?: typeof fetch;
 }): Promise<PlannedWeek> {
   const { brand, schedule } = options;
-  const dates = scheduleDates(schedule);
+  const allDates = scheduleDates(schedule);
   const week = String(options.weekNumber).padStart(2, '0');
   const usedPainPoints = [...options.usedPainPoints];
   const posts: WeekPlan['posts'] = [];
@@ -309,7 +310,11 @@ export async function planWeek(options: {
   const recentFactIds = options.evidence?.recentFactIds ?? [];
   const offerable = options.evidence ? offerableFacts(options.evidence.facts) : [];
   const evidenceMode = offerable.length > 0;
-  const rankedFacts = evidenceMode ? rankFacts(offerable, recentFactIds) : [];
+  const worth = options.evidence?.worth;
+  const rankedFacts = evidenceMode ? rankFacts(offerable, recentFactIds, worth) : [];
+  // With judged scores, only facts that are worth a post lead one; four verified facts do not justify four posters when only two are worth making.
+  const strong = evidenceMode && worth ? rankedFacts.filter((f) => (worth[f.id] ?? 0) >= MIN_WORTH).length : Number.POSITIVE_INFINITY;
+  const dates = strong < allDates.length ? allDates.slice(0, Math.max(1, strong)) : allDates;
   const proofTexts = evidenceMode ? rankedFacts.map(displayFact) : brand.proofPoints;
   const pillarEvidence = evidenceMode ? { proofPoints: proofTexts, offer: rankedFacts.some((f) => f.category === 'commercial_term' || f.category === 'offer') ? 'evidence facts' : '', ...(brand.identity ? { identity: brand.identity } : {}) } : brand;
   const assignments = assignWeek({
@@ -324,7 +329,7 @@ export async function planWeek(options: {
   // in fact mode the hook is not offered until list items come from a list the source itself states.
   const hookSpecs = (options.hooks ?? defaultHooks).filter((h) => !(evidenceMode && h.id === 'numbered_list'));
   const hooks = assignHooks({ pillars: assignments.map((a) => a.pillar), evidence: { proofPoints: proofTexts }, recentHooks: options.recentHooks ?? [], recentPillars: recentPillars, hooks: hookSpecs });
-  const factsPerPost = evidenceMode ? assignFacts({ facts: offerable, anchors: assignments.map((a) => (a.anchor ? rankedFacts.find((f) => displayFact(f) === a.anchor) : undefined)), recentFactIds }) : [];
+  const factsPerPost = evidenceMode ? assignFacts({ ...(worth ? { worth } : {}), facts: offerable, anchors: assignments.map((a) => (a.anchor ? rankedFacts.find((f) => displayFact(f) === a.anchor) : undefined)), recentFactIds }) : [];
   const host = brand.handleUrl?.trim() ?? '';
   const ctaFor = (position: number): PostPlan['cta'] => {
     const mine = factsPerPost[position] ?? [];
@@ -451,8 +456,9 @@ export async function planWeek(options: {
     });
     posts.splice(0, posts.length, ...kept);
   }
-  if (posts.length === 0) throw new InsufficientConceptsError(dates.length, dropped);
+  if (posts.length === 0) throw new InsufficientConceptsError(allDates.length, dropped);
   const plan = parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts }, `week-${week}`);
   const coverage: EvidenceCoverage = evidenceMode ? 'facts' : 'legacy';
-  return dropped.length > 0 ? { ...plan, evidenceCoverage: coverage, insufficientConcepts: { requested: dates.length, produced: posts.length, reasons: dropped } } : { ...plan, evidenceCoverage: coverage };
+  if (dates.length < allDates.length) dropped.unshift(`only ${dates.length} fact${dates.length === 1 ? ' is' : 's are'} worth a post of its own (poster-worthiness ${MIN_WORTH} or more), so ${allDates.length - dates.length} fewer post${allDates.length - dates.length === 1 ? ' was' : 's were'} written`);
+  return dropped.length > 0 ? { ...plan, evidenceCoverage: coverage, insufficientConcepts: { requested: allDates.length, produced: posts.length, reasons: dropped } } : { ...plan, evidenceCoverage: coverage };
 }

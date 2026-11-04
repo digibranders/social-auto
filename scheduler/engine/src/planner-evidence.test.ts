@@ -334,3 +334,27 @@ test('the writer is told which fact is the post\'s one message and that a second
   assert.match(prompt, /Main fact \(the one message of this post\)/);
   assert.match(prompt, /write one proposition, and say nothing that is not in these facts/);
 });
+
+test('with poster-worthiness scores, only worthy facts lead a post and fewer posts are written when too few facts are worth one', async () => {
+  const all = facts();
+  const worth: Record<string, number> = {};
+  const sorted = offerableFacts(all);
+  sorted.forEach((f, i) => { worth[f.id] = i < 2 ? 5 : 1; });
+  const m = model();
+  const plan = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 4 }, usedPainPoints: [], fetchFn: m.fetchFn, evidence: { facts: all, worth } });
+  assert.equal(plan.posts.length, 2);
+  assert.equal(plan.insufficientConcepts?.requested, 4);
+  assert.equal(plan.insufficientConcepts?.produced, 2);
+  assert.match(plan.insufficientConcepts?.reasons[0] ?? '', /only 2 facts are worth a post of its own/);
+  assert.ok(plan.posts.every((p) => (p.factIds ?? []).every((id, n) => n > 0 || (worth[id] ?? 0) >= 3)));
+  // Without scores nothing is held back.
+  const open = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 3 }, usedPainPoints: [], fetchFn: model().fetchFn, evidence: { facts: all } });
+  assert.equal(open.posts.length, 3);
+});
+
+test('the writer is told to write one clear reader-relevant message and not a feature list or menu line', async () => {
+  const m = model();
+  await run(m, { facts: facts() }, 1).catch(() => undefined);
+  assert.match(m.prompts[0] ?? '', /Write one clear, reader-relevant statement or question/);
+  assert.match(m.prompts[0] ?? '', /must not read like a menu item or a specification line/);
+});

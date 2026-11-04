@@ -92,3 +92,11 @@ test('the image poster that slipped through: "Your docs ground every answer" aga
   const r = validateEditorial({ headline: 'Your docs ground |every answer|', subline: 'OyeChats grounds every answer in your own docs.' }, ctx({ brandName: 'OyeChats', identityLine: undefined, citedFacts: cited } as Partial<EditorialContext>));
   assert.deepEqual(codes(r).hard, ['subline_adds_nothing']);
 });
+
+test('a headline built from semicolon or slash fragments gets an advisory warning, never a hard failure', () => {
+  const copy = (headline: string) => ({ headline, subline: 'Acme answers from your own pages.' });
+  assert.deepEqual(codes(validateEditorial(copy('Add/remove documents; |automatic re-indexing|'), ctx())).warnings.includes('headline_reads_like_feature_label'), true);
+  assert.deepEqual(codes(validateEditorial(copy('Add/remove documents; |automatic re-indexing|'), ctx())).hard, []);
+  assert.ok(!codes(validateEditorial(copy('Documents update |automatically|'), ctx())).warnings.includes('headline_reads_like_feature_label'));
+  assert.ok(!codes(validateEditorial(copy('Support that never |sleeps|'), ctx())).warnings.includes('headline_reads_like_feature_label'));
+});

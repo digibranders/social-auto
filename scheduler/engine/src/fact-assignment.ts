@@ -25,9 +25,13 @@ const words = (text: string): number => text.split(/\s+/).filter(Boolean).length
  * Offerable facts, best first: those not used recently (the longer ago, the earlier), then those from marketing pages rather than reference
  * pages, then those that say enough to build a post on (a bare cell such as "2" is a weak start), then in the order the pages gave them.
  */
-export function rankFacts(facts: readonly EvidenceFact[], recentFactIds: readonly string[]): EvidenceFact[] {
+export function rankFacts(facts: readonly EvidenceFact[], recentFactIds: readonly string[], worth: Readonly<Record<string, number>> = {}): EvidenceFact[] {
   const lastUsed = (id: string): number => recentFactIds.lastIndexOf(id);
+  // Poster-worthy facts come first (a total of 5 or 6, then 3 or 4, then unjudged, then 2 or less), whatever was used before: a weak fact is not rescued by rotation.
+  const tier = (id: string): number => { const w = worth[id]; return w === undefined ? 2 : w >= 5 ? 0 : w >= 3 ? 1 : 3; };
   return [...facts].map((fact, index) => ({ fact, index })).sort((a, b) => {
+    const [ta, tb] = [tier(a.fact.id), tier(b.fact.id)];
+    if (ta !== tb) return ta - tb;
     const [ua, ub] = [lastUsed(a.fact.id), lastUsed(b.fact.id)];
     if (ua !== ub) return ua - ub;
     // Marketing pages say what the brand wants said; reference pages (docs, other) are a second choice. A bare label or cell is a weak start.
@@ -53,6 +57,7 @@ export interface FactAssignmentInput {
   anchors: ReadonlyArray<EvidenceFact | undefined>;
   recentFactIds: readonly string[];
   perPost?: number;
+  worth?: Readonly<Record<string, number>>;
 }
 
 /**
@@ -62,7 +67,7 @@ export interface FactAssignmentInput {
  */
 export function assignFacts(input: FactAssignmentInput): EvidenceFact[][] {
   const perPost = Math.min(Math.max(input.perPost ?? 2, 1), 2);
-  const ranked = rankFacts(input.facts, input.recentFactIds);
+  const ranked = rankFacts(input.facts, input.recentFactIds, input.worth);
   const reserved = new Set(input.anchors.flatMap((a) => (a ? [a.id] : [])));
   const usedThisWeek = new Set<string>();
   return input.anchors.map((anchor) => {

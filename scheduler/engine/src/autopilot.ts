@@ -17,7 +17,9 @@
  */
 import { loadFacts } from './evidence-pipeline.ts';
 import { applyReview, loadReview } from './fact-review.ts';
-import { modelJudge, modelPictureJudge } from './semantic-judge.ts';
+import { modelJudge, modelPictureJudge, modelWorthJudge } from './semantic-judge.ts';
+import { loadWorth, MIN_WORTH, saveWorth, scoreFacts, WORTH_VERSION, type WorthScore } from './worth.ts';
+import { offerableFacts, rankFacts } from './fact-assignment.ts';
 import { fileCache } from './semantic-verifier.ts';
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -176,6 +178,17 @@ async function main(): Promise<void> {
     else console.log('    No evidence facts for this brand: writing from the profile\'s proof points (legacy evidence coverage).');
     if (values['semantic-check'] && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--semantic-check makes one model request per batch of posts: with --dry-run it needs --allow-paid-ai');
     const verdicts = values['semantic-check'] ? await fileCache(join(brandDir, 'semantic-verdicts.json')) : undefined;
+    // Poster-worthiness: the best candidates are judged once (a few hundred tokens) and the scores are kept, so a fact is never judged twice.
+    let worthScores: Record<string, WorthScore> | undefined;
+    if (values['semantic-check'] && reviewed) {
+      const worthFile = await loadWorth(brandDir);
+      const candidates = rankFacts(offerableFacts(reviewed.facts), history.weeks.flatMap((w) => w.factIds ?? [])).slice(0, 40);
+      const result = await scoreFacts(candidates, worthFile.scores, modelWorthJudge(ai));
+      if (result.judged > 0) await saveWorth(brandDir, { version: WORTH_VERSION, scores: result.scores });
+      if (result.failure) console.log(`    Poster-worthiness could not be judged (${result.failure}); facts are used unscored.`);
+      else console.log(`    Poster-worthiness: ${candidates.filter((f) => (result.scores[f.id]?.total ?? 0) >= MIN_WORTH).length} of ${candidates.length} top candidates are worth a post of their own.`);
+      worthScores = result.failure ? undefined : result.scores;
+    }
     const plan = await planWeek({
       ai,
       compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
@@ -196,7 +209,7 @@ async function main(): Promise<void> {
       recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
       recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
       ...(verdicts ? { copyJudge: { judge: modelJudge(ai), cache: verdicts } } : {}),
-      ...(reviewed ? { evidence: { facts: reviewed.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []) } } : {}),
+      ...(reviewed ? { evidence: { facts: reviewed.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []), ...(worthScores ? { worth: Object.fromEntries(Object.entries(worthScores).map(([id, sc]) => [id, sc.total])) } : {}) } } : {}),
     });
     await verdicts?.save();
     console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}${verdicts ? (plan.evidenceCoverage === 'facts' ? ', copy checked against its facts by a model' : ' (the semantic check needs evidence facts and was not used)') : ''}.`);

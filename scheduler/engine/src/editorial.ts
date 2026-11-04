@@ -18,7 +18,7 @@ export interface EditorialContext {
   citedFacts?: readonly CitedFact[];
 }
 
-export type EditorialCode = 'subline_restates_headline' | 'subline_restates_identity' | 'subline_adds_nothing' | 'subline_overlap_unsupported_extra' | 'brand_name_repeated' | 'cta_mismatch' | 'caption_repeats_itself';
+export type EditorialCode = 'subline_restates_headline' | 'subline_restates_identity' | 'subline_adds_nothing' | 'subline_overlap_unsupported_extra' | 'brand_name_repeated' | 'cta_mismatch' | 'caption_repeats_itself' | 'headline_reads_like_feature_label';
 export interface EditorialIssue { code: EditorialCode; message: string }
 export interface EditorialResult { hard: EditorialIssue[]; warnings: EditorialIssue[] }
 
@@ -108,6 +108,10 @@ export function validateEditorial(copy: EditorialCopy, context: EditorialContext
     const repeated = sentences.some((a, i) => sentences.slice(i + 1).some((b) => jaccard(a, b) >= config.captionRepeat));
     if (repeated) warnings.push({ code: 'caption_repeats_itself', message: 'the caption seems to say the same thing more than once' });
   }
+
+  // A headline built from fragments joined by a semicolon or slash reads like a specification line or a menu, not a message. Advisory: a headline needs no verb.
+  const plainHeadline = copy.headline.replaceAll('|', '');
+  if (/;|\p{L}\/\p{L}/u.test(plainHeadline)) warnings.push({ code: 'headline_reads_like_feature_label', message: 'the headline looks like a list of feature fragments; a stranger needs one clear statement' });
 
   const cited = context.citedFacts ?? [];
   if (context.cta && cited.length > 0) {
