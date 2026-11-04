@@ -182,7 +182,7 @@ async function movePost(post: StatusPost, day: string, hour: number | null): Pro
   const problem = await sendEdit(post, 'move', JSON.stringify({ day, time }), 'application/json');
   state.notice = problem
     ? { kind: 'warn', text: problem }
-    : { kind: 'ok', text: `Post moved to ${formatDayLabel(day)}${post.manual ? ` at ${formatTime(`${day}T${time}:00+05:30`)}` : ''}.` };
+    : { kind: 'ok', text: `Post moved to ${formatDayLabel(day)} at ${formatTime(`${day}T${time}:00+05:30`)}.` };
   await load();
 }
 
@@ -283,10 +283,8 @@ function editPanel(post: StatusPost): HTMLElement {
     message.classList.toggle('is-error', isError);
   };
   const buttons: Array<HTMLButtonElement | HTMLInputElement> = [];
-  // Controls that stay off for this post (the time of a planned post) are never switched on again.
-  const alwaysOff = new Set<HTMLElement>();
   const busy = (working: boolean): void => {
-    for (const element of buttons) element.disabled = working || alwaysOff.has(element);
+    for (const element of buttons) element.disabled = working;
   };
 
   const area = h('textarea', { class: 'caption-input', rows: '12', 'aria-label': 'Caption', maxlength: String(MAX_CAPTION_LENGTH * 2) });
@@ -340,15 +338,13 @@ function editPanel(post: StatusPost): HTMLElement {
   const cancel = button('Cancel', 'btn btn-quiet', () => openDetail(post, 'view'));
   buttons.push(cancel);
 
-  // When it goes out: a post made by hand takes a day and a time; a planned post only a day (the daily run sends it at its planned time).
+  // When it goes out: a day and a time, for a planned post as well as one made by hand.
   const day = h('input', { type: 'date', class: 'schedule-input', id: 'move-day', min: today(), max: addDays(today(), MAX_DAYS_AHEAD) });
   day.value = dayKeyOf(post.date);
   const time = h('input', { type: 'time', class: 'schedule-input', id: 'move-time' });
   time.value = dropTime(post, null);
-  time.disabled = !post.manual;
-  if (!post.manual) alwaysOff.add(time);
   const move = button('Move post', 'btn', () => {
-    if (!day.value || (post.manual && !time.value)) return show('Choose a day and a time.', true);
+    if (!day.value || !time.value) return show('Choose a day and a time.', true);
     const unchanged = day.value === dayKeyOf(post.date) && time.value === dropTime(post, null);
     if (unchanged) return show('That is when it already goes out.', true);
     void run(() => sendEdit(post, 'move', JSON.stringify({ day: day.value, time: time.value }), 'application/json'), 'edit');
@@ -367,7 +363,7 @@ function editPanel(post: StatusPost): HTMLElement {
       time,
       move,
     ),
-    h('p', { class: 'muted' }, post.manual ? 'India time. It goes out within a few minutes of the time you choose.' : 'Planned posts go out at their planned time, so only the day can change. A day that already has a post of this client is not offered.'),
+    h('p', { class: 'muted' }, post.manual ? 'India time. It goes out within a few minutes of the time you choose.' : 'India time. It goes out within a few minutes of the time you choose. Only one planned post a day is kept, so a day that already has one is not offered.'),
   );
 
   // Skipping and deleting are here too, so everything for one post is in one place.

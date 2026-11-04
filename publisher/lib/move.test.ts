@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { editPost, type EditStore } from './editing.ts';
 import { applyOverrides, parseOverrides, type OverrideMap } from './overrides.ts';
-import type { ScheduledPost } from './schedule.ts';
+import { dueManualPosts, duePlannedPost, type ScheduledPost } from './schedule.ts';
 
 const NOW = Date.parse('2026-11-01T00:00:00Z');
 const planned = (id: string, day: string, brand = 'acme'): ScheduledPost => ({ id, brand, date: `${day}T10:00:00+05:30`, caption: id, image: '/a.jpg' });
@@ -62,4 +62,31 @@ test('a moved post is judged by the day it was moved to, and reverting the words
 test('a malformed move in the overrides file is refused', () => {
   assert.equal(parseOverrides({ a: { date: '2026-11-12T10:00:00+05:30', updatedAt: 'x' } })['a']?.date, '2026-11-12T10:00:00+05:30');
   assert.throws(() => parseOverrides({ a: { date: 'soon', updatedAt: 'x' } }), /date is malformed/);
+});
+
+test('a planned post can take a time as well as a day, or only a new time on its own day', async () => {
+  const store = memoryStore();
+  await editPost(store, posts, 'a', { kind: 'move', day: '2026-11-12', time: '15:30' }, NOW);
+  assert.equal(store.overrides['a']?.date, '2026-11-12T15:30:00+05:30');
+  const retimed = memoryStore();
+  await editPost(retimed, posts, 'a', { kind: 'move', day: '2026-11-05', time: '08:15' }, NOW);
+  assert.equal(retimed.overrides['a']?.date, '2026-11-05T08:15:00+05:30');
+  // Back to the day and time it was planned for takes the change away; a time left out keeps the planned one.
+  await editPost(retimed, posts, 'a', { kind: 'move', day: '2026-11-05', time: '10:00' }, NOW);
+  assert.deepEqual(retimed.overrides, {});
+  await assert.rejects(editPost(memoryStore(), posts, 'a', { kind: 'move', day: '2026-11-12', time: '25:00' }, NOW), /choose a time/);
+  // A day that has another planned post is still refused, whatever the time.
+  await assert.rejects(editPost(memoryStore(), posts, 'a', { kind: 'move', day: '2026-11-06', time: '16:00' }, NOW), /already planned/);
+});
+
+test('a planned post with a day or time of its own is sent by the frequent run, and a plain one is left to the daily run', () => {
+  const now = Date.parse('2026-11-12T10:05:00Z'); // 15:35 in India
+  const overrides: OverrideMap = { a: { date: '2026-11-12T15:30:00+05:30', updatedAt: 'x' } };
+  const all = applyOverrides(posts, overrides);
+  assert.equal(all.find((p) => p.id === 'a')?.ownTime, true);
+  assert.equal(all.find((p) => p.id === 'b')?.ownTime, undefined);
+  assert.deepEqual(dueManualPosts(all, now, 15 * 60 * 1000).map((p) => p.id), ['a']);
+  // A skipped one is never picked, and the daily run still picks only one planned post.
+  assert.deepEqual(dueManualPosts(applyOverrides(posts, { a: { ...overrides['a'], skipped: true } as OverrideMap[string] }), now, 15 * 60 * 1000), []);
+  assert.equal(duePlannedPost(all, now)?.id, 'a');
 });

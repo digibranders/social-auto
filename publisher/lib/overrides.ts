@@ -12,7 +12,7 @@ export interface PostOverride {
   imageKey?: string;
   /** The post is skipped: it stays on the calendar but is never sent. Undone by unskipping, while its time is still ahead. */
   skipped?: boolean;
-  /** A planned post moved to another day: ISO 8601 with offset. Hand-made posts are moved in their own file instead. */
+  /** A planned post moved to another day or given another time: ISO 8601 with offset. Hand-made posts are moved in their own file instead. */
   date?: string;
   updatedAt: string;
 }
@@ -112,7 +112,7 @@ export function applyOverrides(posts: ScheduledPost[], overrides: OverrideMap): 
   return posts.map((post) => {
     const o = overrides[post.id];
     if (!o) return { ...post, edited: false };
-    const moved = o.date === undefined ? {} : { date: o.date };
+    const moved = o.date === undefined ? {} : { date: o.date, ownTime: true };
     const skipped = o.skipped === true ? { skipped: true } : {};
     if (o.caption === undefined && o.imageKey === undefined) return { ...post, ...moved, ...skipped, edited: false };
     return {
