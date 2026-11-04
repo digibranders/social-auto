@@ -269,3 +269,22 @@ test('a numbered-list headline keeps only layouts that show the list, so the cou
   assert.equal(postFacts(post, brand).listRequired, true);
   assert.equal(postFacts({ ...post, hook: 'question' } as PlannedPost, brand).listRequired, undefined);
 });
+
+
+import { surfaceOf } from './art-options.ts';
+
+test('a poster with the same kind of surface as the one before it scores lower, so picture-free posts mix dark and light', () => {
+  assert.equal(surfaceOf('typography-hero', 'center'), 'dark');
+  assert.equal(surfaceOf('typography-hero', 'bottom'), 'light');
+  assert.equal(surfaceOf('typography-hero', 'left'), 'light');
+  assert.equal(surfaceOf('full-bleed-editorial', 'top'), 'picture');
+  assert.equal(surfaceOf('structured-information', 'top'), 'light');
+  const typeOnly = eligibleOptions(facts({ picture: { eligible: false, reasons: ['x'] } }), layoutRegistry, {}).options.filter((o) => o.layout === 'typography-hero');
+  const scoreOf = (previousZone: 'center' | 'bottom', zone: string): number => {
+    const history: ArtRecord[] = [{ layout: 'typography-hero', hierarchy: 'headline-first', textZone: previousZone, pictureRole: 'none' }];
+    return scoreOptions(typeOnly, facts({ picture: { eligible: false, reasons: ['x'] } }), history, {}, layoutRegistry).find((o) => o.zone === zone)?.score ?? NaN;
+  };
+  // After a dark poster a light one is preferred to another dark one of equal standing; after a light one the reverse.
+  assert.ok(scoreOf('center', 'bottom') > scoreOf('center', 'top'), 'light after dark');
+  assert.ok(scoreOf('bottom', 'top') > scoreOf('bottom', 'left'), 'dark after light');
+});

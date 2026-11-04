@@ -46,6 +46,14 @@ export interface PostFacts {
 }
 
 /** One recorded art direction of an accepted (or provisionally chosen) post. */
+/** What a poster of this layout and zone looks like at a glance: a dark page, a light page, or a picture across it. Mirrors how the composers draw each family. */
+export function surfaceOf(layout: string, zone: string): 'dark' | 'light' | 'picture' {
+  if (layout === 'typography-hero') return zone === 'left' || zone === 'bottom' ? 'light' : 'dark';
+  if (layout === 'evidence-spotlight') return 'dark';
+  if (layout === 'full-bleed-editorial') return 'picture';
+  return 'light';
+}
+
 export interface ArtRecord {
   layout: string;
   hierarchy: Hierarchy;
@@ -95,6 +103,8 @@ export interface ArtSettings {
   sameZone?: number;
   sameHierarchy?: number;
   sameRole?: number;
+  /** Penalty when a poster has the same kind of surface (dark, light, or a picture) as the one before it, so a feed is not all one look. */
+  sameSurface?: number;
   fitPenalty?: Readonly<Record<Fit, number>>;
   contentBonus?: Readonly<Record<ContentNeed, number>>;
   hierarchyBonus?: number;
@@ -119,6 +129,7 @@ export const defaultArtSettings: Required<Omit<ArtSettings, 'disabled' | 'family
   sameZone: 0.1,
   sameHierarchy: 0.08,
   sameRole: 0.05,
+  sameSurface: 0.06,
   fitPenalty: { likely_fit: 0, uncertain_fit: 0.1, likely_overflow: 0.5 },
   contentBonus: { list: 0.5, evidence: 0.5, offering: 0.25 },
   hierarchyBonus: 0.25,
@@ -339,6 +350,7 @@ export function scoreOptions(
       if (previous.textZone === option.zone) composition += s.sameZone;
       if (previous.hierarchy === option.hierarchy) composition += s.sameHierarchy;
       if (previous.pictureRole === option.pictureRole) composition += s.sameRole;
+      if (surfaceOf(previous.layout, previous.textZone) === surfaceOf(option.layout, option.zone)) composition += s.sameSurface;
     }
     const fit = s.fitPenalty[option.fit];
     return {
