@@ -255,3 +255,17 @@ test('the typography family offers its light editorial variant without a picture
   assert.ok(zones.has('left') && zones.has('center') && zones.has('bottom') && zones.has('top'));
   assert.ok(options.filter((o) => o.zone === 'left').every((o) => o.pictureRole === 'none'));
 });
+
+
+test('a numbered-list headline keeps only layouts that show the list, so the count it promises is on the poster', () => {
+  const required = eligibleOptions(facts({ listItems: ['WordPress', 'Webflow', 'Plain HTML'], listRequired: true }), layoutRegistry, {});
+  assert.ok(required.options.length > 0);
+  assert.ok(required.options.every((o) => o.layout === 'structured-information'));
+  assert.ok(required.ineligible.some((i) => i.layout === 'feature-spotlight'));
+  const open = eligibleOptions(facts({ listItems: ['WordPress', 'Webflow', 'Plain HTML'] }), layoutRegistry, {});
+  assert.ok(open.options.some((o) => o.layout !== 'structured-information'));
+  const brand = { offer: '', features: [], proofPoints: [] } as unknown as Pick<Brand, 'offer' | 'features' | 'proofPoints'>;
+  const post = { id: 'p', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline: '3 |platforms| it works with', subline: 'Acme', caption: 'c', hashtags: [], hook: 'numbered_list', listItems: ['WordPress', 'Webflow', 'Plain HTML'] } as unknown as PlannedPost;
+  assert.equal(postFacts(post, brand).listRequired, true);
+  assert.equal(postFacts({ ...post, hook: 'question' } as PlannedPost, brand).listRequired, undefined);
+});

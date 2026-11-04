@@ -111,3 +111,10 @@ test('the fallback headline is a complete, prevalidated line: the whole proof po
   assert.equal(fallbackHeadline({ identityLine: 'x'.repeat(80), maxChars: 60 }), undefined);
   assert.equal(fallbackHeadline({ maxChars: 60 }), undefined);
 });
+
+
+test('a list item that joins several items with commas is refused, because the headline counts the items', () => {
+  const problem = checkHook({ hook: 'numbered_list', headline: '4 platforms', listItems: ['WordPress', 'Webflow', 'Next.js, React, Vue', 'plain HTML'] });
+  assert.match(problem ?? '', /single item/);
+  assert.equal(checkHook({ hook: 'numbered_list', headline: '3 platforms', listItems: ['WordPress', 'Webflow', 'plain HTML'] }), undefined);
+});

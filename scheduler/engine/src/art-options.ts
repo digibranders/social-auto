@@ -30,6 +30,8 @@ export interface PostFacts {
   subline: string;
   /** Distinct, validated items intended for display. */
   listItems: readonly string[];
+  /** The headline counts these items (a numbered list), so the poster must show them: only layouts with a list slot are open. */
+  listRequired?: boolean;
   /** A verified figure the post's own copy states, for a large-figure layout. */
   figure?: string;
   /** A verified, attributable quotation. */
@@ -161,7 +163,8 @@ export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'featu
 
   const picture = pictureEligibility({ headline: plain(post.headline), subline: plain(post.subline), caption: post.caption, ...(post.concept ? { concept: post.concept } : {}) });
   const offer = offerFrom(post.factIds, evidence);
-  return { headline: post.headline, subline: post.subline, listItems, ...(figure ? { figure } : {}), ...(offer ? { offer } : {}), concernsOffering, picture };
+  const listRequired = post.hook === 'numbered_list' && listItems.length >= 2;
+  return { headline: post.headline, subline: post.subline, listItems, ...(listRequired ? { listRequired } : {}), ...(figure ? { figure } : {}), ...(offer ? { offer } : {}), concernsOffering, picture };
 }
 
 const isNonLatin = (text: string): boolean => [...text].some((c) => /\p{L}/u.test(c) && !/\p{Script=Latin}/u.test(c));
@@ -253,6 +256,8 @@ export function eligibleOptions(
     }
     const before = options.length;
     for (const [zoneName, zone] of Object.entries(family.zones) as [TextZone, ZoneLayout][]) {
+      // A headline that counts items promises them: a layout with no list slot would leave the promise unkept.
+      if (post.listRequired && !zone.textSlots.some((slot) => slot.id === 'list')) continue;
       const fit = estimateFit(post, family, zone, settings);
       const roles = family.allowedPictureRoles.filter((role) => (role === 'none' || zone.imageSlots.some((slot) => slot.id === role)) && (!noPicture || role === 'none'));
       for (const hierarchy of family.allowedHierarchies) {
@@ -262,7 +267,7 @@ export function eligibleOptions(
         }
       }
     }
-    if (options.length === before) ineligible.push({ layout: family.id, reason: noPicture ? `no picture is allowed (${post.picture?.reasons.join('; ')}) and this layout needs one` : 'no zone can show this post' });
+    if (options.length === before) ineligible.push({ layout: family.id, reason: post.listRequired && !family.zones['top']?.textSlots.some((slot) => slot.id === 'list') && !Object.values(family.zones).some((z) => z?.textSlots.some((slot) => slot.id === 'list')) ? 'the headline counts items and this layout has no list to show them' : noPicture ? `no picture is allowed (${post.picture?.reasons.join('; ')}) and this layout needs one` : 'no zone can show this post' });
   }
   return { options, ineligible };
 }

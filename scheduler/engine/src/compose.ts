@@ -198,6 +198,9 @@ class Canvas {
     const display = opts.role === 'headline' || opts.role === 'figure' || opts.role === 'offer';
     const style = textStyleFor(opts.plain, display);
     const align = this.input.brief.alignment === 'center' && opts.role !== 'identity' && opts.role !== 'cta' && opts.role !== 'brand' ? 'center' : 'start';
+    // Centred text is centred on the poster: a wide slot that is not at the poster's middle (a full-bleed text box 800 wide starts at the margin) is moved to the middle.
+    // A narrow slot beside a picture stays where it is.
+    const rect = align === 'center' && opts.rect.w >= 700 ? { ...opts.rect, x: (CANVAS_SIZE - opts.rect.w) / 2 } : opts.rect;
     const solved = this.input.mode.kind === 'frozen' ? this.input.mode.solved[opts.slot] : undefined;
     const size = solved ?? opts.fit.max;
     const backing = opts.backing ? `background:rgba(${hexToRgb(this.palette.dark)},${backingAlpha(this.palette.textOnDark, this.palette.dark) ?? 1});padding:8px 16px;border-radius:12px;` : '';
@@ -206,7 +209,7 @@ class Canvas {
         ? `display:flex;align-items:center;justify-content:${opts.justify ?? 'flex-start'};`
         : `display:flex;flex-direction:column;justify-content:${opts.anchor === 'end' ? 'flex-end' : 'flex-start'};`;
     this.parts.push(
-      `<div class="slot" style="${rectCss(opts.rect)}${wrapper}">` +
+      `<div class="slot" style="${rectCss(rect)}${wrapper}">` +
         `<div class="fit" data-fit="1" data-slot="${opts.slot}" data-role="${opts.role}" data-layer="${opts.role === 'identity' || opts.role === 'cta' || opts.role === 'brand' ? 'brand' : 'text'}" ` +
         `data-fit-max="${opts.fit.max}" data-fit-min="${opts.fit.min}" data-max-lines="${opts.fit.maxLines}" data-slot-w="${Math.round(opts.rect.w)}" data-slot-h="${Math.round(opts.rect.h)}" ` +
         `dir="${style.dir}" style="color:${text};--accent:${accent};font-size:${size}px;line-height:${style.lineHeight};letter-spacing:${style.letterSpacingEm}em;text-align:${align};font-weight:${opts.weight ?? 600};` +

@@ -124,6 +124,7 @@ export function checkHook(input: { hook: string; headline: string; listItems?: r
   if (n < MIN_LIST_ITEMS || n > max) return `a numbered list has at most ${max} items (and at least ${MIN_LIST_ITEMS}: two is too thin to be a list), the headline says ${n}`;
   if (n !== items.length) return `the headline says ${n} but listItems has ${items.length}; they must match`;
   if (items.some((i) => typeof i !== 'string' || normalizeHeadline(i) === '')) return 'a list item is empty';
+  if (items.some((i) => /[,;]/.test(i))) return 'each list item must be a single item, not several joined with commas: the headline counts them, so grouping items to reach a number misleads the reader';
   if (new Set(items.map(normalizeHeadline)).size !== items.length) return 'list items must be distinct';
   return undefined;
 }

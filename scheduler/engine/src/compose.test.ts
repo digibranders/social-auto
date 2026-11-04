@@ -217,3 +217,16 @@ test('the typography family has a light editorial variant: a full-height rail on
   const dark = compose(briefOf('typography-hero', 'center', { role: 'none' })).html;
   assert.notEqual(html.match(/body\{background:[^;]+/)?.[0], dark.match(/body\{background:[^;]+/)?.[0]);
 });
+
+
+test('centred text is centred on the poster: a wide slot is moved to the middle, a narrow slot beside a picture stays', () => {
+  const centred = (layout: string, zone: string, picture: Record<string, unknown>) => compose(briefOf(layout, zone, picture, { alignment: 'center' }), layout === 'typography-hero' ? {} : { pictureUrl: 'file:///tmp/x.png' }).html;
+  const left = (html: string, slot: string): number => Number(new RegExp(`<div class="slot" style="left:(-?\\d+(?:\\.\\d+)?)px;[^"]*"><div class="fit" data-fit="1" data-slot="${slot}"`).exec(html)?.[1]);
+  const bleed = centred('full-bleed-editorial', 'top', hero);
+  assert.equal(left(bleed, 'headline'), 140);
+  assert.equal(left(bleed, 'subline'), 140);
+  const split = centred('split-composition', 'left', hero);
+  assert.equal(left(split, 'headline'), 64);
+  const start = compose(briefOf('full-bleed-editorial', 'top', hero), { pictureUrl: 'file:///tmp/x.png' }).html;
+  assert.equal(left(start, 'headline'), 64);
+});
