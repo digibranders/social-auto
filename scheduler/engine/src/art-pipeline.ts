@@ -6,6 +6,7 @@
  * nothing slips back to the older renderer unnoticed. Rendered posters wait for human approval before they are scheduled,
  * and only reviewed posters count towards the brand's accepted art history.
  */
+import type { EvidenceFact } from './evidence.ts';
 import { open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AiConfig } from './ai.ts';
@@ -85,9 +86,11 @@ export async function artDirectPlan(input: {
   settings: ArtTenantSettings;
   fetchFn?: typeof fetch;
   director?: DirectorSettings;
+  /** The brand's evidence facts, so a post built on a commercial fact may show it as an offer. */
+  facts?: readonly EvidenceFact[];
 }): Promise<{ plan: WeekPlan; report: ArtReport }> {
   const { plan, brand, history } = input;
-  const facts = plan.posts.map((post) => postFacts(post, brand));
+  const facts = plan.posts.map((post) => postFacts(post, brand, input.facts ?? []));
   const planned = planShortlists({ posts: facts, history });
   const posts: DirectedPost[] = plan.posts.map((post, i) => ({
     id: post.id,
@@ -119,7 +122,8 @@ export async function artDirectPlan(input: {
     const candidates = renderCandidates({ post: directed, ready, history: running, brand });
     running.push(ready.record);
     const figure = facts[i]?.figure;
-    return { ...post, art: { resolution: ready.resolution, candidates, ...(figure ? { figure } : {}) }, approval: { status: 'pending' } };
+    const offer = facts[i]?.offer;
+    return { ...post, art: { resolution: ready.resolution, candidates, ...(figure ? { figure } : {}), ...(offer ? { offer } : {}) }, approval: { status: 'pending' } };
   });
 
   const report: ArtReport = {

@@ -261,3 +261,34 @@ test('real Chrome: a realistic identity line fits its slot on the first candidat
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('real Chrome: an offer poster with plan, icon and condition fits, collides with nothing, and makes no picture request', real, async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'offer-poster-'));
+  try {
+    const out = join(dir, 'offer.png');
+    const offer = { factId: 'f1', text: 'No credit card required.', kicker: 'Starter', qualifier: 'Plus 18% GST at checkout.', kind: 'no_card', icon: 'card-slash', capturedAt: new Date().toISOString() } as const;
+    let pictures = 0;
+    const result = await renderPoster({
+      copy: { headline: 'Start with a |free plan|', subline: 'Try it without paying first', offer },
+      brand, font,
+      candidates: [candidate(brief('evidence-spotlight', 'center', { role: 'none' }, { hierarchy: 'figure-first' }))],
+      outPng: out,
+      makePicture: async () => { pictures += 1; return undefined; },
+    });
+    assert.notEqual(result.status, 'render_failed', JSON.stringify(result.failure));
+    assert.equal(pictures, 0);
+    assert.ok((result.solved?.['figure'] ?? 0) >= 40);
+    assert.ok(existsSync(out));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+
+test('real Chrome: the light editorial variant fits, collides with nothing, and its rail never touches the text', real, async () => {
+  const { report, composed } = await measureOf(brief('typography-hero', 'left', { role: 'none' }, { headlineScale: 'large' }), { headline: 'Answer visitors. |Route buyers.|', subline: 'Acme answers from your own pages and hands buyers to your team.' });
+  const judged = judgeReport(report, { slots: ['headline'], images: 0, contrast: composed.contrast, pictureRects: composed.pictureRects });
+  assert.equal(judged.ok, true, JSON.stringify(judged.hard));
+  assert.deepEqual(report.collisions, []);
+  for (const e of report.elements.filter((x) => x.slot === 'headline' || x.slot === 'subline')) assert.ok(e.rect.x >= 28 + 32, `${e.slot} starts at ${e.rect.x}`);
+});

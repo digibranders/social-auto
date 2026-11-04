@@ -6,6 +6,7 @@
  * real browser, and "frozen" carries those solved sizes and no script, so what is captured is exactly what was measured.
  * The page may load only local files; the content security policy blocks every network request.
  */
+import { iconHtml, type PostOffer } from './offer.ts';
 import type { ArtBrief } from './art-brief.ts';
 import { TARGET_RATIO, backingAlpha, composite, contrastRatio } from './contrast.ts';
 import { escapeHtml, parseHeadline, type BrandColors } from './content.ts';
@@ -31,6 +32,8 @@ export interface PosterCopy {
   figure?: string;
   /** A verified, attributable quotation to show large. */
   quote?: string;
+  /** A usable commercial fact to show large, with its plan and condition. */
+  offer?: PostOffer;
 }
 
 export interface PosterBrand {
@@ -192,7 +195,7 @@ class Canvas {
     extraStyle?: string;
   }): void {
     const { text, accent } = this.colorsOn(opts.surface, opts.slot, opts.role);
-    const display = opts.role === 'headline' || opts.role === 'figure';
+    const display = opts.role === 'headline' || opts.role === 'figure' || opts.role === 'offer';
     const style = textStyleFor(opts.plain, display);
     const align = this.input.brief.alignment === 'center' && opts.role !== 'identity' && opts.role !== 'cta' && opts.role !== 'brand' ? 'center' : 'start';
     const solved = this.input.mode.kind === 'frozen' ? this.input.mode.solved[opts.slot] : undefined;
@@ -296,6 +299,15 @@ type Composer = (c: Canvas) => void;
 
 const composers: Record<string, Composer> = {
   'typography-hero': (c) => {
+    if (c.zoneName === 'left') {
+      // The light editorial variant: a full-height accent rail on the canvas edge (clear of every text slot, which starts at x=96) and dark type on a light page.
+      const { light, accentOnLight } = c.palette;
+      c.css.push(`body{background:${light};}`);
+      c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'light');
+      c.decor({ x: 0, y: 0, w: 28, h: CANVAS_SIZE }, `background:${accentOnLight};`);
+      headlineAndSubline(c, 'light', 'start');
+      return;
+    }
     const { dark } = c.palette;
     c.css.push(`body{background:${dark};}`);
     c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'dark');
@@ -385,8 +397,15 @@ const composers: Record<string, Composer> = {
       c.text({ slot: 'figure', role: 'figure', html: escapeHtml(figureText), plain: figureText, rect: figure.rect, surface: 'dark', anchor: 'end', weight: 900, fit: ROLE_RANGE.figure, extraStyle: `color:${accentOnDark};` });
     } else if (figure && quote) {
       c.text({ slot: 'figure', role: 'quote', html: `&ldquo;${escapeHtml(quote)}&rdquo;`, plain: quote, rect: figure.rect, surface: 'dark', anchor: 'end', weight: 700, fit: ROLE_RANGE.quote });
+    } else if (figure && c.input.copy.offer) {
+      const offer = c.input.copy.offer;
+      // The offer is the fact's own words; the plan above it and the condition under it are in the same measured block, so nothing here can collide with it.
+      const kicker = offer.kicker ? `<span style="display:block;font-size:0.34em;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;opacity:0.85;margin-bottom:0.3em">${escapeHtml(offer.kicker)}</span>` : '';
+      const note = offer.qualifier ? `<span style="display:block;font-size:0.32em;font-weight:600;letter-spacing:0;opacity:0.9;margin-top:0.5em">${escapeHtml(offer.qualifier)}</span>` : '';
+      const icon = offer.icon ? iconHtml(offer.icon) : '';
+      c.text({ slot: 'figure', role: 'offer', html: `${kicker}${icon}${escapeHtml(offer.text)}${note}`, plain: [offer.kicker, offer.text, offer.qualifier].filter(Boolean).join(' '), rect: figure.rect, surface: 'dark', anchor: 'end', weight: 800, fit: ROLE_RANGE.offer, extraStyle: `color:${accentOnDark};` });
     } else if (c.input.brief.hierarchy === 'figure-first') {
-      throw new ComposeError('a figure-first poster needs a verified figure or quotation');
+      throw new ComposeError('a figure-first poster needs a verified figure, quotation or offer');
     }
     headlineAndSubline(c, 'dark', 'start');
   },

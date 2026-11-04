@@ -3,6 +3,7 @@
  *
  *   node src/render.ts --brand brands/brandbasket --plan week-01.json [--env <keys file>] [--model <id>]
  */
+import { DEFAULT_FACT_MAX_AGE_DAYS } from './evidence-pipeline.ts';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -106,6 +107,12 @@ export function posterBrand(brand: Brand, logoHtml: string | undefined, logoTone
   };
 }
 
+/** An offer read longer ago than a commercial fact may be current for is not shown. */
+export function offerIsStale(offer: { capturedAt: string }, now: Date = new Date(), maxAgeDays: number = DEFAULT_FACT_MAX_AGE_DAYS): boolean {
+  const age = (now.getTime() - Date.parse(offer.capturedAt)) / 86_400_000;
+  return !Number.isFinite(age) || age > maxAgeDays;
+}
+
 export interface PostRenderRecord {
   postId: string;
   status: RenderOutcome['status'];
@@ -160,7 +167,7 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
         };
         const pngPath = join(outDir, `${post.id}.png`);
         const outcome = await renderPoster({
-          copy: { headline: post.headline, subline: post.subline, ...(post.listItems?.length ? { listItems: post.listItems } : {}), ...(art.figure ? { figure: art.figure } : {}), ...(art.quote ? { quote: art.quote } : {}) },
+          copy: { headline: post.headline, subline: post.subline, ...(post.listItems?.length ? { listItems: post.listItems } : {}), ...(art.figure ? { figure: art.figure } : {}), ...(art.quote ? { quote: art.quote } : {}), ...(art.offer && !offerIsStale(art.offer) ? { offer: art.offer } : {}) },
           brand: posterBrand(brand, logoHtml, logoTone, post.cta),
           font,
           candidates: art.candidates,

@@ -118,7 +118,7 @@ test('a figure or quotation is shown only when it was provided, and a figure-fir
   const brief = FAMILY_BRIEFS[5]![1];
   assert.match(compose(brief).html, /data-slot="figure"[^>]*>40%</);
   assert.match(compose(brief, { copy: { ...copy, figure: undefined as never, quote: 'Saved us hours' } }).html, /&ldquo;Saved us hours&rdquo;/);
-  assert.throws(() => compose(brief, { copy: { headline: copy.headline, subline: copy.subline } }), /needs a verified figure or quotation/);
+  assert.throws(() => compose(brief, { copy: { headline: copy.headline, subline: copy.subline } }), /needs a verified figure, quotation or offer/);
   const headlineFirst = briefOf('evidence-spotlight', 'center', { role: 'none' });
   assert.doesNotMatch(compose(headlineFirst, { copy: { headline: copy.headline, subline: copy.subline } }).html, /data-slot="figure"/);
 });
@@ -200,4 +200,20 @@ test('the typography layout draws no decorative rule that a long headline could 
       assert.ok(!overlaps || id === 'feature-spotlight', `${id} decor overlaps the headline slot`);
     }
   }
+});
+
+test('the typography family has a light editorial variant: a full-height rail on the canvas edge, text clear of it, and no picture', () => {
+  const brief = briefOf('typography-hero', 'left', { role: 'none' });
+  const { html } = compose(brief);
+  assert.match(html, /body\{background:#[0-9A-Fa-f]{6};\}/);
+  const rails = [...html.matchAll(/<div data-layer="decor" style="left:(-?\d+)px;top:(-?\d+)px;width:(\d+)px;height:(\d+)px;/g)];
+  assert.equal(rails.length, 1);
+  const [x, y, w, h] = (rails[0] as RegExpMatchArray).slice(1).map(Number) as [number, number, number, number];
+  assert.deepEqual([x, y, w, h], [0, 0, 28, 1080]);
+  const zone = familyById(layoutRegistry, 'typography-hero')?.zones['left'];
+  assert.ok(zone && zone.imageSlots.length === 0);
+  for (const slot of zone.textSlots) assert.ok(slot.rect.x >= x + w + 32, `${slot.id} starts clear of the rail`);
+  assert.ok(!html.includes('<img'));
+  const dark = compose(briefOf('typography-hero', 'center', { role: 'none' })).html;
+  assert.notEqual(html.match(/body\{background:[^;]+/)?.[0], dark.match(/body\{background:[^;]+/)?.[0]);
 });

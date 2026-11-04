@@ -89,6 +89,8 @@ export const layoutRegistry: readonly LayoutFamily[] = [
       top: { textSlots: text(slot('headline', MARGIN, 200, WIDE, 400), slot('subline', MARGIN, 620, 860, 150)), imageSlots: [FULL_IMAGE('texture')] },
       center: { textSlots: text(slot('headline', MARGIN, 260, WIDE, 420), slot('subline', MARGIN, 720, 860, 150)), imageSlots: [FULL_IMAGE('texture')] },
       bottom: { textSlots: text(slot('headline', MARGIN, 330, WIDE, 430), slot('subline', MARGIN, 800, 860, 150)), imageSlots: [FULL_IMAGE('texture')] },
+      // The light editorial variant: text starts clear of the accent rail on the canvas edge; no picture.
+      left: { textSlots: text(slot('headline', 96, 250, WIDE - 32, 450), slot('subline', 96, 730, 800, 170)), imageSlots: NO_IMAGE },
     },
     logoSlots: [LOGO_TOP_LEFT, LOGO_TOP_RIGHT],
     identitySlots: [IDENTITY_UNDER_LOGO, IDENTITY_BOTTOM],

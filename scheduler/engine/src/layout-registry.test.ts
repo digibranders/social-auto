@@ -102,7 +102,8 @@ test('an unknown layout is reported, not guessed', () => {
 
 test('hierarchy, text zone, picture role and medium must be ones the family allows', () => {
   assert.ok(kinds(briefFor('typography-hero', { hierarchy: 'picture-first' })).includes('hierarchy_not_allowed'));
-  assert.ok(kinds(briefFor('typography-hero', { textZone: 'left' })).includes('text_zone_not_allowed'));
+  assert.ok(kinds(briefFor('typography-hero', { textZone: 'right' })).includes('text_zone_not_allowed'));
+  assert.ok(!kinds(briefFor('typography-hero', { textZone: 'left', picture: { role: 'none' } })).includes('text_zone_not_allowed'));
   assert.ok(kinds(briefFor('typography-hero', { textZone: 'center' })).includes('picture_role_not_allowed'));
   assert.deepEqual(kinds(briefFor('typography-hero', { textZone: 'center', picture: { role: 'none' } })), []);
 });

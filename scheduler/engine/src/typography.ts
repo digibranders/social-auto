@@ -9,7 +9,7 @@ import type { LayoutFamily } from './layout-registry.ts';
 /** The largest headline size each scale allows; the family's own minimum is the floor. */
 export const SCALE_MAX_PX: Readonly<Record<HeadlineScale, number>> = { xl: 160, large: 124, medium: 96, small: 72 };
 
-export type TextRole = 'headline' | 'subline' | 'list' | 'figure' | 'quote' | 'identity' | 'cta' | 'brand';
+export type TextRole = 'headline' | 'subline' | 'list' | 'figure' | 'quote' | 'offer' | 'identity' | 'cta' | 'brand';
 
 /** Size ranges by role, in pixels on the 1080 canvas. A headline's floor comes from its family. */
 export const ROLE_RANGE: Readonly<Record<Exclude<TextRole, 'headline'>, { max: number; min: number; maxLines: number }>> = {
@@ -17,6 +17,7 @@ export const ROLE_RANGE: Readonly<Record<Exclude<TextRole, 'headline'>, { max: n
   list: { max: 40, min: 28, maxLines: 0 },
   figure: { max: 260, min: 120, maxLines: 1 },
   quote: { max: 72, min: 36, maxLines: 4 },
+  offer: { max: 92, min: 40, maxLines: 3 },
   identity: { max: 28, min: 22, maxLines: 2 },
   cta: { max: 28, min: 22, maxLines: 1 },
   brand: { max: 34, min: 24, maxLines: 1 },

@@ -5,6 +5,8 @@
  * deterministic and takes the brand's history as an argument, so tenants cannot leak into each other and no model or
  * image call is needed.
  */
+import type { EvidenceFact } from './evidence.ts';
+import { offerFrom, type PostOffer } from './offer.ts';
 import { pictureEligibility } from './visual-strategy.ts';
 import { extractFacts, stem } from './claims.ts';
 import type { Hierarchy, PictureMedium, PictureRole, TextZone } from './art-brief.ts';
@@ -32,6 +34,8 @@ export interface PostFacts {
   figure?: string;
   /** A verified, attributable quotation. */
   quote?: string;
+  /** A usable commercial fact of the post that may be shown large (see offer.ts). */
+  offer?: PostOffer;
   /** The post concerns an offering the brand profile states. */
   concernsOffering: boolean;
   /** Whether an AI picture is allowed for the post at all (see visual-strategy.ts); undefined means allowed. */
@@ -131,7 +135,7 @@ const plain = (text: string): string => text.replaceAll('|', '').trim();
 const words = (text: string): string[] => normalizeHeadline(text).split(' ').filter((w) => w.length >= 5).map(stem);
 
 /** The facts a layout can use from one accepted post. A figure counts only when the verified anchor and the post's own copy both state it. */
-export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'features' | 'proofPoints'>): PostFacts {
+export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'features' | 'proofPoints'>, evidence: readonly EvidenceFact[] = []): PostFacts {
   const listItems: string[] = [];
   const seen = new Set<string>();
   for (const item of post.listItems ?? []) {
@@ -156,7 +160,8 @@ export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'featu
   const concernsOffering = brand.offer.trim().length > 0 && postWords.some((w) => offerWords.has(w));
 
   const picture = pictureEligibility({ headline: plain(post.headline), subline: plain(post.subline), caption: post.caption, ...(post.concept ? { concept: post.concept } : {}) });
-  return { headline: post.headline, subline: post.subline, listItems, ...(figure ? { figure } : {}), concernsOffering, picture };
+  const offer = offerFrom(post.factIds, evidence);
+  return { headline: post.headline, subline: post.subline, listItems, ...(figure ? { figure } : {}), ...(offer ? { offer } : {}), concernsOffering, picture };
 }
 
 const isNonLatin = (text: string): boolean => [...text].some((c) => /\p{L}/u.test(c) && !/\p{Script=Latin}/u.test(c));
@@ -208,7 +213,7 @@ export function estimateFit(post: Pick<PostFacts, 'headline' | 'subline'>, famil
 function missingContent(family: LayoutFamily, post: PostFacts): string | undefined {
   for (const need of family.requiredContent) {
     if (need === 'list' && post.listItems.length < 2) return 'needs at least two distinct list items';
-    if (need === 'evidence' && !post.figure && !post.quote) return 'needs a verified figure or quotation';
+    if (need === 'evidence' && !post.figure && !post.quote && !post.offer) return 'needs a verified figure, quotation or offer';
     if (need === 'offering' && !post.concernsOffering) return 'needs a post that concerns a verified offering';
   }
   return undefined;
@@ -217,7 +222,7 @@ function missingContent(family: LayoutFamily, post: PostFacts): string | undefin
 function hierarchyAllowed(hierarchy: Hierarchy, role: PictureRole, zone: ZoneLayout, post: PostFacts): boolean {
   if (hierarchy === 'picture-first') return role !== 'none';
   if (hierarchy === 'list-first') return post.listItems.length >= 2 && zone.textSlots.some((slot) => slot.id === 'list');
-  if (hierarchy === 'figure-first') return Boolean(post.figure) && zone.textSlots.some((slot) => slot.id === 'figure');
+  if (hierarchy === 'figure-first') return Boolean(post.figure ?? post.offer) && zone.textSlots.some((slot) => slot.id === 'figure');
   return true;
 }
 

@@ -247,3 +247,11 @@ test('identical inputs and settings give identical eligibility, ranking and shor
   const run = (): unknown => planShortlists({ posts: [RICH, facts()], history: [record('full-bleed-editorial')] });
   assert.deepEqual(run(), run());
 });
+
+
+test('the typography family offers its light editorial variant without a picture, so a short plain post has more than one safe treatment', () => {
+  const options = eligibleOptions(NEUTRAL, layoutRegistry, {}).options.filter((o) => o.layout === 'typography-hero');
+  const zones = new Set(options.map((o) => o.zone));
+  assert.ok(zones.has('left') && zones.has('center') && zones.has('bottom') && zones.has('top'));
+  assert.ok(options.filter((o) => o.zone === 'left').every((o) => o.pictureRole === 'none'));
+});

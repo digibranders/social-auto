@@ -1,3 +1,4 @@
+import type { PostOffer } from './offer.ts';
 import { readFile } from 'node:fs/promises';
 import { ArtDirectionError, HIERARCHIES, PICTURE_ROLES, TEXT_ZONES, parseArtBrief, type ArtBrief } from './art-brief.ts';
 import type { ArtRecord } from './art-options.ts';
@@ -114,6 +115,8 @@ export interface PostArt {
   /** A verified figure or quotation the evidence layout may show large. */
   figure?: string;
   quote?: string;
+  /** A usable commercial fact the evidence layout may show large, with its plan and condition. */
+  offer?: PostOffer;
 }
 
 export interface PlannedPost {
@@ -502,7 +505,20 @@ function parseArt(raw: unknown, where: string): PostArt {
     if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"art.${key}" must be text`);
     art[key] = value.trim();
   }
+  if (raw['offer'] !== undefined) art.offer = parseOffer(raw['offer'], where);
   return art;
+}
+
+const OFFER_KINDS = ['price', 'trial', 'free', 'no_card', 'other'];
+const OFFER_ICONS = ['tag', 'calendar', 'badge', 'card-slash'];
+
+function parseOffer(raw: unknown, where: string): PostOffer {
+  if (!isObject(raw)) throw new ContentValidationError(where, '"art.offer" must be an object');
+  for (const key of ['factId', 'text', 'capturedAt'] as const) if (typeof raw[key] !== 'string' || !String(raw[key]).trim()) throw new ContentValidationError(where, `"art.offer.${key}" must be text`);
+  if (!OFFER_KINDS.includes(String(raw['kind']))) throw new ContentValidationError(where, '"art.offer.kind" must be price, trial, free, no_card or other');
+  for (const key of ['kicker', 'qualifier'] as const) if (raw[key] !== undefined && (typeof raw[key] !== 'string' || !String(raw[key]).trim())) throw new ContentValidationError(where, `"art.offer.${key}" must be text`);
+  if (raw['icon'] !== undefined && !OFFER_ICONS.includes(String(raw['icon']))) throw new ContentValidationError(where, '"art.offer.icon" is not a known icon');
+  return { factId: String(raw['factId']), text: String(raw['text']).trim(), kind: raw['kind'] as PostOffer['kind'], capturedAt: String(raw['capturedAt']), ...(raw['kicker'] ? { kicker: String(raw['kicker']) } : {}), ...(raw['qualifier'] ? { qualifier: String(raw['qualifier']) } : {}), ...(raw['icon'] ? { icon: raw['icon'] as NonNullable<PostOffer['icon']> } : {}) };
 }
 
 export function escapeHtml(text: string): string {
