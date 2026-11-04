@@ -129,6 +129,9 @@ The password is the Vercel variable `DASHBOARD_PASSWORD` in project `social-dash
 ### Run the local scheduler (optional)
 `cd scheduler/upstream && export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH" && docker compose up -d`, then open http://localhost:4007. Its Instagram connection is not used for posting.
 
+### Art direction contracts (2.1A, not yet wired into posting)
+`art-brief.ts` defines the structured brief an art director returns for one accepted post: layout family, hierarchy, headline scale, alignment, text zone, picture direction (or none) and brand-element slots. It carries no colours, coordinates, CSS, accent words or copy, and parsing drops any such keys. `layout-registry.ts` holds six families (typography hero, split composition, full-bleed editorial, feature spotlight, structured information, evidence spotlight), each declaring text zones with headline/subline/list/figure slots, picture slots named for their role, several logo/identity/CTA placements, text and picture limits, required content and a fallback. `validateRegistry` proves the registry is consistent; `checkBriefAgainstFamily` reports structural problems (unknown layout, disallowed zone/hierarchy/role/medium, missing picture slot, unknown or colliding brand slots). Geometry exists for the 1080 square only; 4:5 and 9:16 are named but unbuilt. Nothing renders from these yet: eligibility, variety, the art-director call and fallbacks are 2.1B-2.1D, composable rendering is 2.2.
+
 ## Where the secrets live (names only, never values)
 
 | Name | Where |
