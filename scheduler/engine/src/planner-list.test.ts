@@ -12,8 +12,8 @@ const check = (d: unknown, hook = 'numbered_list'): void => validateDraft(d as n
 
 test('the leading count of a numbered-list headline is an editorial list size: it passes the gate when it matches the list items', () => {
   assert.doesNotThrow(() => check(draft()));
-  assert.doesNotThrow(() => check(draft({ headline: '2 |parts| of an answer', listItems: ['The source', 'The reply'] })));
-  assert.doesNotThrow(() => check(draft({ headline: '2 points about |answers|', listItems: ['The source', 'The reply'] })));
+  assert.doesNotThrow(() => check(draft({ headline: '3 |parts| of an answer', listItems: ['The source', 'The reply', 'The check'] })));
+  assert.doesNotThrow(() => check(draft({ headline: '3 points about |answers|', listItems: ['The source', 'The reply', 'The check'] })));
 });
 
 test('a count that does not match the list items is still turned back as a hook error', () => {
@@ -34,4 +34,10 @@ test('a leading number that is a quantity, not a list size, is gated', () => {
 
 test('the same number outside a numbered list is still gated', () => {
   assert.throws(() => check(draft({ headline: '2 parts of an |answer|', listItems: undefined }), 'direct_statement'), /2/);
+});
+
+
+test('a numbered list of two items is too thin and is turned back as a hook error', () => {
+  assert.throws(() => check(draft({ headline: '2 |parts| of an answer', listItems: ['The source', 'The reply'] })), HookError);
+  assert.throws(() => check(draft({ headline: '2 |parts| of an answer', listItems: ['The source', 'The reply'] })), /at least 3/);
 });

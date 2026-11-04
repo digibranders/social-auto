@@ -26,7 +26,7 @@ const ALL = (s: Strength): Record<string, Strength> => ({ problem: s, education:
 export const defaultHooks: readonly HookSpec[] = [
   { id: 'question', brief: 'Open with one specific question the reader recognises, ending in a question mark.', needs: null, compatible: { problem: 'strong', education: 'strong', proof: 'conditional', offer: 'conditional', story: 'conditional' } },
   { id: 'benefit_statement', brief: 'State the value plainly, as a benefit the proof allows. Never promise an outcome the profile does not state.', needs: null, compatible: { problem: 'strong', education: 'conditional', proof: 'strong', offer: 'strong', story: 'conditional' } },
-  { id: 'numbered_list', brief: 'Start the headline with the number of items (2 to 5) as a digit and return exactly that many distinct short items in "listItems". Use that number only at the start of the headline: do not state it again as a number in the subline or caption, and do not make it a quantity of anything (no "2 million", no percentages).', needs: null, compatible: { problem: 'conditional', education: 'strong', proof: 'conditional', offer: 'conditional', story: 'conditional' } },
+  { id: 'numbered_list', brief: 'Start the headline with the number of items (3 to 5) as a digit and return exactly that many distinct short items in "listItems". Use that number only at the start of the headline: do not state it again as a number in the subline or caption, and do not make it a quantity of anything (no "2 million", no percentages).', needs: null, compatible: { problem: 'conditional', education: 'strong', proof: 'conditional', offer: 'conditional', story: 'conditional' } },
   { id: 'myth_fact', brief: 'Correct one belief using the evidence given; never call something a common myth without that evidence.', needs: 'myths', compatible: { problem: 'conditional', education: 'strong', proof: 'conditional', offer: 'weak', story: 'weak' } },
   { id: 'before_after', brief: 'Show the verified before and after the evidence gives. Never invent a result.', needs: 'beforeAfter', compatible: { problem: 'conditional', education: 'conditional', proof: 'strong', offer: 'conditional', story: 'conditional' } },
   { id: 'direct_statement', brief: 'State one plain fact from the evidence as a statement, not a question.', needs: null, compatible: ALL('strong') },
@@ -107,6 +107,9 @@ const STATEMENT_HOOKS = new Set(['benefit_statement', 'direct_statement', 'contr
 const DEFAULT_MAX_LIST_ITEMS = 5;
 
 /** A structural problem with a headline for its hook, or undefined. Only what code can verify; whether it truly follows the hook is for a model review. */
+/** A numbered list of fewer items than this tells a reader too little to be worth the poster. */
+export const MIN_LIST_ITEMS = 3;
+
 export function checkHook(input: { hook: string; headline: string; listItems?: readonly string[]; maxListItems?: number }): string | undefined {
   const headline = input.headline.replaceAll('|', '').trim();
   if (input.hook === 'question') return QUESTION_END.test(headline) ? undefined : 'a question hook must end in a question mark';
@@ -118,7 +121,7 @@ export function checkHook(input: { hook: string; headline: string; listItems?: r
   if (!said) return 'a numbered list headline must start with the number of items';
   const n = Number(said[1]);
   const max = input.maxListItems ?? DEFAULT_MAX_LIST_ITEMS;
-  if (n < 2 || n > max) return `a numbered list has at most ${max} items (and at least 2), the headline says ${n}`;
+  if (n < MIN_LIST_ITEMS || n > max) return `a numbered list has at most ${max} items (and at least ${MIN_LIST_ITEMS}: two is too thin to be a list), the headline says ${n}`;
   if (n !== items.length) return `the headline says ${n} but listItems has ${items.length}; they must match`;
   if (items.some((i) => typeof i !== 'string' || normalizeHeadline(i) === '')) return 'a list item is empty';
   if (new Set(items.map(normalizeHeadline)).size !== items.length) return 'list items must be distinct';
