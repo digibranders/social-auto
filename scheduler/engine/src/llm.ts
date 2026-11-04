@@ -16,13 +16,17 @@ export interface ChatJsonOptions<T> {
   user: string;
   /** Validates and narrows the parsed JSON; throw to trigger a corrective retry. */
   parse: (value: unknown) => T;
+  /** Pictures shown to the model with the user message, as data URLs. Only OpenAI is asked then: the backup provider's models are not trusted to see them. */
+  images?: readonly string[];
   /** For tests: replaces the network call. */
   fetchFn?: typeof fetch;
 }
 
+type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+
 interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ContentPart[];
 }
 
 async function complete(candidate: TextCandidate, messages: ChatMessage[], fetchFn: typeof fetch, ai: AiConfig, fallbackFrom?: FallbackFrom): Promise<string> {
@@ -63,15 +67,17 @@ function extractJson(content: string): unknown {
 export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
   const failures: string[] = [];
   const fetchFn = options.fetchFn ?? fetch;
-  const candidates = textCandidates(options.ai);
-  const first = candidates[0] as TextCandidate;
+  const images = options.images ?? [];
+  const candidates = textCandidates(options.ai).filter((candidate) => images.length === 0 || candidate.label === 'OpenAI');
+  const first = candidates[0];
+  if (!first) throw new LlmError(images.length > 0 ? 'Reading pictures needs OpenAI, which is not configured' : 'No text model is configured');
   for (const candidate of candidates) {
     // A different provider than the one asked for: only reached when the main one failed and a backup is allowed.
     const standingIn = candidate.label !== first.label;
     const lastFailure = failures.at(-1);
     const messages: ChatMessage[] = [
       { role: 'system', content: options.system },
-      { role: 'user', content: options.user },
+      { role: 'user', content: images.length === 0 ? options.user : [{ type: 'text', text: options.user }, ...images.map((url): ContentPart => ({ type: 'image_url', image_url: { url } }))] },
     ];
     for (let attempt = 0; attempt < 2; attempt++) {
       let content: string;
