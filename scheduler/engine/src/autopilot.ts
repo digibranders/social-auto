@@ -4,11 +4,16 @@
  *   node src/autopilot.ts --site example.com --channel their_insta [--days 7] [--time 10:00]
  *                         [--weekdays mon,wed,fri] [--start YYYY-MM-DD] [--utc-offset +05:30] [--image-model zimage]
  *                         [--refresh-brand] [--dry-run] [--target scheduler|publisher]
+ *                         [--art] [--allow-paid-ai]
  *
  * First run for a site builds brands/<slug>/brand.json from the website. Every run writes the
  * next week-NN.json with new pain points (history.json prevents repeats) and renders the posters.
  * Unless --dry-run, posts then go to the target: "scheduler" queues them in the local scheduler
  * app (needs --channel); "publisher" exports them to the Vercel publisher folder.
+ *
+ * --art adds art direction (a separate model call per plan, measured rendering, review before scheduling). It only runs
+ * when the brand's art.json enables it, is switched off by ART_DIRECTION_DISABLED=1, and needs --allow-paid-ai with --dry-run.
+ * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
  */
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
@@ -17,7 +22,9 @@ import { aiConfigFromEnv } from './ai.ts';
 import { appendUsageLog } from './usage.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
-import { parseBrand, parseWeekPlan, readJson } from './content.ts';
+import { parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
+import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
+import { recordRenderedArt } from './art-review.ts';
 import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { normalizeHeadline } from './hooks.ts';
@@ -30,7 +37,7 @@ const BRANDS_ROOT = resolve('brands');
 const WEEK_FILE = /^week-(\d+)\.json$/;
 
 interface History {
-  weeks: Array<{ file: string; createdAt: string; painPoints: string[]; /** The pillar of each post; weeks written before pillars have none. */ pillars?: string[]; /** The hook actually used by each post, and its headline as compared for repetition. */ hooks?: string[]; headlines?: string[]; /** The concept of each accepted post, for the repeat check. */ concepts?: ConceptRecord[] }>;
+  weeks: Array<{ file: string; createdAt: string; painPoints: string[]; /** The pillar of each post; weeks written before pillars have none. */ pillars?: string[]; /** The hook actually used by each post, and its headline as compared for repetition. */ hooks?: string[]; headlines?: string[]; /** The concept of each accepted post, for the repeat check. */ concepts?: ConceptRecord[]; /** The art records of rendered posters and where their review stands. */ art?: ArtHistoryEntry[] }>;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -108,6 +115,8 @@ async function main(): Promise<void> {
       'scheduler-url': { type: 'string', default: DEFAULT_SCHEDULER_URL },
       'refresh-brand': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
+      art: { type: 'boolean', default: false },
+      'allow-paid-ai': { type: 'boolean', default: false },
       target: { type: 'string', default: 'scheduler' },
       publisher: { type: 'string', default: '../../publisher' },
     },
@@ -130,6 +139,12 @@ async function main(): Promise<void> {
 
   const slug = slugFromSite(values.site);
   let brandDir = join(BRANDS_ROOT, slug);
+  // Art direction is checked before anything paid happens, so a refusal costs nothing.
+  let artSettings: ArtTenantSettings | undefined;
+  if (values.art) {
+    artSettings = await loadArtSettings(brandDir);
+    assertArtAllowed({ settings: artSettings, env: process.env, dryRun: values['dry-run'], allowPaidAi: values['allow-paid-ai'] });
+  }
   if (values['refresh-brand'] || !(await fileExists(join(brandDir, 'brand.json')))) {
     console.log(`1/4 Reading ${values.site} and building the brand profile…`);
     ai.usage.purpose = 'profile';
@@ -138,79 +153,104 @@ async function main(): Promise<void> {
     console.log(`1/4 Using saved brand profile ${join('brands', slug, 'brand.json')}`);
   }
   const brand = parseBrand(await readJson(join(brandDir, 'brand.json')), 'brand.json');
+  const releaseLock = artSettings ? await acquireTenantLock(brandDir) : undefined;
+  try {
 
-  const historyPath = join(brandDir, 'history.json');
-  const history = await readHistory(historyPath);
-  const weekNumber = await nextWeekNumber(brandDir);
-  const planFile = `week-${String(weekNumber).padStart(2, '0')}.json`;
-  const startDate =
-    values.start ?? chooseStartDate(await lastPlannedDate(brandDir), tomorrowAt(values['utc-offset']));
-  const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
-  ai.usage.purpose = 'writing';
-  console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
-  const plan = await planWeek({
-    ai,
-    compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
-    brand,
-    brandSlug: slug,
-    weekNumber,
-    log: (m) => console.log(`    ${m}`),
-    schedule: {
-      startDate,
-      time: values.time,
-      utcOffset: values['utc-offset'],
-      count: days,
-      ...(weekdays ? { weekdays } : {}),
-    },
-    usedPainPoints: history.weeks.flatMap((w) => w.painPoints),
-    recentPillars: history.weeks.flatMap((w) => w.pillars ?? []),
-    recentHooks: history.weeks.flatMap((w) => w.hooks ?? []),
-    recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
-    recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
-  });
-  if (plan.insufficientConcepts) {
-    const { requested, produced, reasons } = plan.insufficientConcepts;
-    console.log(`    Only ${produced} of ${requested} posts: the rest repeated earlier ideas (insufficient distinct concepts).\n    ${reasons.join('\n    ')}`);
-  }
-  await writeFile(join(brandDir, planFile), `${JSON.stringify(plan, null, 2)}\n`);
-  history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []) });
-  await writeFile(historyPath, `${JSON.stringify(history, null, 2)}\n`);
+    const historyPath = join(brandDir, 'history.json');
+    const history = await readHistory(historyPath);
+    const weekNumber = await nextWeekNumber(brandDir);
+    const planFile = `week-${String(weekNumber).padStart(2, '0')}.json`;
+    const startDate =
+      values.start ?? chooseStartDate(await lastPlannedDate(brandDir), tomorrowAt(values['utc-offset']));
+    const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
+    ai.usage.purpose = 'writing';
+    console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
+    const plan = await planWeek({
+      ai,
+      compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
+      brand,
+      brandSlug: slug,
+      weekNumber,
+      log: (m) => console.log(`    ${m}`),
+      schedule: {
+        startDate,
+        time: values.time,
+        utcOffset: values['utc-offset'],
+        count: days,
+        ...(weekdays ? { weekdays } : {}),
+      },
+      usedPainPoints: history.weeks.flatMap((w) => w.painPoints),
+      recentPillars: history.weeks.flatMap((w) => w.pillars ?? []),
+      recentHooks: history.weeks.flatMap((w) => w.hooks ?? []),
+      recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
+      recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
+    });
+    if (plan.insufficientConcepts) {
+      const { requested, produced, reasons } = plan.insufficientConcepts;
+      console.log(`    Only ${produced} of ${requested} posts: the rest repeated earlier ideas (insufficient distinct concepts).\n    ${reasons.join('\n    ')}`);
+    }
+    let finalPlan: WeekPlan = plan;
+    if (artSettings) {
+      console.log('2b/4 Art direction (one batched model call)…');
+      const directed = await artDirectPlan({ ai, plan, brand, history: readArtHistory(history), settings: artSettings });
+      finalPlan = directed.plan;
+      const { counts, flags, requests, status } = directed.report;
+      console.log(`    ${status}: ${counts.directed} directed, ${counts.repaired} repaired, ${counts.fallback} fell back, ${counts.failed} without art direction (${requests} request${requests === 1 ? '' : 's'}).`);
+      for (const flag of flags) console.log(`    FLAG: ${flag}`);
+      await writeFileAtomic(join(brandDir, `art-report-${planFile}`), `${JSON.stringify(directed.report, null, 2)}\n`);
+    }
+    await writeFileAtomic(join(brandDir, planFile), `${JSON.stringify(finalPlan, null, 2)}\n`);
+    history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []) });
+    await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
-  console.log('3/4 Rendering posters…');
-  const outDir = await renderPlan({
-    brandDir,
-    planFile,
-    ai,
-    log: (m) => console.log(`    ${m}`),
-  });
-  console.log(ai.usage.format());
-  const usageLog = process.env['USAGE_LOG_FILE'];
-  if (usageLog) {
-    await appendUsageLog(usageLog, ai.usage.records(slug, plan.posts.map((p) => `${slug}-${p.id}`)));
-    console.log(`Cost saved to ${usageLog} for the dashboard.`);
-  }
+    console.log('3/4 Rendering posters…');
+    let outDir: string;
+    try {
+      outDir = await renderPlan({
+        brandDir,
+        planFile,
+        ai,
+        log: (m) => console.log(`    ${m}`),
+        artFailure: artSettings?.fallbackToLegacy ? 'legacy' : 'fail',
+      });
+    } finally {
+      // Posters that rendered are recorded as awaiting review even when another poster failed.
+      if (artSettings) {
+        const recorded = await recordRenderedArt({ brandDir, planFile }).catch(() => 0);
+        if (recorded > 0) console.log(`    ${recorded} art-directed poster(s) are waiting for review: node src/art-review.ts --brand ${brandDir} --plan ${planFile} --list`);
+      }
+    }
+    console.log(ai.usage.format());
+    const usageLog = process.env['USAGE_LOG_FILE'];
+    if (usageLog) {
+      await appendUsageLog(usageLog, ai.usage.records(slug, plan.posts.map((p) => `${slug}-${p.id}`)));
+      console.log(`Cost saved to ${usageLog} for the dashboard.`);
+    }
 
-  if (values['dry-run']) {
-    console.log(`4/4 Dry run: nothing scheduled. Preview: ${join(outDir, 'preview.html')}`);
-    return;
+    if (values['dry-run']) {
+      console.log(`4/4 Dry run: nothing scheduled. Preview: ${join(outDir, 'preview.html')}`);
+      return;
+    }
+    if (target === 'publisher') {
+      console.log('4/4 Exporting to the Vercel publisher…');
+      const exported = await exportToPublisher(brandDir, resolve(values.publisher));
+      console.log(`Done: ${exported.length} upcoming posts in the publisher (last ${exported.at(-1)?.date ?? '-'}).`);
+      return;
+    }
+    if (!values.channel) throw new Error('--channel is required for --target scheduler');
+    console.log(`4/4 Scheduling on ${values.channel}…`);
+    const count = await schedulePlan({
+      brandDir,
+      planFile,
+      channel: values.channel,
+      schedulerKey: requireEnv('SCHEDULER_API_KEY', envPath),
+      schedulerUrl: values['scheduler-url'],
+      log: (m) => console.log(`    ${m}`),
+    });
+    console.log(`Done: ${count} posts scheduled. Preview: ${join(outDir, 'preview.html')}`);
+  } finally {
+    await releaseLock?.();
   }
-  if (target === 'publisher') {
-    console.log('4/4 Exporting to the Vercel publisher…');
-    const exported = await exportToPublisher(brandDir, resolve(values.publisher));
-    console.log(`Done: ${exported.length} upcoming posts in the publisher (last ${exported.at(-1)?.date ?? '-'}).`);
-    return;
-  }
-  if (!values.channel) throw new Error('--channel is required for --target scheduler');
-  console.log(`4/4 Scheduling on ${values.channel}…`);
-  const count = await schedulePlan({
-    brandDir,
-    planFile,
-    channel: values.channel,
-    schedulerKey: requireEnv('SCHEDULER_API_KEY', envPath),
-    schedulerUrl: values['scheduler-url'],
-    log: (m) => console.log(`    ${m}`),
-  });
-  console.log(`Done: ${count} posts scheduled. Preview: ${join(outDir, 'preview.html')}`);
 }
 
 if (import.meta.main) {

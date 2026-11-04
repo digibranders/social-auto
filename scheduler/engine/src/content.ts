@@ -144,16 +144,37 @@ export interface PlannedPost {
   anchor?: string;
   /** The art direction (layout, picture, placements) for posts planned with the art director; older posts have none and render as before. */
   art?: PostArt;
+  /** Why an art plan's post has no art direction; such a post is not rendered silently with the older renderer. */
+  artFailure?: { reasons: string[] };
+  /** Review state of an art-directed poster. */
+  approval?: PostApproval;
   /** The older concept the post deliberately returns to with a different message. */
   revisitOf?: string;
   caption: string;
   hashtags: string[];
 }
 
+/** How the posters of a plan are made. A plan names its mode: "art_v1" posts go through art direction and measured rendering and never fall back to the older renderer unless that was explicitly allowed. Plans without a mode are "legacy". */
+export type RenderMode = 'legacy' | 'art_v1';
+
 export interface WeekPlan {
   brand: string;
   timezone: string;
+  renderMode?: RenderMode;
   posts: PlannedPost[];
+}
+
+/** Human review of an art-directed poster. A rendered poster is technically valid, not accepted: only approved posters are scheduled or exported. */
+export interface PostApproval {
+  status: 'pending' | 'approved' | 'rejected';
+  at?: string;
+  by?: string;
+  reason?: string;
+}
+
+/** Whether a post may be scheduled or exported: every post of a legacy plan, only approved posts of an art plan. */
+export function isPublishable(plan: Pick<WeekPlan, 'renderMode'>, post: Pick<PlannedPost, 'approval'>): boolean {
+  return (plan.renderMode ?? 'legacy') === 'legacy' || post.approval?.status === 'approved';
 }
 
 export class ContentValidationError extends Error {
@@ -363,6 +384,23 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     post[key] = value.trim();
   }
   if (raw['art'] !== undefined) post.art = parseArt(raw['art'], where);
+  if (raw['artFailure'] !== undefined) {
+    const failure = raw['artFailure'];
+    if (!isObject(failure) || !Array.isArray(failure['reasons']) || !failure['reasons'].every((r) => typeof r === 'string')) throw new ContentValidationError(where, '"artFailure.reasons" must be a list of text');
+    post.artFailure = { reasons: failure['reasons'] as string[] };
+  }
+  if (raw['approval'] !== undefined) {
+    const approval = raw['approval'];
+    if (!isObject(approval) || !['pending', 'approved', 'rejected'].includes(String(approval['status']))) throw new ContentValidationError(where, '"approval.status" must be pending, approved or rejected');
+    const parsed: PostApproval = { status: approval['status'] as PostApproval['status'] };
+    for (const key of ['at', 'by', 'reason'] as const) {
+      const value = approval[key];
+      if (value === undefined) continue;
+      if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"approval.${key}" must be text`);
+      parsed[key] = value.trim();
+    }
+    post.approval = parsed;
+  }
   if (raw['concept'] !== undefined) {
     try {
       post.concept = parseConcept(raw['concept']);
@@ -391,9 +429,12 @@ export function parseWeekPlan(raw: unknown, source: string): WeekPlan {
   const parsed = posts.map((p) => parsePost(p, source));
   const ids = new Set(parsed.map((p) => p.id));
   if (ids.size !== parsed.length) throw new ContentValidationError(source, 'post ids must be unique');
+  const mode = raw['renderMode'];
+  if (mode !== undefined && mode !== 'legacy' && mode !== 'art_v1') throw new ContentValidationError(source, '"renderMode" must be legacy or art_v1');
   return {
     brand: requireString(raw, 'brand', source),
     timezone: requireString(raw, 'timezone', source),
+    ...(mode ? { renderMode: mode } : {}),
     posts: parsed,
   };
 }

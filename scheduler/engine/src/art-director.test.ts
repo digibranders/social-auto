@@ -278,12 +278,46 @@ test('two tenants with different history get independent results', async () => {
   assert.equal(b.resolved.length, 1);
 });
 
-test('a cost cap stops the repair request once the batch has spent it', async () => {
+test('a cost cap blocks a request whose worst case could pass it, before anything is sent', async () => {
+  const list = posts(2);
+  const { fetchFn, bodies } = scripted(() => reply(list.map((p) => directionFor(p))));
+  const priced = ai();
+  priced.textModel = 'gpt-6-luna';
+  const out = await directWeek({ ai: priced, posts: list, brand, history: [], fetchFn, settings: { maxCostUsd: 0.000001 } });
+  assert.equal(bodies.length, 0);
+  assert.equal(out.requests, 0);
+  assert.equal(out.unresolved.length, 2);
+  assert.ok(out.notes.some((n) => /cost cap/.test(n)));
+});
+
+test('a model with no listed price cannot be bounded, so a capped batch refuses it', async () => {
+  const list = posts(1);
+  const { fetchFn, bodies } = scripted(() => reply([directionFor(list[0] as DirectedPost)]));
+  const unpriced = ai();
+  unpriced.textModel = 'some-unlisted-model';
+  const out = await directWeek({ ai: unpriced, posts: list, brand, history: [], fetchFn, settings: { maxCostUsd: 5 } });
+  assert.equal(bodies.length, 0);
+  assert.ok(out.notes.some((n) => /no listed price/.test(n)));
+});
+
+test('spending recorded from the first answer blocks the repair request when it could pass the cap', async () => {
   const list = posts(2);
   const wrong = list.map((p) => directionFor(p, { optionId: 'nowhere:left:headline-first:hero' }));
-  const { fetchFn, bodies } = scripted(() => reply(wrong));
-  const out = await run(list, fetchFn, { settings: { maxCostUsd: 0 } });
+  const costly = (): Response => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ directions: wrong }) } }], usage: { prompt_tokens: 20_000_000, completion_tokens: 0 } }), { status: 200 });
+  const { fetchFn, bodies } = scripted(costly);
+  const priced = ai();
+  priced.textModel = 'gpt-6-luna';
+  const out = await directWeek({ ai: priced, posts: list, brand, history: [], fetchFn, settings: { maxCostUsd: 2.0000001 } });
   assert.equal(bodies.length, 1);
   assert.equal(out.unresolved.length, 2);
   assert.ok(out.notes.some((n) => /cost cap/.test(n)));
+});
+
+test('with a priced model and room under the cap the batch runs normally', async () => {
+  const list = posts(2);
+  const { fetchFn } = scripted(() => reply(list.map((p) => directionFor(p))));
+  const priced = ai();
+  priced.textModel = 'gpt-6-luna';
+  const out = await directWeek({ ai: priced, posts: list, brand, history: [], fetchFn, settings: { maxCostUsd: 5 } });
+  assert.equal(out.resolved.length, 2);
 });

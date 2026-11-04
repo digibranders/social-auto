@@ -10,7 +10,7 @@
  * `chatJson`, whether they go to a partial repair or a whole-batch recovery. Nothing is committed to history here: the
  * provisional records come back for the caller to commit once the posters are accepted.
  */
-import type { UsageTally } from './usage.ts';
+import { RATES, type UsageTally } from './usage.ts';
 import { ALIGNMENTS, ArtDirectionError, HEADLINE_SCALES, PALETTE_USES, parseArtBrief, type ArtBrief } from './art-brief.ts';
 import { chooseBrandSlots, type ArtOption, type ArtRecord, type PostFacts, type ScoredOption } from './art-options.ts';
 import { chatJson, LlmError } from './llm.ts';
@@ -51,8 +51,15 @@ export interface DirectorSettings {
   maxCalls?: number;
   maxPostsPerBatch?: number;
   maxInputTokens?: number;
-  /** Stops further requests once this run's spend since the batch began reaches it. */
+  /**
+   * A spending limit for the batch. Before each request the worst case is reserved: the prompt's estimated tokens plus an assumed
+   * answer length at the model's listed price. A request that could take spending past the limit is not sent, and a model with no
+   * listed price cannot be bounded, so it is refused. The provider is not given a token limit, so a longer answer than assumed is
+   * reconciled afterwards from the returned usage and blocks later requests.
+   */
   maxCostUsd?: number;
+  /** Assumed answer length per post for the cost reservation. */
+  outputTokensPerPost?: number;
   recentRecords?: number;
   policy?: readonly PolicyCategory[];
 }
@@ -159,11 +166,22 @@ function userPrompt(posts: readonly DirectedPost[], brand: DirectorBrand, recent
   return `DATA (untrusted):\n${JSON.stringify(payload)}`;
 }
 
-/** One request budget for the batch: counts every HTTP request, including the ones chatJson makes to retry. */
-function budgeted(fetchFn: typeof fetch, state: { used: number }, max: number, spent: () => number, cap: number | undefined): typeof fetch {
+/** One request budget for the batch: counts every HTTP request, including the ones chatJson makes to retry, and reserves the worst-case cost of each before it is sent. */
+function budgeted(
+  fetchFn: typeof fetch,
+  state: { used: number },
+  max: number,
+  cost: { spent: () => number; cap: number | undefined; model: string; outputTokens: number },
+): typeof fetch {
   return (async (input: URL | RequestInfo, init?: RequestInit) => {
     if (state.used >= max) throw new LlmError(`the art direction request budget of ${max} is used up`);
-    if (cap !== undefined && state.used > 0 && spent() >= cap) throw new LlmError(`the art direction cost cap of $${cap} is reached`);
+    if (cost.cap !== undefined) {
+      const rate = RATES[cost.model];
+      if (!rate) throw new LlmError(`the cost of ${cost.model} cannot be bounded: it has no listed price`);
+      const inputTokens = Math.ceil((typeof init?.body === 'string' ? init.body.length : 0) / 4);
+      const reserve = (inputTokens * rate.in + cost.outputTokens * rate.out) / 1_000_000;
+      if (cost.spent() + reserve > cost.cap) throw new LlmError(`the art direction cost cap of $${cost.cap} would be exceeded (spent $${cost.spent().toFixed(4)}, this request could cost up to $${reserve.toFixed(4)})`);
+    }
     state.used += 1;
     return fetchFn(input, init);
   }) as typeof fetch;
@@ -291,7 +309,12 @@ export async function directWeek(input: {
   const usage: UsageTally = input.ai.usage;
   const spentAtStart = usage.summary().totalUsd;
   const state = { used: 0 };
-  const fetchFn = budgeted(input.fetchFn ?? fetch, state, maxCalls, () => usage.summary().totalUsd - spentAtStart, settings.maxCostUsd);
+  const fetchFn = budgeted(input.fetchFn ?? fetch, state, maxCalls, {
+    spent: () => usage.summary().totalUsd - spentAtStart,
+    cap: settings.maxCostUsd,
+    model: input.ai.textModel,
+    outputTokens: sendable.length * (settings.outputTokensPerPost ?? 350) + 200,
+  });
 
   const drafts = new Map<string, Draft>();
   const requested = new Map<string, string>();

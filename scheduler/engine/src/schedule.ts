@@ -7,7 +7,7 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { composeCaption, parseWeekPlan, readJson } from './content.ts';
+import { composeCaption, isPublishable, parseWeekPlan, readJson } from './content.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { SchedulerClient } from './scheduler-client.ts';
 
@@ -54,6 +54,10 @@ export async function schedulePlan(options: ScheduleOptions): Promise<number> {
   const now = Date.now();
   for (const post of plan.posts) {
     const imagePath = join(outDir, `${post.id}.jpg`);
+    if (!isPublishable(plan, post)) {
+      log(`${post.id}: ${post.approval?.status ?? 'not reviewed'}, not scheduled until it is approved`);
+      continue;
+    }
     if (scheduled[post.id]) {
       log(`${post.id}: already scheduled (${scheduled[post.id]?.postId}), skipping`);
       continue;
