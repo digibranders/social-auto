@@ -153,3 +153,15 @@ test('the safest family cannot be switched off, so a fallback always exists', ()
   const left = enabledFamilies(layoutRegistry, { disabled: ['typography-hero'] });
   assert.ok(left.some((f) => f.id === 'typography-hero'));
 });
+
+test('in the typography family a centred headline and its subline are centred on the same line, so centred text is truly centred', () => {
+  const family = layoutRegistry.find((f) => f.id === 'typography-hero');
+  assert.ok(family);
+  for (const [name, zone] of Object.entries(family.zones)) {
+    if (name === 'left') continue; // the editorial variant is left-aligned by design
+    const headline = zone?.textSlots.find((s) => s.id === 'headline');
+    const subline = zone?.textSlots.find((s) => s.id === 'subline');
+    assert.ok(headline && subline);
+    assert.equal(headline.rect.x + headline.rect.w / 2, subline.rect.x + subline.rect.w / 2, `${name}: headline and subline share a centre line`);
+  }
+});

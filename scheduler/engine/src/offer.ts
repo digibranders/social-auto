@@ -49,7 +49,8 @@ export function offerFrom(factIds: readonly string[] | undefined, facts: readonl
   if (!factIds || factIds.length === 0) return undefined;
   const mine = factIds.flatMap((id) => facts.find((f) => f.id === id) ?? []);
   const candidates = offerableFacts(mine).filter((f) => f.category === 'commercial_term' && f.text.length <= MAX_OFFER_CHARS && !has(f.text, TAX));
-  const fact = candidates[0];
+  // A price shown on its own must say what it is per: without a billing period the number alone could mislead, so no offer.
+  const fact = candidates.find((f) => offerKind(f) !== 'price' || f.values.periods.length > 0 || has(f.label ?? '', /(?<![\p{L}\p{N}])(?:month|monthly|year|yearly|annual|week|weekly|day|daily)(?![\p{L}])/u));
   if (!fact) return undefined;
   const kind = offerKind(fact);
   // A condition counts only if the page tied it to the same plan or card as the offer.

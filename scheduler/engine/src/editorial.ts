@@ -84,7 +84,8 @@ export function validateEditorial(copy: EditorialCopy, context: EditorialContext
     hard.push({ code: 'subline_restates_identity', message: 'the subline repeats the identity line printed on the poster; give it a different, supported point' });
   } else if (subStems.size > 0 && headStems.size > 0) {
     const similarity = jaccard(headStems, subStems);
-    const extra = [...subStems].filter((s) => !headStems.has(s));
+    // A new stem of one to three letters ("own", "all") is a function word, not new information, even when the cited fact happens to contain it.
+    const extra = [...subStems].filter((s) => !headStems.has(s) && s.length >= 4);
     const headFigures = figuresOf(copy.headline);
     const newFigure = [...figuresOf(copy.subline)].some((f) => !headFigures.has(f));
     const citedStems = new Set((context.citedFacts ?? []).flatMap((f) => [...contentStems(f.text, brand, config)]));

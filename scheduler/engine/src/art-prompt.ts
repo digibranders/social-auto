@@ -72,7 +72,7 @@ export function buildImagePrompt({ brief, brand, textSlots }: ImagePromptInput):
   return [
     `${LOOKS[picture.medium]}: ${idea}.`,
     `Setting: ${picture.scene.replace(/[.\s]+$/, '')}. Composition: ${picture.composition.replace(/[.\s]+$/, '')}. Mood: ${picture.mood.replace(/[.\s]+$/, '')}.`,
-    ...(picture.role === 'hero' ? ['Give the scene real depth: a foreground, a midground and a background, one clear focal subject, and a single consistent light source with soft shadows.'] : []),
+    ...(picture.role === 'hero' ? ['Use depth, environmental context, a clear focal subject and coherent lighting where they improve the idea; a minimal, flat or abstract composition is equally valid when it says the idea better.'] : []),
     `${palette(picture.paletteUse, brand.colors)}.`,
     room,
     `${SAFETY}.`,

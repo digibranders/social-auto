@@ -85,3 +85,10 @@ test('a caption that says the same thing twice gets a warning, a caption of dist
   const distinct = 'Acme Replies scores intent while visitors chat. Hot buyers are routed to your team with the transcript. Setup is one script tag.';
   assert.ok(!codes(validateEditorial({ ...copy, caption: distinct }, ctx())).warnings.includes('caption_repeats_itself'));
 });
+
+
+test('the image poster that slipped through: "Your docs ground every answer" against "OyeChats grounds every answer in your own docs" is redundant even though the cited fact contains "own"', () => {
+  const cited = [{ text: 'Every answer is grounded in your own docs, retrieved via hybrid semantic and keyword search.', category: 'capability' as const }];
+  const r = validateEditorial({ headline: 'Your docs ground |every answer|', subline: 'OyeChats grounds every answer in your own docs.' }, ctx({ brandName: 'OyeChats', identityLine: undefined, citedFacts: cited } as Partial<EditorialContext>));
+  assert.deepEqual(codes(r).hard, ['subline_adds_nothing']);
+});

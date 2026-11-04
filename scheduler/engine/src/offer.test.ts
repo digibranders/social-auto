@@ -108,3 +108,11 @@ test('an offer with no icon draws none, offer text is escaped, and a figure-firs
   assert.throws(() => composePoster({ brief: spotlightBrief(), copy: { headline: 'h', subline: 's' }, brand, font: systemFont('Inter'), mode: { kind: 'measure' } }), /figure, quotation or offer/);
   assert.match(iconHtml('card-slash'), /aria-hidden="true"/);
 });
+
+
+test('a price with no billing period is not shown on its own as an offer; the same price with its period is', () => {
+  const noPeriod = factsOf([block('Only ₹599 for the first plan.', { cardId: 'c1', cardGroup: 'g', cardTitle: 'Starter' }), block('Only ₹999 for the next plan.', { cardId: 'c2', cardGroup: 'g', cardTitle: 'Pro' })]);
+  assert.equal(offerFrom([find(noPeriod, '₹599').id], noPeriod), undefined);
+  const withPeriod = factsOf([block('₹599 /mo', { cardId: 'c1', cardGroup: 'g', cardTitle: 'Starter' }), block('₹999 /mo', { cardId: 'c2', cardGroup: 'g', cardTitle: 'Pro' })]);
+  assert.equal(offerFrom([find(withPeriod, '₹599').id], withPeriod)?.kind, 'price');
+});

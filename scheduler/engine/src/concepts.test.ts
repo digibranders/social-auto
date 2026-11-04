@@ -128,6 +128,10 @@ test('concept fields must all be present text: a malformed concept fails, so the
   const clipped = parseConcept({ ...concept(), subject: long }).subject;
   assert.ok(clipped.length <= 100 && clipped.startsWith('word word'));
   assert.throws(() => parseConcept({ ...concept(), subject: '   ' }), /subject/);
+  // The picture's subject and action are kept whole up to the picture limit, and refused (not cut) beyond it.
+  const kept = `${'a '.repeat(70)}b`.trim();
+  assert.equal(parseConcept({ ...concept(), visualSubject: kept }).visualSubject, kept);
+  assert.throws(() => parseConcept({ ...concept(), visualAction: 'x '.repeat(100) }), /visualAction.*160/);
 });
 
 test('the decision is a pure function: the same inputs give the same result', () => {

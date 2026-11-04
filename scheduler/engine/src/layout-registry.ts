@@ -86,9 +86,9 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     allowedMediums: ['abstract', 'illustration'],
     requiredContent: [],
     zones: {
-      top: { textSlots: text(slot('headline', MARGIN, 200, WIDE, 400), slot('subline', MARGIN, 620, 860, 150)), imageSlots: [FULL_IMAGE('texture')] },
-      center: { textSlots: text(slot('headline', MARGIN, 260, WIDE, 420), slot('subline', MARGIN, 720, 860, 150)), imageSlots: [FULL_IMAGE('texture')] },
-      bottom: { textSlots: text(slot('headline', MARGIN, 330, WIDE, 430), slot('subline', MARGIN, 800, 860, 150)), imageSlots: [FULL_IMAGE('texture')] },
+      top: { textSlots: text(slot('headline', MARGIN, 200, WIDE, 400), slot('subline', MARGIN, 620, WIDE, 150)), imageSlots: [FULL_IMAGE('texture')] },
+      center: { textSlots: text(slot('headline', MARGIN, 260, WIDE, 420), slot('subline', MARGIN, 720, WIDE, 150)), imageSlots: [FULL_IMAGE('texture')] },
+      bottom: { textSlots: text(slot('headline', MARGIN, 330, WIDE, 430), slot('subline', MARGIN, 800, WIDE, 150)), imageSlots: [FULL_IMAGE('texture')] },
       // The light editorial variant: text starts clear of the accent rail on the canvas edge; no picture.
       left: { textSlots: text(slot('headline', 96, 250, WIDE - 32, 450), slot('subline', 96, 730, 800, 170)), imageSlots: NO_IMAGE },
     },

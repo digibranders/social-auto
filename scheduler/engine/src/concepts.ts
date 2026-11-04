@@ -76,6 +76,9 @@ export const defaultConceptConfig: ConceptConfig = {
 
 const FIELDS: ReadonlyArray<keyof Concept> = ['subject', 'angle', 'message', 'visualSubject', 'visualAction', 'visualComposition'];
 const MAX_FIELD_CHARS = 100;
+/** The picture's subject and action establish what the picture shows; they are kept whole up to the picture limit and never cut. */
+const ESSENTIAL_FIELDS: ReadonlyArray<keyof Concept> = ['visualSubject', 'visualAction'];
+const MAX_ESSENTIAL_CHARS = 160;
 
 /** The concept the model wrote, checked field by field; a missing or malformed concept fails, so the repeat check can never be skipped. */
 export function parseConcept(raw: unknown): Concept {
@@ -85,8 +88,13 @@ export function parseConcept(raw: unknown): Concept {
   for (const field of FIELDS) {
     const value = record[field];
     if (typeof value !== 'string' || !value.trim()) throw new Error(`"concept.${field}" must be short text`);
-    // A field a little over the limit is cut at a word, not refused: refusing it threw away a whole post and its facts over wording that only feeds the repeat check.
-    concept[field] = clipToLimit(value, MAX_FIELD_CHARS);
+    if (ESSENTIAL_FIELDS.includes(field)) {
+      if (value.trim().length > MAX_ESSENTIAL_CHARS) throw new Error(`"concept.${field}" must be at most ${MAX_ESSENTIAL_CHARS} characters; shorten it without losing what it names`);
+      concept[field] = value.trim();
+    } else {
+      // A descriptive field a little over the limit is cut at a word, not refused: refusing it threw away a whole post and its facts over wording that only feeds the repeat check.
+      concept[field] = clipToLimit(value, MAX_FIELD_CHARS);
+    }
   }
   return concept;
 }

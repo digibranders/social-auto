@@ -66,9 +66,10 @@ test('identical inputs give an identical prompt', () => {
   assert.equal(run(), run());
 });
 
-test('a hero picture is asked for real depth, one focal subject and one light source; a texture is not', () => {
+test('a hero picture is asked for depth and lighting only where they help, and flat or minimal is allowed; a texture is not', () => {
   const heroPrompt = buildImagePrompt({ brief: briefOf(hero), brand, textSlots: slotsOf('split-composition', 'left') }) ?? '';
-  assert.match(heroPrompt, /foreground, a midground and a background, one clear focal subject, and a single consistent light source/);
+  assert.match(heroPrompt, /depth, environmental context, a clear focal subject and coherent lighting where they improve the idea/);
+  assert.match(heroPrompt, /minimal, flat or abstract composition is equally valid/);
   const texture = buildImagePrompt({ brief: briefOf({ ...hero, role: 'texture', medium: 'abstract' }, 'typography-hero', 'center'), brand, textSlots: slotsOf('typography-hero', 'center') }) ?? '';
-  assert.doesNotMatch(texture, /midground/);
+  assert.doesNotMatch(texture, /environmental context/);
 });
