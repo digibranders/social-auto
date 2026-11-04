@@ -151,6 +151,22 @@ Review: rendered art posters are recorded in `history.json` (`weeks[].art`) as `
 Spending: the director reserves each request's worst-case cost (prompt tokens plus an assumed answer length at the model's listed price) against `maxCostUsd` before sending, refuses a model with no listed price when a cap is set, and counts `chatJson`'s own retries inside its two-request budget. The provider is not given a token limit, so a longer answer than assumed is only caught afterwards from the returned usage. Pictures are bought only after a candidate passed measurement, and never for pictureless posts.
 Not built yet: the planner still writes the older image prompt and format for every post (trimming them for art runs would save tokens); there is no `--resume` for a run that crashed between steps (the plan file, atomic writes and per-prompt cached pictures make a re-run safe but it plans a new week); approval is a command-line step, not yet in the dashboard; no fonts are bundled so posters are `capture_complete`, not `render_verified`. Before this is turned on for a client: run it against approved test brands with a live model in shadow (nothing scheduled), review the posters by eye, and check the fallback and rejection rates in the reports across several weeks and brands.
 
+### Evidence facts (what a post may state)
+
+A brand can carry `brands/<slug>/facts.json`: what its site states, kept as the exact words on the page with their structure. It is built by the profile run (`src/analyze.ts`) or on its own with no model call:
+
+```
+cd scheduler/engine && node src/facts.ts --site https://example.com
+```
+
+Each page is read in headless Chrome under a policy that blocks the page's own scripts and the network, with the homepage's stylesheets applied. A fact is `usable` only when nothing in the structure makes it doubtful; otherwise it is `needs_review` with reason codes (target not guarantee, demo value, figure strip, customer result, several figures in one sentence, other language, shared tax note, table or toggle not confirmed, stylesheets missing, conflicting values, stale). Conflicting prices or trials of the same plan hold both facts. Commercial facts older than 30 days are held when read.
+
+With usable facts, `autopilot` gives the writer each post's own one or two facts instead of the brand's free-text offer, rules and proof points; profile text that states a figure is left out; the claim gate checks every figure, price, period and qualifier against the post's facts. The plan says `evidenceCoverage: facts`. What is checked is recorded on each post (`evidenceChecks`): figures and qualifiers are checked by code; that the wording means what the source means is **not** verified (`semantic_support_unverified`). A brand without `facts.json` behaves as before and is `legacy`. A damaged `facts.json` stops the run rather than silently falling back.
+
+A subline that only restates the headline or the identity line goes back to the writer once; after that it stays with a note (`editorial: ...`) for the reviewer. Other editorial findings are warnings only.
+
+Known limits: a table is trusted as plan and attribute only when the plan name also appears as a heading or card title on the site; a monthly/yearly switch is noticed but only the shown variant is read; content hidden only by a stylesheet that could not be fetched may be read (those facts are held); headings count as facts only with a figure or commercial wording; the semantic verifier exists as a pure layer with an injected judge and is not connected to a live model.
+
 ## Where the secrets live (names only, never values)
 
 | Name | Where |

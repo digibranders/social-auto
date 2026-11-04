@@ -32,7 +32,7 @@ const TOPICS = ['reply times', 'handing off', 'sources', 'setup', 'pricing', 'tr
 const concept = (i: number): Concept => ({ subject: TOPICS[i % 7] as string, angle: `how people see ${TOPICS[i % 7]}`, message: `a calm note on ${TOPICS[i % 7]}`, visualSubject: `${TOPICS[i % 7]} object`, visualAction: ['opening', 'turning', 'rising', 'folding', 'glowing', 'sliding', 'tilting'][i % 7] as string, visualComposition: ['close-up', 'overhead', 'wide', 'macro', 'low angle', 'side view', 'top down'][i % 7] as string });
 
 /** A pretend model. `copy` decides the subline and caption of each post from its slot; the rest follows the assignment. */
-function model(copy: (slot: number, prompt: string) => { subline: string; caption: string } = () => ({ subline: 'Acme Replies keeps it simple.', caption: 'A short note.' })) {
+function model(copy: (slot: number, prompt: string, headline: string) => { subline: string; caption: string } = () => ({ subline: 'Acme Replies keeps it simple.', caption: 'A short note.' })) {
   const prompts: string[] = [];
   const fetchFn = (async (_url: string, init?: RequestInit) => {
     const body = String(init?.body);
@@ -42,8 +42,9 @@ function model(copy: (slot: number, prompt: string) => { subline: string; captio
     const posts = slots.map((m, i) => {
       const hook = m[3] as string;
       const anchor = /Build it on this proof point: \\"(.*?)\\"\./.exec(segments[i] ?? '')?.[1];
-      const written = copy(i, body);
+      
       const headline = hook === 'question' ? `Thinking about ${TOPICS[i]}?` : hook === 'numbered_list' ? `3 things about ${TOPICS[i]}` : `Notes on ${TOPICS[i]}`;
+      const written = copy(i, body, headline);
       return { concept: concept(i), painPoint: `A post about ${TOPICS[i]}`, headline, ...written, ...(anchor ? { caption: `${written.caption} ${anchor}` } : {}), visual: 'A single glowing key on a table.', visualLink: 'the key stands for access', hashtags: ['#acme'],
         ...(hook === 'numbered_list' ? { listItems: ['Ask us anything', 'Plan one small step', 'Share what you learn'] } : {}) };
     });
@@ -131,4 +132,33 @@ test('fact assignment: usable brand claims only, one fact per wording, a second 
   const anchor = offered[2] as EvidenceFact;
   assert.equal(assignFacts({ facts: offered, anchors: [anchor], recentFactIds: [] })[0]?.[0]?.id, anchor.id);
   assert.equal(displayFact(anchor), anchor.scope ? `${anchor.scope}: ${anchor.text}` : anchor.text);
+});
+
+test('editorial: a subline that repeats the headline goes back to the writer once, and the retry is used', async () => {
+  let calls = 0;
+  const m = model((slot, _prompt, headline) => {
+    const bad = calls === 0;
+    if (slot === 0) calls += 1;
+    return bad ? { subline: `Acme Replies: ${headline}`, caption: 'A short note.' } : { subline: 'Acme Replies keeps it simple.', caption: 'A short note.' };
+  });
+  const plan = await run(m, undefined, 1);
+  assert.equal(m.prompts.length, 2);
+  assert.match(m.prompts[1] ?? '', /says the headline again/);
+  assert.equal(plan.posts[0]?.subline, 'Acme Replies keeps it simple.');
+  assert.ok(!(plan.posts[0]?.hookWarnings ?? []).some((w) => /editorial/.test(w)));
+});
+
+test('editorial: a repeat that survives the second try stays in the plan with the reason noted for the reviewer', async () => {
+  const plan = await run(model((_slot, _prompt, headline) => ({ subline: `Acme Replies: ${headline}`, caption: 'A short note.' })), undefined, 1);
+  assert.equal(plan.posts.length, 1);
+  assert.ok(plan.posts[0]?.hookWarnings?.includes('editorial: subline_restates_headline'));
+});
+
+test('editorial: a subline that shares words with the headline but adds a fact is not touched', async () => {
+  const m = model(() => ({ subline: 'Acme Replies: notes on reply times, 2 clicks.', caption: 'A short note.' }));
+  const plan = await run(m, undefined, 1).catch((e: Error) => e);
+  // A figure no profile proof point states is turned back by the claim gate, not by the editorial check.
+  assert.ok(plan instanceof Error);
+  assert.match((plan as Error).message, /2/);
+  assert.ok(!/editorial|says the headline again/.test((plan as Error).message));
 });

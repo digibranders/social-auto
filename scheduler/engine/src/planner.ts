@@ -9,6 +9,7 @@ import { assignWeek, checkAnchored, defaultPillars, type PillarSpec, type PostAs
 import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
+import { validateEditorial } from './editorial.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
 import { assignFacts, offerableFacts, rankFacts } from './fact-assignment.ts';
 
@@ -369,8 +370,13 @@ export async function planWeek(options: {
             droppedHere.push(`post ${i + 1}: ${why}`);
             return;
           }
+          // Editorial: a subline that only says the headline or identity line again goes back to the writer; on the last try it stays, with the reason noted for the reviewer.
+          const cited = evidenceMode ? (factsPerPost[offset + i] ?? []).map((f) => ({ text: f.text, category: f.category })) : [];
+          const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: brand.callToAction, citedFacts: cited });
+          if (editorial.hard.length > 0 && attempt < 2) throw new Error(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
+          const editorialNotes = [...editorial.hard, ...editorial.warnings].map((issue) => `editorial: ${issue.code}`);
           const earlier = [...(options.recentHeadlines ?? []), ...posts.map((p) => p.headline), ...builtSoFar.map((p) => p.headline)].map(normalizeHeadline);
-          const warnings = [...repetitionWarnings(draft.headline, earlier).map((w) => `${w.kind}: ${w.detail}`), ...decision.warnings.map((w) => `concept: ${w}`), ...(decision.status === 'unchecked' ? decision.reasons.map((r) => `concept: unchecked, ${r}`) : [])];
+          const warnings = [...repetitionWarnings(draft.headline, earlier).map((w) => `${w.kind}: ${w.detail}`), ...decision.warnings.map((w) => `concept: ${w}`), ...editorialNotes, ...(decision.status === 'unchecked' ? decision.reasons.map((r) => `concept: unchecked, ${r}`) : [])];
           const built = buildPost({
             draft, id: `w${week}-d${offset + i + 1}`, date, weekNumber: options.weekNumber, index: offset + i, brand,
             pillar: assigned.pillar, hook: used, warnings, concept, ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(decision.revisitOf ? { revisitOf: decision.revisitOf } : {}),
