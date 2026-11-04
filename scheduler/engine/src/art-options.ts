@@ -42,6 +42,8 @@ export interface ArtRecord {
   textZone: TextZone;
   pictureRole: PictureRole;
   pictureMedium?: PictureMedium;
+  /** The picture's camera and arrangement, so fallbacks can avoid repeating it. */
+  pictureComposition?: string;
   logoSlot?: string;
   ctaSlot?: string;
 }

@@ -134,7 +134,7 @@ test('missing, duplicate and unknown post ids are reported with specific reasons
   const answer = [directionFor(list[0] as DirectedPost), directionFor(list[0] as DirectedPost), directionFor(list[2] as DirectedPost), { ...directionFor(list[2] as DirectedPost), postId: 'ghost' }];
   const { fetchFn } = scripted(() => reply(answer), () => bad(), () => bad());
   const out = await run(list, fetchFn);
-  const reasons = Object.fromEntries(out.unresolved.map((u) => [u.postId, u.reasons.join(' | ')]));
+  const reasons = Object.fromEntries(out.unresolved.map((u) => [u.postId, u.reasons.map((r) => r.message).join(' | ')]));
   assert.match(reasons['p1'] ?? '', /gave this post 2 directions/);
   assert.match(reasons['p2'] ?? '', /left this post out/);
   assert.equal(out.resolved.some((r) => r.postId === 'p3'), true, 'the valid post is kept');
@@ -194,8 +194,8 @@ test('a picture that asks for an award or a figure is blocked by the policy, and
   const once = { settings: { maxCalls: 1 } };
   const blocked = await run(list, scripted(() => reply([answer('a trophy and a 40% banner')])).fetchFn, once);
   assert.equal(blocked.resolved.length, 0);
-  assert.match(blocked.unresolved[0]?.reasons.join(' ') ?? '', /credentials_and_awards/);
-  assert.match(blocked.unresolved[0]?.reasons.join(' ') ?? '', /numbers_and_metrics/);
+  assert.match(blocked.unresolved[0]?.reasons.map((r) => r.message).join(' ') ?? '', /credentials_and_awards/);
+  assert.match(blocked.unresolved[0]?.reasons.map((r) => r.message).join(' ') ?? '', /numbers_and_metrics/);
 
   const screen = answer('a laptop showing a screenshot of the app');
   assert.equal((await run(list, scripted(() => reply([screen])).fetchFn, once)).resolved.length, 0, 'no approved screenshot: not allowed');
@@ -242,7 +242,7 @@ test('posts without a concept are not sent and are reported', async () => {
   const { fetchFn, bodies } = scripted(() => reply([directionFor(list[1] as DirectedPost)]));
   const out = await run(list, fetchFn);
   assert.equal(out.resolved.length, 1);
-  assert.match(out.unresolved[0]?.reasons.join(' ') ?? '', /no accepted concept/);
+  assert.match(out.unresolved[0]?.reasons.map((r) => r.message).join(' ') ?? '', /no accepted concept/);
   assert.doesNotMatch(bodies[0]?.messages.find((m) => m.role === 'user')?.content ?? '', /"postId":"p1"/);
 });
 
@@ -253,10 +253,10 @@ test('a batch over the limit is refused before any request', async () => {
   assert.equal(bodies.length, 0);
   assert.equal(out.requests, 0);
   assert.equal(out.unresolved.length, 7);
-  assert.match(out.unresolved[0]?.reasons[0] ?? '', /batch_too_large/);
+  assert.match(out.unresolved[0]?.reasons[0]?.message ?? '', /batch_too_large/);
   const tiny = await run(list, fetchFn, { settings: { maxInputTokens: 50 } });
   assert.equal(bodies.length, 0);
-  assert.match(tiny.unresolved[0]?.reasons[0] ?? '', /batch_too_large/);
+  assert.match(tiny.unresolved[0]?.reasons[0]?.message ?? '', /batch_too_large/);
 });
 
 test('brand slots rotate across the batch and history is not changed by directing', async () => {

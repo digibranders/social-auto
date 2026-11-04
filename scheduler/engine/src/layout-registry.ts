@@ -5,7 +5,7 @@
  * resolves anything the brief leaves open. Geometry is for the 1080 square only in v1; other ratios need their own
  * recomposition and are named in the schema but not yet built. Families describe design capability, never an industry.
  */
-import type { ArtBrief, PictureRole, Ratio, TextZone, Hierarchy, PictureMedium } from './art-brief.ts';
+import type { ArtBrief, HeadlineScale, PictureRole, Ratio, TextZone, Hierarchy, PictureMedium } from './art-brief.ts';
 import { CANVAS_SIZE } from './layout.ts';
 
 export interface Rect {
@@ -37,6 +37,8 @@ export interface LayoutFamily {
   version: number;
   supportedRatios: Ratio[];
   allowedHierarchies: Hierarchy[];
+  /** Headline scales the family supports, largest (preferred) first. */
+  scales: HeadlineScale[];
   allowedPictureRoles: PictureRole[];
   /** When absent every medium is allowed. */
   allowedMediums?: PictureMedium[];
@@ -79,6 +81,7 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     version: 1,
     supportedRatios: ['1:1'],
     allowedHierarchies: ['headline-first'],
+    scales: ['xl', 'large', 'medium'],
     allowedPictureRoles: ['none', 'texture'],
     allowedMediums: ['abstract', 'illustration'],
     requiredContent: [],
@@ -99,6 +102,7 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     version: 1,
     supportedRatios: ['1:1'],
     allowedHierarchies: ['headline-first', 'picture-first'],
+    scales: ['large', 'medium', 'small'],
     allowedPictureRoles: ['hero'],
     requiredContent: [],
     zones: {
@@ -120,6 +124,7 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     version: 1,
     supportedRatios: ['1:1'],
     allowedHierarchies: ['picture-first', 'headline-first'],
+    scales: ['large', 'medium', 'small'],
     allowedPictureRoles: ['hero'],
     requiredContent: [],
     zones: {
@@ -140,6 +145,7 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     version: 1,
     supportedRatios: ['1:1'],
     allowedHierarchies: ['headline-first', 'picture-first'],
+    scales: ['large', 'medium', 'small'],
     allowedPictureRoles: ['hero'],
     allowedMediums: ['illustration', 'isometric', 'still-life', 'diagram', 'photo-like'],
     requiredContent: ['offering'],
@@ -161,6 +167,7 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     version: 1,
     supportedRatios: ['1:1'],
     allowedHierarchies: ['list-first', 'headline-first'],
+    scales: ['large', 'medium', 'small'],
     allowedPictureRoles: ['none', 'supporting'],
     allowedMediums: ['diagram', 'abstract', 'illustration'],
     requiredContent: ['list'],
@@ -187,6 +194,7 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     version: 1,
     supportedRatios: ['1:1'],
     allowedHierarchies: ['figure-first', 'headline-first'],
+    scales: ['large', 'medium', 'small'],
     allowedPictureRoles: ['none', 'texture', 'supporting'],
     allowedMediums: ['abstract', 'illustration'],
     requiredContent: ['evidence'],
@@ -242,6 +250,7 @@ export function validateRegistry(registry: readonly LayoutFamily[]): string[] {
     seen.add(family.id);
     for (const ratio of family.supportedRatios) if (ratio !== '1:1') problems.push(`${label}: has no geometry for ratio ${ratio}`);
     if (family.allowedHierarchies.length === 0) problems.push(`${label}: allows no hierarchy`);
+    if (family.scales.length === 0) problems.push(`${label}: supports no headline scale`);
     if (Object.keys(family.zones).length === 0) problems.push(`${label}: has no text zone`);
 
     const brandSlots = [...family.logoSlots, ...family.identitySlots, ...family.ctaSlots];
@@ -302,6 +311,7 @@ export type BriefProblemKind =
   | 'unknown_layout'
   | 'unsupported_ratio'
   | 'hierarchy_not_allowed'
+  | 'scale_not_allowed'
   | 'text_zone_not_allowed'
   | 'picture_role_not_allowed'
   | 'picture_medium_not_allowed'
@@ -332,6 +342,7 @@ export function checkBriefAgainstFamily(brief: ArtBrief, registry: readonly Layo
 
   if (!family.supportedRatios.includes(ratio)) add('unsupported_ratio', `ratio ${ratio} is not supported`);
   if (!family.allowedHierarchies.includes(brief.hierarchy)) add('hierarchy_not_allowed', `hierarchy "${brief.hierarchy}" is not allowed`);
+  if (!family.scales.includes(brief.headlineScale)) add('scale_not_allowed', `headline scale "${brief.headlineScale}" is not supported`);
 
   const zone = family.zones[brief.textZone];
   if (!zone) add('text_zone_not_allowed', `text zone "${brief.textZone}" is not available`);

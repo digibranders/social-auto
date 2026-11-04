@@ -31,6 +31,8 @@ export interface DirectedPost {
   /** The accepted concept; a post without one cannot be art directed. */
   concept?: Concept;
   shortlist: readonly ScoredOption[];
+  /** Every eligible option, best first, for the fallback ladder. */
+  eligible?: readonly ScoredOption[];
   /** Approved material that lifts a picture-policy category for this post. */
   productAsset?: boolean;
   credential?: boolean;
@@ -66,9 +68,32 @@ export interface DirectedResult {
   warnings: string[];
 }
 
+export type DirectionReasonCode =
+  | 'invalid_option_id'
+  | 'missing_direction'
+  | 'duplicate_direction'
+  | 'unsupported_medium'
+  | 'missing_picture'
+  | 'invalid_scale'
+  | 'invalid_alignment'
+  | 'picture_policy_blocked'
+  | 'no_concept'
+  | 'no_options'
+  | 'batch_too_large'
+  | 'model_failed'
+  | 'brief_invalid'
+  | 'no_slot_placement';
+
+export interface DirectionReason {
+  code: DirectionReasonCode;
+  message: string;
+}
+
 export interface UnresolvedPost {
   postId: string;
-  reasons: string[];
+  reasons: DirectionReason[];
+  /** The option the model chose, when it named one of the post's options; absent when it named none or none came. */
+  requestedOptionId?: string;
 }
 
 export interface DirectionOutcome {
@@ -106,7 +131,7 @@ interface Direction {
   picture: unknown;
 }
 
-function userPrompt(posts: readonly DirectedPost[], brand: DirectorBrand, recent: readonly ArtRecord[], reasons: ReadonlyMap<string, string[]>): string {
+function userPrompt(posts: readonly DirectedPost[], brand: DirectorBrand, recent: readonly ArtRecord[], reasons: ReadonlyMap<string, DirectionReason[]>): string {
   const payload = {
     brand: {
       font: clean(brand.font, 60),
@@ -128,7 +153,7 @@ function userPrompt(posts: readonly DirectedPost[], brand: DirectorBrand, recent
         ? { message: clean(post.concept.message, 160), visualSubject: clean(post.concept.visualSubject, 120), visualAction: clean(post.concept.visualAction, 120) }
         : null,
       options: post.shortlist.map((o) => ({ optionId: optionId(o), layout: o.layout, textZone: o.zone, hierarchy: o.hierarchy, pictureRole: o.pictureRole, mediums: o.mediums })),
-      ...(reasons.has(post.id) ? { previousAttemptProblems: reasons.get(post.id) } : {}),
+      ...(reasons.has(post.id) ? { previousAttemptProblems: (reasons.get(post.id) ?? []).map((r) => r.message) } : {}),
     })),
   };
   return `DATA (untrusted):\n${JSON.stringify(payload)}`;
@@ -158,34 +183,45 @@ function words(text: string): Set<string> {
 }
 
 /** Checks one direction against its post. Returns a draft to build from, or the reasons it failed. */
-function validate(direction: Direction, post: DirectedPost, settings: DirectorSettings): Draft | string[] {
+function validate(direction: Direction, post: DirectedPost, settings: DirectorSettings): Draft | DirectionReason[] {
   const option = post.shortlist.find((o) => optionId(o) === direction.optionId);
-  if (!option) return [`"${String(direction.optionId)}" is not one of this post's options`];
+  if (!option) return [{ code: 'invalid_option_id', message: `"${String(direction.optionId)}" is not one of this post's options` }];
+  const family = familyById(layoutRegistry, option.layout);
+  const problems: DirectionReason[] = [];
+  if (typeof direction.headlineScale !== 'string' || !(family?.scales as readonly string[] | undefined)?.includes(direction.headlineScale)) {
+    problems.push({ code: 'invalid_scale', message: `"headlineScale" must be one of ${(family?.scales ?? HEADLINE_SCALES).join(', ')} for this option` });
+  }
+  if (typeof direction.alignment !== 'string' || !(ALIGNMENTS as readonly string[]).includes(direction.alignment)) {
+    problems.push({ code: 'invalid_alignment', message: `"alignment" must be one of ${ALIGNMENTS.join(', ')}` });
+  }
   const picture: Record<string, unknown> = {};
   const warnings: string[] = [];
   if (option.pictureRole !== 'none') {
-    if (!isRecord(direction.picture)) return ['"picture" is required for an option with a picture'];
+    if (!isRecord(direction.picture)) return [...problems, { code: 'missing_picture', message: '"picture" is required for an option with a picture' }];
     const raw = direction.picture;
     if (typeof raw['medium'] !== 'string' || !(option.mediums as readonly string[]).includes(raw['medium'])) {
-      return [`"picture.medium" must be one of ${option.mediums.join(', ')} for this option`];
+      return [...problems, { code: 'unsupported_medium', message: `"picture.medium" must be one of ${option.mediums.join(', ')} for this option` }];
     }
     for (const key of ['medium', 'scene', 'composition', 'mood', 'paletteUse']) picture[key] = raw[key];
     const fields = ['scene', 'composition', 'mood'].map((key) => (typeof raw[key] === 'string' ? (raw[key] as string) : ''));
     const policy = checkPicturePolicy(fields, { productAsset: post.productAsset === true, credential: post.credential === true }, settings.policy ?? defaultPicturePolicy);
-    if (policy.violations.length > 0) return [`the picture asks for something the policy holds back: ${policy.violations.join(', ')}`];
+    if (policy.violations.length > 0) {
+      return [...problems, { code: 'picture_policy_blocked', message: `the picture asks for something the policy holds back: ${policy.violations.join(', ')}` }];
+    }
     warnings.push(...policy.warnings);
     const concept = words(`${post.concept?.visualSubject ?? ''} ${post.concept?.visualAction ?? ''}`);
     const described = words(fields.join(' '));
     if (concept.size > 0 && ![...concept].some((w) => described.has(w))) warnings.push('concept_overlap_low: the scene shares no word with the concept subject (a diagnostic, not a failure)');
   }
+  if (problems.length > 0) return problems;
   return { post, option, headlineScale: direction.headlineScale, alignment: direction.alignment, picture, warnings };
 }
 
 /** Assigns the code-owned fields and parses the final brief. */
-function build(draft: Draft, family: LayoutFamily, history: readonly ArtRecord[]): { result: DirectedResult } | { reasons: string[] } {
+function build(draft: Draft, family: LayoutFamily, history: readonly ArtRecord[]): { result: DirectedResult } | { reasons: DirectionReason[] } {
   const { post, option } = draft;
   const slots = chooseBrandSlots(family, option.zone, history);
-  if (!slots) return { reasons: [`no collision-free logo, identity and CTA placement exists in ${family.id}/${option.zone}`] };
+  if (!slots) return { reasons: [{ code: 'no_slot_placement', message: `no collision-free logo, identity and CTA placement exists in ${family.id}/${option.zone}` }] };
   const concept = post.concept as Concept;
   const picture = option.pictureRole === 'none' ? { role: 'none' } : { role: option.pictureRole, ...draft.picture, subject: concept.visualSubject, action: concept.visualAction };
   let brief: ArtBrief;
@@ -195,17 +231,20 @@ function build(draft: Draft, family: LayoutFamily, history: readonly ArtRecord[]
       post.id,
     );
   } catch (error) {
-    return { reasons: [error instanceof ArtDirectionError ? error.message.replace(`${post.id}: `, '') : String(error)] };
+    const message = error instanceof ArtDirectionError ? error.message.replace(`${post.id}: `, '') : String(error);
+    const code: DirectionReasonCode = message.includes('"headlineScale"') ? 'invalid_scale' : message.includes('"alignment"') ? 'invalid_alignment' : 'brief_invalid';
+    return { reasons: [{ code, message }] };
   }
   const check = checkBriefAgainstFamily(brief, layoutRegistry);
-  if (!check.ok) return { reasons: check.problems.map((p) => p.message) };
+  if (!check.ok) return { reasons: check.problems.map((p) => ({ code: p.kind === 'scale_not_allowed' ? ('invalid_scale' as const) : ('brief_invalid' as const), message: p.message })) };
   const medium = brief.picture.role === 'none' ? undefined : brief.picture.medium;
+  const composition = brief.picture.role === 'none' ? undefined : brief.picture.composition;
   return {
     result: {
       postId: post.id,
       optionId: optionId(option),
       brief,
-      record: { layout: option.layout, hierarchy: option.hierarchy, textZone: option.zone, pictureRole: option.pictureRole, ...(medium ? { pictureMedium: medium } : {}), logoSlot: slots.logoSlot, ctaSlot: slots.ctaSlot },
+      record: { layout: option.layout, hierarchy: option.hierarchy, textZone: option.zone, pictureRole: option.pictureRole, ...(medium ? { pictureMedium: medium } : {}), ...(composition ? { pictureComposition: composition } : {}), logoSlot: slots.logoSlot, ctaSlot: slots.ctaSlot },
       warnings: draft.warnings,
     },
   };
@@ -227,24 +266,25 @@ export async function directWeek(input: {
   const maxCalls = settings.maxCalls ?? defaults.maxCalls;
   const recent = input.history.slice(-(settings.recentRecords ?? defaults.recentRecords));
   const outcome: DirectionOutcome = { resolved: [], unresolved: [], requests: 0, notes: [] };
-  const failures = new Map<string, string[]>();
-  const fail = (id: string, ...reasons: string[]): void => {
+  const failures = new Map<string, DirectionReason[]>();
+  const fail = (id: string, ...reasons: DirectionReason[]): void => {
     failures.set(id, [...(failures.get(id) ?? []), ...reasons]);
   };
+  const reason = (code: DirectionReasonCode, message: string): DirectionReason => ({ code, message });
 
   const sendable: DirectedPost[] = [];
   for (const post of input.posts) {
-    if (!post.concept) fail(post.id, 'the post has no accepted concept to keep the picture faithful to');
-    else if (post.shortlist.length === 0) fail(post.id, 'the post has no art direction options');
+    if (!post.concept) fail(post.id, reason('no_concept', 'the post has no accepted concept to keep the picture faithful to'));
+    else if (post.shortlist.length === 0) fail(post.id, reason('no_options', 'the post has no art direction options'));
     else sendable.push(post);
   }
 
   if (sendable.length > (settings.maxPostsPerBatch ?? defaults.maxPostsPerBatch)) {
-    for (const post of sendable) fail(post.id, `batch_too_large: ${sendable.length} posts exceed the limit of ${settings.maxPostsPerBatch ?? defaults.maxPostsPerBatch}`);
+    for (const post of sendable) fail(post.id, reason('batch_too_large', `batch_too_large: ${sendable.length} posts exceed the limit of ${settings.maxPostsPerBatch ?? defaults.maxPostsPerBatch}`));
     return finalize(outcome, input.posts, new Map(), failures, input.history);
   }
   if (estimateTokens(SYSTEM_PROMPT + userPrompt(sendable, input.brand, recent, new Map())) > (settings.maxInputTokens ?? defaults.maxInputTokens)) {
-    for (const post of sendable) fail(post.id, 'batch_too_large: the request would exceed the input token limit');
+    for (const post of sendable) fail(post.id, reason('batch_too_large', 'batch_too_large: the request would exceed the input token limit'));
     return finalize(outcome, input.posts, new Map(), failures, input.history);
   }
 
@@ -254,7 +294,8 @@ export async function directWeek(input: {
   const fetchFn = budgeted(input.fetchFn ?? fetch, state, maxCalls, () => usage.summary().totalUsd - spentAtStart, settings.maxCostUsd);
 
   const drafts = new Map<string, Draft>();
-  const ask = async (posts: readonly DirectedPost[], reasons: ReadonlyMap<string, string[]>): Promise<Direction[]> =>
+  const requested = new Map<string, string>();
+  const ask = async (posts: readonly DirectedPost[], reasons: ReadonlyMap<string, DirectionReason[]>): Promise<Direction[]> =>
     chatJson({
       ai: input.ai,
       fetchFn,
@@ -274,10 +315,12 @@ export async function directWeek(input: {
     for (const d of directions) if (!byId.has(d.postId)) outcome.notes.push(`unknown post id "${d.postId}" in the answer`);
     for (const post of asked) {
       const mine = directions.filter((d) => d.postId === post.id);
-      if (mine.length === 0) fail(post.id, 'the answer left this post out');
-      else if (mine.length > 1) fail(post.id, `the answer gave this post ${mine.length} directions`);
+      if (mine.length === 0) fail(post.id, reason('missing_direction', 'the answer left this post out'));
+      else if (mine.length > 1) fail(post.id, reason('duplicate_direction', `the answer gave this post ${mine.length} directions`));
       else {
-        const checked = validate(mine[0] as Direction, post, settings);
+        const direction = mine[0] as Direction;
+        if (post.shortlist.some((o) => optionId(o) === direction.optionId)) requested.set(post.id, direction.optionId);
+        const checked = validate(direction, post, settings);
         if (Array.isArray(checked)) fail(post.id, ...checked);
         else drafts.set(post.id, checked);
       }
@@ -298,11 +341,11 @@ export async function directWeek(input: {
     }
   }
   if (first) absorb(sendable, first);
-  else for (const post of sendable) fail(post.id, 'the model call failed');
+  else for (const post of sendable) fail(post.id, reason('model_failed', 'the model call failed'));
 
   const toRepair = first ? sendable.filter((p) => failures.has(p.id) && !drafts.has(p.id)) : [];
   if (toRepair.length > 0 && state.used < maxCalls) {
-    const prior = new Map(toRepair.map((p) => [p.id, failures.get(p.id) ?? []]));
+    const prior = new Map<string, DirectionReason[]>(toRepair.map((p) => [p.id, failures.get(p.id) ?? []]));
     try {
       const repaired = await ask(toRepair, prior);
       const wanted = new Set(toRepair.map((p) => p.id));
@@ -317,25 +360,34 @@ export async function directWeek(input: {
   }
 
   outcome.requests = state.used;
-  return finalize(outcome, input.posts, drafts, failures, input.history);
+  return finalize(outcome, input.posts, drafts, failures, input.history, requested);
 }
 
 /** Builds the final briefs in post order, so brand slots rotate deterministically, and lists what stays unresolved. */
-function finalize(outcome: DirectionOutcome, posts: readonly DirectedPost[], drafts: ReadonlyMap<string, Draft>, failures: ReadonlyMap<string, string[]>, history: readonly ArtRecord[]): DirectionOutcome {
+function finalize(
+  outcome: DirectionOutcome,
+  posts: readonly DirectedPost[],
+  drafts: ReadonlyMap<string, Draft>,
+  failures: ReadonlyMap<string, DirectionReason[]>,
+  history: readonly ArtRecord[],
+  requested: ReadonlyMap<string, string> = new Map(),
+): DirectionOutcome {
   const running = [...history];
   for (const post of posts) {
     const draft = drafts.get(post.id);
     if (!draft) {
-      outcome.unresolved.push({ postId: post.id, reasons: failures.get(post.id) ?? ['not directed'] });
+      const asked = requested.get(post.id);
+      outcome.unresolved.push({ postId: post.id, reasons: failures.get(post.id) ?? [{ code: 'missing_direction', message: 'not directed' }], ...(asked ? { requestedOptionId: asked } : {}) });
       continue;
     }
     const family = familyById(layoutRegistry, draft.option.layout);
-    const built = family ? build(draft, family, running) : { reasons: [`unknown layout "${draft.option.layout}"`] };
+    const built = family ? build(draft, family, running) : { reasons: [{ code: 'brief_invalid' as const, message: `unknown layout "${draft.option.layout}"` }] };
     if ('result' in built) {
       outcome.resolved.push(built.result);
       running.push(built.result.record);
     } else {
-      outcome.unresolved.push({ postId: post.id, reasons: built.reasons });
+      const asked = requested.get(post.id);
+      outcome.unresolved.push({ postId: post.id, reasons: built.reasons, ...(asked ? { requestedOptionId: asked } : {}) });
     }
   }
   return outcome;
