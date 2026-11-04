@@ -9,6 +9,8 @@ import { assignWeek, checkAnchored, defaultPillars, type PillarSpec, type PostAs
 import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
+import { displayFact, type EvidenceFact } from './evidence.ts';
+import { assignFacts, offerableFacts, rankFacts } from './fact-assignment.ts';
 
 /**
  * The prompt for one post's background picture: the scene, then the brand's visual style (palette in words, mood, what to
@@ -52,9 +54,13 @@ Hard rules:
 Return a single JSON object and nothing else.`;
 
 /** The pillar of each post in the order the model must write them, and the proof point a proof post is built on. */
-function assignmentLines(assignments: readonly PostPlan[]): string {
+function assignmentLines(assignments: readonly PostPlan[], facts: ReadonlyArray<readonly EvidenceFact[]> = []): string {
   if (assignments.length === 0) return '';
-  const lines = assignments.map((a, i) => `Post ${i + 1} (${a.hook ? `${a.pillar}, ${a.hook}` : a.pillar}): ${a.brief}${a.anchor ? ` Build it on this proof point: "${a.anchor}".` : ''}${a.hookBrief ? ` Headline hook: ${a.hookBrief}` : ''}`);
+  const lines = assignments.map((a, i) => {
+    const mine = facts[i] ?? [];
+    const allowed = mine.length > 0 ? ` Facts you may use for this post, in the website's exact words (use no other figure, price, plan, trial or term):${mine.map((f) => ` - "${displayFact(f)}"`).join('')}.` : '';
+    return `Post ${i + 1} (${a.hook ? `${a.pillar}, ${a.hook}` : a.pillar}): ${a.brief}${a.anchor ? ` Build it on this proof point: "${a.anchor}".` : ''}${allowed}${a.hookBrief ? ` Headline hook: ${a.hookBrief}` : ''}`;
+  });
   return `\n\nEvery post belongs to a content pillar and opens with an assigned hook. Write the posts in this order, each following its pillar and hook:\n${lines.join('\n')}`;
 }
 
@@ -71,27 +77,33 @@ function conceptLines(recent: readonly ConceptRecord[]): string {
   return `\n\nAvoid repeating these recent creative angles and pictures:\n${lines.join('\n')}\nYou may write about the same product or subject again, but with a genuinely different, evidence-supported message, and a different picture idea.`;
 }
 
-export function userPrompt(brand: Brand, count: number, usedPainPoints: string[], assignments: readonly PostPlan[] = [], recentConcepts: readonly ConceptRecord[] = []): string {
-  return `Brand profile:
-${JSON.stringify(
-  {
+/** True when a profile sentence states no figure, price or period, so it can reach the writer without being a claim nothing verified. */
+export const figureFree = (text: string): boolean => !/[\p{N}$€£₹¥%]/u.test(text);
+
+/** The profile as the writer sees it. With evidence facts, the free-text offer, rules and proof points stay out (the facts are given per post), and any other profile text that states a figure is left out too. */
+export function profileForPrompt(brand: Brand, withFacts: boolean): Record<string, unknown> {
+  if (!withFacts) return { name: brand.name, website: brand.handleUrl, offer: brand.offer, audience: brand.audience, tone: brand.tone, proofPoints: brand.proofPoints, callToAction: brand.callToAction, rules: brand.rules };
+  return {
     name: brand.name,
     website: brand.handleUrl,
-    offer: brand.offer,
-    audience: brand.audience,
-    tone: brand.tone,
-    proofPoints: brand.proofPoints,
+    ...(figureFree(brand.audience) ? { audience: brand.audience } : {}),
+    ...(figureFree(brand.tone) ? { tone: brand.tone } : {}),
     callToAction: brand.callToAction,
-    rules: brand.rules,
-  },
-  null,
-  2,
-)}
+  };
+}
+
+export function userPrompt(brand: Brand, count: number, usedPainPoints: string[], assignments: readonly PostPlan[] = [], recentConcepts: readonly ConceptRecord[] = [], facts?: ReadonlyArray<readonly EvidenceFact[]>): string {
+  const withFacts = facts !== undefined;
+  const figureRule = withFacts
+    ? 'A number, price, percentage, plan, trial, tax term, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if one of the facts listed for that post states it, with that figure, plan, qualifier and wording unchanged; with no fact for it, say the benefit in plain words instead.'
+    : 'A number, price, percentage, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if a proof point above states it, with that figure and wording unchanged; with no proof point for it, say the benefit in plain words instead.';
+  return `Brand profile:
+${JSON.stringify(profileForPrompt(brand, withFacts), null, 2)}
 
 Pain points already used in earlier weeks (do NOT repeat or rephrase these):
 ${usedPainPoints.length ? usedPainPoints.map((p) => `- ${p}`).join('\n') : '- none yet'}
 
-Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. A number, price, percentage, superlative (best, fastest, number one), guarantee or deadline may appear in the headline, subline or caption only if a proof point above states it, with that figure and wording unchanged; with no proof point for it, say the benefit in plain words instead. The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead.${assignmentLines(assignments)}${conceptLines(recentConcepts)}
+Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. ${figureRule} The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead.${assignmentLines(assignments, facts)}${conceptLines(recentConcepts)}
 
 Return JSON:
 {
@@ -130,7 +142,7 @@ export interface DraftPost {
  * One planned post from the model's draft. The format comes from the rotation in code, so a week varies whatever the model
  * writes: a type-only post needs no picture, the others get a prompt in the brand's own colours.
  */
-export function buildPost(options: { draft: DraftPost; id: string; date: string; weekNumber: number; index: number; brand: Brand; pillar?: string; hook?: string; requestedHook?: string; warnings?: readonly string[]; concept?: Concept; anchor?: string; revisitOf?: string }): PlannedPost {
+export function buildPost(options: { draft: DraftPost; id: string; date: string; weekNumber: number; index: number; brand: Brand; pillar?: string; hook?: string; requestedHook?: string; warnings?: readonly string[]; concept?: Concept; anchor?: string; revisitOf?: string; factIds?: readonly string[]; evidenceChecks?: readonly string[] }): PlannedPost {
   const { draft, brand } = options;
   const format = formatFor(options.weekNumber, options.index);
   const items = options.hook === 'numbered_list' && draft.listItems ? draft.listItems.map((i) => i.trim()) : [];
@@ -140,6 +152,7 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
     id: options.id, date: options.date, painPoint: draft.painPoint, ...(options.pillar ? { pillar: options.pillar } : {}),
     ...(options.concept ? { concept: options.concept } : {}), ...(options.anchor ? { anchor: options.anchor } : {}), ...(options.revisitOf ? { revisitOf: options.revisitOf } : {}),
     ...(options.hook ? { hook: options.hook } : {}), ...(options.requestedHook ? { requestedHook: options.requestedHook } : {}),
+    ...(options.factIds && options.factIds.length > 0 ? { factIds: [...options.factIds], evidenceChecks: [...(options.evidenceChecks ?? [])] } : {}),
     ...(options.warnings && options.warnings.length > 0 ? { hookWarnings: [...options.warnings] } : {}), ...(items.length > 0 ? { listItems: items } : {}),
     format, headline: draft.headline, subline: draft.subline, caption, hashtags: draft.hashtags,
   };
@@ -201,7 +214,14 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
 }
 
 /** A week plan, with a note when it holds fewer posts than asked for because the brand ran out of distinct, supported ideas. */
+/** What the week's copy was written and checked against: assigned evidence facts, or only the profile's proof points (legacy coverage). */
+export type EvidenceCoverage = 'facts' | 'legacy';
+
+/** What the claim gate does and does not check for a post written from facts. */
+export const FACT_CHECKS = ['numbers_prices_periods_qualifiers_checked', 'semantic_support_unverified'] as const;
+
 export interface PlannedWeek extends WeekPlan {
+  evidenceCoverage?: EvidenceCoverage;
   insufficientConcepts?: { requested: number; produced: number; reasons: string[] };
 }
 
@@ -248,6 +268,8 @@ export async function planWeek(options: {
   recentConcepts?: readonly ConceptRecord[];
   /** Thresholds and word lists of the repeat check. */
   conceptConfig?: Partial<ConceptConfig>;
+  /** Evidence facts of the brand. With usable facts the writer is given facts per post instead of the free-text offer, rules and proof points, and the claim gate checks the copy against the post's own facts. */
+  evidence?: { facts: readonly EvidenceFact[]; recentFactIds?: readonly string[] };
   log?: (message: string) => void;
   /** Replaces the network for the text model; tests use it. */
   fetchFn?: typeof fetch;
@@ -258,22 +280,32 @@ export async function planWeek(options: {
   const usedPainPoints = [...options.usedPainPoints];
   const posts: WeekPlan['posts'] = [];
   const recentPillars = options.recentPillars ?? [];
+  // With evidence facts, the facts replace the profile's proof points everywhere a post is built or checked; their order already carries the cooldown.
+  const recentFactIds = options.evidence?.recentFactIds ?? [];
+  const offerable = options.evidence ? offerableFacts(options.evidence.facts) : [];
+  const evidenceMode = offerable.length > 0;
+  const rankedFacts = evidenceMode ? rankFacts(offerable, recentFactIds) : [];
+  const proofTexts = evidenceMode ? rankedFacts.map(displayFact) : brand.proofPoints;
+  const pillarEvidence = evidenceMode ? { proofPoints: proofTexts, offer: rankedFacts.some((f) => f.category === 'commercial_term' || f.category === 'offer') ? 'evidence facts' : '', ...(brand.identity ? { identity: brand.identity } : {}) } : brand;
   const assignments = assignWeek({
-    brand,
+    brand: pillarEvidence,
     count: dates.length,
     recent: recentPillars,
-    recentAnchoredCount: recentPillars.filter((name) => (options.pillars ?? defaultPillars).find((p) => p.name === name)?.needs === 'proof').length,
+    recentAnchoredCount: evidenceMode ? 0 : recentPillars.filter((name) => (options.pillars ?? defaultPillars).find((p) => p.name === name)?.needs === 'proof').length,
     ...(options.pillars ? { pillars: options.pillars } : {}),
   });
   // Each post's hook is chosen together with its pillar, from the hooks that suit it and that the brand's evidence supports.
   const hookSpecs = options.hooks ?? defaultHooks;
-  const hooks = assignHooks({ pillars: assignments.map((a) => a.pillar), evidence: { proofPoints: brand.proofPoints }, recentHooks: options.recentHooks ?? [], recentPillars: recentPillars, hooks: hookSpecs });
+  const hooks = assignHooks({ pillars: assignments.map((a) => a.pillar), evidence: { proofPoints: proofTexts }, recentHooks: options.recentHooks ?? [], recentPillars: recentPillars, hooks: hookSpecs });
+  const factsPerPost = evidenceMode ? assignFacts({ facts: offerable, anchors: assignments.map((a) => (a.anchor ? rankedFacts.find((f) => displayFact(f) === a.anchor) : undefined)), recentFactIds }) : [];
   const plans: PostPlan[] = assignments.map((a, i) => ({ ...a, hook: hooks[i] as string, hookBrief: hookSpecs.find((h) => h.id === hooks[i])?.brief ?? '' }));
   const identityLine = brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
   const recentConcepts = options.recentConcepts ?? [];
   /** Concepts of the posts accepted so far in this plan; later posts are compared with them as well as with history. */
   const acceptedRecords: ConceptRecord[] = [];
   const dropped: string[] = [];
+  /** What the claim gate checks the post at this position against: its own assigned facts, or the profile's proof points. */
+  const gateEvidence = (position: number): readonly string[] => (evidenceMode ? (factsPerPost[position] ?? []).map(displayFact) : brand.proofPoints);
 
   for (let offset = 0; offset < dates.length; offset += POSTS_PER_REQUEST) {
     const chunkDates = dates.slice(offset, offset + POSTS_PER_REQUEST);
@@ -286,7 +318,7 @@ export async function planWeek(options: {
       ai: options.ai,
       ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
       system: SYSTEM_PROMPT,
-      user: userPrompt(brand, chunkDates.length, usedPainPoints, plans.slice(offset, offset + chunkDates.length), [...recentConcepts, ...acceptedRecords]),
+      user: userPrompt(brand, chunkDates.length, usedPainPoints, plans.slice(offset, offset + chunkDates.length), [...recentConcepts, ...acceptedRecords], evidenceMode ? factsPerPost.slice(offset, offset + chunkDates.length) : undefined),
       parse: (value) => {
         attempt += 1;
         droppedHere = [];
@@ -302,7 +334,7 @@ export async function planWeek(options: {
           let draft = d;
           let used = assigned.hook as string;
           try {
-            validateDraft(draft, i + 1, brand.name, brand.proofPoints, assigned);
+            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned);
           } catch (error) {
             // On the last try a post whose copy the claim gate still turns back is left out (fewer posts, never unsupported copy); the others stay.
             if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back/.test(error.message)) {
@@ -314,7 +346,7 @@ export async function planWeek(options: {
             if (!headline) throw error;
             draft = { ...d, headline };
             used = 'direct_statement';
-            validateDraft(draft, i + 1, brand.name, brand.proofPoints, { ...assigned, hook: used });
+            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), { ...assigned, hook: used });
           }
           let concept: Concept;
           try {
@@ -343,6 +375,7 @@ export async function planWeek(options: {
             draft, id: `w${week}-d${offset + i + 1}`, date, weekNumber: options.weekNumber, index: offset + i, brand,
             pillar: assigned.pillar, hook: used, warnings, concept, ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(decision.revisitOf ? { revisitOf: decision.revisitOf } : {}),
             ...(used !== assigned.hook ? { requestedHook: assigned.hook as string } : {}),
+            ...(evidenceMode ? { factIds: (factsPerPost[offset + i] ?? []).map((f) => f.id), evidenceChecks: [...FACT_CHECKS] } : {}),
           });
           builtSoFar.push(built);
           records.push(conceptRecordOf(built) as ConceptRecord);
@@ -360,5 +393,6 @@ export async function planWeek(options: {
 
   if (posts.length === 0) throw new InsufficientConceptsError(dates.length, dropped);
   const plan = parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts }, `week-${week}`);
-  return dropped.length > 0 ? { ...plan, insufficientConcepts: { requested: dates.length, produced: posts.length, reasons: dropped } } : plan;
+  const coverage: EvidenceCoverage = evidenceMode ? 'facts' : 'legacy';
+  return dropped.length > 0 ? { ...plan, evidenceCoverage: coverage, insufficientConcepts: { requested: dates.length, produced: posts.length, reasons: dropped } } : { ...plan, evidenceCoverage: coverage };
 }

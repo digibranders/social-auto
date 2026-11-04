@@ -142,6 +142,10 @@ export interface PlannedPost {
   concept?: Concept;
   /** The proof point the post was built on. */
   anchor?: string;
+  /** Evidence facts assigned to the post by code, in the order given to the writer; used for review and for fact cooldown across weeks. */
+  factIds?: string[];
+  /** What was and was not checked against those facts, e.g. semantic_support_unverified. */
+  evidenceChecks?: string[];
   /** The art direction (layout, picture, placements) for posts planned with the art director; older posts have none and render as before. */
   art?: PostArt;
   /** Why an art plan's post has no art direction; such a post is not rendered silently with the older renderer. */
@@ -408,7 +412,7 @@ function parsePost(raw: unknown, source: string): PlannedPost {
       throw new ContentValidationError(where, error instanceof Error ? error.message : String(error));
     }
   }
-  for (const key of ['hookWarnings', 'listItems'] as const) {
+  for (const key of ['hookWarnings', 'listItems', 'factIds', 'evidenceChecks'] as const) {
     const value = raw[key];
     if (value === undefined) continue;
     if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) throw new ContentValidationError(where, `"${key}" must be a list of text`);
