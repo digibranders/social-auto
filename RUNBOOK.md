@@ -44,6 +44,10 @@ The job works in `~/social-auto-runner`, a separate checkout of `main`; it refus
 ### Everything on the VPS
 Publisher and dashboard can run as two Node servers on the VPS instead of Vercel (see `deploy/README.md`): systemd services `social-publisher` and `social-dashboard`, timers `social-cron` and `social-refresh` (replacing Vercel Cron), data in `/var/lib/social-auto`, settings in `/etc/social-auto/*.env`. Logs: `journalctl -u social-publisher -u social-dashboard -u social-cron`. Update with `deploy/scripts/deploy.sh`. Never run the Vercel crons and the server timers together, or a post can go out twice.
 
+**Posts with their own time.** In the dashboard's New post window, a hand-made post can be given a day and a time (India time). Posts without one go out at 10:00 with the daily run. A post with a time is sent by the frequent run, `social-cron-frequent.timer` (every 5 minutes, at minutes 2, 7, 12 and so on), within about 5 minutes of its time: `GET /api/cron?only=manual` looks only at hand-made posts that became due in the last 15 minutes, so a failing post cannot alert all day. Planned posts and the daily warnings stay with the daily run. Both timers take the same lock (`/var/lib/social-auto/cron.lock`), so two runs never overlap. On a server that is already running, copy the new units (see `deploy/README.md`, step 9).
+
+**Google Business.** A client connects their own listing with a link made in the dashboard (Clients, the client, Channels, Google Business, Get a link for the client): they sign in with the Google account that manages the listing and press Allow. Needs `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` in `/etc/social-auto/publisher.env`, `GOOGLE_CLIENT_ID` in `/etc/social-auto/dashboard.env`, and `https://<dashboard address>/api/google/callback` as an authorized redirect URI on the Google OAuth client.
+
 ### Run the content engine on a Linux server
 The engine runs on a Mac or on Linux. On Linux it needs Node 24, Google Chrome (`google-chrome`) and ImageMagick (`convert`, which replaces the Mac's `sips`). Settings are environment variables, so a server needs no edits to the code:
 

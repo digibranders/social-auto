@@ -24,6 +24,8 @@ export async function storePicture(bytes: Uint8Array): Promise<string> {
 export interface NewPostInput {
   brand: string;
   day: unknown;
+  /** "HH:MM" India time; left out means the daily run's 10:00. */
+  time?: unknown;
   caption: unknown;
   imageKey: unknown;
   /** Channel ids; left out means every channel the client has connected right now. */
@@ -39,7 +41,7 @@ export async function saveNewPost(input: NewPostInput, now: number): Promise<Man
   const connected = channelsFor(channels, input.brand).map((c) => c.id);
   const allowed = [...(input.allowInstagram ? ['instagram'] : []), ...connected];
   const chosen = input.channels === undefined ? connected : input.channels;
-  const post = buildManualPost({ brand: input.brand, day: input.day, caption: input.caption, imageKey: input.imageKey, channels: chosen }, allowed, now);
+  const post = buildManualPost({ brand: input.brand, day: input.day, time: input.time, caption: input.caption, imageKey: input.imageKey, channels: chosen }, allowed, now);
   if (!(await imageExists(post.imageKey))) throw new EditError('the picture was not found. Add it again.');
   await saveManual({ posts: [...file.posts, post] }, etag);
   return post;

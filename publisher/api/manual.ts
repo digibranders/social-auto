@@ -2,7 +2,7 @@
  * Hand-made posts from the dashboard. Called only by the dashboard's server (EDIT_SECRET).
  *
  * POST /api/manual?action=image                  body: the JPG file; answers {"imageKey": "..."}
- * POST /api/manual?action=create                 body: {"brand","day":"YYYY-MM-DD","caption","imageKey","channels":["instagram","linkedin:..."]}
+ * POST /api/manual?action=create                 body: {"brand","day":"YYYY-MM-DD","time":"HH:MM" (optional, India time; default 10:00),"caption","imageKey","channels":["instagram","linkedin:..."]}
  * POST /api/manual?action=delete&post=<id>       removes a hand-made post that has not gone out yet
  */
 import { scheduleData } from '../lib/schedule-source.js';
@@ -26,7 +26,7 @@ async function createPost(request: Request): Promise<Response> {
   const { file: added } = await loadClients();
   if (typeof brand !== 'string' || !allBrands(planned, added).has(brand)) throw new EditError('unknown client');
   // The one Instagram account belongs to the clients the content job plans for; an added client cannot use it.
-  const post = await saveNewPost({ brand, day: body['day'], caption: body['caption'], imageKey: body['imageKey'], channels: body['channels'] ?? [], allowInstagram: planned.has(brand) }, Date.now());
+  const post = await saveNewPost({ brand, day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['imageKey'], channels: body['channels'] ?? [], allowInstagram: planned.has(brand) }, Date.now());
   return json(200, { post: post.id, date: post.date });
 }
 

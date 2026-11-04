@@ -11,17 +11,30 @@ export interface NewPostDeps {
   clients: Array<{ brand: string; label: string }>;
   channels: ChannelHealth[];
   /** Resolves to an explanation when the post could not be saved. */
-  submit(post: { brand: string; day: string; caption: string; picture: File; channels: string[] }): Promise<string | null>;
+  submit(post: { brand: string; day: string; time: string; caption: string; picture: File; channels: string[] }): Promise<string | null>;
   close(): void;
 }
 
 /** The id a channel goes by in a post: its own id, or "instagram" for the team's shared Instagram account (which has none). */
 export const postChannelId = (channel: ChannelHealth): string | null => channel.id ?? (channel.platform === 'instagram' ? 'instagram' : null);
 
-/** Tomorrow as YYYY-MM-DD in the person's own calendar: the daily run is in the morning, so today is too late. */
+const pad = (n: number): string => String(n).padStart(2, '0');
+
+/** Today as YYYY-MM-DD in the person's own calendar. A post can go out today when its time is still ahead. */
 export function earliestDay(now: number): string {
-  const d = new Date(now + DAY_MS);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const d = new Date(now);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/** The time the form starts with: the daily run's 10:00. */
+export const DEFAULT_TIME = '10:00';
+
+/** Why this day and time cannot be used (already gone, or about to be), or null. Mirrors what the publisher checks. */
+export function timeProblem(day: string, time: string, now: number): string | null {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return 'Choose a time like 12:05.';
+  const [year, month, date] = day.split('-').map(Number) as [number, number, number];
+  const [hour, minute] = time.split(':').map(Number) as [number, number];
+  return new Date(year, month - 1, date, hour, minute).getTime() <= now ? 'That time has already passed. Choose a later time.' : null;
 }
 
 /** The New post window: pick the client, the channels, the day, a picture and the words. */
@@ -51,6 +64,7 @@ export function newPostForm(brand: string | null, preselect: string | null, deps
   drawChannels();
 
   const day = h('input', { type: 'date', class: 'btn', 'aria-label': 'Day', min: earliestDay(Date.now()) });
+  const time = h('input', { type: 'time', class: 'btn', 'aria-label': 'Time', value: DEFAULT_TIME });
   const picture = h('input', { type: 'file', accept: 'image/jpeg', class: 'visually-hidden', id: 'new-picture' });
   const pictureName = h('span', { class: 'muted' }, 'No picture chosen');
   const pick = button('Choose picture', 'btn', () => picture.click());
@@ -75,9 +89,11 @@ export function newPostForm(brand: string | null, preselect: string | null, deps
   };
   const save = button('Schedule post', 'btn btn-primary', () => {
     const chosen = picture.files?.[0];
+    const late = day.value ? timeProblem(day.value, time.value, Date.now()) : null;
     const problem =
       ticked.size === 0 ? 'Choose at least one channel.'
       : !day.value ? 'Choose the day.'
+      : late ? late
       : !chosen ? 'Choose a picture.'
       : chosen.type !== 'image/jpeg' ? 'The picture must be a JPG.'
       : chosen.size > MAX_PICTURE_BYTES ? 'That picture is over 4 MB. Choose a smaller one.'
@@ -86,7 +102,7 @@ export function newPostForm(brand: string | null, preselect: string | null, deps
     if (problem || !chosen) return show(problem ?? '', true);
     save.disabled = true;
     show('Saving…', false);
-    void deps.submit({ brand: who.value, day: day.value, caption: area.value, picture: chosen, channels: [...ticked] }).then((error) => {
+    void deps.submit({ brand: who.value, day: day.value, time: time.value, caption: area.value, picture: chosen, channels: [...ticked] }).then((error) => {
       if (error) {
         show(error, true);
         save.disabled = false;
@@ -101,8 +117,8 @@ export function newPostForm(brand: string | null, preselect: string | null, deps
     deps.clients.length > 1 ? h('label', { class: 'picker-client' }, h('span', { class: 'muted' }, 'For client'), who) : null,
     h('h3', { class: 'label' }, 'Post to'),
     boxes,
-    h('h3', { class: 'label' }, 'Day'),
-    h('div', { class: 'actions' }, day, h('span', { class: 'muted' }, 'Goes out at 10:00 AM that day, with the daily run.')),
+    h('h3', { class: 'label' }, 'Day and time'),
+    h('div', { class: 'actions' }, day, time, h('span', { class: 'muted' }, 'India time. It goes out within about 5 minutes of the time you choose.')),
     h('h3', { class: 'label' }, 'Picture'),
     h('div', { class: 'actions' }, pick, picture, pictureName),
     h('p', { class: 'muted' }, 'Square JPG, up to 4 MB.'),

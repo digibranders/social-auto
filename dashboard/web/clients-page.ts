@@ -59,11 +59,11 @@ export function expiryNote(expiresAt: string | undefined, now: number): string |
 }
 
 /**
- * Makes a link to connect LinkedIn, Instagram or Facebook: a client opens it and presses Allow on their own account, or you
+ * Makes a link to connect LinkedIn, Instagram, Facebook or a Google Business listing: a client opens it and presses Allow on their own account, or you
  * open it in the browser where the right account is signed in.
  * Asking is one click; copying is a second, so the browser allows it.
  */
-export function inviteLinkBox(brand: string, label: string, platform: 'linkedin' | 'instagram' | 'facebook' = 'linkedin'): HTMLElement {
+export function inviteLinkBox(brand: string, label: string, platform: 'linkedin' | 'instagram' | 'facebook' | 'google' = 'linkedin'): HTMLElement {
   const box = h('div', { class: 'link-box' });
   const result = h('div', { class: 'link-result', hidden: '' });
   const message = h('p', { class: 'muted', hidden: '' });
@@ -84,7 +84,7 @@ export function inviteLinkBox(brand: string, label: string, platform: 'linkedin'
             () => { copy.textContent = 'Press Ctrl+C to copy'; },
           );
         });
-        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their ${{ linkedin: 'LinkedIn', instagram: 'Instagram', facebook: 'Facebook' }[platform]} for this client.`));
+        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their ${{ linkedin: 'LinkedIn', instagram: 'Instagram', facebook: 'Facebook', google: 'Google Business listing' }[platform]} for this client.`));
         result.hidden = false;
       } catch (error) {
         message.textContent = error instanceof Error ? error.message : String(error);
@@ -122,6 +122,7 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
       channel.platform === 'linkedin' ? inviteLinkBox(client.brand, 'Get a new link for the client') : null,
       channel.platform === 'instagram' && channel.id !== null ? inviteLinkBox(client.brand, 'Get a new link for the client', 'instagram') : null,
       channel.platform === 'facebook' ? inviteLinkBox(client.brand, 'Get a link to connect another Page', 'facebook') : null,
+      channel.platform === 'google' ? inviteLinkBox(client.brand, 'Get a link to connect another listing', 'google') : null,
     ),
     h(
       'div',
@@ -141,11 +142,12 @@ function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext):
     h('div', { class: 'channel-meta' }, h('b', {}, channelName(kind)), h('span', { class: 'muted' }, 'Not connected'),
       kind === 'linkedin' ? inviteLinkBox(brand, 'Get a link for the client') : null,
       kind === 'facebook' ? inviteLinkBox(brand, 'Get a link for the client', 'facebook') : null,
+      kind === 'google' ? inviteLinkBox(brand, 'Get a link for the client', 'google') : null,
     ),
     h(
       'div',
       { class: 'channel-actions' },
-      kind === 'google' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(brand)}`)) : null,
+      kind === 'google' ? button('Connect my own', 'btn', () => location.assign(`/api/google/start?brand=${encodeURIComponent(brand)}`)) : null,
       button('How to connect', 'btn', () => ctx.go({ page: 'help', channel: GUIDE_FOR[kind] })),
     ),
   );
@@ -255,8 +257,9 @@ export function channelPicker(
     }
     if (kind === 'google') {
       note.replaceChildren(
-        'Sign in with the Google account that manages the client’s business listing (the client adds you as a manager first). If it manages several locations, you choose one next.',
-        button('Connect Google', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(who.value)}`)),
+        'The client approves their own business listing: make a link and send it to them. They sign in with the Google account that manages the listing and press Allow. Or connect a listing your own account manages.',
+        inviteLinkBox(who.value, 'Get a link for the client', 'google'),
+        button('Connect my own', 'btn', () => location.assign(`/api/google/start?brand=${encodeURIComponent(who.value)}`)),
       );
       return;
     }

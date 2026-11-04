@@ -83,9 +83,9 @@ export function duePost(posts: ScheduledPost[], now: number): ScheduledPost | nu
 }
 
 /** Hand-made posts whose time has passed within the due window. Unlike planned posts, several can go out on one day. */
-export function dueManualPosts(posts: ScheduledPost[], now: number): ScheduledPost[] {
+export function dueManualPosts(posts: ScheduledPost[], now: number, windowMs: number = DUE_WINDOW_MS): ScheduledPost[] {
   return posts
-    .filter((p) => p.manual === true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < DUE_WINDOW_MS)
+    .filter((p) => p.manual === true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < windowMs)
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
 }
 

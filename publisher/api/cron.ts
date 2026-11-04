@@ -5,6 +5,7 @@
  *
  * GET /api/cron            (called by Vercel Cron with Authorization: Bearer $CRON_SECRET)
  * GET /api/cron?dryRun=1   prepares everything without publishing (no alerts)
+ * GET /api/cron?only=manual   the frequent run: only hand-made posts that became due in the last 15 minutes
  * GET /api/cron?dryRun=1&post=<id>   same, for a named post regardless of its date
  */
 import { scheduleData } from '../lib/schedule-source.js';
@@ -23,6 +24,9 @@ import { loadChannels, loadClients, loadManual, loadOverrides } from '../lib/sto
  * A connection with an end date (LinkedIn gives no refresh; an Instagram token is renewed weekly, so this means the
  * renewal stopped working) is announced to the team and the product, once a day on 7, 3, 1 and 0 days left.
  */
+/** How far back the frequent run looks for a hand-made post that became due. */
+const FREQUENT_WINDOW_MS = 15 * 60 * 1000;
+
 async function warnAboutExpiringConnections(): Promise<void> {
   try {
     const { file } = await loadChannels();
@@ -69,7 +73,11 @@ export async function GET(request: Request): Promise<Response> {
     const schedule = applyOverrides(parseSchedule(scheduleData), overrides);
     const everything = applyOverrides([...parseSchedule(scheduleData), ...manualFile.posts.map(toScheduled)], overrides);
 
-    if (!dryRun) {
+    // The frequent run (every few minutes) only sends hand-made posts that were given their own time. It leaves
+    // planned posts and the daily warnings to the daily run, and its short window keeps a failing post from alerting all day.
+    const onlyManual = url.searchParams.get('only') === 'manual';
+
+    if (!dryRun && !onlyManual) {
       for (const { brand, postsLeft } of lowQueueWarnings(schedule, Date.now())) {
         await notify({
           title: postsLeft === 0 ? 'No scheduled posts left' : 'Schedule running low',
@@ -84,8 +92,10 @@ export async function GET(request: Request): Promise<Response> {
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
     const testPostId = dryRun ? url.searchParams.get('post') : null;
-    const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : duePost(schedule, Date.now());
-    const due = testPostId ? (planned ? [planned] : []) : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now())];
+    const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : onlyManual ? null : duePost(schedule, Date.now());
+    const due = testPostId
+      ? planned ? [planned] : []
+      : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now(), onlyManual ? FREQUENT_WINDOW_MS : undefined)];
     if (due.length === 0) return json(200, { status: testPostId ? 'post-not-found' : 'nothing-due' });
 
     const results: Array<Record<string, unknown>> = [];

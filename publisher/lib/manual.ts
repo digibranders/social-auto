@@ -6,7 +6,7 @@ import type { ScheduledPost } from './schedule.js';
 export interface ManualPost {
   id: string;
   brand: string;
-  /** ISO 8601 with offset: the daily run on that day sends it. */
+  /** ISO 8601 with offset: when it goes out (10:00 by default, or the time chosen for it). */
   date: string;
   caption: string;
   /** Key of the picture in the store, served from /api/edited-image?k=<key>. */
@@ -21,8 +21,9 @@ export interface ManualFile {
 }
 
 export const MAX_MANUAL_POSTS = 300;
-/** The daily run happens at this time, so a hand-made post is always set for it. */
-export const POST_TIME = '10:00:00+05:30';
+/** A hand-made post goes out at the daily run's time unless it is given a time of its own. */
+export const DEFAULT_POST_TIME = '10:00';
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 const MAX_DAYS_AHEAD = 90;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,15 +63,21 @@ export function toScheduled(post: ManualPost): ScheduledPost {
   };
 }
 
-/** The moment the daily run on this day (YYYY-MM-DD) sends a post. Must be ahead of now and within 90 days. */
-export function postDateFor(day: unknown, now: number): string {
+/**
+ * The moment a post on this day (YYYY-MM-DD) goes out: `time` ("HH:MM", India time) or the daily run's 10:00. Must be
+ * ahead of now and within 90 days. A post with its own time is sent by the frequent run, within minutes of it.
+ */
+export function postDateFor(day: unknown, now: number, time?: unknown): string {
   if (typeof day !== 'string' || !DAY.test(day)) throw new EditError('choose a day');
+  if (time !== undefined && (typeof time !== 'string' || !TIME.test(time))) throw new EditError('choose a time like 12:05');
   const [year, month, dayOfMonth] = day.split('-').map(Number) as [number, number, number];
   const real = new Date(Date.UTC(year, month - 1, dayOfMonth));
   if (real.getUTCFullYear() !== year || real.getUTCMonth() !== month - 1 || real.getUTCDate() !== dayOfMonth) throw new EditError('that day does not exist');
-  const date = `${day}T${POST_TIME}`;
+  const date = `${day}T${time ?? DEFAULT_POST_TIME}:00+05:30`;
   const at = Date.parse(date);
-  if (at <= now) throw new EditError('that day has already passed. The next daily run is 10:00 in the morning.');
+  if (at <= now) {
+    throw new EditError(time === undefined ? 'that day has already passed. The next daily run is 10:00 in the morning.' : 'that time has already passed. Choose a later time.');
+  }
   if (at - now > MAX_DAYS_AHEAD * DAY_MS) throw new EditError(`choose a day within the next ${MAX_DAYS_AHEAD} days`);
   return date;
 }
@@ -78,6 +85,8 @@ export function postDateFor(day: unknown, now: number): string {
 export interface NewManualPost {
   brand: string;
   day: unknown;
+  /** "HH:MM" India time; left out means the daily run's 10:00. */
+  time?: unknown;
   caption: unknown;
   imageKey: unknown;
   channels: unknown;
@@ -89,7 +98,7 @@ export interface NewManualPost {
  */
 export function buildManualPost(input: NewManualPost, allowedChannels: readonly string[], now: number): ManualPost {
   const caption = validateCaption(input.caption);
-  const date = postDateFor(input.day, now);
+  const date = postDateFor(input.day, now, input.time);
   if (!isImageKey(input.imageKey)) throw new EditError('add a picture first');
   if (!Array.isArray(input.channels) || input.channels.some((c) => typeof c !== 'string')) throw new EditError('choose where to post');
   const channels = [...new Set(input.channels as string[])];
@@ -109,6 +118,8 @@ export function buildManualPost(input: NewManualPost, allowedChannels: readonly 
 
 export interface ManualChanges {
   day?: unknown;
+  /** "HH:MM" India time. */
+  time?: unknown;
   caption?: unknown;
   imageKey?: unknown;
   channels?: unknown;
@@ -120,11 +131,15 @@ export interface ManualChanges {
  * change is not allowed.
  */
 export function editManualPost(post: ManualPost, changes: ManualChanges, allowedChannels: readonly string[], now: number): ManualPost {
-  if (changes.day === undefined && changes.caption === undefined && changes.imageKey === undefined && changes.channels === undefined) {
+  if (changes.day === undefined && changes.time === undefined && changes.caption === undefined && changes.imageKey === undefined && changes.channels === undefined) {
     throw new EditError('nothing to change');
   }
   const edited: ManualPost = { ...post, channels: [...post.channels] };
-  if (changes.day !== undefined && changes.day !== post.date.slice(0, 10)) edited.date = postDateFor(changes.day, now);
+  const currentDay = post.date.slice(0, 10);
+  const currentTime = post.date.slice(11, 16);
+  if ((changes.day !== undefined && changes.day !== currentDay) || (changes.time !== undefined && changes.time !== currentTime)) {
+    edited.date = postDateFor(changes.day ?? currentDay, now, changes.time ?? currentTime);
+  }
   if (changes.caption !== undefined) edited.caption = validateCaption(changes.caption);
   if (changes.imageKey !== undefined) {
     if (!isImageKey(changes.imageKey)) throw new EditError('add a picture first');

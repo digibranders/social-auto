@@ -8,7 +8,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 
-const PORT = 4050;
+const PORT = Number(process.env['FAKE_GOOGLE_PORT'] ?? 4050);
 const BASE = `http://127.0.0.1:${PORT}`;
 const CODE = 'fake-google-code';
 const REFRESH = 'fake-refresh-token';
