@@ -15,10 +15,11 @@ import { parseProducts } from '../lib/products.js';
 import { dispatch, eventForExpiry } from '../lib/webhooks.js';
 import { notify } from '../lib/notify.js';
 import { applyOverrides } from '../lib/overrides.js';
-import { dueManualPosts, duePost, lowQueueWarnings, parseSchedule } from '../lib/schedule.js';
+import { brandIsPaused, isPaused, type PauseFile } from '../lib/pauses.js';
+import { dueManualPosts, duePlannedPost, lowQueueWarnings, parseSchedule } from '../lib/schedule.js';
 import { sendPost } from '../lib/send-post.js';
 import { toScheduled } from '../lib/manual.js';
-import { loadChannels, loadClients, loadManual, loadOverrides } from '../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses } from '../lib/store.js';
 
 /**
  * A connection with an end date (LinkedIn gives no refresh; an Instagram token is renewed weekly, so this means the
@@ -27,7 +28,7 @@ import { loadChannels, loadClients, loadManual, loadOverrides } from '../lib/sto
 /** How far back the frequent run looks for a hand-made post that became due. */
 const FREQUENT_WINDOW_MS = 15 * 60 * 1000;
 
-async function warnAboutExpiringConnections(): Promise<void> {
+async function warnAboutExpiringConnections(pauses: PauseFile): Promise<void> {
   try {
     const { file } = await loadChannels();
     // A broken PRODUCTS setting must not stop the team's own warnings.
@@ -39,7 +40,8 @@ async function warnAboutExpiringConnections(): Promise<void> {
       }
     })();
     const { file: added } = products.length > 0 ? await loadClients() : { file: { clients: [] } };
-    for (const { channel, days } of expiringSoon(file, Date.now())) {
+    // A paused account is held on purpose, so its connection ending is not worth a phone alert.
+    for (const { channel, days } of expiringSoon(file, Date.now()).filter(({ channel: c }) => !isPaused(pauses, c.brand, c.id))) {
       const item = eventForExpiry(channel, days, added, Date.now());
       if (item) await dispatch([item], products);
       const name = channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram';
@@ -69,6 +71,7 @@ export async function GET(request: Request): Promise<Response> {
     // quietly posting the unedited version.
     const { overrides } = await loadOverrides();
     const { file: manualFile } = await loadManual();
+    const { file: pauses } = await loadPauses();
     // Planned posts drive the runway warnings; hand-made posts are added for sending only.
     const schedule = applyOverrides(parseSchedule(scheduleData), overrides);
     const everything = applyOverrides([...parseSchedule(scheduleData), ...manualFile.posts.map(toScheduled)], overrides);
@@ -78,7 +81,8 @@ export async function GET(request: Request): Promise<Response> {
     const onlyManual = url.searchParams.get('only') === 'manual';
 
     if (!dryRun && !onlyManual) {
-      for (const { brand, postsLeft } of lowQueueWarnings(schedule, Date.now())) {
+      // Skipped posts will not go out, so they are not posts left; a paused client is held on purpose, so it is not warned about.
+      for (const { brand, postsLeft } of lowQueueWarnings(schedule.filter((p) => !p.skipped), Date.now()).filter((w) => !brandIsPaused(pauses, w.brand))) {
         await notify({
           title: postsLeft === 0 ? 'No scheduled posts left' : 'Schedule running low',
           message:
@@ -87,12 +91,12 @@ export async function GET(request: Request): Promise<Response> {
           priority: postsLeft <= 1 ? 'high' : 'default',
         });
       }
-      await warnAboutExpiringConnections();
+      await warnAboutExpiringConnections(pauses);
     }
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
     const testPostId = dryRun ? url.searchParams.get('post') : null;
-    const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : onlyManual ? null : duePost(schedule, Date.now());
+    const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : onlyManual ? null : duePlannedPost(schedule, Date.now());
     const due = testPostId
       ? planned ? [planned] : []
       : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now(), onlyManual ? FREQUENT_WINDOW_MS : undefined)];
@@ -101,7 +105,7 @@ export async function GET(request: Request): Promise<Response> {
     const results: Array<Record<string, unknown>> = [];
     let failed = false;
     for (const post of due) {
-      const { instagram, facebook, linkedin, google, accounts, failed: postFailed } = await sendPost(post, origin, dryRun);
+      const { instagram, facebook, linkedin, google, accounts, failed: postFailed } = await sendPost(post, origin, dryRun, pauses);
       failed ||= postFailed;
       results.push({ ...instagram, facebook, linkedin, google, instagramAccounts: accounts });
     }

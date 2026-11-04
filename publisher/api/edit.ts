@@ -5,6 +5,8 @@
  * POST /api/edit?post=<id>&action=caption   body: {"caption": "..."}
  * POST /api/edit?post=<id>&action=image     body: the JPG file
  * POST /api/edit?post=<id>&action=revert
+ * POST /api/edit?post=<id>&action=skip      the post stays on the calendar but is never sent (while its time is still ahead)
+ * POST /api/edit?post=<id>&action=unskip    brings it back
  */
 import { scheduleData } from '../lib/schedule-source.js';
 import { toScheduled } from '../lib/manual.js';
@@ -17,7 +19,7 @@ import { deleteImage, loadManual, loadOverrides, saveImage, saveOverrides, store
 const store = { load: loadOverrides, save: saveOverrides, saveImage, deleteImage };
 
 async function readAction(request: Request, action: string | null): Promise<EditAction> {
-  if (action === 'revert') return { kind: 'revert' };
+  if (action === 'revert' || action === 'skip' || action === 'unskip') return { kind: action };
   if (action === 'caption') {
     const body: unknown = await request.json().catch(() => null);
     if (typeof body !== 'object' || body === null) throw new EditError('send {"caption": "..."} as JSON');

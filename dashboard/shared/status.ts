@@ -3,10 +3,10 @@
  * browser (which validates what the server sends). Keep in step with publisher/lib/schedule.ts.
  */
 
-export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown';
+export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown' | 'skipped' | 'paused';
 export type Platform = 'instagram' | 'facebook' | 'linkedin' | 'google';
 
-export const POST_STATES: readonly PostState[] = ['published', 'scheduled', 'due', 'missed', 'unknown'];
+export const POST_STATES: readonly PostState[] = ['published', 'scheduled', 'due', 'missed', 'unknown', 'skipped', 'paused'];
 export const PLATFORMS: readonly Platform[] = ['instagram', 'facebook', 'linkedin', 'google'];
 
 export interface StatusPost {
@@ -49,14 +49,26 @@ export interface ChannelHealth {
   avatar: string | null;
   /** The clients whose posts go out through this channel. */
   brands: string[];
+  /** Held back by a pause on this channel, on its client or on everything: posts are not sent to it. */
+  paused: boolean;
   ok: boolean;
   error?: string;
   /** LinkedIn connections end on this date unless the member connects again. */
   expiresAt?: string;
 }
 
+/** What is paused: everything, whole clients, and single channels. A single post is skipped instead. */
+export interface Pauses {
+  all: boolean;
+  brands: string[];
+  channels: string[];
+}
+
+export const NO_PAUSES: Pauses = { all: false, brands: [], channels: [] };
+
 export interface StatusResponse {
   generatedAt: string;
+  pauses: Pauses;
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
@@ -121,6 +133,7 @@ export function parseStatus(raw: unknown): StatusResponse {
         if (typeof brand !== 'string') throw new StatusParseError(`${where}.brands[${j}] must be a string`);
         return brand;
       }),
+      paused: channel['paused'] === true,
       ok: channel['ok'] === true,
       ...(error ? { error } : {}),
       ...(expiresAt ? { expiresAt } : {}),
@@ -170,5 +183,9 @@ export function parseStatus(raw: unknown): StatusResponse {
     return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}) };
   });
 
-  return { generatedAt, channels, posts, runway };
+  const pauseRoot = root['pauses'] === undefined ? {} : record(root['pauses'], 'status.pauses');
+  const names = (key: string): string[] => (Array.isArray(pauseRoot[key]) ? (pauseRoot[key] as unknown[]).filter((v): v is string => typeof v === 'string') : []);
+  const pauses: Pauses = { all: pauseRoot['all'] === true, brands: names('brands'), channels: names('channels') };
+
+  return { generatedAt, pauses, channels, posts, runway };
 }

@@ -14,6 +14,7 @@ export const routes: Record<string, { method: string; load: () => Promise<Handle
   '/api/v1/send': { method: 'POST', load: () => import('../api/_v1/send.js').then((m) => m.POST) },
   '/api/v1/connect-link': { method: 'POST', load: () => import('../api/_v1/connect-link.js').then((m) => m.POST) },
   '/api/clients': { method: 'POST', load: () => import('../api/clients.js').then((m) => m.POST) },
+  '/api/pause': { method: 'ANY', load: async () => { const m = await import('../api/pause.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.js').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.js').then((m) => m.POST) },
   '/api/edited-image': { method: 'GET', load: () => import('../api/edited-image.js').then((m) => m.GET) },

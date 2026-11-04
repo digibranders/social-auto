@@ -27,7 +27,7 @@ test('parseStatus accepts a valid feed and fills optional channel errors', () =>
   assert.equal(parsed.posts[0]?.state, 'published');
   assert.equal(parsed.channels[0]?.error, undefined);
   const withError = parseStatus({ ...valid, channels: [{ platform: 'instagram', account: null, avatar: null, brands: [], ok: false, error: 'Token expired' }] });
-  assert.deepEqual(withError.channels[0], { id: null, platform: 'instagram', account: null, avatar: null, brands: [], ok: false, error: 'Token expired' });
+  assert.deepEqual(withError.channels[0], { id: null, platform: 'instagram', account: null, avatar: null, brands: [], paused: false, ok: false, error: 'Token expired' });
 });
 
 test('parseStatus keeps a channel id and the Facebook line of a post, and defaults them when absent', () => {
@@ -62,4 +62,18 @@ test('a client added in the dashboard can carry its website', () => {
   const parsed = parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://acme.com' }, { brand: 'b', postsLeft: 3 }] });
   assert.equal(parsed.runway[0]?.website, 'https://acme.com');
   assert.equal(parsed.runway[1]?.website, undefined);
+});
+
+test('parseStatus reads what is paused, and a paused channel, and defaults to nothing paused', () => {
+  assert.deepEqual(parseStatus(valid).pauses, { all: false, brands: [], channels: [] });
+  const parsed = parseStatus({
+    ...valid,
+    pauses: { all: false, brands: ['acme', 7], channels: ['facebook:1'] },
+    channels: [{ id: 'facebook:1', platform: 'facebook', account: 'Page', avatar: null, brands: ['acme'], paused: true, ok: true }],
+    posts: [{ ...valid.posts[0], state: 'skipped' }, { ...valid.posts[0], id: 'p2', state: 'paused' }],
+  });
+  assert.deepEqual(parsed.pauses, { all: false, brands: ['acme'], channels: ['facebook:1'] });
+  assert.equal(parsed.channels[0]?.paused, true);
+  assert.deepEqual(parsed.posts.map((p) => p.state), ['skipped', 'paused']);
+  assert.throws(() => parseStatus({ ...valid, pauses: 'yes' }), /status\.pauses must be an object/);
 });

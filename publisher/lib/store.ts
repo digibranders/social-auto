@@ -1,3 +1,4 @@
+import { NO_PAUSES, parsePauses, type PauseFile } from './pauses.js';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -172,4 +173,16 @@ export async function loadPosted(): Promise<{ log: PostedLog; etag: string | nul
 
 export function savePosted(log: PostedLog, etag: string | null): Promise<void> {
   return writeJson(POSTED_PATH, log, etag);
+}
+
+const PAUSES_PATH = 'pauses.json';
+
+export async function loadPauses(): Promise<{ file: PauseFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: NO_PAUSES, etag: null };
+  const { value, etag } = await readJson(PAUSES_PATH);
+  return { file: value === null ? NO_PAUSES : parsePauses(value), etag };
+}
+
+export function savePauses(file: PauseFile, etag: string | null): Promise<void> {
+  return writeJson(PAUSES_PATH, file, etag);
 }

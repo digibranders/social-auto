@@ -12,6 +12,8 @@ export interface ScheduledPost {
   manual?: boolean;
   /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc" or "google:123". Missing means every connected channel. */
   channels?: string[];
+  /** Skipped in the dashboard: it stays on the calendar but is never sent. */
+  skipped?: boolean;
 }
 
 export class ScheduleError extends Error {
@@ -82,10 +84,19 @@ export function duePost(posts: ScheduledPost[], now: number): ScheduledPost | nu
   return due[0] ?? null;
 }
 
+/**
+ * The planned post to send now: the latest one whose time has passed, unless it was skipped. A skipped post is chosen first and then
+ * dropped, so that skipping today's post does not bring yesterday's back.
+ */
+export function duePlannedPost(posts: ScheduledPost[], now: number): ScheduledPost | null {
+  const due = duePost(posts, now);
+  return due !== null && due.skipped === true ? null : due;
+}
+
 /** Hand-made posts whose time has passed within the due window. Unlike planned posts, several can go out on one day. */
 export function dueManualPosts(posts: ScheduledPost[], now: number, windowMs: number = DUE_WINDOW_MS): ScheduledPost[] {
   return posts
-    .filter((p) => p.manual === true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < windowMs)
+    .filter((p) => p.manual === true && p.skipped !== true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < windowMs)
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
 }
 
@@ -107,7 +118,7 @@ export interface MediaItem {
   mediaUrl: string | null;
 }
 
-export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown';
+export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown' | 'skipped' | 'paused';
 
 export interface StatusPost {
   id: string;
@@ -132,7 +143,7 @@ export interface StatusPost {
   manual: boolean;
   /** Where a hand-made post goes ('instagram' and channel ids); null for planned posts, which go everywhere. */
   channels: string[] | null;
-  crossposts: Array<{ platform: Channel['platform']; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
+  crossposts: Array<{ platform: Channel['platform']; account: string; state: 'published' | 'scheduled' | 'due' | 'missed' | 'skipped' | 'paused'; permalink: string | null }>;
 }
 
 export interface StatusSummary {
@@ -156,6 +167,7 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
 
     let state: PostState;
     if (match) state = 'published';
+    else if (post.skipped) state = 'skipped';
     else if (at > now) state = 'scheduled';
     else if (onInstagram && media === null) state = 'unknown';
     else if (now - at < DUE_WINDOW_MS) state = 'due';
@@ -173,7 +185,7 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
       publishedAt: match?.timestamp ?? null,
       mediaUrl: match?.mediaUrl ?? null,
       edited: post.edited === true,
-      editable: state === 'scheduled',
+      editable: at > now && (state === 'scheduled' || state === 'skipped'),
       manual: post.manual === true,
       channels: post.channels ?? null,
       crossposts: [],

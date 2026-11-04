@@ -22,6 +22,7 @@ export const routes: Record<string, { method: string | string[]; load: () => Pro
   '/api/disconnect': { method: 'POST', load: () => import('../api/disconnect.js').then((m) => m.POST) },
   '/api/clients': { method: 'POST', load: () => import('../api/clients.js').then((m) => m.POST) },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.js').then((m) => m.POST) },
+  '/api/pause': { method: 'POST', load: () => import('../api/pause.js').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.js').then((m) => m.POST) },
 };
 

@@ -1,5 +1,5 @@
 /** The calendar page. Every piece of text goes into the page as text, never as HTML. */
-import { parseStatus, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
+import { NO_PAUSES, parseStatus, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
 import {
   addDays,
   addMonths,
@@ -72,6 +72,8 @@ const STATE_HELP: Record<PostState, string> = {
   due: 'Its time has come. It should appear within the hour.',
   missed: 'Its time passed and it is not on the account.',
   unknown: 'The account could not be checked, so its status is not known.',
+  skipped: 'This post was skipped, so it will not be sent. You can undo that until its time comes.',
+  paused: 'This post is held back by a pause. It is sent when the pause ends, unless its time comes first: then it is skipped, not sent late.',
 };
 const state: State = {
   view: 'week',
@@ -225,7 +227,7 @@ function editedTag(post: StatusPost): HTMLElement | false {
 const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
 
 /** Sends one change to the server; resolves to an explanation when it did not work. */
-async function sendEdit(post: StatusPost, action: 'caption' | 'image' | 'revert', body?: BodyInit, contentType?: string): Promise<string | null> {
+async function sendEdit(post: StatusPost, action: 'caption' | 'image' | 'revert' | 'skip' | 'unskip', body?: BodyInit, contentType?: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/edit?post=${encodeURIComponent(post.id)}&action=${action}`, {
       method: 'POST',
@@ -382,6 +384,8 @@ function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
                 { class: 'view-panel' },
                 post.editable ? button('Edit post', 'btn btn-primary', () => openDetail(post, 'edit')) : null,
                 post.editable && post.manual ? button('Delete post', 'btn btn-quiet btn-danger', () => void deleteManualPost(post)) : null,
+                post.editable && post.state === 'skipped' ? button('Undo skip', 'btn', () => void skipPost(post, false)) : null,
+                post.editable && (post.state === 'scheduled' || post.state === 'paused') ? button('Skip this post', 'btn btn-quiet', () => void skipPost(post, true)) : null,
                 h('h3', {}, 'Caption'),
                 h('p', { class: 'caption' }, post.caption),
               ),
@@ -417,6 +421,16 @@ function banners(): HTMLElement[] {
   }
   const data = state.data;
   if (!data) return out;
+  if (data.pauses.all) {
+    out.push(
+      h(
+        'div',
+        { class: 'banner banner-warn banner-notice', role: 'status' },
+        h('span', {}, 'Everything is paused. Nothing is being sent for any client.'),
+        button('Resume everything', 'btn banner-dismiss', () => void setPause('all', null, false)),
+      ),
+    );
+  }
   for (const channel of data.channels) {
     if (channel.ok) continue;
     const who = channel.account ? ` (${channel.account})` : '';
@@ -445,7 +459,7 @@ function channelsPanel(): HTMLElement {
         'span',
         { class: 'channel-text' },
         h('span', { class: 'channel-name' }, channelName(channel)),
-        h('span', { class: 'channel-sub' }, `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}`),
+        h('span', { class: 'channel-sub' }, `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}${channel.paused ? ' · Paused' : ''}`),
       ),
       channel.ok ? null : statusMark(false),
     );
@@ -688,7 +702,7 @@ function rail(): HTMLElement {
 const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', help: 'Help · Connect a channel' } as const;
 
 function clientPicker(): HTMLElement {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now());
+  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] }, Date.now());
   const select = dropdown([{ value: '', label: 'All clients' }, ...clients.map((c) => clientOption(c.brand, c.label))], state.calendarClient ?? '', 'Client');
   select.addEventListener('change', () => {
     state.calendarClient = select.value || null;
@@ -717,6 +731,42 @@ function panelHeader(): HTMLElement {
   );
 }
 
+/** Pauses or resumes everything, one client or one channel, then reloads the feed so the page shows it at once. */
+async function setPause(scope: 'all' | 'brand' | 'channel', id: string | null, paused: boolean): Promise<void> {
+  const label = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] }, Date.now()).find((c) => c.brand === id)?.label;
+  const what = scope === 'all' ? 'everything' : scope === 'brand' ? (label ?? brandLabel(id ?? '')) : 'this channel';
+  if (paused && scope === 'all' && !confirm('Pause everything? Nothing will be sent for any client until you resume. Posts whose time comes in the meantime are skipped, not sent late.')) return;
+  try {
+    const response = await fetch('/api/pause', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, ...(id === null ? {} : { id }), paused }),
+    });
+    if (response.status === 401) return void location.replace('/login');
+    const body: unknown = await response.json().catch(() => null);
+    state.notice = response.ok
+      ? { kind: 'ok', text: paused ? `Paused ${what}. Nothing is sent there until you resume it.` : `Resumed ${what}.` }
+      : { kind: 'warn', text: messageOf(body) ?? `Could not ${paused ? 'pause' : 'resume'} (${response.status}).` };
+  } catch (error) {
+    state.notice = { kind: 'warn', text: error instanceof Error ? error.message : String(error) };
+  }
+  await load();
+}
+
+/** Skips a post (it stays on the calendar but is never sent) or brings it back, then shows it again. */
+async function skipPost(post: StatusPost, skip: boolean): Promise<void> {
+  const problem = await sendEdit(post, skip ? 'skip' : 'unskip');
+  if (problem) {
+    state.notice = { kind: 'warn', text: problem };
+    await load();
+    dialog.close();
+    return;
+  }
+  state.notice = { kind: 'ok', text: skip ? 'Post skipped. It will not be sent. You can undo that from the post until its time comes.' : 'Post brought back. It will go out at its time.' };
+  await reopenAfterChange(post.id, 'view');
+}
+
 /** Removes a Facebook Page, LinkedIn profile or client Instagram account from a client after asking, then reloads the feed. */
 async function disconnect(channel: ChannelHealth): Promise<void> {
   if (!channel.id) return;
@@ -735,7 +785,7 @@ async function disconnect(channel: ChannelHealth): Promise<void> {
 
 /** Opens the Add channel window; with no client chosen it asks which one the channel is for. */
 function openPicker(brand: string | null): void {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
+  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
   const connected: Record<string, Platform[]> = {};
   for (const channel of state.data?.channels ?? []) for (const b of channel.brands) (connected[b] ??= []).push(channel.platform);
   picker.replaceChildren(channelPicker(brand, clients, connected, clientsContext, () => picker.close()));
@@ -770,7 +820,7 @@ async function submitNewPost(post: { brand: string; day: string; time: string; c
 
 /** Opens the New post window; `channel` is ticked in advance. */
 function openNewPost(brand: string | null, channel: string | null): void {
-  const data = state.data ?? { generatedAt: '', channels: [], posts: [], runway: [] };
+  const data = state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] };
   const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
   picker.replaceChildren(newPostForm(brand, channel, { clients, channels: data.channels, submit: submitNewPost, close: () => picker.close() }));
   picker.showModal();
@@ -863,6 +913,8 @@ const clientsContext: ClientsContext = {
   removeClient: (client) => void removeClient(client),
   saveWebsite,
   disconnect: (channel) => void disconnect(channel),
+  allPaused: () => state.data?.pauses.all === true,
+  setPause: (scope, id, paused) => void setPause(scope, id, paused),
 };
 
 function screen(): HTMLElement {

@@ -12,7 +12,8 @@ import { parseProducts } from './products.js';
 import { dispatch, eventsForResults } from './webhooks.js';
 import { fetchImage, memberHealth, postImage, uploadImage } from './linkedin.js';
 import { notify } from './notify.js';
-import type { PostedEntry } from './channels.js';
+import { channelLabel, postedKey, type PostedEntry } from './channels.js';
+import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
 import { isWantedOn, sameCaption, type ScheduledPost } from './schedule.js';
 import { loadChannels, loadClients, loadPosted, savePosted } from './store.js';
 
@@ -45,31 +46,52 @@ async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: bool
 
 type Platform = 'facebook' | 'linkedin' | 'instagram' | 'google';
 
+/** What is written, for a post held back by a pause, so that it is never sent late once the pause ends. */
+const heldEntry = (now: number): PostedEntry => ({ remoteId: 'held', permalink: null, postedAt: new Date(now).toISOString(), skipped: true });
+
+/** Marks posts as held for these channel ids ("instagram" for the team's own account). Reloads first, so another write is never lost. */
+async function recordHeld(postId: string, channelIds: readonly string[], now: number): Promise<void> {
+  if (channelIds.length === 0) return;
+  const latest = await loadPosted();
+  const entries: Record<string, PostedEntry> = {};
+  for (const id of channelIds) if (!latest.log[postedKey(postId, id)]) entries[postedKey(postId, id)] = heldEntry(now);
+  if (Object.keys(entries).length > 0) await savePosted({ ...latest.log, ...entries }, latest.etag);
+}
+
 /** Never throws: a problem here must not hide what happened on Instagram or another channel. */
-async function sendToChannels(platform: Platform, post: ScheduledPost, origin: string, dryRun: boolean): Promise<CrosspostResult[]> {
+async function sendToChannels(platform: Platform, post: ScheduledPost, origin: string, dryRun: boolean, pauses: PauseFile): Promise<CrosspostResult[]> {
   try {
     const { file } = await loadChannels();
     if (!file.channels.some((c) => c.platform === platform)) return [];
     const key = parseKey(process.env['CHANNEL_KEY']);
     const { log } = await loadPosted();
+    const now = Date.now();
+    const brand = post.brand ?? 'default';
+    // A channel that is paused, or was held when the post first came due, is left out; the post still goes to the others.
+    const held = file.channels.filter(
+      (c) => c.platform === platform && c.brand === brand && isWantedOn(post, c.id) && (isPaused(pauses, brand, c.id) || log[postedKey(post.id, c.id)]?.skipped === true),
+    );
+    const heldIds = new Set(held.map((c) => c.id));
+    if (!dryRun) await recordHeld(post.id, held.filter((c) => Date.parse(post.date) >= Date.parse(c.connectedAt)).map((c) => c.id), now);
     const common = {
       post,
-      channels: file,
+      channels: { channels: file.channels.filter((c) => !heldIds.has(c.id)) },
       key,
       origin,
       log,
       dryRun,
-      now: Date.now(),
+      now,
       // Reload before each write so a second channel's record never overwrites the first's.
       record: async (logKey: string, entry: PostedEntry): Promise<void> => {
         const latest = await loadPosted();
         await savePosted({ ...latest.log, [logKey]: entry }, latest.etag);
       },
     };
-    if (platform === 'facebook') return await postToFacebook({ ...common, api: facebookApi });
-    if (platform === 'linkedin') return await postToLinkedIn({ ...common, api: linkedInApi });
-    if (platform === 'google') return await postToGoogle({ ...common, api: googleApi });
-    return await postToInstagram({ ...common, api: instagramApi });
+    const heldResults = held.map((c): CrosspostResult => ({ channel: c.id, account: channelLabel(c), status: 'held' }));
+    if (platform === 'facebook') return [...heldResults, ...(await postToFacebook({ ...common, api: facebookApi }))];
+    if (platform === 'linkedin') return [...heldResults, ...(await postToLinkedIn({ ...common, api: linkedInApi }))];
+    if (platform === 'google') return [...heldResults, ...(await postToGoogle({ ...common, api: googleApi }))];
+    return [...heldResults, ...(await postToInstagram({ ...common, api: instagramApi }))];
   } catch (error) {
     return [{ channel: platform, account: platform, status: 'failed', error: describeError(error) }];
   }
@@ -97,14 +119,22 @@ export interface SendOutcome {
 }
 
 /** Sends the post everywhere it is wanted. Without `dryRun` it also tells the product and alerts the team about failures. */
-export async function sendPost(post: ScheduledPost, origin: string, dryRun: boolean): Promise<SendOutcome> {
-  const instagram: Record<string, unknown> = isWantedOn(post, 'instagram')
-    ? await sendToInstagram(post, origin, dryRun).catch((error: unknown) => ({ status: 'failed', error: describeError(error) }))
-    : { status: 'not-selected', post: post.id };
-  const facebook = await sendToChannels('facebook', post, origin, dryRun);
-  const linkedin = await sendToChannels('linkedin', post, origin, dryRun);
-  const google = await sendToChannels('google', post, origin, dryRun);
-  const accounts = await sendToChannels('instagram', post, origin, dryRun);
+export async function sendPost(post: ScheduledPost, origin: string, dryRun: boolean, pauses: PauseFile = NO_PAUSES): Promise<SendOutcome> {
+  const brand = post.brand ?? 'default';
+  const wantsInstagram = isWantedOn(post, 'instagram');
+  // The team's own Instagram account is the channel "instagram"; like the others it is held when paused, and stays held for this post.
+  const heldBefore = wantsInstagram && !dryRun ? (await loadPosted().catch(() => ({ log: {} as Record<string, PostedEntry> }))).log[postedKey(post.id, 'instagram')]?.skipped === true : false;
+  const instagramHeld = wantsInstagram && (isPaused(pauses, brand, 'instagram') || heldBefore);
+  if (instagramHeld && !dryRun) await recordHeld(post.id, ['instagram'], Date.now()).catch((error: unknown) => console.error(describeError(error)));
+  const instagram: Record<string, unknown> = instagramHeld
+    ? { status: 'held', post: post.id }
+    : wantsInstagram
+      ? await sendToInstagram(post, origin, dryRun).catch((error: unknown) => ({ status: 'failed', error: describeError(error) }))
+      : { status: 'not-selected', post: post.id };
+  const facebook = await sendToChannels('facebook', post, origin, dryRun, pauses);
+  const linkedin = await sendToChannels('linkedin', post, origin, dryRun, pauses);
+  const google = await sendToChannels('google', post, origin, dryRun, pauses);
+  const accounts = await sendToChannels('instagram', post, origin, dryRun, pauses);
 
   if (!dryRun) {
     await tellProducts(post, [...facebook, ...linkedin, ...google, ...accounts]);
