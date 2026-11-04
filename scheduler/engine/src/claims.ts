@@ -161,6 +161,8 @@ export function extractFacts(text: string, config: ClaimConfig = defaultClaimCon
   }
   const periods: string[] = [];
   for (const [i, word] of words.entries()) {
+    // "14-day" is a length of time (a 14-day trial), not a billing period, whatever word comes before it.
+    if (/^\d+[-\u2010-\u2015]?\p{L}+$/u.test(word)) continue;
     const clean = word.replace(/[^\p{L}/]/gu, '');
     const prev = (words[i - 1] ?? '').replace(/[^\p{L}/]/gu, '');
     const period = PERIOD_WORDS[clean.replace(/^\//, '')];

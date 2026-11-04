@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { claimType, defaultClaimConfig, normalizeForQuote, reverifyClaim, verifyClaim, verifyClaims, type ClaimInput, type PageSource } from './claims.ts';
+import { claimType, defaultClaimConfig, extractFacts, normalizeForQuote, reverifyClaim, verifyClaim, verifyClaims, type ClaimInput, type PageSource } from './claims.ts';
 
 const NOW = new Date('2026-11-03T12:00:00Z');
 const RECENT = '2026-11-01T00:00:00Z';
@@ -212,4 +212,19 @@ test('a claim that shares little wording with its quote needs review, while a fa
 test('a negation in another sentence of the quote does not count against a claim', () => {
   const list: PageSource[] = [{ url: 'https://acme.example/f', fetchedAt: RECENT, text: 'No setup fees. We offer refunds.' }];
   assert.equal(check(claim('We offer refunds.', 'https://acme.example/f', 'No setup fees. We offer refunds.'), list).verification.status, 'verified');
+});
+
+test('a duration such as "a 14-day trial" is not a billing period, while real periods are still read', () => {
+  assert.deepEqual(extractFacts('A 14-day free trial on every plan').periods, []);
+  assert.deepEqual(extractFacts('Get a 30-day money-back guarantee').periods, []);
+  assert.deepEqual(extractFacts('₹599/mo').periods, ['month']);
+  assert.deepEqual(extractFacts('Billed per month').periods, ['month']);
+  assert.deepEqual(extractFacts('Pay ₹999 a year').periods, ['year']);
+  assert.deepEqual(extractFacts('Billed monthly').periods, ['month']);
+});
+
+test('a headline "A 14-day free trial" is supported by a source that says "14-day free trial", with no invented billing period', () => {
+  const pages = [{ url: 'https://x.example/p', text: '14-day free trial on every plan', fetchedAt: '2026-11-04T00:00:00Z' }];
+  const result = verifyClaim({ text: 'A 14-day free trial on every plan', sourceUrl: 'https://x.example/p', quote: '14-day free trial on every plan' }, pages, { now: new Date('2026-11-04T00:00:00Z') });
+  assert.equal(result.verification.status, 'verified', result.verification.reasons.join('; '));
 });
