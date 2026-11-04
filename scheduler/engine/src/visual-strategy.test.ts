@@ -72,7 +72,7 @@ const posts = [
 ];
 const base = [{ picture: { eligible: true, reasons: [] as string[] } }, { picture: { eligible: true, reasons: [] as string[] } }, { picture: { eligible: false, reasons: ['no concept'] } }, { picture: { eligible: true, reasons: [] as string[] } }];
 
-test('a picture idea a model cannot see explaining the message is taken away before any picture is paid for; a supported one stays', async () => {
+test('only a picture idea judged unrelated or misleading is taken away before any picture is paid for; supported and unclear ones stay', async () => {
   const seen: string[][] = [];
   const judge = async (items: Array<{ key: string; claim: string; quote: string; context: string }>) => {
     seen.push(items.map((i) => i.key));
@@ -81,16 +81,16 @@ test('a picture idea a model cannot see explaining the message is taken away bef
   const out = await judgePictures(posts, base, judge);
   assert.deepEqual(seen, [['a', 'b', 'd']]);
   assert.equal(out[0]?.picture?.eligible, false);
-  assert.match(out[0]?.picture?.reasons.join(' ') ?? '', /does not explain the message: a maze is not routing/);
+  assert.match(out[0]?.picture?.reasons.join(' ') ?? '', /does not suit the message: a maze is not routing/);
   assert.equal(out[1]?.picture?.eligible, true);
   assert.deepEqual(out[2]?.picture?.reasons, ['no concept']);
-  assert.match(out[3]?.picture?.reasons.join(' ') ?? '', /could not tell/);
+  assert.equal(out[3]?.picture?.eligible, true);
 });
 
-test('a failing picture judge takes the pictures away rather than assuming they are fine; nothing is asked when no post has a picture to check', async () => {
+test('a failing picture judge leaves the pictures alone (an optional check must not turn every feed into plain type); nothing is asked when no post has a picture to check', async () => {
   const failing = async (): Promise<never> => { throw new Error('timeout'); };
   const out = await judgePictures(posts, base, failing);
-  assert.ok([0, 1, 3].every((i) => out[i]?.picture?.eligible === false && /picture check failed \(timeout\)/.test(out[i]?.picture?.reasons.join(' ') ?? '')));
+  assert.ok([0, 1, 3].every((i) => out[i]?.picture?.eligible === true));
   let asked = false;
   const never = async () => { asked = true; return []; };
   const none = await judgePictures([posts[2] as (typeof posts)[number]], [base[2] as (typeof base)[number]], never);

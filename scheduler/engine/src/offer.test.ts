@@ -116,3 +116,16 @@ test('a price with no billing period is not shown on its own as an offer; the sa
   const withPeriod = factsOf([block('₹599 /mo', { cardId: 'c1', cardGroup: 'g', cardTitle: 'Starter' }), block('₹999 /mo', { cardId: 'c2', cardGroup: 'g', cardTitle: 'Pro' })]);
   assert.equal(offerFrom([find(withPeriod, '₹599').id], withPeriod)?.kind, 'price');
 });
+
+
+import { postFacts } from './art-options.ts';
+import type { Brand, PlannedPost } from './content.ts';
+
+test('an offer is not used when the headline already says the same thing, so the poster never prints one sentence twice', () => {
+  const facts = factsOf([block('14-day free trial on every plan.')]);
+  const trial = find(facts, '14-day');
+  const brand = { offer: '', features: [], proofPoints: [] } as unknown as Pick<Brand, 'offer' | 'features' | 'proofPoints'>;
+  const post = (headline: string): PlannedPost => ({ id: 'p', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline, subline: 'Acme', caption: 'c', hashtags: [], factIds: [trial.id] }) as unknown as PlannedPost;
+  assert.equal(postFacts(post('A free trial on |every plan|'), brand, facts).offer, undefined);
+  assert.equal(postFacts(post('Start before you decide'), brand, facts).offer?.text, trial.text);
+});

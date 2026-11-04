@@ -5,6 +5,7 @@
  * deterministic and takes the brand's history as an argument, so tenants cannot leak into each other and no model or
  * image call is needed.
  */
+import { validateEditorial } from './editorial.ts';
 import type { EvidenceFact } from './evidence.ts';
 import { offerFrom, type PostOffer } from './offer.ts';
 import { pictureEligibility } from './visual-strategy.ts';
@@ -162,7 +163,9 @@ export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'featu
   const concernsOffering = brand.offer.trim().length > 0 && postWords.some((w) => offerWords.has(w));
 
   const picture = pictureEligibility({ headline: plain(post.headline), subline: plain(post.subline), caption: post.caption, ...(post.concept ? { concept: post.concept } : {}) });
-  const offer = offerFrom(post.factIds, evidence);
+  // An offer shown large next to a headline that says the same thing is the same sentence twice: the offer is then not used.
+  const found = offerFrom(post.factIds, evidence);
+  const offer = found && validateEditorial({ headline: found.text, subline: plain(post.headline) }, { brandName: '' }).hard.length === 0 ? found : undefined;
   const listRequired = post.hook === 'numbered_list' && listItems.length >= 2;
   return { headline: post.headline, subline: post.subline, listItems, ...(listRequired ? { listRequired } : {}), ...(figure ? { figure } : {}), ...(offer ? { offer } : {}), concernsOffering, picture };
 }

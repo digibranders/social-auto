@@ -59,8 +59,9 @@ type JudgeFn = (items: Array<{ key: string; claim: string; quote: string; contex
 
 /**
  * Asks an injected judge, once for the whole batch and before any picture is paid for, whether each post's picture idea, drawn literally,
- * explains the post's message. Anything but "supported" takes the picture away from that post (it goes to a picture-free treatment), as does a
- * judge that fails: a picture earns its place, it is not assumed. Posts already without a picture are not asked about.
+ * explains the post's message. Only "unsupported" (unrelated, a loosely related symbol, or misleading) takes the picture away from that post, which then
+ * goes to a picture-free treatment; "unclear" and a judge that fails leave it, because an optional check must not turn every feed into plain type.
+ * Posts already without a picture are not asked about.
  */
 export async function judgePictures<T extends { picture?: { eligible: boolean; reasons: readonly string[] } }>(posts: readonly PictureCheckInput[], facts: readonly T[], judge: JudgeFn): Promise<T[]> {
   const asked = posts.flatMap((post, i) => (post.concept && facts[i]?.picture?.eligible !== false ? [{ post, i }] : []));
@@ -75,10 +76,9 @@ export async function judgePictures<T extends { picture?: { eligible: boolean; r
   }
   return facts.map((fact, i) => {
     const hit = asked.find((a) => a.i === i);
-    if (!hit) return fact;
+    if (!hit || failure !== undefined) return fact;
     const verdict = answers.get(hit.post.id);
-    if (verdict?.answer === 'supported') return fact;
-    const why = failure !== undefined ? `the picture check failed (${failure})` : verdict?.answer === 'unsupported' ? `a model judged the picture idea does not explain the message${verdict.reason ? `: ${verdict.reason}` : ''}` : 'a model could not tell that the picture idea explains the message';
-    return { ...fact, picture: { eligible: false, reasons: [why] } };
+    if (verdict?.answer !== 'unsupported') return fact;
+    return { ...fact, picture: { eligible: false, reasons: [`a model judged the picture idea does not suit the message${verdict.reason ? `: ${verdict.reason}` : ''}`] } };
   });
 }

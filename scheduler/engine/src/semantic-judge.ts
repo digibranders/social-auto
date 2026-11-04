@@ -31,8 +31,8 @@ export function modelJudge(ai: AiConfig, fetchFn?: typeof fetch): Judge {
 }
 
 
-const PICTURE_SYSTEM = `You check whether a picture idea would explain a poster's message when drawn literally.
-For each item, "copy" is the poster's headline and subline and "source" describes the picture (its subject and what happens). Answer "supported" only if a viewer who sees that picture next to that message would understand the picture as showing the message's own point. Answer "unsupported" if the picture is a loosely related object or metaphor (for example a maze, key, bridge, clock or compass that stands for something the message does not say), if it shows a different idea from the message, or if it could mislead. Answer "unclear" if you cannot tell. Do not judge beauty. Return JSON only: {"verdicts":[{"key":"...","answer":"supported|unsupported|unclear","reason":"one short line"}]}`;
+const PICTURE_SYSTEM = `You check whether a picture idea suits a poster's message when drawn literally.
+For each item, "copy" is the poster's headline and subline and "source" describes the picture (its subject and what happens). Answer "supported" when the picture is a reasonable, concrete illustration of the message's own subject, even a simple one (a calendar for a trial, a document for docs, an envelope or arrow for something being sent). Answer "unsupported" only when the picture shows a different idea from the message, is a loosely related object or metaphor that stands for something the message does not say (for example a maze, key, bridge, clock or compass used as a symbol), or could mislead. Answer "unclear" if you cannot tell. Do not judge beauty or originality. Return JSON only: {"verdicts":[{"key":"...","answer":"supported|unsupported|unclear","reason":"one short line"}]}`;
 
 /** The judge behind the pre-spend picture check: one request for the batch, asking whether each picture idea explains its post's message. */
 export function modelPictureJudge(ai: AiConfig, fetchFn?: typeof fetch): Judge {
