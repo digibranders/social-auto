@@ -6,12 +6,14 @@ import {
   brandHue,
   brandLabel,
   dayKeyOf,
+  dropTime,
   formatDateTime,
   formatDayHeader,
   formatHourLabel,
   formatTime,
   groupByDay,
   hourOf,
+  mayLandOn,
   minuteOf,
   monthGrid,
   safeHttpsUrl,
@@ -124,4 +126,38 @@ test('captionStats counts characters and hashtags, and captionProblem names the 
   assert.match(captionProblem('   ') ?? '', /empty/);
   assert.match(captionProblem('x'.repeat(2205)) ?? '', /5 characters too long/);
   assert.match(captionProblem(Array.from({ length: 31 }, (_, i) => `#t${i}`).join(' ')) ?? '', /31/);
+});
+
+const aPost = (over: Partial<StatusPost>): StatusPost => ({
+  id: 'p', brand: 'acme', platform: 'instagram', date: '2026-11-10T10:00:00+05:30', caption: 'c', image: null, state: 'scheduled', permalink: null, publishedAt: null, mediaUrl: null,
+  edited: false, editable: true, manual: false, channels: null, crossposts: [], ...over,
+});
+const NOW = Date.parse('2026-11-05T00:00:00Z');
+
+test('a post made by hand takes the hour it is dropped on and keeps its minutes; a planned post keeps its time', () => {
+  const own = aPost({ manual: true, date: '2026-11-10T14:35:00+05:30' });
+  assert.equal(dropTime(own, 17), '17:35');
+  assert.equal(dropTime(own, null), '14:35');
+  assert.equal(dropTime(aPost({ date: '2026-11-10T10:00:00+05:30' }), 17), '10:00');
+});
+
+test('a post may land only on a moment still ahead and within 90 days, never where it already is', () => {
+  const own = aPost({ manual: true, date: '2026-11-10T14:35:00+05:30' });
+  assert.equal(mayLandOn(own, '2026-11-12', 9, [], NOW), true);
+  assert.equal(mayLandOn(own, '2026-11-10', 14, [], NOW), false);
+  assert.equal(mayLandOn(own, '2026-11-10', 15, [], NOW), true);
+  assert.equal(mayLandOn(own, '2026-11-04', 9, [], NOW), false);
+  assert.equal(mayLandOn(own, '2026-11-05', 4, [], NOW), false);
+  assert.equal(mayLandOn(own, '2026-11-05', 20, [], NOW), true);
+  assert.equal(mayLandOn(own, '2027-02-20', 9, [], NOW), false);
+  assert.equal(mayLandOn(own, '2027-01-30', 9, [], NOW), true);
+});
+
+test('a planned post may land only on a day that has no other planned post of its client', () => {
+  const planned = aPost({ id: 'a' });
+  const others = [aPost({ id: 'b', date: '2026-11-11T10:00:00+05:30' }), aPost({ id: 'c', brand: 'beta', date: '2026-11-12T10:00:00+05:30' }), aPost({ id: 'm', manual: true, date: '2026-11-13T09:00:00+05:30' })];
+  assert.equal(mayLandOn(planned, '2026-11-11', null, others, NOW), false);
+  assert.equal(mayLandOn(planned, '2026-11-12', null, others, NOW), true);
+  assert.equal(mayLandOn(planned, '2026-11-13', 15, others, NOW), true);
+  assert.equal(mayLandOn(planned, '2026-11-10', null, others, NOW), false);
 });

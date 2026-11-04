@@ -188,3 +188,29 @@ export function captionProblem(text: string): string | null {
   if (hashtags > MAX_HASHTAGS) return `Instagram allows ${MAX_HASHTAGS} hashtags; this has ${hashtags}.`;
   return null;
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A post can be set up to this many days ahead (the publisher allows 90 from now). */
+export const MAX_DAYS_AHEAD = 89;
+const pad2 = (value: number): string => String(value).padStart(2, '0');
+
+/**
+ * The time (HH:MM, India) a post would have if dropped on this hour of the hourly grid, or on a day (hour null): a post made by hand
+ * takes the hour it is dropped on and keeps its minutes; a planned post always keeps its own time, which the daily run sends it at.
+ */
+export function dropTime(post: Pick<StatusPost, 'date' | 'manual'>, hour: number | null): string {
+  return post.manual && hour !== null ? `${pad2(hour)}:${pad2(minuteOf(post.date))}` : `${pad2(hourOf(post.date))}:${pad2(minuteOf(post.date))}`;
+}
+
+/**
+ * Whether a post may be dropped on this day (and hour): onto a moment still ahead and within 90 days, never where it already is, and
+ * (for a planned post) never onto a day that already has a planned post of its client, because the daily run sends only one a day.
+ */
+export function mayLandOn(post: StatusPost, day: string, hour: number | null, others: readonly StatusPost[], now: number): boolean {
+  const time = dropTime(post, hour);
+  const moment = Date.parse(`${day}T${time}:00+05:30`);
+  if (Number.isNaN(moment) || moment <= now || moment > now + MAX_DAYS_AHEAD * DAY_MS) return false;
+  if (day === dayKeyOf(post.date) && time === dropTime(post, null)) return false;
+  if (!post.manual && others.some((p) => p.id !== post.id && !p.manual && p.brand === post.brand && dayKeyOf(p.date) === day)) return false;
+  return true;
+}

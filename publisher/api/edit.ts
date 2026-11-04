@@ -5,11 +5,13 @@
  * POST /api/edit?post=<id>&action=caption   body: {"caption": "..."}
  * POST /api/edit?post=<id>&action=image     body: the JPG file
  * POST /api/edit?post=<id>&action=revert
+ * POST /api/edit?post=<id>&action=move       body: {"day": "2026-11-12", "time"?: "14:30"}  a hand-made post takes a day and a time; a planned post only a day (its time stays)
  * POST /api/edit?post=<id>&action=skip      the post stays on the calendar but is never sent (while its time is still ahead)
  * POST /api/edit?post=<id>&action=unskip    brings it back
  */
 import { scheduleData } from '../lib/schedule-source.js';
-import { toScheduled } from '../lib/manual.js';
+import { isManualId, toScheduled } from '../lib/manual.js';
+import { updateNewPost } from '../lib/manual-service.js';
 import { editPost, type EditAction } from '../lib/editing.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError, MAX_IMAGE_BYTES } from '../lib/overrides.js';
@@ -18,7 +20,16 @@ import { deleteImage, loadManual, loadOverrides, saveImage, saveOverrides, store
 
 const store = { load: loadOverrides, save: saveOverrides, saveImage, deleteImage };
 
+/** The day and time asked for by a move. */
+async function readMove(request: Request): Promise<{ day: unknown; time: unknown }> {
+  const body: unknown = await request.json().catch(() => null);
+  if (typeof body !== 'object' || body === null) throw new EditError('send {"day": "2026-11-12"} as JSON');
+  const { day, time } = body as Record<string, unknown>;
+  return { day, time };
+}
+
 async function readAction(request: Request, action: string | null): Promise<EditAction> {
+  if (action === 'move') return { kind: 'move', day: (await readMove(request)).day };
   if (action === 'revert' || action === 'skip' || action === 'unskip') return { kind: action };
   if (action === 'caption') {
     const body: unknown = await request.json().catch(() => null);
@@ -42,6 +53,12 @@ export async function POST(request: Request): Promise<Response> {
   if (!id) return json(400, { error: 'post is required' });
 
   try {
+    if (url.searchParams.get('action') === 'move' && isManualId(id)) {
+      // A hand-made post lives in its own file, and may take a time as well as a day.
+      const { day, time } = await readMove(request);
+      await updateNewPost(id, { day, ...(time === undefined ? {} : { time }) }, Date.now());
+      return json(200, { post: id, edited: false });
+    }
     const action = await readAction(request, url.searchParams.get('action'));
     const { file: manual } = await loadManual();
     const result = await editPost(store, [...parseSchedule(scheduleData), ...manual.posts.map(toScheduled)], id, action, Date.now());

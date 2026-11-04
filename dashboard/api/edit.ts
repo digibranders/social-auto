@@ -1,15 +1,15 @@
 /**
- * POST /api/edit?post=<id>&action=caption|image|revert|skip|unskip
+ * POST /api/edit?post=<id>&action=caption|image|revert|skip|unskip|move
  * Changes to a post that has not gone out yet. Signed-in people only, from this site's own pages only;
  * the work is done by the publisher, which this function reaches with a secret the browser never sees.
  */
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
-const ACTIONS = ['caption', 'image', 'revert', 'skip', 'unskip'] as const;
+const ACTIONS = ['caption', 'image', 'revert', 'skip', 'unskip', 'move'] as const;
 const POST_ID = /^[A-Za-z0-9._-]{1,80}$/;
 /** Matches the publisher's picture limit (Vercel functions accept bodies up to 4.5 MB). */
-const MAX_BODY_BYTES: Record<(typeof ACTIONS)[number], number> = { caption: 16 * 1024, image: 4 * 1024 * 1024, revert: 0, skip: 0, unskip: 0 };
+const MAX_BODY_BYTES: Record<(typeof ACTIONS)[number], number> = { caption: 16 * 1024, image: 4 * 1024 * 1024, revert: 0, skip: 0, unskip: 0, move: 1024 };
 const TIMEOUT_MS = 25_000;
 
 export async function POST(request: Request): Promise<Response> {

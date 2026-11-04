@@ -12,6 +12,9 @@ import {
   formatMonth,
   captionProblem,
   captionStats,
+  dropTime,
+  mayLandOn,
+  MAX_DAYS_AHEAD,
   formatTime,
   groupByDay,
   hourOf,
@@ -34,6 +37,7 @@ import { summarizeClients, type ClientSummary } from './clients.ts';
 import { helpPage } from './help-page.ts';
 import { addClientForm } from './add-client.ts';
 import { clientOption, dropdown } from './dropdown.ts';
+import { makeDraggable, type DragRules } from './drag.ts';
 import { newPostForm } from './new-post.ts';
 import { parseRoute, routeHash, type Route } from './route.ts';
 
@@ -169,6 +173,21 @@ function describe(post: StatusPost): string {
   return `${brandLabel(post.brand)}, ${formatDateTime(post.date)}, ${stateLabel(post.state)}`;
 }
 
+/** Where a post may be dropped (see mayLandOn). */
+const mayLand = (post: StatusPost, day: string, hour: number | null): boolean => mayLandOn(post, day, hour, state.data?.posts ?? [], Date.now());
+
+/** Moves a post to the day (and hour) it was dropped on, then shows the calendar as it now is. */
+async function movePost(post: StatusPost, day: string, hour: number | null): Promise<void> {
+  const time = dropTime(post, hour);
+  const problem = await sendEdit(post, 'move', JSON.stringify({ day, time }), 'application/json');
+  state.notice = problem
+    ? { kind: 'warn', text: problem }
+    : { kind: 'ok', text: `Post moved to ${formatDayLabel(day)}${post.manual ? ` at ${formatTime(`${day}T${time}:00+05:30`)}` : ''}.` };
+  await load();
+}
+
+const dragRules: DragRules = { allowed: mayLand, drop: (post, day, hour) => void movePost(post, day, hour) };
+
 /** A post inside an hourly cell: a small preview, like a draft in a calendar slot. */
 function slotPost(post: StatusPost, large: boolean): HTMLElement {
   const element = h(
@@ -183,6 +202,7 @@ function slotPost(post: StatusPost, large: boolean): HTMLElement {
     ),
   );
   element.addEventListener('click', () => openDetail(post));
+  if (post.editable) makeDraggable(element, post, dragRules);
   return element;
 }
 
@@ -213,6 +233,7 @@ function monthChip(post: StatusPost): HTMLElement {
     h('span', { class: 'mtext' }, snippet(post.caption, 40)),
   );
   chip.addEventListener('click', () => openDetail(post));
+  if (post.editable) makeDraggable(chip, post, dragRules);
   return chip;
 }
 
@@ -227,7 +248,7 @@ function editedTag(post: StatusPost): HTMLElement | false {
 const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
 
 /** Sends one change to the server; resolves to an explanation when it did not work. */
-async function sendEdit(post: StatusPost, action: 'caption' | 'image' | 'revert' | 'skip' | 'unskip', body?: BodyInit, contentType?: string): Promise<string | null> {
+async function sendEdit(post: StatusPost, action: 'caption' | 'image' | 'revert' | 'skip' | 'unskip' | 'move', body?: BodyInit, contentType?: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/edit?post=${encodeURIComponent(post.id)}&action=${action}`, {
       method: 'POST',
@@ -261,9 +282,11 @@ function editPanel(post: StatusPost): HTMLElement {
     message.textContent = text;
     message.classList.toggle('is-error', isError);
   };
-  const buttons: HTMLButtonElement[] = [];
+  const buttons: Array<HTMLButtonElement | HTMLInputElement> = [];
+  // Controls that stay off for this post (the time of a planned post) are never switched on again.
+  const alwaysOff = new Set<HTMLElement>();
   const busy = (working: boolean): void => {
-    for (const element of buttons) element.disabled = working;
+    for (const element of buttons) element.disabled = working || alwaysOff.has(element);
   };
 
   const area = h('textarea', { class: 'caption-input', rows: '12', 'aria-label': 'Caption', maxlength: String(MAX_CAPTION_LENGTH * 2) });
@@ -317,14 +340,52 @@ function editPanel(post: StatusPost): HTMLElement {
   const cancel = button('Cancel', 'btn btn-quiet', () => openDetail(post, 'view'));
   buttons.push(cancel);
 
+  // When it goes out: a post made by hand takes a day and a time; a planned post only a day (the daily run sends it at its planned time).
+  const day = h('input', { type: 'date', class: 'schedule-input', id: 'move-day', min: today(), max: addDays(today(), MAX_DAYS_AHEAD) });
+  day.value = dayKeyOf(post.date);
+  const time = h('input', { type: 'time', class: 'schedule-input', id: 'move-time' });
+  time.value = dropTime(post, null);
+  time.disabled = !post.manual;
+  if (!post.manual) alwaysOff.add(time);
+  const move = button('Move post', 'btn', () => {
+    if (!day.value || (post.manual && !time.value)) return show('Choose a day and a time.', true);
+    const unchanged = day.value === dayKeyOf(post.date) && time.value === dropTime(post, null);
+    if (unchanged) return show('That is when it already goes out.', true);
+    void run(() => sendEdit(post, 'move', JSON.stringify({ day: day.value, time: time.value }), 'application/json'), 'edit');
+  });
+  buttons.push(day, time, move);
+  const schedule = h(
+    'div',
+    { class: 'schedule' },
+    h('h3', {}, 'When it goes out'),
+    h(
+      'div',
+      { class: 'schedule-row' },
+      h('label', { for: 'move-day' }, 'Day'),
+      day,
+      h('label', { for: 'move-time' }, 'Time'),
+      time,
+      move,
+    ),
+    h('p', { class: 'muted' }, post.manual ? 'India time. It goes out within a few minutes of the time you choose.' : 'Planned posts go out at their planned time, so only the day can change. A day that already has a post of this client is not offered.'),
+  );
+
+  // Skipping and deleting are here too, so everything for one post is in one place.
+  const skip = post.state === 'skipped' ? button('Undo skip', 'btn btn-quiet', () => void skipPost(post, false)) : button('Skip this post', 'btn btn-quiet', () => void skipPost(post, true));
+  const remove = post.manual ? button('Delete post', 'btn btn-quiet btn-danger', () => void deleteManualPost(post)) : null;
+  buttons.push(skip);
+  if (remove) buttons.push(remove);
+
   return h(
     'div',
     { class: 'edit-panel' },
+    schedule,
     h('h3', {}, 'Caption'),
     area,
     count,
     h('p', { class: 'muted' }, 'The pictures must be square JPG, up to 4 MB. Changes go out at the scheduled time.'),
     h('div', { class: 'actions' }, save, pick, file, revert, cancel),
+    h('div', { class: 'actions actions-more' }, skip, remove),
     message,
   );
 }
@@ -339,7 +400,7 @@ function channelNames(post: StatusPost): string {
   return names.join(', ');
 }
 
-function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
+function openDetail(post: StatusPost, mode: 'view' | 'edit' = post.editable ? 'edit' : 'view'): void {
   const source = pictureOf(post);
   const link = safeHttpsUrl(post.permalink);
   const editing = mode === 'edit' && post.editable;
@@ -581,7 +642,7 @@ function timeGrid(days: string[]): HTMLElement {
     for (const day of days) {
       const posts = (groups.get(day) ?? []).filter((p) => hourOf(p.date) === hour);
       const past = day < nowKey || (day === nowKey && hour < nowHour);
-      const cell = h('div', { class: `tcell${past ? ' tcell-past' : ''}`, role: 'gridcell' }, ...posts.map((p) => slotPost(p, large)));
+      const cell = h('div', { class: `tcell${past ? ' tcell-past' : ''}`, role: 'gridcell', 'data-drop-day': day, 'data-drop-hour': String(hour) }, ...posts.map((p) => slotPost(p, large)));
       if (day === nowKey && isNow) {
         const line = h('span', { class: 'nowline', 'aria-hidden': 'true' });
         line.style.setProperty('--at', `${(minuteOf(Date.now()) / 60) * 100}%`);
@@ -628,7 +689,7 @@ function monthView(): HTMLElement {
       const classes = ['mcell', day < now ? 'mcell-past' : '', monthOf(day) !== month ? 'mcell-out' : ''].filter(Boolean).join(' ');
       return h(
         'div',
-        { class: classes },
+        { class: classes, 'data-drop-day': day },
         h('div', { class: `mnum${day === now ? ' mnum-today' : ''}` }, String(Number(day.slice(8)))),
         ...posts.slice(0, MONTH_CHIPS_PER_DAY).map(monthChip),
         more > 0 ? button(`+${more} more`, 'more', () => { state.view = 'day'; jumpTo(day); }) : null,
