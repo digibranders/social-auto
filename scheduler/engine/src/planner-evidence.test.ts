@@ -271,3 +271,11 @@ test('caption length follows the evidence: a short target for one fact, no 450 t
   assert.match(legacy.m.prompts[0] ?? '', /450-900 characters/);
   assert.ok(!/Caption length for this post/.test(legacy.m.prompts[0] ?? ''));
 });
+
+test('in fact mode the caption is told to stay within the facts; legacy keeps the problem-and-solution caption', async () => {
+  const withFacts = await planWith(brand, { facts: facts().filter((f) => f.text === SETUP) });
+  assert.match(withFacts.m.prompts[0] ?? '', /Do not add benefits, outcomes, scenarios, customers, scope or capabilities that the facts do not state/);
+  assert.ok(!/the problem in the customer's words/.test(withFacts.m.prompts[0] ?? ''));
+  const legacy = await planWith(brand, undefined);
+  assert.match(legacy.m.prompts[0] ?? '', /the problem in the customer's words/);
+});

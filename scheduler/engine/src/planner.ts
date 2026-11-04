@@ -129,7 +129,7 @@ Return JSON:
       "visualLink": "one short sentence: how a viewer connects this picture to the headline, e.g. 'the parcel stands for big files and the narrow door for friction'",
       "concept": {"subject": "what the post is about, 2-5 words", "angle": "the particular angle on that subject", "message": "the one thing the post asserts", "visualSubject": "the main object in the picture", "visualAction": "what happens to it", "visualComposition": "the framing, e.g. close-up, overhead, wide"},
       "listItems": ["only for a numbered_list post: exactly as many distinct short items as the number the headline starts with; omit it for every other post"],
-      "caption": "Instagram caption (${withFacts ? 'length as set for each post above' : '450-900 characters'}): hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).",
+      "caption": "${withFacts ? `Instagram caption (length as set for each post above): a hook line, then what the post's facts say, in plain words, then the call to action. Do not add benefits, outcomes, scenarios, customers, scope or capabilities that the facts do not state; the reader's situation may be put only as a question. Short paragraphs separated by blank lines (\\n\\n).` : `Instagram caption (450-900 characters): hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).`}",
       "hashtags": ["6-8 relevant hashtags, each starting with #, last one the brand name"]
     }
   ]
