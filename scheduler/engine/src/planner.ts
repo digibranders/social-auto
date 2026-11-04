@@ -319,7 +319,9 @@ export async function planWeek(options: {
     ...(options.pillars ? { pillars: options.pillars } : {}),
   });
   // Each post's hook is chosen together with its pillar, from the hooks that suit it and that the brand's evidence supports.
-  const hookSpecs = options.hooks ?? defaultHooks;
+  // A numbered list needs N distinct, supported items, and a post written from one or two facts cannot supply them without inventing a count or grouping items:
+  // in fact mode the hook is not offered until list items come from a list the source itself states.
+  const hookSpecs = (options.hooks ?? defaultHooks).filter((h) => !(evidenceMode && h.id === 'numbered_list'));
   const hooks = assignHooks({ pillars: assignments.map((a) => a.pillar), evidence: { proofPoints: proofTexts }, recentHooks: options.recentHooks ?? [], recentPillars: recentPillars, hooks: hookSpecs });
   const factsPerPost = evidenceMode ? assignFacts({ facts: offerable, anchors: assignments.map((a) => (a.anchor ? rankedFacts.find((f) => displayFact(f) === a.anchor) : undefined)), recentFactIds }) : [];
   const host = brand.handleUrl?.trim() ?? '';

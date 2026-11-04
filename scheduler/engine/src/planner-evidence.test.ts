@@ -310,3 +310,14 @@ test('a post that invents a figure its fact does not state is turned back, and o
   assert.ok(plan.insufficientConcepts !== undefined);
   assert.ok(plan.insufficientConcepts.reasons.length >= 1);
 });
+
+test('in fact mode the numbered-list hook is never assigned; legacy brands keep it', async () => {
+  const hooks = new Set<string>();
+  for (let week = 1; week <= 4; week += 1) {
+    const m = model();
+    await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: week, schedule: { ...schedule, count: 7 }, usedPainPoints: [], recentHooks: [], fetchFn: m.fetchFn, evidence: { facts: facts() } }).catch(() => undefined);
+    for (const body of m.prompts) for (const match of body.matchAll(/Post \d+ \(\w+, (\w+)\)/g)) hooks.add(match[1] as string);
+  }
+  assert.ok(hooks.size > 0);
+  assert.ok(!hooks.has('numbered_list'));
+});
