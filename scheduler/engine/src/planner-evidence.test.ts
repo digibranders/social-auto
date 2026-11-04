@@ -81,10 +81,12 @@ test('legacy brands behave as before and are labelled legacy coverage', async ()
   assert.ok(!(m2.prompts[0] ?? '').includes('uptime target'));
 });
 
-test('profile text that states a figure reaches the writer only when no facts are in use', () => {
+test('unverified profile text (audience, offer, rules, proof points, a tone with figures) reaches the writer only when no facts are in use', () => {
   const withFigures = { ...brand, audience: '1,000 small websites', tone: 'Warm' } as Brand;
   assert.equal(profileForPrompt(withFigures, true)['audience'], undefined);
+  assert.equal(profileForPrompt({ ...withFigures, audience: 'Small websites' } as Brand, true)['audience'], undefined);
   assert.equal(profileForPrompt(withFigures, true)['tone'], 'Warm');
+  assert.equal(profileForPrompt({ ...withFigures, tone: 'Warm, 24/7' } as Brand, true)['tone'], undefined);
   assert.equal(profileForPrompt(withFigures, true)['offer'], undefined);
   assert.equal(profileForPrompt(withFigures, false)['audience'], '1,000 small websites');
   assert.equal(profileForPrompt(withFigures, false)['offer'], brand.offer);

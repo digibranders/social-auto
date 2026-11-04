@@ -93,13 +93,13 @@ function conceptLines(recent: readonly ConceptRecord[]): string {
 /** True when a profile sentence states no figure, price or period, so it can reach the writer without being a claim nothing verified. */
 export const figureFree = (text: string): boolean => !/[\p{N}$€£₹¥%]/u.test(text);
 
-/** The profile as the writer sees it. With evidence facts, the free-text offer, rules and proof points stay out (the facts are given per post), and any other profile text that states a figure is left out too. */
+/** The profile as the writer sees it. With evidence facts, the free-text offer, rules, proof points and audience stay out (the facts are given per post; the audience line is unverified wording), and a tone that states a figure is left out too. */
 export function profileForPrompt(brand: Brand, withFacts: boolean): Record<string, unknown> {
   if (!withFacts) return { name: brand.name, website: brand.handleUrl, offer: brand.offer, audience: brand.audience, tone: brand.tone, proofPoints: brand.proofPoints, callToAction: brand.callToAction, rules: brand.rules };
   return {
     name: brand.name,
     website: brand.handleUrl,
-    ...(figureFree(brand.audience) ? { audience: brand.audience } : {}),
+    // The audience line is the profile model's own wording about who the product is for, which nothing verified: a writer given it states it as a fact. Tone is style only.
     ...(figureFree(brand.tone) ? { tone: brand.tone } : {}),
     callToAction: brand.callToAction,
   };
