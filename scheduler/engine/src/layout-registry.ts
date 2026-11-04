@@ -41,8 +41,6 @@ export interface LayoutFamily {
   /** When absent every medium is allowed. */
   allowedMediums?: PictureMedium[];
   requiredContent: ContentNeed[];
-  /** Hooks this family suits; absent means any. */
-  eligibleHooks?: string[];
   zones: Partial<Record<TextZone, ZoneLayout>>;
   logoSlots: SlotDefinition[];
   identitySlots: SlotDefinition[];
@@ -166,7 +164,6 @@ export const layoutRegistry: readonly LayoutFamily[] = [
     allowedPictureRoles: ['none', 'supporting'],
     allowedMediums: ['diagram', 'abstract', 'illustration'],
     requiredContent: ['list'],
-    eligibleHooks: ['numbered_list', 'how_to', 'contrast', 'myth_fact', 'before_after', 'direct_statement'],
     zones: {
       top: {
         textSlots: text(slot('headline', MARGIN, 200, WIDE, 200), slot('subline', MARGIN, 410, WIDE, 100), slot('list', MARGIN, 530, WIDE, 420)),
@@ -227,7 +224,7 @@ const overlaps = (a: Rect, b: Rect): boolean => a.x < b.x + b.w && b.x < a.x + a
 const inCanvas = ({ x, y, w, h }: Rect): boolean => w > 0 && h > 0 && x >= 0 && y >= 0 && x + w <= CANVAS_SIZE && y + h <= CANVAS_SIZE;
 
 /** True when the three chosen brand elements neither touch each other nor any text slot of the zone. */
-function seatedCleanly(zone: ZoneLayout, logo: SlotDefinition, identity: SlotDefinition, cta: SlotDefinition): boolean {
+export function seatedCleanly(zone: ZoneLayout, logo: SlotDefinition, identity: SlotDefinition, cta: SlotDefinition): boolean {
   const brand = [logo.rect, identity.rect, cta.rect];
   for (let i = 0; i < brand.length; i++) {
     for (let j = i + 1; j < brand.length; j++) if (overlaps(brand[i] as Rect, brand[j] as Rect)) return false;
