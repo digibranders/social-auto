@@ -100,3 +100,19 @@ test('a headline built from semicolon or slash fragments gets an advisory warnin
   assert.ok(!codes(validateEditorial(copy('Documents update |automatically|'), ctx())).warnings.includes('headline_reads_like_feature_label'));
   assert.ok(!codes(validateEditorial(copy('Support that never |sleeps|'), ctx())).warnings.includes('headline_reads_like_feature_label'));
 });
+
+
+test('a subline made by rewording the fact is redundant even though the cited fact contains its one extra word', () => {
+  const cited = (text: string) => [{ text, category: 'capability' as const }];
+  const cases: Array<[string, string, string]> = [
+    ['Need replies grounded in |your docs|?', 'OyeChats writes replies grounded in your docs.', 'OyeChats writes replies grounded in your docs, retrieved with hybrid search.'],
+    ['Meaning-based search meets |keyword search|', 'OyeChats uses meaning-based and keyword search together.', 'OyeChats uses meaning-based and keyword search together for precise answers.'],
+  ];
+  for (const [headline, subline, fact] of cases) {
+    const r = validateEditorial({ headline, subline }, ctx({ brandName: 'OyeChats', identityLine: undefined, citedFacts: cited(fact) } as Partial<EditorialContext>));
+    assert.deepEqual(codes(r).hard, ['subline_adds_nothing'], subline);
+  }
+  // A subline that adds two or more words the facts back, or a figure, is still a new point.
+  const added = validateEditorial({ headline: 'Start with a |free plan|', subline: 'Free plan. No credit card required.' }, ctx({ citedFacts: cited('Free plan. No credit card required.') }));
+  assert.deepEqual(codes(added).hard, []);
+});

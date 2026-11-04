@@ -35,10 +35,10 @@ export interface EditorialConfig {
 }
 
 export const defaultEditorialConfig: EditorialConfig = {
-  stopWords: ['a', 'an', 'the', 'and', 'or', 'but', 'for', 'with', 'your', 'you', 'our', 'we', 'is', 'are', 'was', 'be', 'to', 'of', 'in', 'on', 'at', 'by', 'it', 'its', 'this', 'that', 'from', 'as', 'can', 'will', 'all', 'one', 'more', 'has', 'have', 'who', 'what', 'how', 'why', 'not', 'no', 'so', 'if', 'do', 'does', 'into', 'out', 'up', 'than', 'then', 'them', 'they', 'their'],
+  stopWords: ['a', 'an', 'the', 'and', 'or', 'but', 'for', 'with', 'your', 'you', 'our', 'we', 'is', 'are', 'was', 'be', 'to', 'of', 'in', 'on', 'at', 'by', 'it', 'its', 'this', 'that', 'from', 'as', 'can', 'will', 'all', 'one', 'more', 'has', 'have', 'who', 'what', 'how', 'why', 'not', 'no', 'so', 'if', 'do', 'does', 'into', 'out', 'up', 'than', 'then', 'them', 'they', 'their', 'own', 'use', 'uses', 'get', 'gets', 'also', 'just', 'each', 'any', 'every', 'via', 'per'],
   nearIdentical: 0.6,
   maxNewStems: 1,
-  overlapWarning: 0.6,
+  overlapWarning: 0.5,
   captionRepeat: 0.5,
   pricingCtaWords: ['pricing', 'price', 'prices', 'plans', 'plan', 'buy', 'subscribe', 'checkout'],
 };
@@ -90,7 +90,9 @@ export function validateEditorial(copy: EditorialCopy, context: EditorialContext
     const newFigure = [...figuresOf(copy.subline)].some((f) => !headFigures.has(f));
     const citedStems = new Set((context.citedFacts ?? []).flatMap((f) => [...contentStems(f.text, brand, config)]));
     const supportedExtra = extra.filter((s) => citedStems.has(s));
-    if (similarity >= config.nearIdentical && !newFigure && supportedExtra.length === 0 && extra.length <= config.maxNewStems) {
+    // One extra word is a rewording whether or not the cited fact contains it (a subline made from the fact always uses the fact's words); only a real addition (a figure,
+    // or two or more new words the facts back) makes similar vocabulary a new point.
+    if (similarity >= config.nearIdentical && !newFigure && extra.length <= config.maxNewStems) {
       hard.push({ code: 'subline_adds_nothing', message: 'the subline repeats the headline in nearly the same words and adds nothing supported; say something the headline does not' });
     } else if (similarity >= config.overlapWarning && !newFigure && supportedExtra.length === 0 && extra.length > 0) {
       warnings.push({ code: 'subline_overlap_unsupported_extra', message: 'the subline overlaps the headline and its extra wording is not backed by the post\'s facts' });
