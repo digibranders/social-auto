@@ -243,3 +243,21 @@ test('a measurement report that is absent is a hard failure, never assumed succe
 test('Chrome version is recorded from the browser', real, async () => {
   assert.match(await chromeVersion(), /Chrome/);
 });
+
+test('real Chrome: a realistic identity line fits its slot on the first candidate, and one too long for any slot is dropped with a warning instead of failing the poster', real, async () => {
+  const { dir, out } = await job();
+  try {
+    const realistic: PosterBrand = { ...brand, identityLine: 'An AI chat assistant that answers from your content and scores visitors.' };
+    const fits = await renderPoster({ copy: SHORT, brand: realistic, font, candidates: [candidate(brief('split-composition', 'left', { role: 'none' }, {}))].map((c) => ({ ...c, brief: brief('typography-hero', 'center', { role: 'none' }) })), outPng: out });
+    assert.notEqual(fits.status, 'render_failed', JSON.stringify(fits.attempts));
+    assert.ok(!fits.warnings.some((w) => w.code === 'identity_omitted'), 'a normal identity line is kept');
+
+    const tooLong: PosterBrand = { ...brand, identityLine: 'An AI chat assistant that answers questions from your own content, scores every visitor as they chat, hands the hot ones to your team and reports on all of it. '.repeat(3) };
+    const dropped = await renderPoster({ copy: SHORT, brand: tooLong, font, candidates: [candidate(brief('typography-hero', 'center', { role: 'none' }))], outPng: out });
+    assert.equal(dropped.status, 'capture_complete');
+    assert.ok(dropped.warnings.some((w) => w.code === 'identity_omitted'));
+    assert.deepEqual(pngSize(await readFile(out)), { width: 1080, height: 1080 });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

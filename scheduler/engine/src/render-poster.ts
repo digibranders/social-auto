@@ -51,10 +51,10 @@ export interface RenderInput {
 
 const fail = (message: string): Issue => ({ code: 'measurement_incomplete', severity: 'hard', message });
 
-async function measure(candidate: RenderCandidate, input: RenderInput, pictureUrl: string | undefined, expectImages: number): Promise<{ issues: Issue[]; warnings: Issue[]; solved: Record<string, number> }> {
+async function measure(candidate: RenderCandidate, input: RenderInput, pictureUrl: string | undefined, expectImages: number, brand: PosterBrand = input.brand): Promise<{ issues: Issue[]; warnings: Issue[]; solved: Record<string, number> }> {
   let composed;
   try {
-    composed = composePoster({ brief: candidate.brief, copy: input.copy, brand: input.brand, font: input.font, mode: { kind: 'measure' }, ...(pictureUrl ? { pictureUrl } : {}) });
+    composed = composePoster({ brief: candidate.brief, copy: input.copy, brand, font: input.font, mode: { kind: 'measure' }, ...(pictureUrl ? { pictureUrl } : {}) });
   } catch (error) {
     if (error instanceof ComposeError) return { issues: [fail(error.message)], warnings: [], solved: {} };
     throw error;
@@ -74,12 +74,27 @@ export async function renderPoster(input: RenderInput): Promise<RenderOutcome> {
   const version = await chromeVersion(input.chrome);
   const attempts: Attempt[] = [];
   let chosen: { candidate: RenderCandidate; solved: Record<string, number> } | undefined;
+  let omitIdentity = false;
+  let extraWarnings: Issue[] = [];
 
   for (const candidate of input.candidates) {
-    const result = await measure(candidate, input, undefined, 0);
+    let result = await measure(candidate, input, undefined, 0);
     attempts.push({ optionId: candidate.optionId, stage: 'preflight', ok: result.issues.length === 0, issues: result.issues });
+    // An identity line too long for its slot is dropped rather than failing the poster: it is an optional brand element, never invented or shortened, and the report says so.
+    const onlyIdentity = result.issues.length > 0 && result.issues.every((i) => i.slot === 'identity' || (i.code === 'collision' && i.message.includes('"identity"')));
+    if (onlyIdentity && input.brand.identityLine) {
+      const trimmed: PosterBrand = { ...input.brand };
+      delete trimmed.identityLine;
+      const retry = await measure(candidate, input, undefined, 0, trimmed);
+      attempts.push({ optionId: candidate.optionId, stage: 'preflight', ok: retry.issues.length === 0, issues: retry.issues });
+      if (retry.issues.length === 0) {
+        omitIdentity = true;
+        result = { ...retry, warnings: [...retry.warnings, { code: 'identity_omitted', severity: 'warning', message: 'the identity line did not fit its slot at the smallest size, so the poster is drawn without it' }] };
+      }
+    }
     if (result.issues.length === 0) {
       chosen = { candidate, solved: result.solved };
+      extraWarnings = result.warnings.filter((w) => w.code === 'identity_omitted');
       break;
     }
   }
@@ -95,13 +110,15 @@ export async function renderPoster(input: RenderInput): Promise<RenderOutcome> {
     }
   }
 
-  const final = await measure(candidate, input, pictureUrl, pictureUrl ? 1 : 0);
+  const brand: PosterBrand = omitIdentity ? { ...input.brand, ...{} } : input.brand;
+  if (omitIdentity) delete brand.identityLine;
+  const final = await measure(candidate, input, pictureUrl, pictureUrl ? 1 : 0, brand);
   attempts.push({ optionId: candidate.optionId, stage: 'final', ok: final.issues.length === 0, issues: final.issues });
   if (final.issues.length > 0) {
     return { status: 'render_failed', warnings: final.warnings, attempts, chromeVersion: version, failure: `the final measurement failed: ${final.issues.map((i) => i.message).join('; ')}` };
   }
 
-  const frozen = composePoster({ brief: candidate.brief, copy: input.copy, brand: input.brand, font: input.font, mode: { kind: 'frozen', solved: final.solved }, ...(pictureUrl ? { pictureUrl } : {}) });
+  const frozen = composePoster({ brief: candidate.brief, copy: input.copy, brand, font: input.font, mode: { kind: 'frozen', solved: final.solved }, ...(pictureUrl ? { pictureUrl } : {}) });
   await captureHtml(frozen.html, input.outPng, input.chrome);
   const local = input.font.source === 'local';
   return {
@@ -109,7 +126,7 @@ export async function renderPoster(input: RenderInput): Promise<RenderOutcome> {
     optionId: candidate.optionId,
     record: candidate.record,
     solved: final.solved,
-    warnings: final.warnings,
+    warnings: [...extraWarnings, ...final.warnings],
     attempts,
     chromeVersion: version,
   };

@@ -83,7 +83,8 @@ export type IssueCode =
   | 'outside_margin'
   | 'missing_glyphs'
   | 'image_failed'
-  | 'contrast';
+  | 'contrast'
+  | 'identity_omitted';
 
 export interface Issue {
   code: IssueCode;

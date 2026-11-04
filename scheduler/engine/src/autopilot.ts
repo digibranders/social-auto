@@ -213,6 +213,9 @@ async function main(): Promise<void> {
         log: (m) => console.log(`    ${m}`),
         artFailure: artSettings?.fallbackToLegacy ? 'legacy' : 'fail',
       });
+    } catch (error) {
+      console.log(ai.usage.format());
+      throw error;
     } finally {
       // Posters that rendered are recorded as awaiting review even when another poster failed.
       if (artSettings) {
