@@ -103,6 +103,10 @@ export interface SiteSnapshot {
   links?: LinkInfo[];
   /** The homepage's `<html lang>` as written, e.g. "en-GB"; null when it declares none. */
   htmlLang?: string | null;
+  /** The HTML of every page that was read (as rendered, where it had to be rendered), kept in memory so its structure can be read for evidence. Never written to disk. */
+  sources?: Array<{ url: string; html: string }>;
+  /** The text of the stylesheets the homepage links, applied when the structure of a page is read. */
+  stylesheets?: string[];
 }
 
 function decodeEntities(text: string): string {
@@ -311,7 +315,9 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
 
   const homeBody = await readable(base.href, home.body);
   const pages: CrawledPage[] = [];
+  const sources: Array<{ url: string; html: string }> = [];
   const addPage = (url: string, html: string): void => {
+    sources.push({ url, html });
     pages.push({
       url,
       title: decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? ''),
@@ -379,5 +385,7 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     pageDecisions: decisions,
     links: extractLinkInfo(homeBody, base).links,
     htmlLang: extractLinkInfo(homeBody, base).htmlLang,
+    sources,
+    stylesheets: stylesheets.filter((sheet) => sheet !== ''),
   };
 }

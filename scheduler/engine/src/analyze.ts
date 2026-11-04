@@ -1,4 +1,5 @@
 /** Turns a website into brands/<slug>/brand.json plus a downloaded logo. */
+import { buildSiteFacts, writeFacts, type BuildDeps } from './evidence-pipeline.ts';
 import { unsourcedClaim, verifyClaims, type ClaimBatch, type ClaimInput, type VerifiedClaim } from './claims.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
@@ -150,6 +151,10 @@ export interface AnalyzeDeps {
   crawl?: (site: string) => Promise<SiteSnapshot>;
   fetchBytes?: (url: string) => Promise<FetchedBytes>;
   chatFetch?: typeof fetch;
+  /** Evidence facts are built from the crawl by default; `false` skips them. */
+  facts?: false;
+  factsDeps?: BuildDeps;
+  log?: (message: string) => void;
 }
 
 /** The record of where a logo came from. */
@@ -225,5 +230,15 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
   // Which pages the profile was built from and which were left out, with scores and reasons, so a wrong choice can be seen.
   const pages = { read: snapshot.pageDecisions.filter((d) => d.selected), skipped: snapshot.pageDecisions.filter((d) => !d.selected) };
   await writeFile(join(dir, 'pages.json'), `${JSON.stringify(pages, null, 2)}\n`);
+  // Evidence facts: what the pages state, as exact words with their structure. A failure here never stops the profile; the brand stays on legacy coverage.
+  if (deps.facts !== false && (snapshot.sources?.length ?? 0) > 0) {
+    try {
+      const file = await buildSiteFacts(snapshot, deps.factsDeps);
+      await writeFacts(dir, file);
+      deps.log?.(`evidence facts: ${file.coverage.usable} usable, ${file.coverage.needsReview} held for review, from ${file.coverage.structured} of ${file.coverage.pages} pages read with structure${file.coverage.notes.length ? ` (${file.coverage.notes.length} note${file.coverage.notes.length === 1 ? '' : 's'} in facts.json)` : ''}`);
+    } catch (error) {
+      deps.log?.(`evidence facts were not built: ${error instanceof Error ? error.message : String(error)}; the brand stays on legacy evidence coverage`);
+    }
+  }
   return { dir, brand: profile };
 }

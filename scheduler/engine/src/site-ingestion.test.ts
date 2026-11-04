@@ -117,3 +117,53 @@ test('a broken page is replaced by the next best one, and the brand stage sees e
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('the crawl keeps the HTML of every page it read, in memory, for evidence; the profile run writes facts.json and survives a failed extraction', async () => {
+  const { deps } = world();
+  const snapshot = await crawlSite(`${ORIGIN}/`, { ...deps, maxPages: 4 });
+  assert.deepEqual((snapshot.sources ?? []).map((s) => s.url).sort(), snapshot.pages.map((p) => p.url).sort());
+  assert.ok((snapshot.sources ?? []).every((s) => s.html.length > 100));
+
+  const answer = {
+    name: 'Fynix Digital', website: ORIGIN, handleUrl: 'fynix.digital', offer: 'Marketing services', audience: 'B2B teams', tone: 'Direct', proofPoints: ['Six services'],
+    callToAction: 'Visit fynix.digital (link in bio)', rules: ['No invented prices'], colors: { background: '#FCFBF9', ink: '#102234', accent: '#E9AF88', tile: '#0C1E2E' }, font: 'Figtree',
+    visualStyle: 'Navy and peach', features: [{ icon: 'monitor', title: 'Development', detail: 'Custom websites' }],
+  };
+  const chatFetch = (async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200 })) as typeof fetch;
+  const noLogo = async (): Promise<never> => { throw new Error('no logo download in this test'); };
+  const dir = await mkdtemp(join(tmpdir(), 'ingestion-facts-'));
+  try {
+    const logs: string[] = [];
+    const extract = async (_html: string, url: string) => ({ url, title: '', lang: 'en', truncated: false, unstyled: false, variantSwitch: false, htmlHash: '', blocks: [{ id: 'b0', text: 'Fynix builds custom websites for B2B teams.', tag: 'p', region: 'prose' as const, isHeading: false, headingText: '', chrome: '' as const, cardId: '', cardGroup: '', cardTitle: '', rowLabel: '', colLabel: '', tableHeader: false, demo: false, strip: false, lang: 'en' }] });
+    const { dir: brandDir } = await analyzeSite(ORIGIN, dir, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), { crawl: async () => snapshot, fetchBytes: noLogo, chatFetch, factsDeps: { extract }, log: (m) => logs.push(m) });
+    const saved = JSON.parse(await readFile(join(brandDir, 'facts.json'), 'utf8')) as { facts: unknown[]; coverage: { structured: number } };
+    assert.ok(saved.facts.length >= 1);
+    assert.equal(saved.coverage.structured, snapshot.pages.length);
+    assert.ok(logs.some((l) => /evidence facts:/.test(l)));
+    // The page HTML itself is never written to disk.
+    assert.ok(!(await readFile(join(brandDir, 'facts.json'), 'utf8')).includes('<html'));
+
+    const second = await mkdtemp(join(tmpdir(), 'ingestion-facts-'));
+    try {
+      const broken = async (): Promise<never> => { throw new Error('boom'); };
+      const failLogs: string[] = [];
+      const { dir: dir2 } = await analyzeSite(ORIGIN, second, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), { crawl: async () => snapshot, fetchBytes: noLogo, chatFetch, factsDeps: { extract: broken }, log: (m) => failLogs.push(m) });
+      const flat = JSON.parse(await readFile(join(dir2, 'facts.json'), 'utf8')) as { coverage: { flatText: number; usable: number } };
+      assert.equal(flat.coverage.usable, 0);
+      assert.equal(flat.coverage.flatText, snapshot.pages.length);
+      await readFile(join(dir2, 'brand.json'), 'utf8');
+    } finally {
+      await rm(second, { recursive: true, force: true });
+    }
+
+    const third = await mkdtemp(join(tmpdir(), 'ingestion-facts-'));
+    try {
+      const { dir: dir3 } = await analyzeSite(ORIGIN, third, aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), { crawl: async () => snapshot, fetchBytes: noLogo, chatFetch, facts: false });
+      await assert.rejects(readFile(join(dir3, 'facts.json'), 'utf8'));
+    } finally {
+      await rm(third, { recursive: true, force: true });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -15,6 +15,7 @@
  * when the brand's art.json enables it, is switched off by ART_DIRECTION_DISABLED=1, and needs --allow-paid-ai with --dry-run.
  * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
  */
+import { loadFacts } from './evidence-pipeline.ts';
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -37,7 +38,7 @@ const BRANDS_ROOT = resolve('brands');
 const WEEK_FILE = /^week-(\d+)\.json$/;
 
 interface History {
-  weeks: Array<{ file: string; createdAt: string; painPoints: string[]; /** The pillar of each post; weeks written before pillars have none. */ pillars?: string[]; /** The hook actually used by each post, and its headline as compared for repetition. */ hooks?: string[]; headlines?: string[]; /** The concept of each accepted post, for the repeat check. */ concepts?: ConceptRecord[]; /** The art records of rendered posters and where their review stands. */ art?: ArtHistoryEntry[] }>;
+  weeks: Array<{ file: string; createdAt: string; painPoints: string[]; /** The pillar of each post; weeks written before pillars have none. */ pillars?: string[]; /** The hook actually used by each post, and its headline as compared for repetition. */ hooks?: string[]; headlines?: string[]; /** The concept of each accepted post, for the repeat check. */ concepts?: ConceptRecord[]; /** The evidence facts assigned to the week's posts, for the fact cooldown. */ factIds?: string[]; /** The art records of rendered posters and where their review stands. */ art?: ArtHistoryEntry[] }>;
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -165,6 +166,9 @@ async function main(): Promise<void> {
     const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
     ai.usage.purpose = 'writing';
     console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
+    const loaded = await loadFacts(brandDir);
+    if (loaded) console.log(`    Evidence facts: ${loaded.facts.filter((f) => f.status === 'usable').length} usable of ${loaded.facts.length} (built ${loaded.file.builtAt.slice(0, 10)}).`);
+    else console.log('    No evidence facts for this brand: writing from the profile\'s proof points (legacy evidence coverage).');
     const plan = await planWeek({
       ai,
       compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
@@ -184,7 +188,9 @@ async function main(): Promise<void> {
       recentHooks: history.weeks.flatMap((w) => w.hooks ?? []),
       recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
       recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
+      ...(loaded ? { evidence: { facts: loaded.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []) } } : {}),
     });
+    console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}.`);
     if (plan.insufficientConcepts) {
       const { requested, produced, reasons } = plan.insufficientConcepts;
       console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);
@@ -200,7 +206,7 @@ async function main(): Promise<void> {
       await writeFileAtomic(join(brandDir, `art-report-${planFile}`), `${JSON.stringify(directed.report, null, 2)}\n`);
     }
     await writeFileAtomic(join(brandDir, planFile), `${JSON.stringify(finalPlan, null, 2)}\n`);
-    history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []) });
+    history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(plan.posts.some((p) => p.factIds) ? { factIds: plan.posts.flatMap((p) => p.factIds ?? []) } : {}) });
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
     console.log('3/4 Rendering posters…');
