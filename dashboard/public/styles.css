@@ -172,12 +172,12 @@ button { font: inherit; color: inherit; }
 .tcell-past { background-image: repeating-linear-gradient(135deg, transparent 0 6px, var(--hatch) 6px 7px); }
 .nowline { position: absolute; left: 0; right: 0; top: var(--at); height: 2px; background: var(--today); pointer-events: none; z-index: 1; }
 
-.slot-post { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--slot); border: 1px solid var(--border); border-left: 3px solid var(--unknown); border-radius: 8px; padding: 5px 7px; cursor: pointer; min-width: 0; }
+.slot-post { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--slot); border: 1px solid var(--border); border-radius: 8px; padding: 5px 7px; cursor: pointer; min-width: 0; }
 .slot-post:hover { border-color: var(--accent); }
-.slot-post.state-published { border-left-color: var(--published); }
-.slot-post.state-scheduled { border-left-color: var(--scheduled); }
-.slot-post.state-due { border-left-color: var(--due); }
-.slot-post.state-missed { border-left-color: var(--missed); background: var(--missed-bg); }
+.slot-post.state-published { background: color-mix(in srgb, var(--published) 9%, var(--slot)); }
+.slot-post.state-scheduled { background: color-mix(in srgb, var(--scheduled) 9%, var(--slot)); }
+.slot-post.state-due { background: color-mix(in srgb, var(--due) 9%, var(--slot)); }
+.slot-post.state-missed { background: var(--missed-bg); border-color: color-mix(in srgb, var(--missed) 40%, var(--border)); }
 .slot-post .avatar { width: 26px; height: 26px; }
 .slot-post .badge { display: none; }
 .slot-text { display: grid; min-width: 0; flex: 1; }
@@ -220,12 +220,12 @@ button { font: inherit; color: inherit; }
 .mcell-out { opacity: 0.45; }
 .mnum { text-align: center; color: var(--muted); font-weight: 600; justify-self: center; min-width: 26px; padding: 2px 6px; border-radius: 6px; }
 .mnum-today { background: var(--today-bg); color: var(--today); }
-.mchip { display: flex; align-items: center; gap: 5px; border: 0; border-left: 3px solid var(--unknown); border-radius: 6px; padding: 3px 6px; background: var(--slot); cursor: pointer; text-align: left; font-size: 0.74rem; min-width: 0; }
+.mchip { display: flex; align-items: center; gap: 5px; border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; background: var(--slot); cursor: pointer; text-align: left; font-size: 0.74rem; min-width: 0; }
 .mchip:hover { outline: 1px solid var(--accent); }
-.mchip.state-published { border-left-color: var(--published); }
-.mchip.state-scheduled { border-left-color: var(--scheduled); }
-.mchip.state-due { border-left-color: var(--due); }
-.mchip.state-missed { border-left-color: var(--missed); background: var(--missed-bg); }
+.mchip.state-published { background: color-mix(in srgb, var(--published) 9%, var(--slot)); }
+.mchip.state-scheduled { background: color-mix(in srgb, var(--scheduled) 9%, var(--slot)); }
+.mchip.state-due { background: color-mix(in srgb, var(--due) 9%, var(--slot)); }
+.mchip.state-missed { background: var(--missed-bg); border-color: color-mix(in srgb, var(--missed) 40%, var(--border)); }
 .mtime { font-weight: 700; white-space: nowrap; }
 .mtext { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .mchip.state-published .mmark { color: var(--published); }
