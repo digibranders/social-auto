@@ -50,9 +50,9 @@ test('every family passes the contrast target for the text it draws', () => {
 test('the six families are structurally different pages', () => {
   const shapes = FAMILY_BRIEFS.map(([, brief, extra]) => {
     const { html } = compose(brief, extra);
-    return JSON.stringify([html.includes('data-layer="scrim"'), html.includes('data-slot="picture"'), html.includes('class="list"'), html.includes('data-slot="figure"'), (html.match(/data-layer="decor"/g) ?? []).length, html.match(/body\{background:[^;]+/)?.[0]]);
+    return JSON.stringify([html.includes('data-layer="scrim"'), html.includes('data-slot="picture"'), html.includes('class="list"'), html.includes('data-slot="figure"'), html.includes('opacity:0.28'), (html.match(/<div data-layer="decor"/g) ?? []).length, html.match(/body\{background:[^;]+/)?.[0]]);
   });
-  assert.equal(new Set(shapes).size, 6);
+  assert.equal(new Set(shapes).size, 6, shapes.join('\n'));
 });
 
 test('the headline keeps its |accent| spans and its text unchanged', () => {
@@ -182,4 +182,22 @@ test('a system font names the brand font first and says its source is system', (
   assert.equal(f.source, 'system');
   assert.match(f.stack, /^"Inter", /);
   assert.equal(systemFont('Bad"; } body { x').stack.includes('}'), false);
+});
+
+test('the typography layout draws no decorative rule that a long headline could run into, and no layout draws decor over the headline slot', () => {
+  const none = compose(briefOf('typography-hero', 'top', { role: 'none' }));
+  assert.ok(!none.html.includes('<div data-layer="decor"'));
+  const slot = familyById(layoutRegistry, 'typography-hero')?.zones['top']?.textSlots.find((s) => s.id === 'headline');
+  assert.ok(slot);
+  for (const [id, brief, extra] of FAMILY_BRIEFS) {
+    const { html } = compose(brief, extra);
+    for (const m of html.matchAll(/<div data-layer="decor" style="left:(-?\d+)px;top:(-?\d+)px;width:(\d+)px;height:(\d+)px;/g)) {
+      const [x, y, w, h] = m.slice(1).map(Number) as [number, number, number, number];
+      const zone = familyById(layoutRegistry, id)?.zones[brief.textZone];
+      const headline = zone?.textSlots.find((s) => s.id === 'headline');
+      if (!headline || w >= 1000 || h >= 1000) continue; // full-length edge rules sit on a picture edge, not on text
+      const overlaps = x < headline.rect.x + headline.rect.w && x + w > headline.rect.x && y < headline.rect.y + headline.rect.h && y + h > headline.rect.y;
+      assert.ok(!overlaps || id === 'feature-spotlight', `${id} decor overlaps the headline slot`);
+    }
+  }
 });

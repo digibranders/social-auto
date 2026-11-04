@@ -296,13 +296,12 @@ type Composer = (c: Canvas) => void;
 
 const composers: Record<string, Composer> = {
   'typography-hero': (c) => {
-    const { dark, accentOnDark } = c.palette;
+    const { dark } = c.palette;
     c.css.push(`body{background:${dark};}`);
     c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'dark');
     const texture = c.picture('texture', { opacity: 0.28 });
     if (texture) c.check('texture', '#FFFFFF', composite('#FFFFFF', 0.28, dark));
-    const subline = c.slot('subline');
-    if (subline) c.decor({ x: subline.rect.x, y: subline.rect.y - 30, w: 120, h: 10 }, `background:${accentOnDark};`);
+    // No decorative rule between headline and subline: it sat at a fixed height the headline could run into, and nothing measures decor.
     headlineAndSubline(c, 'dark');
   },
 
