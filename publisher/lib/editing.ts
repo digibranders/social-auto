@@ -20,6 +20,8 @@ export interface EditStore {
 export type EditAction =
   | { kind: 'caption'; caption: unknown }
   | { kind: 'image'; bytes: Uint8Array }
+  | { kind: 'skip' }
+  | { kind: 'unskip' }
   | { kind: 'revert' };
 
 export interface EditResult {
@@ -62,13 +64,19 @@ export async function editPost(
     await store.saveImage(key, action.bytes);
     if (current?.imageKey) staleImages.push(current.imageKey);
     next = { ...current, imageKey: key, updatedAt };
+  } else if (action.kind === 'skip') {
+    next = { ...current, skipped: true, updatedAt };
+  } else if (action.kind === 'unskip') {
+    next = { ...current, updatedAt };
+    delete next.skipped;
   } else {
+    // Reverting discards the words and the picture, not the decision to skip the post.
     if (current?.imageKey) staleImages.push(current.imageKey);
-    next = undefined;
+    next = current?.skipped ? { skipped: true, updatedAt } : undefined;
   }
 
   const updated: OverrideMap = { ...overrides };
-  if (next && (next.caption !== undefined || next.imageKey !== undefined)) updated[id] = next;
+  if (next && (next.caption !== undefined || next.imageKey !== undefined || next.skipped === true)) updated[id] = next;
   else delete updated[id];
 
   try {
@@ -79,5 +87,6 @@ export async function editPost(
     throw error;
   }
   for (const key of staleImages) await store.deleteImage(key).catch(() => undefined);
-  return { post: id, edited: id in updated };
+  const kept = updated[id];
+  return { post: id, edited: kept !== undefined && (kept.caption !== undefined || kept.imageKey !== undefined) };
 }

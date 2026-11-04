@@ -10,6 +10,8 @@ export interface PostOverride {
   caption?: string;
   /** Random key of the replacement picture; the picture is served from /api/edited-image?k=<key>. */
   imageKey?: string;
+  /** The post is skipped: it stays on the calendar but is never sent. Undone by unskipping, while its time is still ahead. */
+  skipped?: boolean;
   updatedAt: string;
 }
 
@@ -94,6 +96,7 @@ export function parseOverrides(raw: unknown): OverrideMap {
     }
     if (o['caption'] !== undefined && typeof o['caption'] !== 'string') throw new Error(`overrides["${id}"].caption is malformed`);
     if (o['imageKey'] !== undefined && !isImageKey(o['imageKey'])) throw new Error(`overrides["${id}"].imageKey is malformed`);
+    if (o['skipped'] !== undefined && typeof o['skipped'] !== 'boolean') throw new Error(`overrides["${id}"].skipped is malformed`);
     result[id] = o as unknown as PostOverride;
   }
   return result;
@@ -101,13 +104,16 @@ export function parseOverrides(raw: unknown): OverrideMap {
 
 export type EditedPost = ScheduledPost & { edited: boolean };
 
-/** The posts as they will actually be sent: planned posts with the dashboard edits applied on top. */
+/** The posts as they will actually be sent: planned posts with the dashboard edits applied on top, and the ones skipped marked. */
 export function applyOverrides(posts: ScheduledPost[], overrides: OverrideMap): EditedPost[] {
   return posts.map((post) => {
     const o = overrides[post.id];
-    if (!o || (o.caption === undefined && o.imageKey === undefined)) return { ...post, edited: false };
+    if (!o) return { ...post, edited: false };
+    const skipped = o.skipped === true ? { skipped: true } : {};
+    if (o.caption === undefined && o.imageKey === undefined) return { ...post, ...skipped, edited: false };
     return {
       ...post,
+      ...skipped,
       caption: o.caption ?? post.caption,
       image: o.imageKey ? imagePathFor(o.imageKey) : post.image,
       edited: true,

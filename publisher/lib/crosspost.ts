@@ -1,3 +1,4 @@
+import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
 import { channelLabel, channelsFor, channelToken, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
 import { isWantedOn } from './schedule.js';
 import type { LinkedInPost, Visibility } from './linkedin.js';
@@ -52,7 +53,7 @@ export interface PostToSend {
 export interface CrosspostResult {
   channel: string;
   account: string;
-  status: 'posted' | 'already-posted' | 'skipped-before-connection' | 'dry-run-ready' | 'failed';
+  status: 'posted' | 'already-posted' | 'skipped-before-connection' | 'dry-run-ready' | 'failed' | 'held';
   remoteId?: string;
   permalink?: string | null;
   error?: string;
@@ -272,23 +273,33 @@ export interface CrosspostStatus {
   id: string;
   platform: Channel['platform'];
   account: string;
-  state: 'published' | 'scheduled' | 'due' | 'missed';
+  state: 'published' | 'scheduled' | 'due' | 'missed' | 'skipped' | 'paused';
   permalink: string | null;
 }
 
 /** Where a post stands on every connected channel of its client, for the dashboard. */
-export function crosspostStatusFor(post: { id: string; brand?: string; date: string; channels?: string[] }, channels: ChannelFile, log: PostedLog, now: number): CrosspostStatus[] {
+export function crosspostStatusFor(
+  post: { id: string; brand?: string; date: string; channels?: string[]; skipped?: boolean },
+  channels: ChannelFile,
+  log: PostedLog,
+  now: number,
+  pauses: PauseFile = NO_PAUSES,
+): CrosspostStatus[] {
   const at = Date.parse(post.date);
   return channelsFor(channels, post.brand ?? 'default')
     .filter((channel) => isWantedOn(post, channel.id))
     .filter((channel) => at >= Date.parse(channel.connectedAt))
     .map((channel): CrosspostStatus => {
       const done = log[postedKey(post.id, channel.id)];
+      const held = !done && isPaused(pauses, post.brand ?? 'default', channel.id);
       let state: CrosspostStatus['state'];
-      if (done) state = 'published';
+      if (done?.skipped) state = 'skipped';
+      else if (done) state = 'published';
+      else if (post.skipped) state = 'skipped';
+      else if (held && (at > now || now - at < DUE_WINDOW_MS)) state = 'paused';
       else if (at > now) state = 'scheduled';
       else if (now - at < DUE_WINDOW_MS) state = 'due';
       else state = 'missed';
-      return { id: channel.id, platform: channel.platform, account: channelLabel(channel), state, permalink: done?.permalink ?? null };
+      return { id: channel.id, platform: channel.platform, account: channelLabel(channel), state, permalink: done?.skipped ? null : (done?.permalink ?? null) };
     });
 }

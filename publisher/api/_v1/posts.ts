@@ -19,7 +19,7 @@ import { applyOverrides, EditError } from '../../lib/overrides.js';
 import { postView, scheduledView } from '../../lib/post-view.js';
 import { productOf } from '../../lib/product-request.js';
 import { parseSchedule } from '../../lib/schedule.js';
-import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted, storeConfigured } from '../../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted, storeConfigured } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -61,8 +61,8 @@ export async function POST(request: Request): Promise<Response> {
   if (caller instanceof Response) return caller;
   try {
     const post = await saveNewPost({ brand: caller.brand, day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], allowInstagram: false }, Date.now());
-    const [{ file: channels }, { log }] = await Promise.all([loadChannels(), loadPosted()]);
-    return json(201, { post: postView(post, channels, log, Date.now(), originOf(request)) });
+    const [{ file: channels }, { log }, { file: pauses }] = await Promise.all([loadChannels(), loadPosted(), loadPauses()]);
+    return json(201, { post: postView(post, channels, log, Date.now(), originOf(request), pauses) });
   } catch (error) {
     return failure(error, 'schedule the post');
   }
@@ -76,7 +76,7 @@ export async function GET(request: Request): Promise<Response> {
   const to = params.has('to') ? startOfDay(params.get('to')) : null;
   if ((params.has('from') && from === null) || (params.has('to') && to === null)) return json(400, { error: 'from and to must be days like 2026-11-20' });
   try {
-    const [{ file: manual }, { file: channels }, { log }, { overrides }] = await Promise.all([loadManual(), loadChannels(), loadPosted(), loadOverrides()]);
+    const [{ file: manual }, { file: channels }, { log }, { overrides }, { file: pauses }] = await Promise.all([loadManual(), loadChannels(), loadPosted(), loadOverrides(), loadPauses()]);
     const now = Date.now();
     const origin = originOf(request);
     // Planned posts carry the customer's workspace id as their client; dashboard edits are applied on top.
@@ -84,7 +84,7 @@ export async function GET(request: Request): Promise<Response> {
     const posts = applyOverrides([...planned, ...manual.posts.filter((p) => p.brand === caller.brand).map(toScheduled)], overrides)
       .filter((p) => (from === null || Date.parse(p.date) >= from) && (to === null || Date.parse(p.date) < to + DAY_MS))
       .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
-    return json(200, { posts: posts.map((p) => scheduledView(p, channels, log, now, origin)) });
+    return json(200, { posts: posts.map((p) => scheduledView(p, channels, log, now, origin, pauses)) });
   } catch (error) {
     return failure(error, 'read the posts');
   }
@@ -99,8 +99,8 @@ export async function PATCH(request: Request): Promise<Response> {
   if (caller instanceof Response) return caller;
   try {
     const post = await updateNewPost(params.get('postId'), { day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'] }, Date.now(), caller.brand);
-    const [{ file: channels }, { log }] = await Promise.all([loadChannels(), loadPosted()]);
-    return json(200, { post: postView(post, channels, log, Date.now(), originOf(request)) });
+    const [{ file: channels }, { log }, { file: pauses }] = await Promise.all([loadChannels(), loadPosted(), loadPauses()]);
+    return json(200, { post: postView(post, channels, log, Date.now(), originOf(request), pauses) });
   } catch (error) {
     return failure(error, 'change the post');
   }

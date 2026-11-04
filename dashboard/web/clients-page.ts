@@ -20,14 +20,27 @@ export interface ClientsContext {
   /** Saves (or, when empty, clears) the website; resolves to an explanation when it could not be saved. */
   saveWebsite(client: ClientSummary, website: string): Promise<string | null>;
   disconnect(channel: ChannelHealth): void;
+  /** Whether everything is paused. */
+  allPaused(): boolean;
+  /** Pauses or resumes everything, one client or one channel (its id; "instagram" for the team's own account). */
+  setPause(scope: 'all' | 'brand' | 'channel', id: string | null, paused: boolean): void;
 }
+
+/** The id a channel is paused by: its own, or "instagram" for the team's own Instagram account. */
+export const pauseIdOf = (channel: ChannelHealth): string | null => channel.id ?? (channel.platform === 'instagram' ? 'instagram' : null);
 
 const KINDS: readonly ChannelKind[] = ['facebook', 'instagram', 'google', 'linkedin'];
 const GUIDE_FOR: Record<ChannelKind, GuideKey> = { facebook: 'facebook', instagram: 'instagram', google: 'google', linkedin: 'linkedin' };
 const UPCOMING_SHOWN = 14;
 
 export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTMLElement {
-  const add = h('div', { class: 'page-actions' }, button([icon('plus'), 'Add client'], 'btn btn-primary', () => ctx.addClient()));
+  const paused = ctx.allPaused();
+  const add = h(
+    'div',
+    { class: 'page-actions' },
+    button([icon('plus'), 'Add client'], 'btn btn-primary', () => ctx.addClient()),
+    button(paused ? 'Resume everything' : 'Pause everything', paused ? 'btn' : 'btn btn-quiet btn-danger', () => ctx.setPause('all', null, !paused)),
+  );
   if (clients.length === 0) return h('div', {}, add, h('p', { class: 'empty' }, 'No clients yet.'));
   return h('div', {}, add, h(
     'div',
@@ -37,7 +50,7 @@ export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTML
         'button',
         { type: 'button', class: 'folder', 'aria-label': `Open ${client.label}` },
         h('span', { class: 'folder-tab', 'aria-hidden': 'true' }),
-        h('div', { class: 'folder-head' }, h('h3', {}, client.label)),
+        h('div', { class: 'folder-head' }, h('h3', {}, client.label), client.paused ? h('span', { class: 'tag-paused' }, 'Paused') : null),
         h('div', { class: 'folder-marks' }, ...client.channels.map((c) => h('span', { class: 'mark', title: channelName(c.platform) }, brandMark(c.platform)))),
         h('div', { class: 'folder-stats muted' }, h('span', {}, client.pattern ?? 'Nothing booked'), h('span', {}, `${client.postsLeft} days booked`)),
       );
@@ -118,6 +131,7 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
         statusMark(channel.ok),
         channel.ok ? 'Connected' : `Connection problem: ${(channel.error ?? 'unknown').slice(0, 140)}`,
       ),
+      channel.paused ? h('span', { class: 'tag-paused', role: 'status' }, client.paused ? 'Paused with the client' : 'Paused. Posts are not sent here until you resume it.') : null,
       expiry ? h('span', { class: 'muted' }, expiry) : null,
       channel.platform === 'linkedin' ? inviteLinkBox(client.brand, 'Get a new link for the client') : null,
       channel.platform === 'instagram' && channel.id !== null ? inviteLinkBox(client.brand, 'Get a new link for the client', 'instagram') : null,
@@ -128,6 +142,10 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
       'div',
       { class: 'channel-actions' },
       channel.ok && postChannelId(channel) ? button('Post here', 'btn', () => ctx.newPost(client.brand, postChannelId(channel))) : null,
+      // A channel held by its client (or by everything) is resumed there; its own pause is only for the channel itself.
+      pauseIdOf(channel) !== null && !client.paused
+        ? button(channel.paused ? 'Resume channel' : 'Pause channel', channel.paused ? 'btn' : 'btn btn-quiet', () => ctx.setPause('channel', pauseIdOf(channel), !channel.paused))
+        : null,
       button('How to reconnect', 'btn btn-quiet', () => ctx.go({ page: 'help', channel: GUIDE_FOR[channel.platform] })),
       canDisconnect ? button('Disconnect', 'btn btn-quiet btn-danger', () => ctx.disconnect(channel)) : null,
     ),
@@ -219,8 +237,9 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
       button('Clients', 'link-button', () => ctx.go({ page: 'clients' })),
       ` / ${client.label}`,
     ),
-    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
+    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), ctx.allPaused() ? null : button(client.paused ? 'Resume client' : 'Pause client', client.paused ? 'btn' : 'btn btn-quiet', () => ctx.setPause('brand', client.brand, !client.paused)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
     client.added ? websiteCard(client, ctx) : null,
+    client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
     tab === 'channels' ? channels : posts,
   );

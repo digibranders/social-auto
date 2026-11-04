@@ -149,11 +149,13 @@ const STATE_LABELS: Record<PostState, string> = {
   due: 'Due now',
   missed: 'Missed',
   unknown: 'Unknown',
+  skipped: 'Skipped',
+  paused: 'Paused',
 };
 export const stateLabel = (state: PostState): string => STATE_LABELS[state];
 
 /** Marks that carry the meaning without relying on colour. */
-const STATE_MARKS: Record<PostState, string> = { published: '✓', scheduled: '◷', due: '●', missed: '!', unknown: '?' };
+const STATE_MARKS: Record<PostState, string> = { published: '✓', scheduled: '◷', due: '●', missed: '!', unknown: '?', skipped: '⊘', paused: '‖' };
 export const stateMark = (state: PostState): string => STATE_MARKS[state];
 
 /**

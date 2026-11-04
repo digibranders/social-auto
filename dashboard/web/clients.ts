@@ -22,6 +22,8 @@ export interface ClientSummary {
   product: string | null;
   /** The client's website (https address) that posts are planned from; null when none was given. */
   website: string | null;
+  /** Everything for this client is held back: the client itself is paused, or everything is. */
+  paused: boolean;
 }
 
 const LOW_QUEUE_DAYS = 7;
@@ -77,6 +79,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       added,
       product: entry?.product ?? null,
       website: entry?.website ?? null,
+      paused: data.pauses.all || data.pauses.brands.includes(brand),
     };
   });
 }

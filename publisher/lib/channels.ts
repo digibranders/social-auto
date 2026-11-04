@@ -74,6 +74,8 @@ export interface PostedEntry {
   remoteId: string;
   permalink: string | null;
   postedAt: string;
+  /** Not sent: the channel was paused when the post came due. Kept so the post is never sent late, after the pause ends. */
+  skipped?: true;
 }
 export type PostedLog = Record<string, PostedEntry>;
 
