@@ -251,6 +251,25 @@
       "status": "usable",
       "category": "commercial_term",
       "scope": "Standard"
+    },
+    {
+      "page": "mockups",
+      "quote": "Acme Replies answers visitor questions from your own pages and documents.",
+      "status": "usable",
+      "category": "capability"
+    },
+    {
+      "page": "mockups",
+      "quote": "Free forever",
+      "status": "usable",
+      "category": "commercial_term"
+    },
+    {
+      "page": "mockups",
+      "quote": "Our results are on the case study page for anyone to read.",
+      "status": "usable",
+      "category": "capability",
+      "why": "a sentence that merely contains a link is still a statement"
     }
   ],
   "forbidden": [
@@ -283,6 +302,51 @@
       "page": "features",
       "quote": "98%",
       "why": "stat strip without context"
+    },
+    {
+      "page": "mockups",
+      "quote": "[Handoff, score 87] Priya here.",
+      "why": "chat mock-up"
+    },
+    {
+      "page": "mockups",
+      "quote": "Yes, we are rolling out to about 40 seats in Q3.",
+      "why": "text inside a non-interactive illustration"
+    },
+    {
+      "page": "mockups",
+      "quote": "Can I talk to a person about billing today?",
+      "why": "chat bubble"
+    },
+    {
+      "page": "mockups",
+      "quote": "Setup time?",
+      "why": "question"
+    },
+    {
+      "page": "mockups",
+      "quote": "Live handoff?",
+      "why": "question"
+    },
+    {
+      "page": "mockups",
+      "quote": "Conversations today",
+      "why": "interface label"
+    },
+    {
+      "page": "mockups",
+      "quote": "Push events",
+      "why": "interface label"
+    },
+    {
+      "page": "mockups",
+      "quote": "Is there a trial?",
+      "why": "question"
+    },
+    {
+      "page": "mockups",
+      "quote": "Read the case study",
+      "why": "link label"
     }
   ],
   "associations": [

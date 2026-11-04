@@ -30,6 +30,7 @@ export type ReasonCode =
   | 'tax_scope_unconfirmed'
   | 'scope_unconfirmed'
   | 'too_long'
+  | 'fragment_unscoped'
   | 'table_axis_unconfirmed'
   | 'billing_variant_unconfirmed'
   | 'styles_not_applied'
@@ -69,7 +70,7 @@ export interface EvidenceFact {
 export interface ExcludedBlock {
   url: string;
   text: string;
-  reason: 'nav' | 'header' | 'footer' | 'aside' | 'heading' | 'repeated_across_pages' | 'too_short' | 'page_cap' | 'duplicate';
+  reason: 'nav' | 'header' | 'footer' | 'aside' | 'heading' | 'question' | 'link_label' | 'repeated_across_pages' | 'too_short' | 'page_cap' | 'duplicate';
 }
 
 export interface PageSnapshot {
@@ -181,10 +182,12 @@ function candidatesOf(structure: PageStructure, excluded: ExcludedBlock[], repea
     if (block.chrome) { excluded.push({ url: structure.url, text: block.text, reason: block.chrome }); continue; }
     const headingFact = block.isHeading && (hasDigit(block.text) || wordPattern(config.headingFactWords).test(block.text));
     if ((block.isHeading && !headingFact) || (block.region === 'table' && block.tableHeader)) { excluded.push({ url: structure.url, text: block.text, reason: 'heading' }); continue; }
+    if (block.linkOnly) { excluded.push({ url: structure.url, text: block.text, reason: 'link_label' }); continue; }
     const pieces = block.region === 'table' ? [block.text] : sentencesOf(block.text);
     for (const piece of pieces) {
       const confirmedCell = block.region === 'table' && block.rowLabel !== '' && block.colLabel !== '';
       if (!confirmedCell && wordCount(piece) < 2 && !hasDigit(piece)) { excluded.push({ url: structure.url, text: piece, reason: 'too_short' }); continue; }
+      if (/[?？]\s*$/.test(piece)) { excluded.push({ url: structure.url, text: piece, reason: 'question' }); continue; }
       if (!hasDigit(piece) && repeated.has(normalizeForQuote(piece))) { excluded.push({ url: structure.url, text: piece, reason: 'repeated_across_pages' }); continue; }
       out.push({ block, quote: piece });
     }
@@ -270,6 +273,10 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
     if (taxPattern.test(quote) && scope === undefined) reasons.push('tax_scope_unconfirmed');
     else if (fragment && (hasNumbers || values.prices.length > 0) && scope === undefined) reasons.push('scope_unconfirmed');
     if (quote.length > config.maxSentenceChars) reasons.push('too_long');
+    // A bracketed tag is the mark of a chat or log shown as an example, not of something the brand says about itself.
+    if (/\[[^\]]{1,60}\]/.test(block.text)) reasons.push('demo_context');
+    // A short label with no figure and no commercial wording, outside any card or cell, is interface text, not a claim.
+    if (fragment && !hasNumbers && scope === undefined && !wordPattern(config.commercialWords).test(quote)) reasons.push('fragment_unscoped');
 
     const key = `${normalizeForQuote(quote)}|${scope ?? ''}|${label ?? ''}`;
     if (seen.has(key)) { excluded.push({ url: structure.url, text: quote, reason: 'duplicate' }); continue; }

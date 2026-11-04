@@ -107,3 +107,11 @@ test('fixture site: the docs price contradicts the pricing pages, the two setup 
   assert.equal(summarizePlan(terms, 'Standard').tax, undefined);
   assert.equal(summarizePlan(terms, 'Starter').prices.length, 2);
 });
+
+test('a fact that is held for review never creates a conflict with a usable one', () => {
+  const a = buildEvidence([page('https://x.example/pricing', [card('Pro', 'c0', '₹999 /mo'), card('Team', 'c1', '₹1,999 /mo')])], NOW).facts;
+  const held = buildEvidence([page('https://x.example/docs', [{ text: 'The Pro plan costs ₹499 per month, as shown in the sample.' }])], NOW).facts;
+  assert.equal(held[0]?.status, 'needs_review');
+  assert.deepEqual(findConflicts(deriveTerms([...a, ...held])), []);
+  assert.ok(applyConflicts([...a, ...held]).facts.filter((f) => f.status === 'usable').length >= 2);
+});

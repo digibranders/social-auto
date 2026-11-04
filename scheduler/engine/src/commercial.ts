@@ -112,7 +112,7 @@ export interface TermConflict { a: string; b: string; reason: string }
 /** Prices of one plan, in one currency and billing period, that differ; trial lengths of one plan that differ. Only usable terms with a plan are compared. */
 export function findConflicts(terms: readonly CommercialTerm[]): TermConflict[] {
   const out: TermConflict[] = [];
-  const usable = terms.filter((t) => t.plan !== undefined);
+  const usable = terms.filter((t) => t.plan !== undefined && t.status === 'usable');
   for (const [i, a] of usable.entries()) {
     for (const b of usable.slice(i + 1)) {
       if (norm(a.plan ?? '') !== norm(b.plan ?? '') || a.kind !== b.kind || a.factId === b.factId) continue;

@@ -13,7 +13,7 @@ const haveChrome = existsSync(chromePath(process.env, process.platform));
 const real = { skip: haveChrome ? false : 'Chrome is not installed' };
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'evidence');
 const NOW = new Date('2026-11-04T00:00:00Z');
-const PAGES = ['home', 'features', 'pricing-cards', 'pricing-table', 'case-studies', 'docs'];
+const PAGES = ['home', 'features', 'pricing-cards', 'pricing-table', 'case-studies', 'docs', 'mockups'];
 
 interface Gold { facts: Array<{ page: string; quote: string; status: 'usable' | 'needs_review'; category: string; scope?: string }>; forbidden: Array<{ page: string; quote: string }> }
 

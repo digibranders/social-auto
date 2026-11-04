@@ -22,15 +22,18 @@ export function offerableFacts(facts: readonly EvidenceFact[]): EvidenceFact[] {
 const words = (text: string): number => text.split(/\s+/).filter(Boolean).length;
 
 /**
- * Offerable facts, best first: those not used recently (the longer ago, the earlier), then those that say enough to build a post on
- * (a bare cell such as "2" is a weak start), then in the order the pages gave them.
+ * Offerable facts, best first: those not used recently (the longer ago, the earlier), then those from marketing pages rather than reference
+ * pages, then those that say enough to build a post on (a bare cell such as "2" is a weak start), then in the order the pages gave them.
  */
 export function rankFacts(facts: readonly EvidenceFact[], recentFactIds: readonly string[]): EvidenceFact[] {
   const lastUsed = (id: string): number => recentFactIds.lastIndexOf(id);
   return [...facts].map((fact, index) => ({ fact, index })).sort((a, b) => {
     const [ua, ub] = [lastUsed(a.fact.id), lastUsed(b.fact.id)];
     if (ua !== ub) return ua - ub;
-    const [ra, rb] = [words(displayFact(a.fact)) >= 4 ? 0 : 1, words(displayFact(b.fact)) >= 4 ? 0 : 1];
+    // Marketing pages say what the brand wants said; reference pages (docs, other) are a second choice. A bare label or cell is a weak start.
+    const [pa, pb] = [a.fact.source.pageRole === 'docs' || a.fact.source.pageRole === 'other' ? 1 : 0, b.fact.source.pageRole === 'docs' || b.fact.source.pageRole === 'other' ? 1 : 0];
+    if (pa !== pb) return pa - pb;
+    const [ra, rb] = [words(displayFact(a.fact)) >= 6 ? 0 : 1, words(displayFact(b.fact)) >= 6 ? 0 : 1];
     return ra !== rb ? ra - rb : a.index - b.index;
   }).map((x) => x.fact);
 }

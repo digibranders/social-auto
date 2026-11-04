@@ -31,6 +31,8 @@ export interface PageBlock {
   tableHeader: boolean;
   demo: boolean;
   strip: boolean;
+  /** The whole block is the label of a link or a button: a call to action, not a statement. */
+  linkOnly?: boolean;
   lang: string;
 }
 
@@ -73,7 +75,7 @@ function parseBlock(raw: unknown): PageBlock {
   return {
     id, text, tag, region: region as BlockRegion, isHeading: flags[0] as boolean, headingText: strings[0] as string, chrome: chrome as ChromeRegion,
     cardId: strings[1] as string, cardGroup: strings[2] as string, cardTitle: strings[3] as string, rowLabel: strings[4] as string, colLabel: strings[5] as string,
-    tableHeader: flags[3] as boolean, demo: flags[1] as boolean, strip: flags[2] as boolean, lang: strings[6] as string,
+    tableHeader: flags[3] as boolean, demo: flags[1] as boolean, strip: flags[2] as boolean, lang: strings[6] as string, ...(raw['linkOnly'] === true ? { linkOnly: true } : {}),
   };
 }
 

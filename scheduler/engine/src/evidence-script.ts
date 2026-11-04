@@ -12,7 +12,7 @@ export const EVIDENCE_SCRIPT = String.raw`
   var out = { done: false, errors: [], title: document.title || '', lang: document.documentElement.getAttribute('lang') || '', blocks: [], truncated: false, externalStyles: document.querySelectorAll('link[rel~=stylesheet]').length, variantSwitch: false };
   var MAX_BLOCKS = 1500;
   var SKIP = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, SVG: 1, CANVAS: 1, IFRAME: 1, HEAD: 1, OBJECT: 1, EMBED: 1, SELECT: 1, OPTION: 1, TEXTAREA: 1 };
-  var DEMO = /(^|[^a-z])(demo|mock|mockup|sample|preview|example|placeholder|screenshot|illustration)([^a-z]|$)/i;
+  var DEMO = /(^|[^a-z])(demo|mock|mockup|sample|preview|example|placeholder|screenshot|illustration|bubble|transcript|phone-frame|device-frame)([^a-z]|$)/i;
   var seq = 0;
 
   function clean(text) { return String(text).replace(/\s+/g, ' ').trim(); }
@@ -43,6 +43,8 @@ export const EVIDENCE_SCRIPT = String.raw`
     for (var n = el, depth = 0; n && n !== document.body && depth < 12; n = n.parentElement, depth += 1) {
       var probe = (n.getAttribute('id') || '') + ' ' + (n.getAttribute('class') || '') + ' ' + (n.getAttribute('aria-label') || '') + ' ' + (n.getAttribute('data-testid') || '');
       if (DEMO.test(probe)) return true;
+      // A picture of an interface is not clickable: the page's own style switches pointer events off on it.
+      if (getComputedStyle(n).pointerEvents === 'none') return true;
     }
     return false;
   }
@@ -73,6 +75,12 @@ export const EVIDENCE_SCRIPT = String.raw`
     return { rowLabel: rowLabel, colLabel: colLabel, header: cell.tagName === 'TH' && (!headRow || headRow === row || cell === first) };
   }
 
+  function linkOnly(el, text) {
+    var link = el.closest('a,button,[role=button]');
+    if (!link && el.children.length === 1 && el.firstElementChild.matches('a,button,[role=button]')) link = el.firstElementChild;
+    return !!link && clean(link.textContent) === text;
+  }
+
   function statStrip(el) {
     var parent = el.parentElement;
     if (!parent || parent.children.length < 3) return false;
@@ -98,7 +106,7 @@ export const EVIDENCE_SCRIPT = String.raw`
       isHeading: !!asHeading, headingText: asHeading ? '' : heading.text, chrome: chromeOf(el),
       cardId: card ? card.id : '', cardGroup: card ? card.group : '', cardTitle: card ? card.title : '',
       rowLabel: table ? table.rowLabel : '', colLabel: table ? table.colLabel : '', tableHeader: table ? table.header : false,
-      demo: demoContext(el), strip: region === 'prose' ? statStrip(el) : false,
+      linkOnly: linkOnly(el, text), demo: demoContext(el), strip: region === 'prose' ? statStrip(el) : false,
       lang: (langEl ? langEl.getAttribute('lang') : '') || out.lang
     };
     out.blocks.push(block);
