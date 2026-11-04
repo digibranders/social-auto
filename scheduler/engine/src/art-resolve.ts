@@ -233,7 +233,8 @@ function buildFor(
   if (brief.picture.role !== 'none') {
     const zone = family.zones[option.zone];
     try {
-      imagePrompt = buildImagePrompt({ brief, brand, textSlots: zone?.textSlots ?? [] });
+      const pictureSlot = zone?.imageSlots.find((slot) => slot.id === brief.picture.role)?.rect;
+      imagePrompt = buildImagePrompt({ brief, brand, textSlots: zone?.textSlots ?? [], ...(pictureSlot ? { pictureSlot } : {}) });
     } catch (error) {
       return reasonOf('prompt_failed', error instanceof Error ? error.message : String(error));
     }

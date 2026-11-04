@@ -55,10 +55,23 @@ export interface ImagePromptInput {
   brand: Pick<Brand, 'colors'>;
   /** The text slots of the zone the brief chose. */
   textSlots: readonly SlotDefinition[];
+  /** Where the picture is shown. The scene is made square; a wide or tall panel shows only part of it, so the subject must sit inside what stays visible. */
+  pictureSlot?: Rect;
+}
+
+/** Words that keep the subject inside the part of a square picture a panel of another shape shows; empty when the panel is nearly square. */
+export function cropGuidance(slot: Rect | undefined): string {
+  if (!slot) return '';
+  const share = Math.min(slot.w, slot.h) / Math.max(slot.w, slot.h);
+  if (share > 0.9) return '';
+  const percent = Math.round(share * 100);
+  return slot.w > slot.h
+    ? `The picture will be cropped to a wide band that shows only the middle ${percent}% of its height: keep the whole subject inside that central band, with nothing important above or below it.`
+    : `The picture will be cropped to a tall panel that shows only the middle ${percent}% of its width: keep the whole subject inside that central column, with nothing important to its left or right.`;
 }
 
 /** The prompt for a post's picture, or undefined when the brief wants no picture, so no image is ever requested for it. */
-export function buildImagePrompt({ brief, brand, textSlots }: ImagePromptInput): string | undefined {
+export function buildImagePrompt({ brief, brand, textSlots, pictureSlot }: ImagePromptInput): string | undefined {
   const { picture } = brief;
   if (picture.role === 'none') return undefined;
   const subject = picture.subject.replace(/[.\s]+$/, '');
@@ -75,6 +88,7 @@ export function buildImagePrompt({ brief, brand, textSlots }: ImagePromptInput):
     ...(picture.role === 'hero' ? ['Use depth, environmental context, a clear focal subject and coherent lighting where they improve the idea; a minimal, flat or abstract composition is equally valid when it says the idea better.'] : []),
     `${palette(picture.paletteUse, brand.colors)}.`,
     room,
+    picture.role === 'hero' ? cropGuidance(pictureSlot) : '',
     `${SAFETY}.`,
   ]
     .filter(Boolean)

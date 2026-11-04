@@ -73,3 +73,18 @@ test('a hero picture is asked for depth and lighting only where they help, and f
   const texture = buildImagePrompt({ brief: briefOf({ ...hero, role: 'texture', medium: 'abstract' }, 'typography-hero', 'center'), brand, textSlots: slotsOf('typography-hero', 'center') }) ?? '';
   assert.doesNotMatch(texture, /environmental context/);
 });
+
+
+import { cropGuidance } from './art-prompt.ts';
+
+test('a wide or tall picture panel tells the image model which central part stays visible, so the subject is not cut off; a square panel adds nothing', () => {
+  assert.match(cropGuidance({ x: 0, y: 680, w: 1080, h: 400 }), /wide band that shows only the middle 37% of its height: keep the whole subject inside that central band/);
+  assert.match(cropGuidance({ x: 600, y: 200, w: 416, h: 720 }), /tall panel that shows only the middle 58% of its width: keep the whole subject inside that central column/);
+  assert.equal(cropGuidance({ x: 0, y: 0, w: 1080, h: 1080 }), '');
+  assert.equal(cropGuidance(undefined), '');
+  const slot = familyById(layoutRegistry, 'split-composition')?.zones['top']?.imageSlots[0];
+  const prompt = buildImagePrompt({ brief: briefOf(hero, 'split-composition', 'top'), brand, textSlots: slotsOf('split-composition', 'top'), ...(slot ? { pictureSlot: slot.rect } : {}) }) ?? '';
+  assert.match(prompt, /middle 37% of its height/);
+  const full = buildImagePrompt({ brief: briefOf(hero, 'split-composition', 'top'), brand, textSlots: slotsOf('split-composition', 'top') }) ?? '';
+  assert.doesNotMatch(full, /cropped to/);
+});
