@@ -113,3 +113,8 @@ export function chooseCallToAction(links: readonly CtaLink[], origin: string, ho
   if (!best) return fallback;
   return { kind: 'site-action', label: best.rule.label, evidence: { linkText: best.link.text, url: best.link.url, region: best.link.region }, text: `${best.rule.label} at ${host} (link in bio)` };
 }
+
+/** The neutral call to action: visit the site. Used when the chosen one does not fit what a post is about. */
+export function neutralCta(host: string): CallToAction {
+  return { kind: 'visit-site', label: 'Visit the website', evidence: null, text: `Visit ${host} (link in bio)` };
+}

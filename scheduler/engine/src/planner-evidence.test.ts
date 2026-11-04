@@ -239,3 +239,35 @@ test('a second fact is added only when the page ties it to the first: the same p
   assert.equal(assignFacts({ facts: [starterPrice, standardPrice], anchors: [starterPrice], recentFactIds: [] })[0]?.length, 1);
   assert.equal(assignFacts({ facts: [answers, setup], anchors: [answers], recentFactIds: [] })[0]?.length, 1);
 });
+
+const pricingBrand = { ...brand, callToAction: 'See pricing at acme.example (link in bio)', handleUrl: 'acme.example' } as Brand;
+const planWith = (b: Brand, evidence: Parameters<typeof planWeek>[0]['evidence'], m = model(), count = 1) =>
+  planWeek({ ai, brand: b, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count }, usedPainPoints: [], fetchFn: m.fetchFn, ...(evidence ? { evidence } : {}) }).then((plan) => ({ plan, m }));
+
+test('a pricing call to action is replaced by the neutral one on a post that is not about price or plan, and the writer is told', async () => {
+  const setup = facts().filter((f) => f.text === SETUP);
+  const { plan, m } = await planWith(pricingBrand, { facts: setup });
+  assert.match(m.prompts[0] ?? '', /Call to action for this post \(use this one, not the profile's\): \\"Visit acme.example \(link in bio\)\\"/);
+  assert.equal(plan.posts[0]?.cta?.label, 'Visit the website');
+  assert.equal(plan.posts[0]?.cta?.text, 'Visit acme.example (link in bio)');
+  assert.match(plan.posts[0]?.ctaReason ?? '', /cta_relevance_fallback/);
+  assert.ok(!(plan.posts[0]?.hookWarnings ?? []).includes('editorial: cta_mismatch'));
+});
+
+test('the brand call to action is kept on a post built on a commercial fact, and for legacy brands', async () => {
+  const trial = facts().filter((f) => f.text === TRIAL);
+  const kept = await planWith(pricingBrand, { facts: trial });
+  assert.equal(kept.plan.posts[0]?.cta, undefined);
+  assert.ok(!/Call to action for this post/.test(kept.m.prompts[0] ?? ''));
+  const legacy = await planWith(pricingBrand, undefined);
+  assert.equal(legacy.plan.posts[0]?.cta, undefined);
+});
+
+test('caption length follows the evidence: a short target for one fact, no 450 to 900 floor in fact mode, the old range for legacy', async () => {
+  const one = await planWith(brand, { facts: facts().filter((f) => f.text === SETUP) });
+  assert.match(one.m.prompts[0] ?? '', /Caption length for this post: about 100 to 300 characters; say each fact once/);
+  assert.ok(!/450-900/.test(one.m.prompts[0] ?? ''));
+  const legacy = await planWith(brand, undefined);
+  assert.match(legacy.m.prompts[0] ?? '', /450-900 characters/);
+  assert.ok(!/Caption length for this post/.test(legacy.m.prompts[0] ?? ''));
+});

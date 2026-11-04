@@ -77,3 +77,11 @@ test('sublines on a different point or with a new condition are not touched by t
   ];
   for (const [headline, subline] of allowed) assert.deepEqual(codes(validateEditorial({ headline, subline }, ctx())).hard, [], subline);
 });
+
+test('a caption that says the same thing twice gets a warning, a caption of distinct sentences does not', () => {
+  const copy = { headline: 'Visitors leave without |answers|', subline: 'Acme Replies answers from your own pages.' };
+  const padded = 'Acme Replies scores intent while visitors chat. Visitors chat and Acme Replies scores their intent while they chat. Then buyers reach your team.';
+  assert.ok(codes(validateEditorial({ ...copy, caption: padded }, ctx())).warnings.includes('caption_repeats_itself'));
+  const distinct = 'Acme Replies scores intent while visitors chat. Hot buyers are routed to your team with the transcript. Setup is one script tag.';
+  assert.ok(!codes(validateEditorial({ ...copy, caption: distinct }, ctx())).warnings.includes('caption_repeats_itself'));
+});

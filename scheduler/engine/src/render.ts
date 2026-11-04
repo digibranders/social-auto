@@ -92,14 +92,15 @@ export interface RenderOptions {
 }
 
 /** What the art-directed poster needs from a brand profile. */
-function posterBrand(brand: Brand, logoHtml: string | undefined, logoTone: PosterBrand['logoTone']): PosterBrand {
+export function posterBrand(brand: Brand, logoHtml: string | undefined, logoTone: PosterBrand['logoTone'], postCta?: Brand['cta']): PosterBrand {
+  const cta = postCta ?? brand.cta;
   const identity = brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
   const host = brand.handleUrl?.trim();
   return {
     name: brand.name,
     colors: brand.colors,
     ...(identity ? { identityLine: identity } : {}),
-    ...(brand.cta ? { cta: { label: brand.cta.label, host: host || brand.cta.text } } : {}),
+    ...(cta ? { cta: { label: cta.label, host: host || cta.text } } : {}),
     ...(logoHtml ? { logoHtml } : {}),
     ...(logoTone ? { logoTone } : {}),
   };
@@ -160,7 +161,7 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
         const pngPath = join(outDir, `${post.id}.png`);
         const outcome = await renderPoster({
           copy: { headline: post.headline, subline: post.subline, ...(post.listItems?.length ? { listItems: post.listItems } : {}), ...(art.figure ? { figure: art.figure } : {}), ...(art.quote ? { quote: art.quote } : {}) },
-          brand: posterBrand(brand, logoHtml, logoTone),
+          brand: posterBrand(brand, logoHtml, logoTone, post.cta),
           font,
           candidates: art.candidates,
           makePicture,

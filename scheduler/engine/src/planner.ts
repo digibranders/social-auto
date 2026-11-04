@@ -9,7 +9,9 @@ import { assignWeek, checkAnchored, defaultPillars, type PillarSpec, type PostAs
 import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
 import { chatJson } from './llm.ts';
-import { validateEditorial } from './editorial.ts';
+import { isPricingText, validateEditorial } from './editorial.ts';
+import { neutralCta } from './cta.ts';
+import type { CallToAction } from './cta.ts';
 import { memoryCache, verifyCopySupport, type Judge, type VerdictCache } from './semantic-verifier.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
 import { assignFacts, offerableFacts, rankFacts } from './fact-assignment.ts';
@@ -55,13 +57,20 @@ Hard rules:
 - Plain, warm, confident language. No hype words like "revolutionary" or "game-changer". No emojis in headlines.
 Return a single JSON object and nothing else.`;
 
+/** How long a caption should be for the facts a post has: a soft target that follows the evidence, never a floor to pad up to. */
+export function captionTarget(factCount: number): string {
+  return factCount <= 1 ? 'about 100 to 300 characters' : 'about 200 to 500 characters';
+}
+
 /** The pillar of each post in the order the model must write them, and the proof point a proof post is built on. */
 function assignmentLines(assignments: readonly PostPlan[], facts: ReadonlyArray<readonly EvidenceFact[]> = []): string {
   if (assignments.length === 0) return '';
   const lines = assignments.map((a, i) => {
     const mine = facts[i] ?? [];
     const allowed = mine.length > 0 ? ` Facts you may use for this post, in the website's exact words (use no other figure, price, plan, trial or term):${mine.map((f) => ` - "${displayFact(f)}"`).join('')}.` : '';
-    return `Post ${i + 1} (${a.hook ? `${a.pillar}, ${a.hook}` : a.pillar}): ${a.brief}${a.anchor ? ` Build it on this proof point: "${a.anchor}".` : ''}${allowed}${a.hookBrief ? ` Headline hook: ${a.hookBrief}` : ''}`;
+    const target = mine.length > 0 ? ` Caption length for this post: ${captionTarget(mine.length)}; say each fact once and add no claim that is not in the facts; do not repeat a point to fill space.` : '';
+    const cta = a.cta ? ` Call to action for this post (use this one, not the profile's): "${a.cta.text}".` : '';
+    return `Post ${i + 1} (${a.hook ? `${a.pillar}, ${a.hook}` : a.pillar}): ${a.brief}${a.anchor ? ` Build it on this proof point: "${a.anchor}".` : ''}${allowed}${target}${cta}${a.hookBrief ? ` Headline hook: ${a.hookBrief}` : ''}`;
   });
   return `\n\nEvery post belongs to a content pillar and opens with an assigned hook. Write the posts in this order, each following its pillar and hook:\n${lines.join('\n')}`;
 }
@@ -70,6 +79,8 @@ function assignmentLines(assignments: readonly PostPlan[], facts: ReadonlyArray<
 export interface PostPlan extends PostAssignment {
   hook?: string;
   hookBrief?: string;
+  /** The call to action for this post when it differs from the brand's (the brand's points to pricing and the post is not about price or plan). */
+  cta?: { text: string; reason: string };
 }
 
 /** The most recent concepts, in a line each, so the writer sees which angles and pictures are taken; the repeat check, not this list, is what decides. */
@@ -118,7 +129,7 @@ Return JSON:
       "visualLink": "one short sentence: how a viewer connects this picture to the headline, e.g. 'the parcel stands for big files and the narrow door for friction'",
       "concept": {"subject": "what the post is about, 2-5 words", "angle": "the particular angle on that subject", "message": "the one thing the post asserts", "visualSubject": "the main object in the picture", "visualAction": "what happens to it", "visualComposition": "the framing, e.g. close-up, overhead, wide"},
       "listItems": ["only for a numbered_list post: exactly as many distinct short items as the number the headline starts with; omit it for every other post"],
-      "caption": "Instagram caption, 450-900 characters: hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).",
+      "caption": "Instagram caption (${withFacts ? 'length as set for each post above' : '450-900 characters'}): hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).",
       "hashtags": ["6-8 relevant hashtags, each starting with #, last one the brand name"]
     }
   ]
@@ -144,7 +155,7 @@ export interface DraftPost {
  * One planned post from the model's draft. The format comes from the rotation in code, so a week varies whatever the model
  * writes: a type-only post needs no picture, the others get a prompt in the brand's own colours.
  */
-export function buildPost(options: { draft: DraftPost; id: string; date: string; weekNumber: number; index: number; brand: Brand; pillar?: string; hook?: string; requestedHook?: string; warnings?: readonly string[]; concept?: Concept; anchor?: string; revisitOf?: string; factIds?: readonly string[]; evidenceChecks?: readonly string[] }): PlannedPost {
+export function buildPost(options: { draft: DraftPost; id: string; date: string; weekNumber: number; index: number; brand: Brand; pillar?: string; hook?: string; requestedHook?: string; warnings?: readonly string[]; concept?: Concept; anchor?: string; revisitOf?: string; factIds?: readonly string[]; evidenceChecks?: readonly string[]; cta?: CallToAction; ctaReason?: string }): PlannedPost {
   const { draft, brand } = options;
   const format = formatFor(options.weekNumber, options.index);
   const items = options.hook === 'numbered_list' && draft.listItems ? draft.listItems.map((i) => i.trim()) : [];
@@ -154,6 +165,7 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
     id: options.id, date: options.date, painPoint: draft.painPoint, ...(options.pillar ? { pillar: options.pillar } : {}),
     ...(options.concept ? { concept: options.concept } : {}), ...(options.anchor ? { anchor: options.anchor } : {}), ...(options.revisitOf ? { revisitOf: options.revisitOf } : {}),
     ...(options.hook ? { hook: options.hook } : {}), ...(options.requestedHook ? { requestedHook: options.requestedHook } : {}),
+    ...(options.cta ? { cta: options.cta, ...(options.ctaReason ? { ctaReason: options.ctaReason } : {}) } : {}),
     ...(options.factIds && options.factIds.length > 0 ? { factIds: [...options.factIds], evidenceChecks: [...(options.evidenceChecks ?? [])] } : {}),
     ...(options.warnings && options.warnings.length > 0 ? { hookWarnings: [...options.warnings] } : {}), ...(items.length > 0 ? { listItems: items } : {}),
     format, headline: draft.headline, subline: draft.subline, caption, hashtags: draft.hashtags,
@@ -310,7 +322,14 @@ export async function planWeek(options: {
   const hookSpecs = options.hooks ?? defaultHooks;
   const hooks = assignHooks({ pillars: assignments.map((a) => a.pillar), evidence: { proofPoints: proofTexts }, recentHooks: options.recentHooks ?? [], recentPillars: recentPillars, hooks: hookSpecs });
   const factsPerPost = evidenceMode ? assignFacts({ facts: offerable, anchors: assignments.map((a) => (a.anchor ? rankedFacts.find((f) => displayFact(f) === a.anchor) : undefined)), recentFactIds }) : [];
-  const plans: PostPlan[] = assignments.map((a, i) => ({ ...a, hook: hooks[i] as string, hookBrief: hookSpecs.find((h) => h.id === hooks[i])?.brief ?? '' }));
+  const host = brand.handleUrl?.trim() ?? '';
+  const ctaFor = (position: number): PostPlan['cta'] => {
+    const mine = factsPerPost[position] ?? [];
+    if (!evidenceMode || mine.length === 0 || host === '' || !isPricingText(brand.callToAction)) return undefined;
+    if (mine.some((f) => f.category === 'commercial_term' || f.category === 'offer')) return undefined;
+    return { text: neutralCta(host).text, reason: 'cta_relevance_fallback: the brand call to action points to pricing and the post is not about price or plan' };
+  };
+  const plans: PostPlan[] = assignments.map((a, i) => ({ ...a, hook: hooks[i] as string, hookBrief: hookSpecs.find((h) => h.id === hooks[i])?.brief ?? '', ...(ctaFor(i) ? { cta: ctaFor(i) as NonNullable<PostPlan['cta']> } : {}) }));
   const identityLine = brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
   const recentConcepts = options.recentConcepts ?? [];
   /** Concepts of the posts accepted so far in this plan; later posts are compared with them as well as with history. */
@@ -383,7 +402,7 @@ export async function planWeek(options: {
           }
           // Editorial: a subline that only says the headline or identity line again goes back to the writer; on the last try it stays, with the reason noted for the reviewer.
           const cited = evidenceMode ? (factsPerPost[offset + i] ?? []).map((f) => ({ text: f.text, category: f.category })) : [];
-          const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: brand.callToAction, citedFacts: cited });
+          const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: assigned.cta?.text ?? brand.callToAction, citedFacts: cited });
           if (editorial.hard.length > 0 && attempt < 2) throw new Error(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
           // A subline that says the headline again, exactly or in nearly the same words with nothing new supported, is not copy: on the last try the post is left out.
           if (editorial.hard.length > 0) {
@@ -398,6 +417,7 @@ export async function planWeek(options: {
             pillar: assigned.pillar, hook: used, warnings, concept, ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(decision.revisitOf ? { revisitOf: decision.revisitOf } : {}),
             ...(used !== assigned.hook ? { requestedHook: assigned.hook as string } : {}),
             ...(evidenceMode ? { factIds: (factsPerPost[offset + i] ?? []).map((f) => f.id), evidenceChecks: [...FACT_CHECKS] } : {}),
+            ...(assigned.cta ? { cta: neutralCta(host), ctaReason: assigned.cta.reason } : {}),
           });
           builtSoFar.push(built);
           records.push(conceptRecordOf(built) as ConceptRecord);
@@ -416,7 +436,7 @@ export async function planWeek(options: {
   if (evidenceMode && options.copyJudge && posts.length > 0) {
     const byId = new Map(offerable.map((f) => [f.id, f]));
     const results = await verifyCopySupport(
-      posts.map((p) => ({ copy: { headline: p.headline, subline: p.subline, caption: withoutCta(p.caption, brand.callToAction) }, facts: (p.factIds ?? []).flatMap((id) => byId.get(id) ?? []) })),
+      posts.map((p) => ({ copy: { headline: p.headline, subline: p.subline, caption: withoutCta(withoutCta(p.caption, brand.callToAction), p.cta?.text ?? '') }, facts: (p.factIds ?? []).flatMap((id) => byId.get(id) ?? []) })),
       options.copyJudge.judge, options.copyJudge.cache ?? memoryCache(), { tenant: options.brandSlug },
     );
     const kept: typeof posts = [];

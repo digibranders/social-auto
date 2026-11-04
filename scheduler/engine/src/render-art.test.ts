@@ -1,3 +1,5 @@
+import { neutralCta } from './cta.ts';
+import { posterBrand } from './render.ts';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -68,4 +70,11 @@ test('real Chrome: a plan with art directions renders its posters, reports hones
     process.chdir(previous);
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('the poster shows the post\'s own call to action when it has one, and the brand\'s otherwise', () => {
+  const brand = { name: 'Acme', handleUrl: 'acme.example', colors: { ink: '#111111', accent: '#FCA311', background: '#FFFFFF', tile: '#F2F2F2' }, cta: { kind: 'site-action', label: 'See pricing', evidence: null, text: 'See pricing at acme.example (link in bio)' } } as never;
+  assert.equal(posterBrand(brand, undefined, undefined).cta?.label, 'See pricing');
+  assert.equal(posterBrand(brand, undefined, undefined, neutralCta('acme.example')).cta?.label, 'Visit the website');
+  assert.equal(posterBrand(brand, undefined, undefined, neutralCta('acme.example')).cta?.host, 'acme.example');
 });

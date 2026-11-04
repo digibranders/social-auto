@@ -7,7 +7,7 @@
 import { extractFacts, normalizeForQuote } from './claims.ts';
 import type { EvidenceCategory } from './evidence.ts';
 
-export interface EditorialCopy { headline: string; subline: string }
+export interface EditorialCopy { headline: string; subline: string; caption?: string }
 export interface CitedFact { text: string; category: EvidenceCategory }
 export interface EditorialContext {
   brandName: string;
@@ -18,7 +18,7 @@ export interface EditorialContext {
   citedFacts?: readonly CitedFact[];
 }
 
-export type EditorialCode = 'subline_restates_headline' | 'subline_restates_identity' | 'subline_adds_nothing' | 'subline_overlap_unsupported_extra' | 'brand_name_repeated' | 'cta_mismatch';
+export type EditorialCode = 'subline_restates_headline' | 'subline_restates_identity' | 'subline_adds_nothing' | 'subline_overlap_unsupported_extra' | 'brand_name_repeated' | 'cta_mismatch' | 'caption_repeats_itself';
 export interface EditorialIssue { code: EditorialCode; message: string }
 export interface EditorialResult { hard: EditorialIssue[]; warnings: EditorialIssue[] }
 
@@ -29,6 +29,8 @@ export interface EditorialConfig {
   maxNewStems: number;
   /** Similarity from which extra wording is worth a warning. */
   overlapWarning: number;
+  /** Similarity of two caption sentences from which the caption "repeats itself". */
+  captionRepeat: number;
   pricingCtaWords: readonly string[];
 }
 
@@ -37,6 +39,7 @@ export const defaultEditorialConfig: EditorialConfig = {
   nearIdentical: 0.6,
   maxNewStems: 1,
   overlapWarning: 0.6,
+  captionRepeat: 0.5,
   pricingCtaWords: ['pricing', 'price', 'prices', 'plans', 'plan', 'buy', 'subscribe', 'checkout'],
 };
 
@@ -58,6 +61,11 @@ const figuresOf = (text: string): Set<string> => {
   const f = extractFacts(text);
   return new Set([...f.numbers, ...f.prices, ...f.periods, ...f.qualifiers.map((q) => q.split('|')[0] ?? q)]);
 };
+
+/** True when a call to action points at pricing or buying. */
+export function isPricingText(text: string, words: readonly string[] = defaultEditorialConfig.pricingCtaWords): boolean {
+  return new RegExp(`(?<![\\p{L}\\p{N}])(?:${words.join('|')})(?![\\p{L}])`, 'iu').test(text);
+}
 
 export function validateEditorial(copy: EditorialCopy, context: EditorialContext, options: Partial<EditorialConfig> = {}): EditorialResult {
   const config = { ...defaultEditorialConfig, ...options };
@@ -93,9 +101,16 @@ export function validateEditorial(copy: EditorialCopy, context: EditorialContext
   if (mentions > 1 && subStems.size === 0) warnings.push({ code: 'brand_name_repeated', message: 'the brand name appears more than once and the subline adds nothing else' });
   else if (mentions > 2) warnings.push({ code: 'brand_name_repeated', message: `the brand name appears ${mentions} times across the headline, subline and identity line` });
 
+  // A caption that says the same thing twice to reach a length is padding. Lexical overlap cannot prove two sentences mean the same, so this only warns.
+  if (copy.caption) {
+    const sentences = copy.caption.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean).map((x) => contentStems(x, brand, config)).filter((x) => x.size >= 4);
+    const repeated = sentences.some((a, i) => sentences.slice(i + 1).some((b) => jaccard(a, b) >= config.captionRepeat));
+    if (repeated) warnings.push({ code: 'caption_repeats_itself', message: 'the caption seems to say the same thing more than once' });
+  }
+
   const cited = context.citedFacts ?? [];
   if (context.cta && cited.length > 0) {
-    const pricing = new RegExp(`(?<![\\p{L}\\p{N}])(?:${config.pricingCtaWords.join('|')})(?![\\p{L}])`, 'iu').test(context.cta);
+    const pricing = isPricingText(context.cta, config.pricingCtaWords);
     if (pricing && !cited.some((f) => f.category === 'commercial_term' || f.category === 'offer')) {
       warnings.push({ code: 'cta_mismatch', message: 'the call to action points to pricing, but the post is built on facts that are not about price or plan' });
     }

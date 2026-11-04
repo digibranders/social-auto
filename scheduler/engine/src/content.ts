@@ -142,6 +142,10 @@ export interface PlannedPost {
   concept?: Concept;
   /** The proof point the post was built on. */
   anchor?: string;
+  /** A call to action chosen for this post alone (the brand's own does not fit its subject); the poster and the caption use it instead of the brand's. */
+  cta?: CallToAction;
+  /** Why the post's call to action differs from the brand's. */
+  ctaReason?: string;
   /** Evidence facts assigned to the post by code, in the order given to the writer; used for review and for fact cooldown across weeks. */
   factIds?: string[];
   /** What was and was not checked against those facts, e.g. semantic_support_unverified. */
@@ -297,7 +301,7 @@ function parseIdentity(raw: unknown, source: string): BrandIdentity {
   return { line, kind: kind as BrandIdentity['kind'], type: (type as BrandIdentity['type'] | undefined) ?? null, source: sourceRecord, verification: { status: verification['status'] as BrandIdentity['verification']['status'], reasons: verification['reasons'] as string[] } };
 }
 
-function parseCta(raw: unknown, source: string): CallToAction {
+export function parseCta(raw: unknown, source: string): CallToAction {
   const where = `${source} cta`;
   if (!isRecord(raw)) throw new ContentValidationError(where, '"cta" must be an object');
   const { kind, label, text, evidence } = raw;
@@ -386,6 +390,11 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     if (value === undefined) continue;
     if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"${key}" must be text`);
     post[key] = value.trim();
+  }
+  if (raw['cta'] !== undefined) post.cta = parseCta(raw['cta'], `${where}`);
+  if (raw['ctaReason'] !== undefined) {
+    if (typeof raw['ctaReason'] !== 'string' || !raw['ctaReason'].trim()) throw new ContentValidationError(where, '"ctaReason" must be text');
+    post.ctaReason = raw['ctaReason'].trim();
   }
   if (raw['art'] !== undefined) post.art = parseArt(raw['art'], where);
   if (raw['artFailure'] !== undefined) {
