@@ -5,7 +5,7 @@
  * POST /api/edit?post=<id>&action=caption   body: {"caption": "..."}
  * POST /api/edit?post=<id>&action=image     body: the JPG file
  * POST /api/edit?post=<id>&action=revert
- * POST /api/edit?post=<id>&action=move       body: {"day": "2026-11-12", "time"?: "14:30"}  a hand-made post takes a day and a time; a planned post only a day (its time stays)
+ * POST /api/edit?post=<id>&action=move       body: {"day": "2026-11-12", "time"?: "14:30"}  a post takes a new day and time; one planned post per client per day, and a time left out stays as planned
  * POST /api/edit?post=<id>&action=skip      the post stays on the calendar but is never sent (while its time is still ahead)
  * POST /api/edit?post=<id>&action=unskip    brings it back
  */
@@ -29,7 +29,10 @@ async function readMove(request: Request): Promise<{ day: unknown; time: unknown
 }
 
 async function readAction(request: Request, action: string | null): Promise<EditAction> {
-  if (action === 'move') return { kind: 'move', day: (await readMove(request)).day };
+  if (action === 'move') {
+    const { day, time } = await readMove(request);
+    return { kind: 'move', day, ...(time === undefined ? {} : { time }) };
+  }
   if (action === 'revert' || action === 'skip' || action === 'unskip') return { kind: action };
   if (action === 'caption') {
     const body: unknown = await request.json().catch(() => null);

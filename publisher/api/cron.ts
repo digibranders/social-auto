@@ -99,7 +99,7 @@ export async function GET(request: Request): Promise<Response> {
     const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : onlyManual ? null : duePlannedPost(schedule, Date.now());
     const due = testPostId
       ? planned ? [planned] : []
-      : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now(), onlyManual ? FREQUENT_WINDOW_MS : undefined)];
+      : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now(), onlyManual ? FREQUENT_WINDOW_MS : undefined)].filter((p, i, all) => all.findIndex((q) => q.id === p.id) === i);
     if (due.length === 0) return json(200, { status: testPostId ? 'post-not-found' : 'nothing-due' });
 
     const results: Array<Record<string, unknown>> = [];

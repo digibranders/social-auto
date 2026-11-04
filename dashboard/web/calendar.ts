@@ -195,16 +195,16 @@ export const MAX_DAYS_AHEAD = 89;
 const pad2 = (value: number): string => String(value).padStart(2, '0');
 
 /**
- * The time (HH:MM, India) a post would have if dropped on this hour of the hourly grid, or on a day (hour null): a post made by hand
- * takes the hour it is dropped on and keeps its minutes; a planned post always keeps its own time, which the daily run sends it at.
+ * The time (HH:MM, India) a post would have if dropped on this hour of the hourly grid, or on a day (hour null): it takes the hour it is
+ * dropped on and keeps its minutes; dropped on a day, it keeps its own time.
  */
-export function dropTime(post: Pick<StatusPost, 'date' | 'manual'>, hour: number | null): string {
-  return post.manual && hour !== null ? `${pad2(hour)}:${pad2(minuteOf(post.date))}` : `${pad2(hourOf(post.date))}:${pad2(minuteOf(post.date))}`;
+export function dropTime(post: Pick<StatusPost, 'date'>, hour: number | null): string {
+  return hour !== null ? `${pad2(hour)}:${pad2(minuteOf(post.date))}` : `${pad2(hourOf(post.date))}:${pad2(minuteOf(post.date))}`;
 }
 
 /**
  * Whether a post may be dropped on this day (and hour): onto a moment still ahead and within 90 days, never where it already is, and
- * (for a planned post) never onto a day that already has a planned post of its client, because the daily run sends only one a day.
+ * (for a planned post) never onto another day that already has a planned post of its client, because only one planned post a day is kept.
  */
 export function mayLandOn(post: StatusPost, day: string, hour: number | null, others: readonly StatusPost[], now: number): boolean {
   const time = dropTime(post, hour);

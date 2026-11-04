@@ -134,11 +134,12 @@ const aPost = (over: Partial<StatusPost>): StatusPost => ({
 });
 const NOW = Date.parse('2026-11-05T00:00:00Z');
 
-test('a post made by hand takes the hour it is dropped on and keeps its minutes; a planned post keeps its time', () => {
+test('a post takes the hour it is dropped on and keeps its minutes, and keeps its own time when dropped on a day', () => {
   const own = aPost({ manual: true, date: '2026-11-10T14:35:00+05:30' });
   assert.equal(dropTime(own, 17), '17:35');
   assert.equal(dropTime(own, null), '14:35');
-  assert.equal(dropTime(aPost({ date: '2026-11-10T10:00:00+05:30' }), 17), '10:00');
+  assert.equal(dropTime(aPost({ date: '2026-11-10T10:00:00+05:30' }), 17), '17:00');
+  assert.equal(dropTime(aPost({ date: '2026-11-10T10:20:00+05:30' }), null), '10:20');
 });
 
 test('a post may land only on a moment still ahead and within 90 days, never where it already is', () => {
