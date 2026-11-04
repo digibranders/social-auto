@@ -154,6 +154,23 @@ const RECENT_CONCEPTS_IN_PROMPT = 10;
 /** The headline limit given to the model is 45; this is the slack allowed before a draft is sent back. */
 const MAX_HEADLINE_CHARS = 60;
 
+/** Words that make a leading number a quantity ("2 million customers"), never a list size. */
+const MAGNITUDE = /^\|?(?:hundred|thousand|million|billion|trillion|k|m|bn|percent|x)\b|^%/iu;
+
+/**
+ * The number a numbered-list headline starts with counts the list's own items: an editorial list size, not a claim. That one
+ * leading occurrence is taken out of the headline before the claim gate looks (unless it is followed by a magnitude word or a
+ * percent sign, which make it a quantity). The subline and caption are never touched, and every other figure is still gated. Only
+ * called once the hook check has confirmed the count matches the list items.
+ */
+function withoutListCount<T extends { headline: string; subline: string; caption: string }>(copy: T): T {
+  const said = copy.headline.normalize('NFKC').match(/^(\s*)(\d{1,2})\s+(?=\S)/u);
+  if (!said) return copy;
+  const rest = copy.headline.normalize('NFKC').slice(said[0].length);
+  if (MAGNITUDE.test(rest)) return copy;
+  return { ...copy, headline: rest };
+}
+
 /**
  * Turns back a draft the poster cannot be made from, so the model is asked again with the reason. With the brand's verified proof
  * points, it also turns back copy that states a figure, superlative, guarantee or deadline none of them supports; this runs before
@@ -173,7 +190,10 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
   }
   const hookProblem = assignment?.hook ? checkHook({ hook: assignment.hook, headline: draft.headline, ...(draft.listItems ? { listItems: draft.listItems } : {}) }) : undefined;
   if (hookProblem) throw new HookError(`post ${position} (${assignment?.hook}): ${hookProblem}`);
-  if (proofPoints !== undefined) assertCopySupported({ headline: draft.headline, subline: draft.subline, caption: [draft.caption, ...(draft.listItems ?? [])].join('\n') }, proofPoints, position);
+  if (proofPoints !== undefined) {
+    const copy = { headline: draft.headline, subline: draft.subline, caption: [draft.caption, ...(draft.listItems ?? [])].join('\n') };
+    assertCopySupported(assignment?.hook === 'numbered_list' ? withoutListCount(copy) : copy, proofPoints, position);
+  }
   const unanchored = assignment?.anchor ? checkAnchored({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, assignment.anchor) : undefined;
   if (assignment?.anchor && unanchored) {
     throw new Error(`post ${position} (${assignment.pillar}) must be built on this proof point: "${assignment.anchor}", with its figures and meaning unchanged: ${unanchored}`);
@@ -284,6 +304,11 @@ export async function planWeek(options: {
           try {
             validateDraft(draft, i + 1, brand.name, brand.proofPoints, assigned);
           } catch (error) {
+            // On the last try a post whose copy the claim gate still turns back is left out (fewer posts, never unsupported copy); the others stay.
+            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back/.test(error.message)) {
+              droppedHere.push(error.message);
+              return;
+            }
             if (!(error instanceof HookError) || attempt < 2) throw error;
             const headline = fallbackHeadline({ ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(identityLine ? { identityLine } : {}), maxChars: MAX_HEADLINE_CHARS });
             if (!headline) throw error;

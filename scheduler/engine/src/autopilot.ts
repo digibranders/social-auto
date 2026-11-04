@@ -187,7 +187,7 @@ async function main(): Promise<void> {
     });
     if (plan.insufficientConcepts) {
       const { requested, produced, reasons } = plan.insufficientConcepts;
-      console.log(`    Only ${produced} of ${requested} posts: the rest repeated earlier ideas (insufficient distinct concepts).\n    ${reasons.join('\n    ')}`);
+      console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);
     }
     let finalPlan: WeekPlan = plan;
     if (artSettings) {
