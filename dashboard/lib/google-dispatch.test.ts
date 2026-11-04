@@ -60,7 +60,7 @@ test('a callback with no saved state, or a client with nothing waiting to choose
 
 test('the chooser form only accepts same-site posts for a valid location while something is waiting', async () => {
   setup();
-  const waiting = { cookie: pickCookie('brandbasket', 'v1.AbC_-1.dEf_-2.gHi_-3', false).split(';')[0] as string };
+  const waiting = { cookie: pickCookie('brandbasket', 'v1.AbC_-1.dEf_-2.gHi_-3', null, false).split(';')[0] as string };
   const form = (headers: Record<string, string>, body: string): Request => call('/api/google/choose', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', ...headers }, body });
   assert.equal((await POST(form({ ...waiting }, 'location=1'))).status, 403);
   const same = { ...waiting, origin: 'http://localhost:4010' };
@@ -79,4 +79,23 @@ test('the invite endpoint makes a Google link only when Google is configured, an
   assert.match(link, /^http:\/\/localhost:4010\/api\/google\/start\?invite=/);
   delete process.env['GOOGLE_CLIENT_ID'];
   assert.equal(invite(post(signedIn)).status, 503);
+});
+
+test('a product\'s customer who denies Google comes back to the product with the result, and a bad return address is never followed', async () => {
+  setup();
+  process.env['INVITE_SECRET'] = 'i'.repeat(40);
+  const back = 'https://app.brandbasket.in/social';
+  const link = createInvite(process.env['INVITE_SECRET'], 'brandbasket', Date.now(), undefined, back);
+  const start = await GET(call(`/api/google/start?invite=${encodeURIComponent(link)}`));
+  assert.equal(start.status, 302);
+  const saved = cookieOf(start, 'g_connect') as string;
+  assert.match(saved, /^[0-9a-f]{32}\.brandbasket\.[A-Za-z0-9_-]+$/);
+
+  const denied = await GET(call('/api/google/callback?error=access_denied', { headers: { cookie: `g_connect=${saved}` } }));
+  assert.equal(denied.status, 302);
+  assert.equal(denied.headers.get('location'), `${back}?social=denied&channel=google`);
+
+  // Nothing saved, nowhere to return: the plain page.
+  const plain = await GET(call('/api/google/callback?error=access_denied'));
+  assert.equal(plain.status, 200);
 });

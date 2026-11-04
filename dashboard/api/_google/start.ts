@@ -31,6 +31,6 @@ export function GET(request: Request): Response {
   const state = newState();
   return new Response(null, {
     status: 302,
-    headers: { Location: authorizeLink({ clientId, redirectUri: callbackUrl(request), state }), 'Set-Cookie': connectCookie(state, brand), 'Cache-Control': 'no-store' },
+    headers: { Location: authorizeLink({ clientId, redirectUri: callbackUrl(request), state }), 'Set-Cookie': connectCookie(state, brand, invited?.returnUrl ?? null), 'Cache-Control': 'no-store' },
   });
 }
