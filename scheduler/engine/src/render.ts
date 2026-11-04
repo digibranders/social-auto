@@ -3,6 +3,8 @@
  *
  *   node src/render.ts --brand brands/brandbasket --plan week-01.json [--env <keys file>] [--model <id>]
  */
+import { sceneSizeFor } from './art-prompt.ts';
+import { familyById, layoutRegistry } from './layout-registry.ts';
 import { DEFAULT_FACT_MAX_AGE_DAYS } from './evidence-pipeline.ts';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -158,7 +160,9 @@ export async function renderPlan(options: RenderOptions): Promise<string> {
           if (!(await exists(scenePath))) {
             log(`${post.id}: generating AI scene for ${candidate.optionId}…`);
             options.ai.usage.post = `${basename(options.brandDir)}-${post.id}`;
-            const maker = await generateScene(options.ai, { prompt: candidate.imagePrompt, outPath: scenePath, width: SCENE_SIZE, height: SCENE_SIZE, seed: seedFromId(post.id) }, budget).finally(() => {
+            const panel = familyById(layoutRegistry, candidate.brief.layout)?.zones[candidate.brief.textZone]?.imageSlots.find((slot) => slot.id === candidate.brief.picture.role)?.rect;
+            const size = sceneSizeFor(panel, SCENE_SIZE);
+            const maker = await generateScene(options.ai, { prompt: candidate.imagePrompt, outPath: scenePath, width: size.width, height: size.height, seed: seedFromId(post.id) }, budget).finally(() => {
               options.ai.usage.post = null;
             });
             log(`${post.id}: scene made by ${maker}`);

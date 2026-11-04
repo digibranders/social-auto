@@ -84,7 +84,20 @@ test('a wide or tall picture panel tells the image model which central part stay
   assert.equal(cropGuidance(undefined), '');
   const slot = familyById(layoutRegistry, 'split-composition')?.zones['top']?.imageSlots[0];
   const prompt = buildImagePrompt({ brief: briefOf(hero, 'split-composition', 'top'), brand, textSlots: slotsOf('split-composition', 'top'), ...(slot ? { pictureSlot: slot.rect } : {}) }) ?? '';
-  assert.match(prompt, /middle 37% of its height/);
+  assert.match(prompt, /middle 56% of its height/);
   const full = buildImagePrompt({ brief: briefOf(hero, 'split-composition', 'top'), brand, textSlots: slotsOf('split-composition', 'top') }) ?? '';
   assert.doesNotMatch(full, /cropped to/);
+});
+
+
+import { sceneSizeFor } from './art-prompt.ts';
+
+test('the scene is requested in the panel\'s shape, and the crop guidance accounts for the shape it was made in', () => {
+  assert.deepEqual(sceneSizeFor({ x: 0, y: 680, w: 1080, h: 400 }), { width: 1536, height: 1024 });
+  assert.deepEqual(sceneSizeFor({ x: 600, y: 200, w: 416, h: 720 }), { width: 1024, height: 1536 });
+  assert.deepEqual(sceneSizeFor({ x: 0, y: 0, w: 1080, h: 1080 }, 1088), { width: 1088, height: 1088 });
+  assert.deepEqual(sceneSizeFor(undefined, 1088), { width: 1088, height: 1088 });
+  assert.match(cropGuidance({ x: 0, y: 680, w: 1080, h: 400 }, { width: 1536, height: 1024 }), /middle 56% of its height/);
+  assert.match(cropGuidance({ x: 600, y: 200, w: 416, h: 720 }, { width: 1024, height: 1536 }), /middle 87% of its width/);
+  assert.equal(cropGuidance({ x: 0, y: 0, w: 1000, h: 640 }, { width: 1536, height: 1024 }), '');
 });

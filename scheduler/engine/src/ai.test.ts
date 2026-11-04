@@ -221,3 +221,37 @@ test('a run that used no backup has no fallback marks', async () => {
   assert.ok(ai.usage.records('acme', []).every((r) => r.fallback === undefined && r.requestedModel === undefined));
   assert.doesNotMatch(ai.usage.format(), /FALLBACK/i);
 });
+
+
+import { openaiSizeFor } from './ai.ts';
+
+test('the picture is requested in the shape of its panel: wide, tall or square', () => {
+  assert.equal(openaiSizeFor(1536, 1024), '1536x1024');
+  assert.equal(openaiSizeFor(1024, 1536), '1024x1536');
+  assert.equal(openaiSizeFor(1088, 1088), '1024x1024');
+  assert.equal(openaiSizeFor(1100, 1000), '1024x1024');
+});
+
+test('a shaped size the model does not offer (a 400) is retried once as a square, and a refusal on the square still falls through to the next provider', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ai-test-'));
+  try {
+    const sizes: string[] = [];
+    const picky = scripted((url, init) => {
+      if (url.includes('openai.com')) {
+        const size = String((JSON.parse(String(init.body)) as Record<string, unknown>)['size']);
+        sizes.push(size);
+        return size === '1024x1024' ? json({ data: [{ b64_json: PNG_OR_JPEG.toString('base64') }] }) : json({ error: { message: 'unsupported size' } }, 400);
+      }
+      return new Response(PNG_OR_JPEG, { headers: { 'content-type': 'image/jpeg' } });
+    });
+    const used = await generateScene(both(), { ...request(dir), width: 1536, height: 1024 }, { openaiImages: 0 }, picky.fetchFn);
+    assert.equal(used, 'OpenAI');
+    assert.deepEqual(sizes, ['1536x1024', '1024x1024']);
+    const offered = scripted(() => json({ data: [{ b64_json: PNG_OR_JPEG.toString('base64') }] }));
+    await generateScene(both(), { ...request(dir, 'b.jpg'), width: 1024, height: 1536 }, { openaiImages: 0 }, offered.fetchFn);
+    assert.equal(offered.calls.length, 1);
+    assert.equal(offered.calls[0]?.body?.['size'], '1024x1536');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

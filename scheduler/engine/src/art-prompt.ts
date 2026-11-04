@@ -59,18 +59,30 @@ export interface ImagePromptInput {
   pictureSlot?: Rect;
 }
 
-/** Words that keep the subject inside the part of a square picture a panel of another shape shows; empty when the panel is nearly square. */
-export function cropGuidance(slot: Rect | undefined): string {
+export interface SceneSize { width: number; height: number }
+
+/** The picture is requested in a shape close to its panel (wide, tall or square) so little of it is cropped away. */
+export function sceneSizeFor(slot: Rect | undefined, square: number = Math.ceil(CANVAS_SIZE / 32) * 32): SceneSize {
+  if (!slot) return { width: square, height: square };
+  const aspect = slot.w / slot.h;
+  if (aspect >= 1.2) return { width: 1536, height: 1024 };
+  if (aspect <= 0.83) return { width: 1024, height: 1536 };
+  return { width: square, height: square };
+}
+
+/** Words that keep the subject inside the part of the picture a panel shows; empty when the panel shows nearly all of it. */
+export function cropGuidance(slot: Rect | undefined, size: SceneSize = { width: 1, height: 1 }): string {
   if (!slot) return '';
-  const share = Math.min(slot.w, slot.h) / Math.max(slot.w, slot.h);
+  const panel = slot.w / slot.h;
+  const source = size.width / size.height;
+  const share = panel > source ? source / panel : panel / source;
   if (share > 0.9) return '';
   const percent = Math.round(share * 100);
-  return slot.w > slot.h
+  return panel > source
     ? `The picture will be cropped to a wide band that shows only the middle ${percent}% of its height: keep the whole subject inside that central band, with nothing important above or below it.`
     : `The picture will be cropped to a tall panel that shows only the middle ${percent}% of its width: keep the whole subject inside that central column, with nothing important to its left or right.`;
 }
 
-/** The prompt for a post's picture, or undefined when the brief wants no picture, so no image is ever requested for it. */
 export function buildImagePrompt({ brief, brand, textSlots, pictureSlot }: ImagePromptInput): string | undefined {
   const { picture } = brief;
   if (picture.role === 'none') return undefined;
@@ -88,7 +100,7 @@ export function buildImagePrompt({ brief, brand, textSlots, pictureSlot }: Image
     ...(picture.role === 'hero' ? ['Use depth, environmental context, a clear focal subject and coherent lighting where they improve the idea; a minimal, flat or abstract composition is equally valid when it says the idea better.'] : []),
     `${palette(picture.paletteUse, brand.colors)}.`,
     room,
-    picture.role === 'hero' ? cropGuidance(pictureSlot) : '',
+    picture.role === 'hero' ? cropGuidance(pictureSlot, sceneSizeFor(pictureSlot)) : '',
     `${SAFETY}.`,
   ]
     .filter(Boolean)

@@ -120,14 +120,26 @@ export interface ImageBudget {
   openaiImages: number;
 }
 
+/** The OpenAI size closest to the requested shape. */
+export function openaiSizeFor(width: number, height: number): '1024x1024' | '1536x1024' | '1024x1536' {
+  if (width / height >= 1.2) return '1536x1024';
+  if (width / height <= 0.83) return '1024x1536';
+  return '1024x1024';
+}
+
 async function openaiImage(ai: AiConfig, request: SceneRequest, budget: ImageBudget, fetchFn: typeof fetch, fallbackFrom?: FallbackFrom): Promise<void> {
   if (budget.openaiImages >= ai.maxOpenAiImages) throw new ImageGenerationError(`OpenAI image limit of ${ai.maxOpenAiImages} per run reached`);
-  const response = await fetchFn(`${ai.openaiBase}/images/generations`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${ai.openaiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: ai.imageModel, prompt: request.prompt, n: 1, size: '1024x1024', quality: ai.imageQuality, output_format: 'jpeg' }),
-    signal: AbortSignal.timeout(180_000),
-  });
+  const ask = (size: string): Promise<Response> =>
+    fetchFn(`${ai.openaiBase}/images/generations`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${ai.openaiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: ai.imageModel, prompt: request.prompt, n: 1, size, quality: ai.imageQuality, output_format: 'jpeg' }),
+      signal: AbortSignal.timeout(180_000),
+    });
+  const wanted = openaiSizeFor(request.width, request.height);
+  let response = await ask(wanted);
+  // A model that does not offer the shaped size answers 400: the square picture is the safe second try, cropped to the panel as before.
+  if (response.status === 400 && wanted !== '1024x1024') response = await ask('1024x1024');
   const body = (await response.json().catch(() => null)) as { data?: Array<{ b64_json?: string }>; usage?: { input_tokens?: number; output_tokens?: number }; error?: { message?: string } } | null;
   if (!response.ok) throw new ImageGenerationError(`OpenAI image request returned ${response.status}: ${redact(body?.error?.message ?? 'no details').slice(0, 300)}`);
   const encoded = body?.data?.[0]?.b64_json;
