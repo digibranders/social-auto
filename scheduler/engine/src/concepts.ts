@@ -4,6 +4,7 @@
  * plan before any picture is paid for. Repeated ideas are rejected, repeated business topics are not: a brand with one product may come back
  * to it from a different angle, and a new look for the same message only asks for a new picture. All thresholds and word lists are settings.
  */
+import { clipToLimit } from './art-brief.ts';
 import { normalizeHeadline } from './hooks.ts';
 
 export interface Concept {
@@ -84,8 +85,8 @@ export function parseConcept(raw: unknown): Concept {
   for (const field of FIELDS) {
     const value = record[field];
     if (typeof value !== 'string' || !value.trim()) throw new Error(`"concept.${field}" must be short text`);
-    if (value.trim().length > MAX_FIELD_CHARS) throw new Error(`"concept.${field}" must be at most ${MAX_FIELD_CHARS} characters`);
-    concept[field] = value.trim();
+    // A field a little over the limit is cut at a word, not refused: refusing it threw away a whole post and its facts over wording that only feeds the repeat check.
+    concept[field] = clipToLimit(value, MAX_FIELD_CHARS);
   }
   return concept;
 }

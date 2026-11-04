@@ -123,7 +123,11 @@ test('concept fields must all be present text: a malformed concept fails, so the
   assert.throws(() => parseConcept(undefined), /concept/);
   assert.throws(() => parseConcept({ ...concept(), message: '' }), /message/);
   assert.throws(() => parseConcept({ ...concept(), visualAction: 3 }), /visualAction/);
-  assert.throws(() => parseConcept({ ...concept(), subject: 'x'.repeat(200) }), /subject/);
+  // A field over the limit is cut at a word, not refused.
+  const long = `${'word '.repeat(40)}end`;
+  const clipped = parseConcept({ ...concept(), subject: long }).subject;
+  assert.ok(clipped.length <= 100 && clipped.startsWith('word word'));
+  assert.throws(() => parseConcept({ ...concept(), subject: '   ' }), /subject/);
 });
 
 test('the decision is a pure function: the same inputs give the same result', () => {
