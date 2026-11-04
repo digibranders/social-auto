@@ -230,3 +230,11 @@ test('centred text is centred on the poster: a wide slot is moved to the middle,
   const start = compose(briefOf('full-bleed-editorial', 'top', hero), { pictureUrl: 'file:///tmp/x.png' }).html;
   assert.equal(left(start, 'headline'), 64);
 });
+
+test('the lower-anchored typography variant is a light page with no picture and no decor, so a feed of picture-free posts mixes dark and light', () => {
+  const bottom = compose(briefOf('typography-hero', 'bottom', { role: 'none' })).html;
+  const center = compose(briefOf('typography-hero', 'center', { role: 'none' })).html;
+  assert.notEqual(bottom.match(/body\{background:[^;]+/)?.[0], center.match(/body\{background:[^;]+/)?.[0]);
+  assert.ok(!bottom.includes('<div data-layer="decor"') && !bottom.includes('<img'));
+  assert.equal(familyById(layoutRegistry, 'typography-hero')?.zones['bottom']?.imageSlots.length, 0);
+});

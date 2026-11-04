@@ -302,13 +302,14 @@ type Composer = (c: Canvas) => void;
 
 const composers: Record<string, Composer> = {
   'typography-hero': (c) => {
-    if (c.zoneName === 'left') {
-      // The light editorial variant: a full-height accent rail on the canvas edge (clear of every text slot, which starts at x=96) and dark type on a light page.
+    if (c.zoneName === 'left' || c.zoneName === 'bottom') {
+      // The light variants: dark type on a light page. The left one has a full-height accent rail on the canvas edge (clear of every text slot, which starts at x=96);
+      // the bottom one is the plain light page with the text block anchored low.
       const { light, accentOnLight } = c.palette;
       c.css.push(`body{background:${light};}`);
       c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'light');
-      c.decor({ x: 0, y: 0, w: 28, h: CANVAS_SIZE }, `background:${accentOnLight};`);
-      headlineAndSubline(c, 'light', 'start');
+      if (c.zoneName === 'left') c.decor({ x: 0, y: 0, w: 28, h: CANVAS_SIZE }, `background:${accentOnLight};`);
+      headlineAndSubline(c, 'light', c.zoneName === 'left' ? 'start' : 'end');
       return;
     }
     const { dark } = c.palette;
