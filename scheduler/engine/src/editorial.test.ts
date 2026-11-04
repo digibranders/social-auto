@@ -63,3 +63,17 @@ test('empty or brand-only sublines do not crash the check', () => {
   assert.doesNotThrow(() => validateEditorial({ headline: '|x|', subline: '' }, ctx()));
   assert.doesNotThrow(() => validateEditorial({ headline: 'Acme Replies', subline: 'Acme Replies' }, ctx({ identityLine: undefined } as Partial<EditorialContext>)));
 });
+
+test('the poster that exposed the gap: "Keep the deal conversation in one thread" against "OyeChats keeps the whole conversation in one thread" is redundant', () => {
+  const r = validateEditorial({ headline: 'Keep the deal conversation in |one thread|', subline: 'OyeChats keeps the whole conversation in one thread.' }, ctx({ brandName: 'OyeChats', identityLine: undefined } as Partial<EditorialContext>));
+  assert.deepEqual(codes(r).hard, ['subline_adds_nothing']);
+});
+
+test('sublines on a different point or with a new condition are not touched by the stricter overlap rule', () => {
+  const allowed: Array<[string, string]> = [
+    ['Start with a |free plan|', 'Free plan. No credit card required.'],
+    ['Track visitor |intent|', 'Intent scores update during conversations.'],
+    ['Start your |14-day trial|', 'No credit card required.'],
+  ];
+  for (const [headline, subline] of allowed) assert.deepEqual(codes(validateEditorial({ headline, subline }, ctx())).hard, [], subline);
+});

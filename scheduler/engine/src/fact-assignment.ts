@@ -1,6 +1,6 @@
 /**
  * Which evidence facts each post of a week may use. Code decides, not the model: facts rotate across weeks with a cooldown (a fact used
- * recently is ranked later, never banned, because a narrow brand may have only a few), a post gets one or two facts of different kinds, and
+ * recently is ranked later, never banned, because a narrow brand may have only a few), a post gets one fact, or two when the page ties them together, and
  * only facts that are usable and state a claim of the brand itself are ever offered.
  */
 import { displayFact, type EvidenceFact } from './evidence.ts';
@@ -38,6 +38,16 @@ export function rankFacts(facts: readonly EvidenceFact[], recentFactIds: readonl
   }).map((x) => x.fact);
 }
 
+/**
+ * Two facts may share a post only when the page itself ties them together: the same plan or card, or the same heading on the same page.
+ * Shared words or a shared page are not enough, and when no tie is established the post gets one fact.
+ */
+export function related(a: EvidenceFact, b: EvidenceFact): boolean {
+  if (a.source.url !== b.source.url) return false;
+  if (a.scope !== undefined && a.scope === b.scope) return true;
+  return a.source.heading !== '' && a.source.heading === b.source.heading;
+}
+
 export interface FactAssignmentInput {
   facts: readonly EvidenceFact[];
   /** One entry per post: the fact that must be the post's first, when a pillar fixed it. */
@@ -58,7 +68,7 @@ export function assignFacts(input: FactAssignmentInput): EvidenceFact[][] {
     if (first === undefined) return [];
     const chosen = [first];
     if (perPost > 1) {
-      const second = pool.find((f) => f.id !== first.id && f.category !== first.category);
+      const second = pool.find((f) => f.id !== first.id && related(first, f));
       if (second) chosen.push(second);
     }
     for (const fact of chosen) usedThisWeek.add(fact.id);

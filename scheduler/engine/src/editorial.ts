@@ -24,8 +24,9 @@ export interface EditorialResult { hard: EditorialIssue[]; warnings: EditorialIs
 
 export interface EditorialConfig {
   stopWords: readonly string[];
-  /** Similarity of content stems from which a subline "says it again". */
+  /** Similarity of content stems from which a subline "says it again" when it has at most `maxNewStems` stems of its own that nothing supports. */
   nearIdentical: number;
+  maxNewStems: number;
   /** Similarity from which extra wording is worth a warning. */
   overlapWarning: number;
   pricingCtaWords: readonly string[];
@@ -33,13 +34,14 @@ export interface EditorialConfig {
 
 export const defaultEditorialConfig: EditorialConfig = {
   stopWords: ['a', 'an', 'the', 'and', 'or', 'but', 'for', 'with', 'your', 'you', 'our', 'we', 'is', 'are', 'was', 'be', 'to', 'of', 'in', 'on', 'at', 'by', 'it', 'its', 'this', 'that', 'from', 'as', 'can', 'will', 'all', 'one', 'more', 'has', 'have', 'who', 'what', 'how', 'why', 'not', 'no', 'so', 'if', 'do', 'does', 'into', 'out', 'up', 'than', 'then', 'them', 'they', 'their'],
-  nearIdentical: 0.85,
+  nearIdentical: 0.6,
+  maxNewStems: 1,
   overlapWarning: 0.6,
   pricingCtaWords: ['pricing', 'price', 'prices', 'plans', 'plan', 'buy', 'subscribe', 'checkout'],
 };
 
 const words = (text: string): string[] => normalizeForQuote(text.replaceAll('|', '')).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
-const stem = (word: string): string => word.slice(0, 5);
+const stem = (word: string): string => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word).slice(0, 5);
 
 function contentStems(text: string, drop: ReadonlySet<string>, config: EditorialConfig): Set<string> {
   const stop = new Set(config.stopWords);
@@ -79,7 +81,7 @@ export function validateEditorial(copy: EditorialCopy, context: EditorialContext
     const newFigure = [...figuresOf(copy.subline)].some((f) => !headFigures.has(f));
     const citedStems = new Set((context.citedFacts ?? []).flatMap((f) => [...contentStems(f.text, brand, config)]));
     const supportedExtra = extra.filter((s) => citedStems.has(s));
-    if (similarity >= config.nearIdentical && !newFigure && supportedExtra.length === 0) {
+    if (similarity >= config.nearIdentical && !newFigure && supportedExtra.length === 0 && extra.length <= config.maxNewStems) {
       hard.push({ code: 'subline_adds_nothing', message: 'the subline repeats the headline in nearly the same words and adds nothing supported; say something the headline does not' });
     } else if (similarity >= config.overlapWarning && !newFigure && supportedExtra.length === 0 && extra.length > 0) {
       warnings.push({ code: 'subline_overlap_unsupported_extra', message: 'the subline overlaps the headline and its extra wording is not backed by the post\'s facts' });

@@ -16,7 +16,7 @@ export const VERIFIER_VERSION = 1;
 
 export type JudgeAnswer = 'supported' | 'unsupported' | 'unclear';
 export interface JudgeItem { key: string; claim: string; quote: string; context: string }
-export interface JudgeVerdict { key: string; answer: JudgeAnswer }
+export interface JudgeVerdict { key: string; answer: JudgeAnswer; /** One line from the judge on what the copy adds, when it gave one. */ reason?: string }
 export type Judge = (items: JudgeItem[]) => Promise<JudgeVerdict[]>;
 
 export interface VerdictCache {
@@ -145,10 +145,11 @@ export async function verifyCopySupport(inputs: readonly CopySupportInput[], jud
   });
   const items = [...asked.values()];
   const answers = new Map<string, JudgeAnswer>();
+  const why = new Map<string, string>();
   let failed: string | null = null;
   for (let i = 0; i < items.length && failed === null; i += batchSize) {
     try {
-      for (const v of await judge(items.slice(i, i + batchSize))) if (ANSWERS.includes(v.answer) && asked.has(v.key)) answers.set(v.key, v.answer);
+      for (const v of await judge(items.slice(i, i + batchSize))) if (ANSWERS.includes(v.answer) && asked.has(v.key)) { answers.set(v.key, v.answer); if (v.reason) why.set(v.key, v.reason); }
     } catch (error) {
       failed = error instanceof Error ? error.message : String(error);
     }
@@ -157,13 +158,13 @@ export async function verifyCopySupport(inputs: readonly CopySupportInput[], jud
   inputs.forEach((_, index) => {
     if (results[index] !== undefined) return;
     const answer = answers.get(keys[index] as string);
-    results[index] = answer !== undefined ? copyFromAnswer(answer, false) : { status: 'uncertain', reasons: [failed !== null ? `the judge failed: ${failed}` : 'the judge gave no answer for this post'], cached: false };
+    results[index] = answer !== undefined ? copyFromAnswer(answer, false, why.get(keys[index] as string)) : { status: 'uncertain', reasons: [failed !== null ? `the judge failed: ${failed}` : 'the judge gave no answer for this post'], cached: false };
   });
   return results;
 }
 
-function copyFromAnswer(answer: JudgeAnswer, cached: boolean): CopySupportResult {
+function copyFromAnswer(answer: JudgeAnswer, cached: boolean, reason?: string): CopySupportResult {
   if (answer === 'supported') return { status: 'supported_by_model', reasons: ['a model judged the copy no stronger than its source facts (not verified by code)'], cached };
-  if (answer === 'unsupported') return { status: 'rejected', reasons: ['a model judged the copy to claim more than its source facts say'], cached };
+  if (answer === 'unsupported') return { status: 'rejected', reasons: [`a model judged the copy to claim more than its source facts say${reason ? `: ${reason}` : ''}`], cached };
   return { status: 'uncertain', reasons: ['a model could not tell whether the copy goes beyond its source facts'], cached };
 }

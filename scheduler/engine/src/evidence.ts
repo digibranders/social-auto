@@ -119,7 +119,8 @@ export const defaultEvidenceConfig: EvidenceConfig = {
   demoWords: ['sample', 'demo', 'mock', 'mockup', 'example', 'placeholder', 'dummy', 'lorem'],
   headingFactWords: ['free', 'trial', 'credit card', 'per month', 'per year', 'refund', 'guarantee', 'guaranteed', 'starting at', 'starts at'],
   taxWords: ['gst', 'vat', 'tax', 'taxes'],
-  commercialWords: ['free', 'trial', 'credit card', 'per month', 'per year', 'billed', 'billing', 'refund', 'discount', 'plan', 'plans', 'pricing', 'price', 'prices', 'subscription', 'checkout', 'cancel'],
+  /** Words that state a commercial term. Mentioning a pricing page, a plan or a price in passing does not: the sentence has to state a term. */
+  commercialWords: ['free trial', 'free forever', 'free plan', 'free tier', 'trial', 'trials', 'credit card', 'per month', 'per year', 'billed', 'billing', 'refund', 'discount', 'subscription', 'cancel anytime'],
   processWords: ['install', 'installation', 'setup', 'set up', 'onboard', 'get started', 'go live', 'live bot', 'signup', 'sign up', 'migrate', 'script tag'],
   credentialWords: ['certified', 'certification', 'iso', 'soc 2', 'accredited', 'award', 'compliant', 'compliance', 'gdpr', 'hipaa'],
   outcomeWords: ['increase', 'increased', 'reduce', 'reduced', 'cut', 'saved', 'resolved', 'booked', 'handled', 'grew', 'improved', 'doubled'],

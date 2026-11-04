@@ -126,7 +126,7 @@ test('fact assignment: usable brand claims only, one fact per wording, a second 
   assert.equal(offerableFacts([...all, ...all]).length, offered.length);
   const perPost = assignFacts({ facts: offered, anchors: [undefined, undefined, undefined], recentFactIds: [] });
   assert.ok(perPost.every((p) => p.length >= 1 && p.length <= 2));
-  assert.ok(perPost.every((p) => p.length === 1 || p[0]?.category !== p[1]?.category));
+  assert.ok(perPost.every((p) => p.length === 1 || (p[0]?.source.url === p[1]?.source.url && (p[0]?.scope === p[1]?.scope || p[0]?.source.heading === p[1]?.source.heading))));
   const firsts = perPost.map((p) => p[0]?.id);
   assert.equal(new Set(firsts).size, firsts.length);
   const anchor = offered[2] as EvidenceFact;
@@ -152,10 +152,8 @@ test('editorial: a subline that is exactly the headline after the second try lea
   await assert.rejects(run(model((_slot, _prompt, headline) => ({ subline: `Acme Replies: ${headline}`, caption: 'A short note.' })), undefined, 1), InsufficientConceptsError);
 });
 
-test('editorial: a near-identical subline that survives the second try stays with the reason noted for the reviewer', async () => {
-  const plan = await run(model((_slot, _prompt, headline) => ({ subline: `Acme Replies: ${headline} the`, caption: 'A short note.' })), undefined, 1);
-  assert.equal(plan.posts.length, 1);
-  assert.ok(plan.posts[0]?.hookWarnings?.includes('editorial: subline_adds_nothing'));
+test('editorial: a subline that says the headline in nearly the same words, with nothing new supported, leaves the post out after the second try', async () => {
+  await assert.rejects(run(model((_slot, _prompt, headline) => ({ subline: `Acme Replies: ${headline} the`, caption: 'A short note.' })), undefined, 1), InsufficientConceptsError);
 });
 
 test('editorial: a subline that shares words with the headline but adds a fact is not touched', async () => {
@@ -202,4 +200,42 @@ test('the model judge sends one request for the batch, with source and copy, and
   assert.equal(bodies.length, 1);
   assert.match(bodies[0] ?? '', /can suggest responses/);
   assert.deepEqual(verdicts, [{ key: 'k1', answer: 'unsupported' }, { key: 'k2', answer: 'supported' }]);
+});
+
+import { withoutCta } from './planner.ts';
+
+test('the brand\'s own call to action is not shown to the copy judge as a claim', () => {
+  assert.equal(withoutCta('A note about replies.\n\nSee pricing at oyechats.com (link in bio)', 'See pricing at oyechats.com (link in bio)'), 'A note about replies.');
+  assert.equal(withoutCta('A note. See pricing at oyechats.com today', 'See pricing at oyechats.com (link in bio)'), 'A note. today');
+  assert.equal(withoutCta('A note.', ''), 'A note.');
+});
+
+test('categories: a sentence that merely mentions a pricing page or a plan is not a commercial term; a stated term is', () => {
+  const set = buildEvidence([structure('https://acme.example/home', [
+    { text: 'Point Acme at your docs, help center, and pricing page.' },
+    { text: 'Free plan forever, no credit card required.' },
+    { text: 'Pick the plan that suits your team size.' },
+    { text: 'Start a 14-day trial of any plan.' },
+  ])], NOW);
+  const cat = (needle: string): string => (set.facts.find((f) => f.text.includes(needle)) as EvidenceFact).category;
+  assert.equal(cat('pricing page'), 'capability');
+  assert.equal(cat('Pick the plan'), 'capability');
+  assert.equal(cat('Free plan forever'), 'commercial_term');
+  assert.equal(cat('14-day trial'), 'commercial_term');
+});
+
+test('a second fact is added only when the page ties it to the first: the same plan or the same heading on the same page', () => {
+  const base = structure('https://acme.example/pricing', []);
+  const set = buildEvidence([{ ...base, blocks: [
+    block({ text: '₹599 /mo', cardId: 'c1', cardGroup: 'g', cardTitle: 'Starter' }),
+    block({ text: '14-day free trial', cardId: 'c1', cardGroup: 'g', cardTitle: 'Starter' }),
+    block({ text: '₹1,199 /mo', cardId: 'c2', cardGroup: 'g', cardTitle: 'Standard' }),
+    block({ text: 'Answers come from your own pages and documents.', headingText: 'Answers' }),
+    block({ text: 'Installation takes under 10 minutes and uses one script tag.', headingText: 'Setup' }),
+  ] }], NOW).facts;
+  const find = (needle: string): EvidenceFact => set.find((f) => f.text.includes(needle)) as EvidenceFact;
+  const [starterPrice, trial, standardPrice, answers, setup] = [find('₹599'), find('14-day'), find('₹1,199'), find('Answers come'), find('Installation')];
+  assert.equal(assignFacts({ facts: [starterPrice, trial, standardPrice], anchors: [starterPrice], recentFactIds: [] })[0]?.map((f) => f.text).join('|'), '₹599 /mo|14-day free trial');
+  assert.equal(assignFacts({ facts: [starterPrice, standardPrice], anchors: [starterPrice], recentFactIds: [] })[0]?.length, 1);
+  assert.equal(assignFacts({ facts: [answers, setup], anchors: [answers], recentFactIds: [] })[0]?.length, 1);
 });

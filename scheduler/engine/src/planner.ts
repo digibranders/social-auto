@@ -162,6 +162,14 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
   return { ...base, mode: 'ai', imagePrompt: creativePrompt(format, draft.visual, brand) };
 }
 
+/** The caption without the brand's own verified call to action, which is an invitation and not a claim the facts must support. */
+export function withoutCta(caption: string, cta: string): string {
+  const text = cta.trim();
+  if (text === '') return caption;
+  const bare = text.replace(/\s*\([^)]*\)\s*$/, '').trim();
+  return [text, bare].filter(Boolean).reduce((c, t) => c.split(t).join(' '), caption).replace(/[ \t]+/g, ' ').replace(/\s+\n/g, '\n').trim();
+}
+
 /** 70 is the target given to the model; allow some slack before forcing a retry. */
 const MAX_SUBLINE_CHARS = 90;
 /** How many recent concepts the writer is shown. */
@@ -377,8 +385,8 @@ export async function planWeek(options: {
           const cited = evidenceMode ? (factsPerPost[offset + i] ?? []).map((f) => ({ text: f.text, category: f.category })) : [];
           const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: brand.callToAction, citedFacts: cited });
           if (editorial.hard.length > 0 && attempt < 2) throw new Error(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
-          // A subline that is exactly the headline or the identity line is not copy: on the last try the post is left out. A near-identical one stays, with the note.
-          if (editorial.hard.some((h) => h.code === 'subline_restates_headline' || h.code === 'subline_restates_identity')) {
+          // A subline that says the headline again, exactly or in nearly the same words with nothing new supported, is not copy: on the last try the post is left out.
+          if (editorial.hard.length > 0) {
             droppedHere.push(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
             return;
           }
@@ -408,13 +416,13 @@ export async function planWeek(options: {
   if (evidenceMode && options.copyJudge && posts.length > 0) {
     const byId = new Map(offerable.map((f) => [f.id, f]));
     const results = await verifyCopySupport(
-      posts.map((p) => ({ copy: { headline: p.headline, subline: p.subline, caption: p.caption }, facts: (p.factIds ?? []).flatMap((id) => byId.get(id) ?? []) })),
+      posts.map((p) => ({ copy: { headline: p.headline, subline: p.subline, caption: withoutCta(p.caption, brand.callToAction) }, facts: (p.factIds ?? []).flatMap((id) => byId.get(id) ?? []) })),
       options.copyJudge.judge, options.copyJudge.cache ?? memoryCache(), { tenant: options.brandSlug },
     );
     const kept: typeof posts = [];
     posts.forEach((p, i) => {
       const r = results[i] as (typeof results)[number];
-      if (r.status === 'rejected') { dropped.push(`${p.id}: ${r.reasons.join('; ')}`); return; }
+      if (r.status === 'rejected') { dropped.push(`${p.id}: ${r.reasons.join('; ')} [headline: "${p.headline}" | subline: "${p.subline}" | facts: ${(p.factIds ?? []).map((id) => byId.get(id)).flatMap((f) => (f ? [`"${displayFact(f)}"`] : [])).join(', ')}]`); return; }
       const checks = (p.evidenceChecks ?? []).filter((c) => c !== 'semantic_support_unverified');
       kept.push({ ...p, evidenceChecks: [...checks, r.status === 'supported_by_model' ? 'semantic_support_model_judged' : 'semantic_support_unverified'], ...(r.status === 'uncertain' ? { hookWarnings: [...(p.hookWarnings ?? []), `evidence: ${r.reasons.join('; ')}`] } : {}) });
     });
