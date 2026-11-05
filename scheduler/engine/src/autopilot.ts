@@ -29,6 +29,7 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { aiConfigFromEnv } from './ai.ts';
 import { appendUsageLog } from './usage.ts';
+import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
 import { parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
@@ -157,6 +158,9 @@ async function main(): Promise<void> {
   console.log(`AI: ${ai.primary === 'openai' ? `OpenAI (${ai.textModel} for text, ${ai.imageModel} at ${ai.imageQuality} quality for pictures)` : 'Pollinations'}${ai.fallback ? ', with the other provider as backup' : ''}`);
 
   const slug = slugFromSite(values.site);
+  // Every OpenAI call of this run is reserved against the budget caps before it is sent and recorded after (paid-ledger.ts). The file is shared by
+  // all brands, so the daily caps hold across them; a run that hits a cap stops buying and keeps what it already made.
+  ai.ledger = new PaidLedger(resolve(process.env['PAID_LEDGER_FILE'] || join(BRANDS_ROOT, '..', 'ledger', 'paid-calls.jsonl')), budgetLimitsFromEnv(process.env), { jobId: `${slug}-${Date.now()}`, tenantId: 'owner', brandId: slug });
   let brandDir = join(BRANDS_ROOT, slug);
   // Art direction is checked before anything paid happens, so a refusal costs nothing.
   let artSettings: ArtTenantSettings | undefined;
@@ -316,7 +320,8 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);
+    if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    else console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);
     process.exitCode = 1;
   });
 }

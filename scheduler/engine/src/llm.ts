@@ -1,5 +1,6 @@
 import { redact, textCandidates, type AiConfig, type TextCandidate } from './ai.ts';
-import type { FallbackFrom } from './usage.ts';
+import { costOf, RATES, type FallbackFrom } from './usage.ts';
+import { BudgetError } from './paid-ledger.ts';
 
 const REQUEST_TIMEOUT_MS = 180_000;
 
@@ -29,17 +30,56 @@ interface ChatMessage {
   content: string | ContentPart[];
 }
 
+/** The most a text or vision call may cost: the longest answer allowed, and the question at three characters a token plus a flat share per picture. A model with no known price is counted at the dearest known rate. */
+export function maxTextCallUsd(model: string, messages: readonly ChatMessage[]): number {
+  const rate = RATES[model] ?? Object.values(RATES).reduce((dearest, r) => (r.out > dearest.out ? r : dearest));
+  let chars = 0;
+  let pictures = 0;
+  for (const message of messages) {
+    if (typeof message.content === 'string') chars += message.content.length;
+    else for (const part of message.content) {
+      if (part.type === 'text') chars += part.text.length;
+      else pictures += 1;
+    }
+  }
+  const inputTokens = Math.ceil(chars / 3) + pictures * 1_500;
+  return Math.round(((inputTokens * rate.in + MAX_OUTPUT_TOKENS * rate.out) / 1_000_000) * 1e8) / 1e8;
+}
+
+const MAX_OUTPUT_TOKENS = 6_000;
+
 async function complete(candidate: TextCandidate, messages: ChatMessage[], fetchFn: typeof fetch, ai: AiConfig, fallbackFrom?: FallbackFrom): Promise<string> {
-  const response = await fetchFn(candidate.endpoint, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${candidate.apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: candidate.model, messages, response_format: { type: 'json_object' } }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const text = await response.text();
+  // Only OpenAI calls are paid for here; a backup provider is not on the ledger.
+  const ledger = candidate.label === 'OpenAI' ? ai.ledger : undefined;
+  const pictures = messages.some((m) => typeof m.content !== 'string' && m.content.some((p) => p.type === 'image_url'));
+  const callId = ledger?.reserve({ operation: pictures ? 'vision' : 'text', model: candidate.model, ...(ai.usage.post !== null ? { postId: ai.usage.post } : {}), requestKey: JSON.stringify(messages), maxCostUsd: maxTextCallUsd(candidate.model, messages) });
+  if (ledger && callId) ledger.markInFlight(callId);
+  let response: Response;
+  let text: string;
+  try {
+    response = await fetchFn(candidate.endpoint, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${candidate.apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: candidate.model, messages, response_format: { type: 'json_object' } }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    text = await response.text();
+  } catch (error) {
+    // Sent, but no answer was read: it may have been accepted, so it is never sent again on its own.
+    if (ledger && callId) ledger.markUnknown(callId, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
   const who = `${candidate.label} ${candidate.model}`;
-  if (!response.ok) throw new LlmError(`${who} returned ${response.status}: ${redact(text).slice(0, 300)}`);
+  if (!response.ok) {
+    if (ledger && callId) ledger.fail(callId, `status ${response.status}`);
+    throw new LlmError(`${who} returned ${response.status}: ${redact(text).slice(0, 300)}`);
+  }
   const answer = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
+  if (ledger && callId) {
+    const inputTokens = answer.usage?.prompt_tokens ?? 0;
+    const outputTokens = answer.usage?.completion_tokens ?? 0;
+    ledger.complete(callId, { actualCostUsd: costOf({ kind: 'text', model: candidate.model, inputTokens, outputTokens }), inputTokens, outputTokens });
+  }
   const content = answer.choices?.[0]?.message?.content;
   if (!content) throw new LlmError(`${who} returned an empty response`);
   ai.usage.add({
@@ -84,6 +124,8 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
       try {
         content = await complete(candidate, messages, fetchFn, options.ai, standingIn ? { requested: `${first.label} ${first.model}`, reason: lastFailure ?? 'unknown' } : undefined);
       } catch (error) {
+        // A spending refusal ends the call: no retry and no backup provider may be used to get around a cap.
+        if (error instanceof BudgetError) throw error;
         failures.push(error instanceof Error ? error.message : String(error));
         break;
       }

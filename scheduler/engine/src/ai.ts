@@ -1,6 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { generateImage as generatePollinationsImage, ImageGenerationError, resolveImageModel } from './pollinations.ts';
-import { flatImageCost, UsageTally, type FallbackFrom } from './usage.ts';
+import { flatImageCost, UsageTally, costOf, type FallbackFrom } from './usage.ts';
+import { BudgetError, type PaidLedger } from './paid-ledger.ts';
 
 /**
  * Which AI service writes the text and draws the pictures, and with what settings. OpenAI is the main provider when
@@ -28,6 +29,8 @@ export interface AiConfig {
   pollinationsImageModel: string;
   /** What this run has asked of the AI and what it cost; printed at the end of a run. */
   usage: UsageTally;
+  /** When set, every OpenAI call is reserved against the budget caps before it is sent and recorded after (see paid-ledger.ts). */
+  ledger?: PaidLedger;
 }
 
 export class AiConfigError extends Error {
@@ -137,17 +140,39 @@ async function openaiImage(ai: AiConfig, request: SceneRequest, budget: ImageBud
       signal: AbortSignal.timeout(180_000),
     });
   const wanted = openaiSizeFor(request.width, request.height);
-  let response = await ask(wanted);
-  // A model that does not offer the shaped size answers 400: the square picture is the safe second try, cropped to the panel as before.
-  if (response.status === 400 && wanted !== '1024x1024') response = await ask('1024x1024');
+  // Reserved before anything is sent: a refusal (over a cap, a second picture for the poster, the same request already made) stops here.
+  const ledger = ai.ledger;
+  const callId = ledger?.reserve({ operation: 'image', model: ai.imageModel, ...(ai.usage.post !== null ? { postId: ai.usage.post } : {}), requestKey: `${request.prompt}|${request.width}x${request.height}|${ai.imageQuality}`, maxCostUsd: ledger.limits.imageReserveUsd });
+  if (ledger && callId) ledger.markInFlight(callId);
+  let response: Response;
+  try {
+    response = await ask(wanted);
+    // A model that does not offer the shaped size answers 400: the square picture is the safe second try, cropped to the panel as before.
+    if (response.status === 400 && wanted !== '1024x1024') response = await ask('1024x1024');
+  } catch (error) {
+    // The request left and no answer came back: it may have been accepted, so it is never sent again on its own.
+    if (ledger && callId) ledger.markUnknown(callId, error instanceof Error ? error.message : String(error));
+    throw error;
+  }
   const body = (await response.json().catch(() => null)) as { data?: Array<{ b64_json?: string }>; usage?: { input_tokens?: number; output_tokens?: number }; error?: { message?: string } } | null;
-  if (!response.ok) throw new ImageGenerationError(`OpenAI image request returned ${response.status}: ${redact(body?.error?.message ?? 'no details').slice(0, 300)}`);
+  if (!response.ok) {
+    if (ledger && callId) ledger.fail(callId, `status ${response.status}`);
+    throw new ImageGenerationError(`OpenAI image request returned ${response.status}: ${redact(body?.error?.message ?? 'no details').slice(0, 300)}`);
+  }
   const encoded = body?.data?.[0]?.b64_json;
-  if (!encoded) throw new ImageGenerationError('OpenAI returned no picture');
+  if (!encoded) {
+    // The provider answered 2xx with nothing usable: the picture may still have been billed.
+    if (ledger && callId) ledger.markUnknown(callId, 'answered without a picture');
+    throw new ImageGenerationError('OpenAI returned no picture');
+  }
   await writeFile(request.outPath, Buffer.from(encoded, 'base64'));
   budget.openaiImages += 1;
   const used = body?.usage;
   const counted = typeof used?.output_tokens === 'number' && used.output_tokens > 0;
+  if (ledger && callId) {
+    const price = costOf({ kind: 'image', model: ai.imageModel, inputTokens: used?.input_tokens ?? 0, outputTokens: used?.output_tokens ?? 0, ...(counted ? {} : { flatCost: flatImageCost(ai.imageQuality) }) });
+    ledger.complete(callId, { actualCostUsd: price, inputTokens: used?.input_tokens ?? 0, outputTokens: used?.output_tokens ?? 0, outputPath: request.outPath });
+  }
   ai.usage.add({
     kind: 'image',
     model: ai.imageModel,
@@ -177,6 +202,8 @@ export async function generateScene(ai: AiConfig, request: SceneRequest, budget:
         ai.usage.add({ kind: 'image', model: `pollinations/${ai.pollinationsImageModel}`, inputTokens: 0, outputTokens: 0, ...(fallbackFrom ? { fallbackFrom } : {}) });
       }
     } catch (error) {
+      // A spending refusal ends the picture: another provider is never used to get around a cap.
+      if (error instanceof BudgetError) throw error;
       failures.push(redact(error instanceof Error ? error.message : String(error)));
       continue;
     }
