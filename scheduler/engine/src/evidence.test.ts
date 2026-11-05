@@ -164,10 +164,13 @@ test('unit: classification from hand-built blocks', () => {
   ])], NOW);
   const by = (needle: string): EvidenceFact => set.facts.find((f) => f.text.includes(needle)) as EvidenceFact;
   assert.equal(by('reduced support').category, 'outcome');
-  assert.equal(by('reduced support').status, 'usable');
+  // A result the site claims for itself is held from the automatic flow (proof-hold.ts), however well it is quoted.
+  assert.equal(by('reduced support').status, 'needs_review');
+  assert.equal(by('reduced support').proofHold?.code, 'HOLD_PERFORMANCE');
   assert.deepEqual(by('uptime goal').reasonCodes, ['target_not_guarantee']);
   assert.equal(by('5 users').scope, 'Team');
   assert.equal(by('ISO 27001').category, 'credential');
+  assert.equal(by('ISO 27001').proofHold?.code, 'HOLD_CREDENTIAL');
 });
 
 test('unit: repeated furniture across pages is excluded but a repeated figure is kept', () => {

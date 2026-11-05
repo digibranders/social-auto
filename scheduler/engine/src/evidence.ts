@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto';
 import { defaultClaimConfig, extractFacts, normalizeForQuote, type ClaimConfig } from './claims.ts';
 import type { PageBlock, PageStructure } from './evidence-extract.ts';
+import { assessProofClaim, type ProofHoldCode } from './proof-hold.ts';
 
 export type EvidenceCategory = 'identity' | 'capability' | 'process' | 'offer' | 'commercial_term' | 'outcome' | 'credential' | 'testimonial' | 'educational';
 export type PageRole = 'home' | 'pricing' | 'features' | 'docs' | 'case_study' | 'other';
@@ -36,7 +37,8 @@ export type ReasonCode =
   | 'styles_not_applied'
   | 'conflicting_values'
   | 'stale_commercial_term'
-  | 'flat_text_only';
+  | 'flat_text_only'
+  | 'proof_claim_held';
 
 export interface EvidenceFact {
   id: string;
@@ -64,6 +66,8 @@ export interface EvidenceFact {
   language: string;
   status: FactStatus;
   reasonCodes: ReasonCode[];
+  /** Why the proof-claim hold kept this fact from the automatic flow (see proof-hold.ts), when it did. */
+  proofHold?: { code: ProofHoldCode; reason: string };
   capturedAt: string;
 }
 
@@ -281,6 +285,9 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
     // A short label with no figure and no commercial wording, outside any card or cell, is interface text, not a claim.
     if (fragment && !hasNumbers && scope === undefined && !wordPattern(config.commercialWords).test(quote)) reasons.push('fragment_unscoped');
 
+    const proof = assessProofClaim(quote, { context: [block.headingText, block.cardTitle, block.text].filter(Boolean).join(' '), fetchedAt: now.toISOString(), now, attributed: false });
+    if (proof.decision === 'HOLD') reasons.push('proof_claim_held');
+
     const key = `${normalizeForQuote(quote)}|${scope ?? ''}|${label ?? ''}`;
     if (seen.has(key)) { excluded.push({ url: structure.url, text: quote, reason: 'duplicate' }); continue; }
     seen.add(key);
@@ -305,6 +312,7 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
       language,
       status: reasons.length === 0 ? 'usable' : 'needs_review',
       reasonCodes: [...new Set(reasons)],
+      ...(proof.decision === 'HOLD' && proof.code !== undefined ? { proofHold: { code: proof.code, reason: proof.reason } } : {}),
       capturedAt: now.toISOString(),
     });
   }
