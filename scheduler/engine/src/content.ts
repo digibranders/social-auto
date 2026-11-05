@@ -43,6 +43,8 @@ export interface LogoSource {
   fetchedAt: string;
   /** Every address tried, in order, with what happened. */
   tried: Array<{ url: string; outcome: string }>;
+  /** Why this picture was taken for the business's own logo: where it sits, what says so, and whose domain serves it. Older profiles have none. */
+  provenance?: { placement: string; signals: string[]; hostRelation: 'same_site' | 'third_party' };
 }
 
 /** The brand's own symbol without its name, taken from the site, and whether a model confirmed it is the same mark that appears in the logo. */
@@ -181,8 +183,8 @@ export interface PlannedPost {
   hashtags: string[];
 }
 
-/** How the posters of a plan are made. A plan names its mode: "art_v1" posts go through art direction and measured rendering and never fall back to the older renderer unless that was explicitly allowed. Plans without a mode are "legacy". */
-export type RenderMode = 'legacy' | 'art_v1';
+/** How the posters of a plan are made. A plan names its mode: "art_v1" posts go through art direction and measured rendering and never fall back to the older renderer unless that was explicitly allowed. "ai_v1" posters are drawn whole by the picture model and are published only from an approved version in the review store (review-store.ts), never from the plan. Plans without a mode are "legacy". */
+export type RenderMode = 'legacy' | 'art_v1' | 'ai_v1';
 
 export interface WeekPlan {
   brand: string;
@@ -201,6 +203,8 @@ export interface PostApproval {
 
 /** Whether a post may be scheduled or exported: every post of a legacy plan, only approved posts of an art plan. */
 export function isPublishable(plan: Pick<WeekPlan, 'renderMode'>, post: Pick<PlannedPost, 'approval'>): boolean {
+  // An "ai_v1" plan says nothing about approval: the plan file is mutable, so only an approved version in the review store can publish (see approvedAiPoster).
+  if (plan.renderMode === 'ai_v1') return false;
   return (plan.renderMode ?? 'legacy') === 'legacy' || post.approval?.status === 'approved';
 }
 
@@ -268,6 +272,13 @@ export function parseBrand(raw: unknown, source: string): Brand {
   };
 }
 
+function parseProvenance(raw: unknown, where: string): NonNullable<LogoSource['provenance']> {
+  if (!isRecord(raw) || typeof raw['placement'] !== 'string' || !Array.isArray(raw['signals']) || !raw['signals'].every((x) => typeof x === 'string') || (raw['hostRelation'] !== 'same_site' && raw['hostRelation'] !== 'third_party')) {
+    throw new ContentValidationError(where, '"logoSource.provenance" must be {placement, signals, hostRelation}');
+  }
+  return { placement: raw['placement'], signals: raw['signals'] as string[], hostRelation: raw['hostRelation'] };
+}
+
 function parseLogoSource(raw: unknown, source: string): LogoSource {
   const where = `${source} logoSource`;
   if (!isRecord(raw)) throw new ContentValidationError(where, '"logoSource" must be an object');
@@ -298,6 +309,7 @@ function parseLogoSource(raw: unknown, source: string): LogoSource {
     contentHash: text('contentHash'),
     fetchedAt,
     tried: (tried as Array<Record<string, string>>).map((t) => ({ url: t['url'] as string, outcome: t['outcome'] as string })),
+    ...(raw['provenance'] === undefined ? {} : { provenance: parseProvenance(raw['provenance'], where) }),
   };
 }
 
@@ -477,7 +489,7 @@ export function parseWeekPlan(raw: unknown, source: string): WeekPlan {
   const ids = new Set(parsed.map((p) => p.id));
   if (ids.size !== parsed.length) throw new ContentValidationError(source, 'post ids must be unique');
   const mode = raw['renderMode'];
-  if (mode !== undefined && mode !== 'legacy' && mode !== 'art_v1') throw new ContentValidationError(source, '"renderMode" must be legacy or art_v1');
+  if (mode !== undefined && mode !== 'legacy' && mode !== 'art_v1' && mode !== 'ai_v1') throw new ContentValidationError(source, '"renderMode" must be legacy, art_v1 or ai_v1');
   return {
     brand: requireString(raw, 'brand', source),
     timezone: requireString(raw, 'timezone', source),

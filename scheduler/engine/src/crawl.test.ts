@@ -247,3 +247,49 @@ test('the snapshot keeps the homepage links with their text and where they sit, 
   assert.deepEqual(book, { url: 'https://acme.com/book', text: 'Book a visit', region: 'nav' });
   assert.equal(snapshot.links?.find((l) => l.url === 'https://acme.com/privacy')?.region, 'footer');
 });
+
+test('a site that cannot be read fails with a code a caller can act on', async () => {
+  const { FetchRefusedError } = await import('./safe-fetch.ts');
+  const { crawlSite, CrawlError, crawlMaxSeconds } = await import('./crawl.ts');
+  const code = async (fetchPage: (url: string) => Promise<{ finalUrl: string; body: string; type: string }>): Promise<string> => {
+    try {
+      await crawlSite('https://acme.example.com', { fetchPage, render: async () => '' });
+    } catch (error) {
+      assert.ok(error instanceof CrawlError);
+      return error.code;
+    }
+    return 'no error';
+  };
+  const page = (body: string) => async (url: string) => ({ finalUrl: url, body, type: 'text/html' });
+  assert.equal(await code(async (url) => { if (url.endsWith('/robots.txt')) return { finalUrl: url, body: 'User-agent: *\nDisallow: /', type: 'text/plain' }; return page('<html></html>')(url); }), 'SITE_ACCESS_BLOCKED');
+  assert.equal(await code(async (url) => { if (url.endsWith('/robots.txt')) throw new Error('none'); throw new FetchRefusedError('https://acme.example.com/ answered 403'); }), 'SITE_ACCESS_BLOCKED');
+  assert.equal(await code(async (url) => { if (url.endsWith('/robots.txt')) throw new Error('none'); throw new FetchRefusedError('127.0.0.1 is not a public website address'); }), 'URL_REFUSED');
+  assert.equal(await code(async (url) => { if (url.endsWith('/robots.txt')) throw new Error('none'); throw new Error('The operation was aborted due to timeout'); }), 'CRAWL_TIMEOUT');
+  assert.equal(await code(async (url) => { if (url.endsWith('/robots.txt')) throw new Error('none'); throw new Error('getaddrinfo ENOTFOUND'); }), 'SITE_UNREACHABLE');
+  assert.equal(await code(async (url) => { if (url.endsWith('/robots.txt')) throw new Error('none'); return { finalUrl: url, body: '%PDF', type: 'application/pdf' }; }), 'NOT_A_WEB_PAGE');
+  assert.equal(await code(page('<html><body><p>Hi</p></body></html>')), 'INSUFFICIENT_EVIDENCE');
+  assert.equal(crawlMaxSeconds({}), 120);
+  assert.equal(crawlMaxSeconds({ CRAWL_MAX_SECONDS: '30' }), 30);
+  assert.throws(() => crawlMaxSeconds({ CRAWL_MAX_SECONDS: '5' }), /CRAWL_MAX_SECONDS/);
+});
+
+test('a logo is taken only when its placement and its own words say it is the business logo, and why is recorded', async () => {
+  const { logoCandidatesWithEvidence } = await import('./crawl.ts');
+  const base = new URL('https://www.acme.com/');
+  const html = `
+    <header><a href="/"><img src="https://cdn.shopify.example/files/acme-logo.svg" alt="Acme"></a>
+      <img src="/img/badge-3.png" alt="">
+      <img src="/img/header-promo-icon.png" alt="a gift"></header>
+    <section class="trusted"><img src="/img/globex-logo.svg" alt="Globex logo"></section>
+    <nav><img src="/assets/mark.png" alt="logo"></nav>`;
+  const found = logoCandidatesWithEvidence(html, base);
+  const urls = found.map((c) => c.url);
+  assert.ok(urls.includes('https://cdn.shopify.example/files/acme-logo.svg'));
+  assert.ok(!urls.some((u) => u.includes('badge-3') || u.includes('header-promo')), 'a header picture that says nothing about being a logo is not one');
+  assert.ok(!urls.some((u) => u.includes('globex')), 'a logo in the body belongs to someone else');
+  const cdn = found.find((c) => c.url.includes('cdn.shopify'))?.evidence;
+  assert.equal(cdn?.hostRelation, 'third_party');
+  assert.equal(cdn?.placement, 'home_link');
+  assert.deepEqual(cdn?.signals, ['says logo', 'names the business']);
+  assert.equal(found.find((c) => c.url.endsWith('/assets/mark.png'))?.evidence.hostRelation, 'same_site');
+});

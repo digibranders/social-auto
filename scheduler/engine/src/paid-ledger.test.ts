@@ -68,10 +68,10 @@ test('two workers racing for the last dollar: only one gets it', () => {
   }
 });
 
-test('a poster gets one picture purchase: a failed attempt still counts and nothing regenerates', () => {
+test('a poster gets its picture purchases: a failed attempt still counts and nothing regenerates', () => {
   const { file, done } = workspace();
   try {
-    const ledger = open(file);
+    const ledger = open(file, { maxImagesPerPoster: 1 });
     const call = ledger.reserve({ operation: 'image', model: 'img', postId: 'p1', requestKey: 'one', maxCostUsd: 0.03 });
     ledger.markInFlight(call);
     ledger.fail(call, 'provider returned 500');

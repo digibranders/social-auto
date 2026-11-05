@@ -1,6 +1,7 @@
 import { redact, textCandidates, type AiConfig, type TextCandidate } from './ai.ts';
 import { costOf, RATES, type FallbackFrom } from './usage.ts';
 import { BudgetError } from './paid-ledger.ts';
+import { UNTRUSTED_DATA_RULE } from './instruction-guard.ts';
 
 const REQUEST_TIMEOUT_MS = 180_000;
 
@@ -116,7 +117,7 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
     const standingIn = candidate.label !== first.label;
     const lastFailure = failures.at(-1);
     const messages: ChatMessage[] = [
-      { role: 'system', content: options.system },
+      { role: 'system', content: `${options.system}\n\n${UNTRUSTED_DATA_RULE}` },
       { role: 'user', content: images.length === 0 ? options.user : [{ type: 'text', text: options.user }, ...images.map((url): ContentPart => ({ type: 'image_url', image_url: { url } }))] },
     ];
     for (let attempt = 0; attempt < 2; attempt++) {

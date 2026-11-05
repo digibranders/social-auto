@@ -36,7 +36,7 @@ export function chromeArgs(profileDir: string, pngPath: string, pageUrl: string,
 }
 
 /** Chrome's arguments for printing a page as it looks after its scripts ran (used to read sites that build themselves in the browser). */
-export function chromeDumpArgs(profileDir: string, pageUrl: string, env: Env): string[] {
+export function chromeDumpArgs(profileDir: string, pageUrl: string, env: Env, extra: readonly string[] = []): string[] {
   return [
     '--headless=new',
     '--disable-gpu',
@@ -44,6 +44,7 @@ export function chromeDumpArgs(profileDir: string, pageUrl: string, env: Env): s
     `--user-data-dir=${profileDir}`,
     '--virtual-time-budget=8000',
     '--dump-dom',
+    ...extra,
     pageUrl,
   ];
 }

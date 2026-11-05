@@ -271,10 +271,10 @@ test('the autopilot refuses --art before doing anything paid when the brand has 
     const script = join(process.cwd(), 'src', 'autopilot.ts');
     const env = { PATH: process.env['PATH'] ?? '', OPENAI_API_KEY: 'sk-test-openai-key' };
     const run = (args: string[]): Promise<{ stdout: string; stderr: string }> => promisify(execFile)('node', [script, ...args], { cwd: root, env }).then((r) => ({ stdout: String(r.stdout), stderr: String(r.stderr) }));
-    await assert.rejects(run(['--site', 'https://acme.example', '--art', '--dry-run']), (error: { stderr?: string }) => /not enabled for this brand/.test(error.stderr ?? ''));
+    await assert.rejects(run(['--site', 'https://acme.example', '--route', 'template', '--art', '--dry-run']), (error: { stderr?: string }) => /not enabled for this brand/.test(error.stderr ?? ''));
     await mkdir(join(root, 'brands', 'acme'), { recursive: true });
     await writeFile(join(root, 'brands', 'acme', 'art.json'), JSON.stringify({ enabled: true }));
-    await assert.rejects(run(['--site', 'https://acme.example', '--art', '--dry-run']), (error: { stderr?: string }) => /--allow-paid-ai/.test(error.stderr ?? ''));
+    await assert.rejects(run(['--site', 'https://acme.example', '--route', 'template', '--art', '--dry-run']), (error: { stderr?: string }) => /--allow-paid-ai/.test(error.stderr ?? ''));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

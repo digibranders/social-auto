@@ -15,6 +15,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { composeCaption, isPublishable, parseWeekPlan, readJson } from './content.ts';
+import { ReviewStore } from './review-store.ts';
 
 const WEEK_FILE = /^week-\d+\.json$/;
 /** Posters are kept for posts from the last 20 hours onwards, so a post due today can still be published. */
@@ -76,10 +77,12 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
     const plan = parseWeekPlan(await readJson(join(brandDir, file)), file);
     const outDir = resolve('out', brand, basename(file, '.json'));
     for (const post of plan.posts) {
-      if (!isPublishable(plan, post)) continue;
+      // Fully AI posters are exported only as the exact approved version (its picture and its caption); every other plan by its own approval.
+      const approved = plan.renderMode === 'ai_v1' ? new ReviewStore(brandDir, brand).approvedFor(post.id) : undefined;
+      if (plan.renderMode === 'ai_v1' ? !approved : !isPublishable(plan, post)) continue;
       let poster: string | null = null;
       if (Date.parse(post.date) >= now - KEEP_RECENT_MS) {
-        const image = await readFile(join(outDir, `${post.id}.jpg`));
+        const image = await readFile(approved ? approved.path : join(outDir, `${post.id}.jpg`));
         const fileName = posterFileName(image);
         await writeFile(join(postsDir, fileName), image);
         poster = `/posts/${brand}/${fileName}`;
@@ -88,7 +91,7 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
         brand,
         id: `${brand}-${post.id}`,
         date: post.date,
-        caption: composeCaption(post),
+        caption: approved ? approved.version.caption : composeCaption(post),
         image: poster,
       });
     }

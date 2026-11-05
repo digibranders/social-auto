@@ -100,3 +100,19 @@ test('robots.txt: our own group wins over *, the longest matching rule wins, and
   assert.equal(robotsAllows(parseRobots(''), '/anything'), true);
   assert.equal(robotsAllows(parseRobots('# only a comment\n'), '/x'), true);
 });
+
+test('IPv6: only global unicast is public; mapped, embedded, documentation, link-local and unique-local addresses are not', () => {
+  for (const bad of ['::1', '::', 'fe80::1', 'fd12:3456::1', 'fc00::1', 'ff02::1', '64:ff9b::7f00:1', '2002:7f00:1::1', '2001:db8::1', '2001::1', '::ffff:10.0.0.1', '::ffff:7f00:1', '3fff::1', 'not-an-ip']) assert.equal(isPublicAddress(bad), false, bad);
+  for (const ok of ['2606:4700:4700::1111', '2a00:1450:4001:81b::200e']) assert.equal(isPublicAddress(ok), true, ok);
+});
+
+test('the pinned fetch refuses a name that resolves to any private address, so rebinding cannot slip a private address in', async () => {
+  const { pinnedFetch } = await import('./safe-fetch.ts');
+  const rebinding = pinnedFetch(async () => ['93.184.216.34', '10.0.0.5']);
+  await assert.rejects(rebinding('https://rebind.example.com/'), /not a public website address/);
+  const loopback = pinnedFetch(async () => ['127.0.0.1']);
+  await assert.rejects(loopback('http://sneaky.example.com/'), /not a public website address/);
+  await assert.rejects(pinnedFetch()('http://127.0.0.1:8080/'), /standard web port|not a public/);
+  await assert.rejects(pinnedFetch()('http://[::1]/'), /not a public/);
+  await assert.rejects(pinnedFetch()('file:///etc/passwd'), /only http and https/);
+});

@@ -11,7 +11,9 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { chromeDumpArgs, chromePath } from './platform.ts';
 import { canonicalOf, duplicateOf, extractLinkInfo, rankPages, type LinkInfo, type PageDecision, type RankingConfig } from './pages.ts';
-import { assertPublicUrl, parseRobots, robotsAllows, safeFetch, type FetchedPage } from './safe-fetch.ts';
+import { withoutInstructions } from './instruction-guard.ts';
+import { startGuardProxy } from './guard-proxy.ts';
+import { assertPublicUrl, FetchRefusedError, parseRobots, robotsAllows, safeFetch, type FetchedPage } from './safe-fetch.ts';
 
 const run = promisify(execFile);
 /** A page with less text than this probably builds itself in the browser. */
@@ -29,22 +31,36 @@ const MIN_PAGE_CHARS = 200;
 const MAX_CHARS_PER_PAGE = 3_000;
 const MAX_STYLESHEETS = 4;
 
+/** Why a site could not be read, as a stable code a caller can act on. */
+export type CrawlFailureCode = 'SITE_ACCESS_BLOCKED' | 'CRAWL_TIMEOUT' | 'INSUFFICIENT_EVIDENCE' | 'SITE_UNREACHABLE' | 'URL_REFUSED' | 'NOT_A_WEB_PAGE' | 'CRAWL_FAILED';
+
 export class CrawlError extends Error {
-  constructor(message: string) {
+  readonly code: CrawlFailureCode;
+  constructor(message: string, code: CrawlFailureCode = 'CRAWL_FAILED') {
     super(message);
     this.name = 'CrawlError';
+    this.code = code;
   }
 }
 
 /** The site was read, but it holds too little text to plan posts from. The dashboard shows this message to the person. */
 export class TooLittleContentError extends CrawlError {
   constructor(site: string) {
-    super(`${site} gave too little to read (almost no text on its pages). Add a few sentences about the business to the site, or write the brand details by hand.`);
+    super(`${site} gave too little to read (almost no text on its pages). Add a few sentences about the business to the site, or write the brand details by hand.`, 'INSUFFICIENT_EVIDENCE');
     this.name = 'TooLittleContentError';
   }
 }
 
 /** What the crawler uses to reach the outside; tests replace it. */
+/** The most seconds the whole read of one site may take (CRAWL_MAX_SECONDS, 10 to 900), or the default of 120. Nonsense is refused, not ignored. */
+export function crawlMaxSeconds(env: Record<string, string | undefined>): number {
+  const raw = env['CRAWL_MAX_SECONDS'];
+  if (raw === undefined || raw === '') return 120;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 10 || value > 900) throw new CrawlError(`CRAWL_MAX_SECONDS must be a whole number from 10 to 900, not "${raw}"`);
+  return value;
+}
+
 /** The page budget from the environment (CRAWL_MAX_PAGES, 2 to 40, homepage included), or the default. Nonsense is refused, not ignored. */
 export function crawlMaxPages(env: Record<string, string | undefined>): number {
   const raw = env['CRAWL_MAX_PAGES'];
@@ -70,10 +86,13 @@ export interface CrawlDeps {
 export async function renderWithChrome(url: string, env: Record<string, string | undefined> = process.env): Promise<string> {
   await assertPublicUrl(new URL(url));
   const profile = await mkdtemp(join(tmpdir(), 'engine-crawl-'));
+  // Chrome follows redirects and loads things of its own: everything it connects to goes through the guard proxy, which allows public addresses only.
+  const guard = await startGuardProxy();
   try {
-    const { stdout } = await run(chromePath(env, process.platform), chromeDumpArgs(profile, url, env), { timeout: RENDER_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
+    const { stdout } = await run(chromePath(env, process.platform), chromeDumpArgs(profile, url, env, guard.chromeArgs), { timeout: RENDER_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 });
     return stdout;
   } finally {
+    await guard.close();
     await rm(profile, { recursive: true, force: true });
   }
 }
@@ -92,6 +111,8 @@ export interface SiteSnapshot {
   pages: CrawledPage[];
   /** Absolute URLs, most likely logo first. */
   logoCandidates: string[];
+  /** For each logo candidate, where it sits and what says it is this business's logo. */
+  logoEvidence?: Record<string, LogoEvidence>;
   /** The site's own browser/app icons, best first; a second choice when no logo picture is found. */
   iconCandidates: string[];
   /** #RRGGBB colours, most frequent first. */
@@ -179,13 +200,13 @@ function logoScore(src: string, alt: string, siteName: string, tag: string, inLo
 }
 
 /** The stretches of the page where a business puts its own logo: the header, the navigation and any link to the home page. */
-function logoPlaces(html: string, base: URL): Array<[number, number]> {
-  const places: Array<[number, number]> = [];
-  for (const match of html.matchAll(/<(header|nav)\b[\s\S]*?<\/\1>/gi)) places.push([match.index, match.index + match[0].length]);
+function logoPlaces(html: string, base: URL): Array<[number, number, 'header_or_nav' | 'home_link']> {
+  const places: Array<[number, number, 'header_or_nav' | 'home_link']> = [];
+  for (const match of html.matchAll(/<(header|nav)\b[\s\S]*?<\/\1>/gi)) places.push([match.index, match.index + match[0].length, 'header_or_nav']);
   for (const match of html.matchAll(/<a\b[^>]*\shref=["']([^"']*)["'][^>]*>[\s\S]*?<\/a>/gi)) {
     try {
       const target = new URL(decodeEntities(match[1] ?? ''), base);
-      if (target.origin === base.origin && target.pathname.replace(/\/+$/, '') === '' && !target.search && !target.hash) places.push([match.index, match.index + match[0].length]);
+      if (target.origin === base.origin && target.pathname.replace(/\/+$/, '') === '' && !target.search && !target.hash) places.push([match.index, match.index + match[0].length, 'home_link']);
     } catch {
       continue;
     }
@@ -200,26 +221,53 @@ function logoPlaces(html: string, base: URL): Array<[number, number]> {
  * own icon is used, and without one the brand's name is drawn.
  */
 export function findLogoCandidates(html: string, base: URL): string[] {
-  const siteName = base.hostname.replace(/^www\./, '').split('.')[0] ?? '';
+  return logoCandidatesWithEvidence(html, base).map((c) => c.url);
+}
+
+/** Why a picture was taken for the business's own logo, kept with the profile so a wrong one can be explained. */
+export interface LogoEvidence {
+  /** Where on the page it sits: the header or navigation, or a link to the home page. */
+  placement: 'header_or_nav' | 'home_link';
+  /** What in its address or alt text says it is this business's logo: the word "logo", the business's name. */
+  signals: string[];
+  /** Whether the picture is served from the site's own domain or from another host (a CDN, an image service). */
+  hostRelation: 'same_site' | 'third_party';
+}
+
+const registrable = (host: string): string => {
+  const labels = host.toLowerCase().replace(/^www\./, '').split('.');
+  const country = labels.length >= 3 && (labels.at(-2)?.length ?? 9) <= 3 && labels.at(-1)?.length === 2;
+  return labels.slice(country ? -3 : -2).join('.');
+};
+
+/** Logo candidates, best first, each with the evidence for it. A picture in the header with no word "logo" and no business name anywhere in its address or alt text is not a candidate: placement alone proves nothing. */
+export function logoCandidatesWithEvidence(html: string, base: URL): Array<{ url: string; score: number; evidence: LogoEvidence }> {
+  const siteName = (base.hostname.replace(/^www\./, '').split('.')[0] ?? '').toLowerCase();
   const places = logoPlaces(html, base);
-  const scored = new Map<string, number>();
+  const scored = new Map<string, { score: number; evidence: LogoEvidence }>();
   for (const match of html.matchAll(/<img\b[^>]*>/gi)) {
     const tag = match[0];
     const src = tag.match(/\ssrc=["']([^"']+)["']/i)?.[1];
     if (!src || src.startsWith('data:')) continue;
     const alt = tag.match(/\salt=["']([^"']*)["']/i)?.[1] ?? '';
-    const inLogoPlace = places.some(([from, to]) => match.index >= from && match.index < to);
-    const score = logoScore(src, alt, siteName.toLowerCase(), tag, inLogoPlace);
+    const here = places.filter(([from, to]) => match.index >= from && match.index < to);
+    const place = here.find((p) => p[2] === 'home_link') ?? here[0];
+    const inLogoPlace = place !== undefined;
+    const score = logoScore(src, alt, siteName, tag, inLogoPlace);
     if (score < LOGO_THRESHOLD) continue;
+    const haystack = `${safeDecode(src)} ${alt}`.toLowerCase();
+    const signals = [...(haystack.includes('logo') ? ['says logo'] : []), ...(siteName.length >= 3 && haystack.includes(siteName) ? ['names the business'] : [])];
+    if (!inLogoPlace || signals.length === 0) continue;
     let url: string;
     try {
       url = new URL(decodeEntities(src), base).href;
     } catch {
       continue;
     }
-    scored.set(url, Math.max(score, scored.get(url) ?? -Infinity));
+    const evidence: LogoEvidence = { placement: place[2] === 'home_link' ? 'home_link' : 'header_or_nav', signals, hostRelation: registrable(new URL(url).hostname) === registrable(base.hostname) ? 'same_site' : 'third_party' };
+    if (score > (scored.get(url)?.score ?? -Infinity)) scored.set(url, { score, evidence });
   }
-  return [...scored.entries()].sort((a, b) => b[1] - a[1]).map(([url]) => url);
+  return [...scored.entries()].sort((a, b) => b[1].score - a[1].score).map(([url, v]) => ({ url, score: v.score, evidence: v.evidence }));
 }
 
 /** The size an icon link declares ("512x512" -> 512), or 0 when it declares none. */
@@ -290,14 +338,16 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
   // What the site asks of automated readers. No robots.txt (or none we can read) means no restrictions.
   const robots = await fetchPage(new URL('/robots.txt', start).href).then((page) => parseRobots(page.body)).catch(() => []);
   if (!robotsAllows(robots, start.pathname || '/')) {
-    throw new CrawlError(`${start.hostname} asks automated readers not to read it (robots.txt), so it was not read.`);
+    throw new CrawlError(`${start.hostname} asks automated readers not to read it (robots.txt), so it was not read.`, 'SITE_ACCESS_BLOCKED');
   }
 
   const get = (url: string): Promise<FetchedPage | null> => fetchPage(url).catch(() => null);
   const home = await fetchPage(start.href).catch((error: unknown) => {
-    throw new CrawlError(`Could not load ${start.href}: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    const code: CrawlFailureCode = error instanceof FetchRefusedError ? (/answered (401|403|429)/.test(message) ? 'SITE_ACCESS_BLOCKED' : 'URL_REFUSED') : /timeout|timed out|aborted|stopped/i.test(message) ? 'CRAWL_TIMEOUT' : 'SITE_UNREACHABLE';
+    throw new CrawlError(`Could not load ${start.href}: ${message}`, code);
   });
-  if (!home.type.includes('html')) throw new CrawlError(`Could not load ${start.href}: it is not a web page`);
+  if (!home.type.includes('html')) throw new CrawlError(`Could not load ${start.href}: it is not a web page`, 'NOT_A_WEB_PAGE');
   const base = new URL(home.finalUrl);
 
   // A page with almost no text probably builds itself in the browser: look at it the way a browser does.
@@ -322,7 +372,7 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
       url,
       title: decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]?.trim() ?? ''),
       description: metaContent(html, 'description') || metaContent(html, 'og:description'),
-      text: htmlToText(html).slice(0, MAX_CHARS_PER_PAGE),
+      text: withoutInstructions(htmlToText(html)).text.slice(0, MAX_CHARS_PER_PAGE),
       fetchedAt: new Date().toISOString(),
     });
   };
@@ -332,11 +382,18 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
   const maxPages = deps.maxPages ?? crawlMaxPages(process.env);
   if (!Number.isInteger(maxPages) || maxPages < MIN_BUDGET || maxPages > MAX_BUDGET) throw new CrawlError(`The page budget must be a whole number from ${MIN_BUDGET} to ${MAX_BUDGET}, not ${maxPages}`);
   const minChars = deps.minPageChars ?? MIN_PAGE_CHARS;
+  // The whole read has a time limit: a slow site yields the pages read so far, and an almost empty result is refused further down, never padded.
+  const deadline = Date.now() + crawlMaxSeconds(process.env) * 1000;
   const decisions = rankPages(homeBody, base, (maxPages - 1) * 2, { allowed: (path) => robotsAllows(robots, path), ...(deps.ranking ? { config: deps.ranking } : {}) });
   for (const decision of decisions.filter((d) => d.selected)) {
     if (pages.length >= maxPages) {
       decision.selected = false;
       decision.reasons.push(`not read: the page budget of ${maxPages} (the homepage included) was filled by better pages`);
+      continue;
+    }
+    if (Date.now() > deadline) {
+      decision.selected = false;
+      decision.reasons.push('not read: the time limit for reading this site was reached');
       continue;
     }
     const page = await get(decision.url);
@@ -368,7 +425,9 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     .slice(0, MAX_STYLESHEETS);
   const stylesheets = (await Promise.all(stylesheetUrls.map(get))).map((sheet) => sheet?.body ?? '');
 
-  const logoCandidates = findLogoCandidates(homeBody, base);
+  const logoFound = logoCandidatesWithEvidence(homeBody, base);
+  const logoCandidates = logoFound.map((c) => c.url);
+  const logoEvidence = Object.fromEntries(logoFound.map((c) => [c.url, c.evidence]));
   const logoSvgs = await Promise.all(
     logoCandidates.filter((u) => /\.svg(\?|$)/i.test(u)).slice(0, 2).map(async (u) => (await get(u))?.body ?? ''),
   );
@@ -378,6 +437,7 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
     origin: base.origin,
     pages,
     logoCandidates,
+    logoEvidence,
     iconCandidates: findIconCandidates(homeBody, base),
     // Logo colours count double: they are the most reliable brand signal.
     colors: collectColors([...logoSvgs, ...logoSvgs, themeColor, homeBody, ...stylesheets]),

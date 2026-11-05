@@ -41,7 +41,7 @@ test('the text logo shows the name in the brand colours, with anything odd in th
   assert.ok(textLogoSvg('x'.repeat(80), { ink: '#000000', accent: '#111111' }).includes('x'.repeat(24)));
 });
 
-const snapshot: SiteSnapshot = { origin: 'https://acme.com', pages: [{ url: 'https://acme.com/', title: 'Acme', description: 'd', text: 'Dental care. '.repeat(50) }], logoCandidates: ['https://acme.com/logo.png'], iconCandidates: ['https://acme.com/icon.png'], colors: ['#0E8C8C'], fonts: ['Inter'], pageDecisions: [] };
+const snapshot: SiteSnapshot = { origin: 'https://acme.com', pages: [{ url: 'https://acme.com/', title: 'Acme', description: 'd', text: 'Acme looks after the teeth of families in the town, and we are open on Saturdays for check-ups. '.repeat(8) }], logoCandidates: ['https://acme.com/logo.png'], iconCandidates: ['https://acme.com/icon.png'], colors: ['#0E8C8C'], fonts: ['Inter'], pageDecisions: [] };
 const modelAnswer = (): Response => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...brandJson, visualStyle: 'Deep teal and white' }) } }] }), { status: 200 });
 
 test('when no logo can be downloaded the brand still gets one: its name as a text logo', async () => {

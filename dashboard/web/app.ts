@@ -32,6 +32,7 @@ import { googleLocationPicker } from './google-pick.ts';
 import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
 import { summarizeClients, type ClientSummary } from './clients.ts';
 import { helpPage } from './help-page.ts';
+import { reviewPage, resetReview } from './review-page.ts';
 import { addClientForm } from './add-client.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { newPostForm } from './new-post.ts';
@@ -665,11 +666,11 @@ function go(route: Route): void {
 }
 
 /** The page a route belongs to, for the menu: a client's folder counts as Clients. */
-const sectionOf = (route: Route): 'clients' | 'calendar' | 'help' => (route.page === 'client' ? 'clients' : route.page);
+const sectionOf = (route: Route): 'clients' | 'calendar' | 'review' | 'help' => (route.page === 'client' ? 'clients' : route.page);
 
 function rail(): HTMLElement {
   const section = sectionOf(state.route);
-  const item = (name: 'clients' | 'calendar' | 'help', iconName: string, label: string): HTMLElement => {
+  const item = (name: 'clients' | 'calendar' | 'review' | 'help', iconName: string, label: string): HTMLElement => {
     const route: Route = name === 'help' ? { page: 'help', channel: 'facebook' } : { page: name };
     return button([icon(iconName), h('span', {}, label)], `rail-item rail-button${section === name ? ' rail-on' : ''}`, () => go(route), label);
   };
@@ -679,13 +680,14 @@ function rail(): HTMLElement {
     h('div', { class: 'logo', 'aria-hidden': 'true' }, h('img', { src: '/logo.svg', alt: '', width: '44', height: '44' })),
     item('clients', 'folder', 'Clients'),
     item('calendar', 'calendar', 'Calendar'),
+    item('review', 'review', 'Review'),
     h('span', { class: 'rail-spacer' }),
     item('help', 'help', 'Help'),
     button([icon('logout'), h('span', {}, 'Sign out')], 'rail-item rail-button', () => void signOut(), 'Sign out'),
   );
 }
 
-const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', help: 'Help · Connect a channel' } as const;
+const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', review: 'Review posters', help: 'Help · Connect a channel' } as const;
 
 function clientPicker(): HTMLElement {
   const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [], costs: [] }, Date.now());
@@ -872,6 +874,7 @@ function screen(): HTMLElement {
   if (route.page === 'help') {
     return helpPage(route.channel, (channel) => go({ page: 'help', channel }), render);
   }
+  if (route.page === 'review') return reviewPage(render);
   if (route.page === 'clients' || route.page === 'client') {
     if (!data) return h('p', { class: 'empty' }, state.error ? 'Could not load the clients.' : 'Loading…');
     const clients = summarizeClients(data, Date.now());
@@ -910,6 +913,7 @@ function messageOf(body: unknown): string | null {
 
 async function load(): Promise<void> {
   if (state.loading) return;
+  if (state.route.page === 'review') resetReview();
   state.loading = true;
   render();
   try {

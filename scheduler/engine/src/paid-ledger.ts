@@ -13,7 +13,7 @@
  * dollar. It is durable: restarting the engine never forgets what was spent or what was in flight. What this cannot do is make a provider
  * charge exactly once after a lost answer; it can only refuse to ask twice.
  */
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 
@@ -33,15 +33,17 @@ export interface BudgetLimits {
   imageReserveUsd: number;
 }
 
-/** ChatGPT's recommended starting caps for the owner-operated V1. */
+/** Starting caps for the owner-operated V1 (provisional: to be checked against real bills). Calls made for one poster count towards its cap; site-wide calls count only towards the run, brand-day and deployment caps. */
 export const defaultBudgetLimits: BudgetLimits = {
   maxPostersPerJob: 4,
-  perPosterUsd: 0.035,
-  perRunUsd: 0.12,
-  perBrandDayUsd: 0.24,
-  globalDayUsd: 1.0,
-  maxImagesPerPoster: 1,
-  imageReserveUsd: 0.03,
+  perPosterUsd: 0.14,
+  perRunUsd: 0.6,
+  perBrandDayUsd: 1.2,
+  globalDayUsd: 2.0,
+  // One picture, and one more only when the first was rejected for a defect a new instruction can fix (see ai-creative-pipeline.ts).
+  maxImagesPerPoster: 2,
+  // An upper bound near the published price of a medium picture, not the usual bill (about $0.03): the reservation must never be lower than what the call may cost.
+  imageReserveUsd: 0.05,
 };
 
 export type BudgetRefusal = 'POSTER_BUDGET' | 'RUN_BUDGET' | 'BRAND_DAY_BUDGET' | 'GLOBAL_DAY_BUDGET' | 'IMAGE_LIMIT' | 'REPLAY_BLOCKED' | 'KILL_SWITCH';
@@ -109,7 +111,7 @@ function chargeOf(call: PaidCall): number {
 }
 
 /** Runs `work` while holding the ledger's lock file, so reads and writes of the log by two processes never interleave. */
-function withLock<T>(lockPath: string, work: () => T): T {
+export function withLock<T>(lockPath: string, work: () => T): T {
   const deadline = Date.now() + 5_000;
   for (;;) {
     try {
@@ -155,6 +157,13 @@ export class PaidLedger {
     this.markInterruptedUnknown();
   }
 
+  private picturesOff = false;
+
+  /** No picture may be bought for the rest of this ledger's life (a site whose identity could not be confirmed). Everything else goes on. */
+  disablePictures(): void {
+    this.picturesOff = true;
+  }
+
   private now(): Date {
     return this.context.now?.() ?? new Date();
   }
@@ -165,11 +174,17 @@ export class PaidLedger {
     try {
       text = readFileSync(this.file, 'utf8');
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new BudgetError('KILL_SWITCH', `the paid-call ledger ${this.file} could not be read (${(error as Error).message}), so nothing is spent`);
     }
     for (const line of text.split('\n')) {
       if (line.trim() === '') continue;
-      const event = JSON.parse(line) as Event;
+      let event: Event;
+      try {
+        event = JSON.parse(line) as Event;
+      } catch {
+        // A damaged record in the middle of the log means what was spent can no longer be trusted: nothing is spent until a person looks at the file.
+        throw new BudgetError('KILL_SWITCH', `the paid-call ledger ${this.file} has a damaged record, so nothing is spent until it is checked`);
+      }
       if (event.type === 'reserve') calls.set(event.call.callId, event.call);
       else {
         const found = calls.get(event.callId);
@@ -180,12 +195,32 @@ export class PaidLedger {
   }
 
   private append(event: Event): void {
-    appendFileSync(this.file, `${JSON.stringify(event)}\n`);
+    try {
+      appendFileSync(this.file, `${JSON.stringify(event)}\n`);
+    } catch (error) {
+      throw new BudgetError('KILL_SWITCH', `the paid-call ledger could not be written (${error instanceof Error ? error.message : String(error)}), so nothing is spent`);
+    }
+  }
+
+  /** A process that died in the middle of a write leaves a last line with no newline. It is moved aside (a half-written reservation was never sent; a half-written result leaves its call in flight, which becomes unknown), so the next record never glues to it. */
+  private repairTornTail(): void {
+    let text: string;
+    try {
+      text = readFileSync(this.file, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw new BudgetError('KILL_SWITCH', `the paid-call ledger ${this.file} could not be read (${(error as Error).message}), so nothing is spent`);
+    }
+    if (text === '' || text.endsWith('\n')) return;
+    const cut = text.lastIndexOf('\n') + 1;
+    appendFileSync(`${this.file}.torn`, `${text.slice(cut)}\n`);
+    writeFileSync(this.file, text.slice(0, cut));
   }
 
   /** A call left reserved or in flight by a process that is gone may have been accepted: it becomes "unknown", keeps its reservation, and is never replayed. */
   private markInterruptedUnknown(): void {
     withLock(this.lockPath, () => {
+      this.repairTornTail();
       for (const call of this.load().values()) {
         if (call.status === 'reserved' || call.status === 'in_flight') this.append({ type: 'update', callId: call.callId, patch: { status: 'unknown', note: 'the process ended before the answer was stored' } });
       }
@@ -214,6 +249,7 @@ export class PaidLedger {
       const cost = roundUsd(request.maxCostUsd);
       const same = [...calls.values()].find((c) => c.jobId === context.jobId && c.requestHash === requestHash && c.status !== 'failed');
       if (same) throw new BudgetError('REPLAY_BLOCKED', `this exact ${request.operation} request was already made in this job (${same.status}, call ${same.callId}); it is not sent again automatically`);
+      if (request.operation === 'image' && this.picturesOff) throw new BudgetError('IMAGE_LIMIT', 'no picture is bought for this site: its identity could not be confirmed');
       if (request.operation === 'image') {
         const attempts = [...calls.values()].filter((c) => c.jobId === context.jobId && c.operation === 'image' && c.postId === request.postId).length;
         if (attempts >= limits.maxImagesPerPoster) throw new BudgetError('IMAGE_LIMIT', `this poster has already used its ${limits.maxImagesPerPoster} picture purchase${limits.maxImagesPerPoster === 1 ? '' : 's'}; pictures are never regenerated automatically`);
@@ -245,6 +281,7 @@ export class PaidLedger {
   complete(callId: string, result: { actualCostUsd: number | null; inputTokens?: number; outputTokens?: number; providerRequestId?: string; outputPath?: string }): void {
     this.update(callId, {
       status: 'completed',
+      ...(result.actualCostUsd !== null && result.actualCostUsd > this.reservedOf(callId) + 1e-9 ? { note: 'the real cost was higher than the reservation' } : {}),
       completedAt: this.now().toISOString(),
       ...(result.actualCostUsd !== null ? { actualCostUsd: roundUsd(result.actualCostUsd) } : {}),
       ...(result.inputTokens !== undefined ? { inputTokens: result.inputTokens } : {}),
@@ -252,6 +289,10 @@ export class PaidLedger {
       ...(result.providerRequestId !== undefined ? { providerRequestId: result.providerRequestId } : {}),
       ...(result.outputPath !== undefined ? { outputPath: result.outputPath } : {}),
     });
+  }
+
+  private reservedOf(callId: string): number {
+    return this.load().get(callId)?.reservedCostUsd ?? 0;
   }
 
   /** The provider answered with an error: nothing was bought. */

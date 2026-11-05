@@ -11,6 +11,7 @@
 import { createHash } from 'node:crypto';
 import { defaultClaimConfig, extractFacts, normalizeForQuote, type ClaimConfig } from './claims.ts';
 import type { PageBlock, PageStructure } from './evidence-extract.ts';
+import { instructionLike } from './instruction-guard.ts';
 import { assessProofClaim, type ProofHoldCode } from './proof-hold.ts';
 
 export type EvidenceCategory = 'identity' | 'capability' | 'process' | 'offer' | 'commercial_term' | 'outcome' | 'credential' | 'testimonial' | 'educational';
@@ -38,7 +39,8 @@ export type ReasonCode =
   | 'conflicting_values'
   | 'stale_commercial_term'
   | 'flat_text_only'
-  | 'proof_claim_held';
+  | 'proof_claim_held'
+  | 'instruction_like';
 
 export interface EvidenceFact {
   id: string;
@@ -287,6 +289,8 @@ export function factsOfPage(structure: PageStructure, now: Date, config: Evidenc
 
     const proof = assessProofClaim(quote, { context: [block.headingText, block.cardTitle, block.text].filter(Boolean).join(' '), fetchedAt: now.toISOString(), now, attributed: false });
     if (proof.decision === 'HOLD') reasons.push('proof_claim_held');
+    // Text that reads like an instruction to a model is never a fact about the business.
+    if (instructionLike(quote)) reasons.push('instruction_like');
 
     const key = `${normalizeForQuote(quote)}|${scope ?? ''}|${label ?? ''}`;
     if (seen.has(key)) { excluded.push({ url: structure.url, text: quote, reason: 'duplicate' }); continue; }

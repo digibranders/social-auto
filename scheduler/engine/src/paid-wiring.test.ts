@@ -57,7 +57,7 @@ test('a text call whose answer was lost is unknown, not retried', async () => {
 });
 
 test('a picture is reserved first, one per poster, and a second purchase is refused without being sent', async () => {
-  const { ai, ledger, dir, done } = setup();
+  const { ai, ledger, dir, done } = setup({ maxImagesPerPoster: 1 });
   try {
     ai.usage.post = 'p1';
     let sent = 0;

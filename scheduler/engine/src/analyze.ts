@@ -10,6 +10,7 @@ import { chooseIdentity, metadataSources, type IdentityCandidate } from './ident
 import { escapeHtml, parseBrand, type Brand, type BrandColors, type LogoSource } from './content.ts';
 import { crawlSite, type SiteSnapshot } from './crawl.ts';
 import { chatJson } from './llm.ts';
+import { checkLanguage, PreflightError } from './site-preflight.ts';
 import { safeFetchBytes, type FetchedBytes } from './safe-fetch.ts';
 
 const LOGO_EXTENSIONS = new Set(['.svg', '.png', '.jpg', '.jpeg', '.webp']);
@@ -158,7 +159,7 @@ export interface AnalyzeDeps {
 }
 
 /** The record of where a logo came from. */
-function sourceOf(kind: LogoSource['kind'], foundOn: string, image: { url: string; bytes: Buffer; type: string } | null, savedAs: string | null, tried: LogoSource['tried']): LogoSource {
+function sourceOf(kind: LogoSource['kind'], foundOn: string, image: { url: string; bytes: Buffer; type: string } | null, savedAs: string | null, tried: LogoSource['tried'], provenance?: LogoSource['provenance']): LogoSource {
   return {
     kind,
     foundOn,
@@ -169,11 +170,15 @@ function sourceOf(kind: LogoSource['kind'], foundOn: string, image: { url: strin
     contentHash: image ? `sha256:${createHash('sha256').update(image.bytes).digest('hex')}` : null,
     fetchedAt: new Date().toISOString(),
     tried: tried.map((t) => ({ ...t })),
+    ...(provenance ? { provenance } : {}),
   };
 }
 
 export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig, deps: AnalyzeDeps = {}): Promise<{ dir: string; brand: Brand }> {
   const snapshot = await (deps.crawl ?? crawlSite)(site);
+  // Before anything is bought or written: a site in a language the engine does not support stops here.
+  const unsupported = checkLanguage(snapshot.pages.map((p) => p.text).join('\n').slice(0, 6000), snapshot.htmlLang);
+  if (unsupported?.severity === 'stop') throw new PreflightError(unsupported);
   const dir = join(brandsRoot, slugFromSite(snapshot.origin));
   const assetsDir = join(dir, 'assets');
   await mkdir(assetsDir, { recursive: true });
@@ -208,7 +213,7 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
     },
   });
 
-  let logoSource: LogoSource = logo ? sourceOf('site-logo', snapshot.origin, logo.image, logo.path, tried) : sourceOf('name-only', snapshot.origin, null, null, tried);
+  let logoSource: LogoSource = logo ? sourceOf('site-logo', snapshot.origin, logo.image, logo.path, tried, snapshot.logoEvidence?.[logo.image.url]) : sourceOf('name-only', snapshot.origin, null, null, tried);
   if (!logo) {
     // No logo picture: the site's own icon with the name beside it, and only without an icon the name alone, so the run goes on.
     const icon = await downloadImage(snapshot.iconCandidates, fetchBytes, tried);

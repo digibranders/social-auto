@@ -22,6 +22,7 @@ export const routes: Record<string, { method: string | string[]; load: () => Pro
   '/api/clients': { method: 'POST', load: () => import('../api/clients.js').then((m) => m.POST) },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.js').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.js').then((m) => m.POST) },
+  '/api/review': { method: ['GET', 'POST'], load: () => import('../api/review.js').then((m) => (request: Request) => (request.method === 'POST' ? m.POST(request) : m.GET(request))) },
 };
 
 export type Match = { kind: 'ok'; route: NonNullable<(typeof routes)[string]> } | { kind: 'not-found' } | { kind: 'method-not-allowed' };

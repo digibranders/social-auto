@@ -29,6 +29,11 @@ import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { aiConfigFromEnv } from './ai.ts';
 import { appendUsageLog } from './usage.ts';
+import { CrawlError } from './crawl.ts';
+import { makeCreatives } from './ai-creative-pipeline.ts';
+import { registerForReview } from './review-register.ts';
+import { displayFact } from './evidence.ts';
+import { checkBrandIdentity, checkEvidence, checkLanguage, PreflightError } from './site-preflight.ts';
 import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
@@ -46,6 +51,7 @@ import { createArtRenderContext, renderPlan, type PostRenderRecord } from './ren
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
 
 const BRANDS_ROOT = resolve('brands');
+const OUT_ROOT = resolve('out');
 const WEEK_FILE = /^week-(\d+)\.json$/;
 
 interface History {
@@ -128,6 +134,7 @@ async function main(): Promise<void> {
       'refresh-brand': { type: 'boolean', default: false },
       'dry-run': { type: 'boolean', default: false },
       art: { type: 'boolean', default: false },
+      route: { type: 'string', default: 'ai' },
       'semantic-check': { type: 'boolean', default: false },
       review: { type: 'boolean', default: false },
       'plan-only': { type: 'boolean', default: false },
@@ -138,6 +145,8 @@ async function main(): Promise<void> {
     },
   });
   if (!values.site) throw new Error('Usage: --site <website> --channel <instagram username> [--days 7] [--dry-run]');
+  const route = values.route;
+  if (route !== 'ai' && route !== 'template') throw new Error('--route must be "ai" (the model draws the whole poster) or "template" (our own layout with an AI picture)');
   const target = values.target;
   const reviewBudget = Number(values['review-budget']);
   if (!Number.isFinite(reviewBudget) || reviewBudget <= 0) throw new Error('--review-budget must be a positive number of dollars');
@@ -164,7 +173,7 @@ async function main(): Promise<void> {
   let brandDir = join(BRANDS_ROOT, slug);
   // Art direction is checked before anything paid happens, so a refusal costs nothing.
   let artSettings: ArtTenantSettings | undefined;
-  if (values.art) {
+  if (values.art && route === 'template') {
     artSettings = await loadArtSettings(brandDir);
     assertArtAllowed({ settings: artSettings, env: process.env, dryRun: values['dry-run'], allowPaidAi: values['allow-paid-ai'] });
   }
@@ -194,6 +203,21 @@ async function main(): Promise<void> {
     const reviewed = loaded ? applyReview(loaded.facts.filter((f) => f.status === 'usable'), await loadReview(brandDir)) : undefined;
     if (loaded && reviewed) console.log(`    Evidence facts: ${loaded.facts.filter((f) => f.status === 'usable').length} usable of ${loaded.facts.length} (built ${loaded.file.builtAt.slice(0, 10)}); ${reviewed.mode === 'approved_only' ? `${reviewed.approved} approved by the owner are used` : 'none approved yet, all usable are eligible'}.`);
     else console.log('    No evidence facts for this brand: writing from the profile\'s proof points (legacy evidence coverage).');
+    // Before anything is written or bought for this run: the site must be supported, the profile must be about it, and there must be a fact to write from.
+    if (loaded) {
+      const sample = loaded.file.snapshots.map((snap) => snap.text).join('\n').slice(0, 6000);
+      const declared = loaded.facts.map((f) => f.language).find((l) => l !== '');
+      const findings = [
+        checkLanguage(sample, declared),
+        checkBrandIdentity({ name: brand.name, site: brand.website || values.site, pageText: sample, titles: loaded.file.snapshots.map((snap) => snap.title) }),
+        checkEvidence(reviewed?.facts.length ?? 0),
+      ].flatMap((f) => (f ? [f] : []));
+      const stop = findings.find((f) => f.severity === 'stop');
+      if (stop) throw new PreflightError(stop);
+      for (const warning of findings) console.log(`    WARNING ${warning.code}: ${warning.reason}`);
+      // A business that could not be confirmed gets no purchased picture; the poster still renders with the verified name and its own text.
+      if (findings.some((f) => f.code === 'BRAND_UNVERIFIED')) ai.ledger?.disablePictures();
+    }
     if (values['semantic-check'] && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--semantic-check makes one model request per batch of posts: with --dry-run it needs --allow-paid-ai');
     const verdicts = values['semantic-check'] ? await fileCache(join(brandDir, 'semantic-verdicts.json')) : undefined;
     // Poster-worthiness: the best candidates are judged once (a few hundred tokens) and the scores are kept, so a fact is never judged twice.
@@ -235,7 +259,8 @@ async function main(): Promise<void> {
       const { requested, produced, reasons } = plan.insufficientConcepts;
       console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);
     }
-    let finalPlan: WeekPlan = plan;
+    // A fully AI plan is marked so that nothing can publish from it except an approved version in the review queue.
+    let finalPlan: WeekPlan = route === 'ai' ? { ...plan, renderMode: 'ai_v1' } : plan;
     if (artSettings && !values['plan-only']) {
       console.log('2b/4 Art direction (one batched model call)…');
       const directed = await artDirectPlan({ ai, plan, brand, history: readArtHistory(history), settings: artSettings, ...(loaded ? { facts: loaded.facts } : {}), ...(values['semantic-check'] ? { pictureJudge: modelPictureJudge(ai) } : {}) });
@@ -249,6 +274,27 @@ async function main(): Promise<void> {
     history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(plan.posts.some((p) => p.factIds) ? { factIds: plan.posts.flatMap((p) => p.factIds ?? []) } : {}) });
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
+    if (route === 'ai' && !values['plan-only']) {
+      if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
+      console.log('3/4 Drawing the posters with the picture model (no template)…');
+      const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai`);
+      const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+      ai.usage.purpose = 'writing';
+      const made = await makeCreatives({
+        ai, brand, brandSlug: slug, brandDir, posts: finalPlan.posts, outDir, log: (m) => console.log(`    ${m}`),
+        factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
+      });
+      const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
+      console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${finalPlan.posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
+      if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
+      console.log(ai.usage.format());
+      const log = process.env['USAGE_LOG_FILE'];
+      if (log) await appendUsageLog(log, ai.usage.records(slug, finalPlan.posts.map((p) => `${slug}-${p.id}`)));
+      const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts: finalPlan.posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json') });
+      console.log(`    ${queued.length} poster${queued.length === 1 ? '' : 's'} added to the owner's review queue.`);
+      console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
+      return;
+    }
     if (values['plan-only']) {
       console.log(`Plan only: ${planFile} is written with its copy and facts; no picture was made and nothing was rendered. ${ai.usage.format()}`);
       return;
@@ -321,6 +367,8 @@ async function main(): Promise<void> {
 if (import.meta.main) {
   main().catch((error: unknown) => {
     if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
+    else if (error instanceof PreflightError) console.error(`${error.code}: ${error.message}. No posters were made.`);
     else console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);
     process.exitCode = 1;
   });
