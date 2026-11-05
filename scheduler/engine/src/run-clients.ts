@@ -73,6 +73,8 @@ export function autopilotArgs(client: ClientConfig): string[] {
   const args = [
     'src/autopilot.ts',
     '--site', client.site,
+    // The weekly client run keeps the template route that schedules or exports: the default route draws posters that wait for approval and never publishes.
+    '--route', 'template',
     '--days', String(count),
     '--time', client.time,
     '--utc-offset', client.utcOffset,
