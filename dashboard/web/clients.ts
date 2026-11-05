@@ -1,4 +1,4 @@
-import type { ChannelHealth, CostEntry, StatusPost, StatusResponse } from '../shared/status.ts';
+import type { ChannelHealth, ClientPlanData, CostEntry, StatusPost, StatusResponse } from '../shared/status.ts';
 import { brandLabel, dayKeyOf, formatTime, weekdayName } from './calendar.ts';
 
 export interface ClientSummary {
@@ -22,6 +22,8 @@ export interface ClientSummary {
   product: string | null;
   /** The client's website (https address) that posts are planned from; null when none was given. */
   website: string | null;
+  /** What was chosen to post, where and for how long when the website was added; null when nothing was. */
+  plan: ClientPlanData | null;
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
@@ -81,6 +83,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       added,
       product: entry?.product ?? null,
       website: entry?.website ?? null,
+      plan: entry?.plan ?? null,
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };

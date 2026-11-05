@@ -1,5 +1,6 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
+import { planSentence } from '../shared/posting-plan.ts';
 import { websiteHost, type ClientSummary } from './clients.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
@@ -179,6 +180,7 @@ function websiteCard(client: ClientSummary, ctx: ClientsContext): HTMLElement {
     h('div', { class: 'card-head' }, h('h2', {}, 'Website')),
     h('p', { class: 'muted' }, client.website ? `Posts for ${client.label} are planned from ${websiteHost(client.website)}.` : `Add ${client.label}’s website. Posts are planned from it.`),
     h('div', { class: 'website-row' }, input, save),
+    client.plan ? h('p', { class: 'muted plan-line' }, `Posting plan: ${planSentence(client.plan)}. The posters are made from the website and wait in Review until you approve them.`) : null,
     message,
   );
 }

@@ -2,6 +2,9 @@
 import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
 import { assertCopySupported } from './copy-gate.ts';
+import { brandPrefixProblem, planQualifierProblem } from './headline-rules.ts';
+import { candidateCount, selectBest, type Candidate } from './candidate-selection.ts';
+import { reviewCandidates, type ReviewDeps, type ReviewOutcome } from './copy-review.ts';
 import { creativePrompt, formatFor } from './creative.ts';
 import { checkConcept, parseConcept, type Concept, type ConceptConfig, type ConceptRecord } from './concepts.ts';
 import { assignHooks, checkHook, defaultHooks, fallbackHeadline, HookError, normalizeHeadline, repetitionWarnings, type HookSpec } from './hooks.ts';
@@ -121,7 +124,7 @@ ${JSON.stringify(profileForPrompt(brand, withFacts), null, 2)}
 Pain points already used in earlier weeks (do NOT repeat or rephrase these):
 ${usedPainPoints.length ? usedPainPoints.map((p) => `- ${p}`).join('\n') : '- none yet'}
 
-Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post, whose post it is and what ${brand.name} does about it. Use plain words, no jargon, no internal product terms. ${figureRule} The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead.${assignmentLines(assignments, facts)}${conceptLines(recentConcepts)}
+Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post and what is offered or solved. Write each headline as a standalone advertising message, never as a label naming the company: the brand's name is shown separately on the poster, so do not begin a headline with "${brand.name}" followed by a colon or dash, and put the name inside a headline only when it is a natural part of the sentence and the message is clearer with it. When a figure or limit belongs to a named plan in the facts, name the plan in the headline ("Free plan: 5 active projects") or leave the figure out. Use plain words, no jargon, no internal product terms. ${figureRule} The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead.${assignmentLines(assignments, facts)}${conceptLines(recentConcepts)}
 
 Return JSON:
 {
@@ -216,7 +219,7 @@ function withoutListCount<T extends { headline: string; subline: string; caption
  * points, it also turns back copy that states a figure, superlative, guarantee or deadline none of them supports; this runs before
  * any picture is generated.
  */
-export function validateDraft(draft: DraftPost, position: number, brandName?: string, proofPoints?: readonly string[], assignment?: PostPlan, options: { optionalSubline?: boolean } = {}): void {
+export function validateDraft(draft: DraftPost, position: number, brandName?: string, proofPoints?: readonly string[], assignment?: PostPlan, options: { optionalSubline?: boolean; facts?: readonly EvidenceFact[] } = {}): void {
   if (typeof draft.visual !== 'string' || !draft.visual.trim()) throw new Error(`post ${position} needs a "visual"`);
   if (typeof draft.visualLink !== 'string' || !draft.visualLink.trim()) throw new Error(`post ${position} needs a "visualLink": how the picture connects to the headline`);
   if (brandName !== undefined) {
@@ -230,6 +233,11 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
   if (typeof draft.headline === 'string' && draft.headline.replaceAll('|', '').length > 60) {
     throw new Error(`post ${position} headline is too long; keep it under 45 characters`);
   }
+  // A headline is a message, not a label, and a figure that belongs to a plan keeps its plan (headline-rules.ts); each is asked for again once, then the post is left out.
+  const prefix = brandName !== undefined && typeof draft.headline === 'string' ? brandPrefixProblem(draft.headline, brandName) : undefined;
+  if (prefix) throw new Error(`post ${position} headline rule: ${prefix}`);
+  const qualifier = options.facts && typeof draft.headline === 'string' ? planQualifierProblem(draft.headline, options.facts) : undefined;
+  if (qualifier) throw new Error(`post ${position} headline rule: ${qualifier}`);
   const hookProblem = assignment?.hook ? checkHook({ hook: assignment.hook, headline: draft.headline, ...(draft.listItems ? { listItems: draft.listItems } : {}) }) : undefined;
   if (hookProblem) throw new HookError(`post ${position} (${assignment?.hook}): ${hookProblem}`);
   if (proofPoints !== undefined) {
@@ -252,6 +260,10 @@ export const FACT_CHECKS = ['numbers_prices_periods_qualifiers_checked', 'semant
 export interface PlannedWeek extends WeekPlan {
   evidenceCoverage?: EvidenceCoverage;
   insufficientConcepts?: { requested: number; produced: number; reasons: string[] };
+  /** With oversampling: validated candidates that were not chosen, best first. They are drafts, not approved content: before any is used they must pass every check again. */
+  reserveDrafts?: PlannedPost[];
+  /** With oversampling: how many candidates were written, what each review did, and which were chosen. */
+  candidateReport?: { written: number; requested: number; reviews: Array<{ id: string; status: ReviewOutcome['status']; rewritten: boolean; reasons: string[]; trail: ReviewOutcome['trail'] }>; selected: string[]; skipped: Array<{ id: string; reason: string }>; scores: Record<string, number> };
 }
 
 /** Raised when not one draft was a new idea. The plan stops before any picture is made. */
@@ -301,6 +313,8 @@ export async function planWeek(options: {
   evidence?: { facts: readonly EvidenceFact[]; recentFactIds?: readonly string[]; /** Poster-worthiness totals (0 to 6) by fact id; with them, weak facts are held back and fewer posts are written when too few facts are worth a post. */ worth?: Readonly<Record<string, number>> };
   /** Optional: a judge that reads the week's copy once against its facts. A post it finds stronger than its facts is left out; one it cannot decide stays with a note. Only used with evidence facts. */
   copyJudge?: { judge: Judge; cache?: VerdictCache };
+  /** Write more candidates than posts (one per distinct fact), review each with structured verdicts and at most one rewrite before any picture is bought, and keep the best. Only with evidence facts. */
+  candidates?: { factor?: number; review: ReviewDeps };
   log?: (message: string) => void;
   /** Replaces the network for the text model; tests use it. */
   fetchFn?: typeof fetch;
@@ -320,11 +334,16 @@ export async function planWeek(options: {
   // With judged scores, only facts that are worth a post lead one; four verified facts do not justify four posters when only two are worth making.
   const strong = evidenceMode && worth ? rankedFacts.filter((f) => (worth[f.id] ?? 0) >= MIN_WORTH).length : Number.POSITIVE_INFINITY;
   const dates = strong < allDates.length ? allDates.slice(0, Math.max(1, strong)) : allDates;
+  // More candidates than posts when asked: one per distinct eligible fact, never padded (with fewer eligible facts there are fewer candidates and fewer posts).
+  const oversample = evidenceMode && options.candidates !== undefined;
+  const eligibleFacts = Number.isFinite(strong) ? strong : offerable.length;
+  const wanted = oversample ? candidateCount(dates.length, eligibleFacts, { ...(options.candidates?.factor !== undefined ? { factor: options.candidates.factor } : {}) }) : dates.length;
+  const workDates = wanted <= dates.length ? dates.slice(0, wanted) : [...dates, ...Array.from({ length: wanted - dates.length }, (_, i) => dates[i % dates.length] as string)];
   const proofTexts = evidenceMode ? rankedFacts.map(displayFact) : brand.proofPoints;
   const pillarEvidence = evidenceMode ? { proofPoints: proofTexts, offer: rankedFacts.some((f) => f.category === 'commercial_term' || f.category === 'offer') ? 'evidence facts' : '', ...(brand.identity ? { identity: brand.identity } : {}) } : brand;
   const assignments = assignWeek({
     brand: pillarEvidence,
-    count: dates.length,
+    count: workDates.length,
     recent: recentPillars,
     recentAnchoredCount: evidenceMode ? 0 : recentPillars.filter((name) => (options.pillars ?? defaultPillars).find((p) => p.name === name)?.needs === 'proof').length,
     ...(options.pillars ? { pillars: options.pillars } : {}),
@@ -351,9 +370,9 @@ export async function planWeek(options: {
   /** What the claim gate checks the post at this position against: its own assigned facts, or the profile's proof points. */
   const gateEvidence = (position: number): readonly string[] => (evidenceMode ? (factsPerPost[position] ?? []).map(displayFact) : brand.proofPoints);
 
-  for (let offset = 0; offset < dates.length; offset += POSTS_PER_REQUEST) {
-    const chunkDates = dates.slice(offset, offset + POSTS_PER_REQUEST);
-    options.log?.(`writing posts ${offset + 1}-${offset + chunkDates.length} of ${dates.length}`);
+  for (let offset = 0; offset < workDates.length; offset += POSTS_PER_REQUEST) {
+    const chunkDates = workDates.slice(offset, offset + POSTS_PER_REQUEST);
+    options.log?.(`writing ${oversample ? 'candidates' : 'posts'} ${offset + 1}-${offset + chunkDates.length} of ${workDates.length}`);
     // The second try is the last: a headline that still does not follow its hook is then replaced by a safe, complete line, and a draft that
     // still repeats an earlier idea is left out of the plan (fewer posts, never a repeat); or the plan fails.
     let attempt = 0;
@@ -378,10 +397,10 @@ export async function planWeek(options: {
           let draft = d;
           let used = assigned.hook as string;
           try {
-            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode });
+            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode, facts: factsPerPost[offset + i] ?? [] });
           } catch (error) {
             // On the last try a post whose copy the claim gate still turns back, or that does not stay with its fact, is left out (fewer posts, never unsupported copy); the others stay.
-            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point/.test(error.message)) {
+            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point|headline rule:/.test(error.message)) {
               droppedHere.push(error.message);
               return;
             }
@@ -390,7 +409,7 @@ export async function planWeek(options: {
             if (!headline) throw error;
             draft = { ...d, headline };
             used = 'direct_statement';
-            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), { ...assigned, hook: used }, { optionalSubline: evidenceMode });
+            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), { ...assigned, hook: used }, { optionalSubline: evidenceMode, facts: factsPerPost[offset + i] ?? [] });
           }
           let concept: Concept;
           try {
@@ -452,7 +471,44 @@ export async function planWeek(options: {
     usedPainPoints.push(...chunk.map((p) => p.painPoint));
   }
 
-  if (evidenceMode && options.copyJudge && posts.length > 0) {
+  let reserveDrafts: PlannedPost[] | undefined;
+  let candidateReport: PlannedWeek['candidateReport'];
+  if (oversample && options.candidates && posts.length > 0) {
+    const byId = new Map(offerable.map((f) => [f.id, f]));
+    const split = (p: PlannedPost): { body: string; tail: string } => {
+      let body = withoutCta(withoutCta(p.caption, brand.callToAction), p.cta?.text ?? '');
+      // The engine's own call-to-action line ("Visit example.com (link in bio)") is not a claim of the post, whichever call to action produced it.
+      const lines = body.split('\n');
+      for (let i = lines.length - 1; i >= 0; i--) {
+        if (lines[i]?.trim() === '') continue;
+        if (/\(link in bio\)\s*$/.test(lines[i] as string)) body = lines.slice(0, i).join('\n').replace(/\s+$/, '');
+        break;
+      }
+      return { body, tail: p.caption.slice(body.length) };
+    };
+    const outcomes = await reviewCandidates(
+      posts.map((p) => ({ id: p.id, draft: { headline: p.headline, subline: p.subline, caption: split(p).body }, facts: (p.factIds ?? []).flatMap((id) => byId.get(id) ?? []) })),
+      options.candidates.review,
+    );
+    const survivors: PlannedPost[] = [];
+    posts.forEach((p, i) => {
+      const o = outcomes[i] as ReviewOutcome;
+      if (o.status === 'dropped') { dropped.push(`${p.id}: ${o.reasons.join('; ')} [headline: "${p.headline}"]`); return; }
+      const rewritten = o.rewritten ? { headline: o.draft.headline, subline: o.draft.subline, caption: `${o.draft.caption}${split(p).tail}` } : {};
+      survivors.push({ ...p, ...rewritten, evidenceChecks: [...(p.evidenceChecks ?? []).filter((c) => c !== 'semantic_support_unverified'), o.rewritten ? 'semantic_support_rewritten_once' : 'semantic_support_structured_verdict'] });
+    });
+    const candidatesOut: Candidate[] = survivors.map((p) => ({ id: p.id, factId: (p.factIds ?? [''])[0] as string, headline: p.headline.replace(/\|/g, ''), proposition: p.painPoint, ...(worth?.[(p.factIds ?? [''])[0] as string] !== undefined ? { worth: worth?.[(p.factIds ?? [''])[0] as string] as number } : {}) }));
+    const choice = selectBest(candidatesOut, dates.length, { recent: [...(options.recentHeadlines ?? []), ...recentConcepts.map((c) => `${c.headline} ${c.concept.message}`)] });
+    const keepIds = choice.selected.map((c) => c.id);
+    // The chosen posts take the real days in order, and their ids follow the days, so nothing downstream sees the candidates that were not chosen.
+    const chosen = keepIds.map((id) => survivors.find((p) => p.id === id) as PlannedPost);
+    reserveDrafts = choice.reserve.map((c) => survivors.find((p) => p.id === c.id) as PlannedPost);
+    posts.splice(0, posts.length, ...chosen.map((p, i) => ({ ...p, id: `w${week}-d${i + 1}`, date: dates[i] as string })));
+    candidateReport = { written: workDates.length, requested: dates.length, reviews: outcomes.map((o) => ({ id: o.id, status: o.status, rewritten: o.rewritten, reasons: o.reasons, trail: o.trail })), selected: keepIds, skipped: choice.skipped, scores: choice.scores };
+    for (const s of choice.skipped) dropped.push(`${s.id}: left out, ${s.reason}`);
+    options.log?.(`candidates: ${workDates.length} written, ${survivors.length} passed review, ${chosen.length} chosen, ${reserveDrafts.length} kept in reserve`);
+  }
+  if (evidenceMode && options.copyJudge && !oversample && posts.length > 0) {
     const byId = new Map(offerable.map((f) => [f.id, f]));
     const results = await verifyCopySupport(
       posts.map((p) => ({ copy: { headline: p.headline, subline: p.subline, caption: withoutCta(withoutCta(p.caption, brand.callToAction), p.cta?.text ?? '') }, facts: (p.factIds ?? []).flatMap((id) => byId.get(id) ?? []) })),
@@ -471,5 +527,6 @@ export async function planWeek(options: {
   const plan = parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts }, `week-${week}`);
   const coverage: EvidenceCoverage = evidenceMode ? 'facts' : 'legacy';
   if (dates.length < allDates.length) dropped.unshift(`only ${dates.length} fact${dates.length === 1 ? ' is' : 's are'} worth a post of its own (poster-worthiness ${MIN_WORTH} or more), so ${allDates.length - dates.length} fewer post${allDates.length - dates.length === 1 ? ' was' : 's were'} written`);
-  return dropped.length > 0 ? { ...plan, evidenceCoverage: coverage, insufficientConcepts: { requested: allDates.length, produced: posts.length, reasons: dropped } } : { ...plan, evidenceCoverage: coverage };
+  const extra = { ...(reserveDrafts ? { reserveDrafts } : {}), ...(candidateReport ? { candidateReport } : {}) };
+  return dropped.length > 0 ? { ...plan, evidenceCoverage: coverage, ...extra, insufficientConcepts: { requested: allDates.length, produced: posts.length, reasons: dropped } } : { ...plan, evidenceCoverage: coverage, ...extra };
 }

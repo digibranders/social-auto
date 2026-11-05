@@ -779,9 +779,9 @@ function openNewPost(brand: string | null, channel: string | null): void {
 }
 
 /** Adds a client, then opens its page so the channels can be connected. */
-async function submitNewClient(name: string, website: string): Promise<string | null> {
+async function submitNewClient(name: string, website: string, plan: Record<string, unknown> | null): Promise<string | null> {
   try {
-    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}) }) });
+    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}), ...(website && plan ? { plan } : {}) }) });
     if (response.status === 401) {
       location.replace('/login');
       return 'You were signed out.';
@@ -789,7 +789,7 @@ async function submitNewClient(name: string, website: string): Promise<string | 
     const answer = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     if (!response.ok || typeof answer?.['brand'] !== 'string') return messageOf(answer) ?? `The server answered ${response.status}`;
     picker.close();
-    state.notice = { kind: 'ok', text: 'Client added. Connect their channels next.' };
+    state.notice = { kind: 'ok', text: plan ? 'Client added. The posters are being made from the website; they will appear in Review for you to approve. Connect their channels next.' : 'Client added. Connect their channels next.' };
     await load();
     go({ page: 'client', brand: answer['brand'], tab: 'channels' });
     return null;

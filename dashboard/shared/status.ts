@@ -68,12 +68,30 @@ export interface CostEntry {
   usd: number;
 }
 
+/** What to post, where and for how long, as a client carries it (see publisher/lib/clients.ts). */
+export interface ClientPlanData {
+  platforms: string[];
+  startDate: string;
+  durationDays: number;
+  postsPerWeek?: number;
+  weekdays?: string[];
+  time: string;
+  utcOffset: string;
+}
+
+function planData(value: unknown): ClientPlanData | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const p = value as Record<string, unknown>;
+  if (!Array.isArray(p['platforms']) || !p['platforms'].every((x) => typeof x === 'string') || typeof p['startDate'] !== 'string' || typeof p['durationDays'] !== 'number' || typeof p['time'] !== 'string' || typeof p['utcOffset'] !== 'string') return undefined;
+  return { platforms: p['platforms'] as string[], startDate: p['startDate'], durationDays: p['durationDays'], time: p['time'], utcOffset: p['utcOffset'], ...(typeof p['postsPerWeek'] === 'number' ? { postsPerWeek: p['postsPerWeek'] } : {}), ...(Array.isArray(p['weekdays']) ? { weekdays: (p['weekdays'] as unknown[]).filter((d): d is string => typeof d === 'string') } : {}) };
+}
+
 export interface StatusResponse {
   generatedAt: string;
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
-  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string }>;
+  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plan?: ClientPlanData }>;
   costs: CostEntry[];
 }
 
@@ -181,7 +199,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}) };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(planData(entry['plan']) ? { plan: planData(entry['plan']) as ClientPlanData } : {}) };
   });
 
   const costs = list(root['costs'] ?? [], 'status.costs').map((item, i): CostEntry => {

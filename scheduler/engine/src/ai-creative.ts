@@ -50,8 +50,8 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
     'TEXT CONTRACT. The only visible text on the poster is the following, each exactly once and spelled character for character:',
     `1. HEADLINE: "${manifest.headline}"`,
     ...(manifest.subline ? [`2. SUPPORTING LINE: "${manifest.subline}"`] : []),
-    `${manifest.subline ? 3 : 2}. BRAND NAME: "${manifest.brandName}", in plain, clearly legible lettering, small and secondary to the headline, placed wherever it fits the composition naturally${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`,
-    `${manifest.subline ? 4 : 3}. WEB ADDRESS: "${manifest.domain}", small but clearly legible, next to or near the brand name.`,
+    `${manifest.subline ? 3 : 2}. BRAND NAME: "${manifest.brandName}", in plain, clearly legible lettering, secondary to the headline, placed wherever it fits the composition naturally; its letters are at least about 3 percent of the poster's height, never tiny${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`,
+    `${manifest.subline ? 4 : 3}. WEB ADDRESS: "${manifest.domain}", clearly legible and not tiny: its letters are at least about 3 percent of the poster's height, with strong contrast; next to or near the brand name.`,
     'Show no other words, letters, numbers or symbols that resemble writing anywhere: no labels, buttons, slogans, interface messages, captions, watermarks, signs, screens with writing, or made-up text.',
     'Never draw or imitate a logo, an app icon, a custom wordmark, a certification badge, a seal, a medal or an award.',
     ...(context.concept
@@ -61,7 +61,7 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
         ]
       : [`THE MESSAGE is only this verified fact: "${context.fact}". Create an original visual idea that makes it clear to a stranger who is scrolling past. Do not invent product screenshots, customer quotes, results, endorsements, statistics, prices, offers or any evidence. Any interface you show must be an obvious concept with no text in it. People may appear only as generic illustrated subjects, never as real customers, employees or endorsers.`]),
     ...(context.concept?.typography
-      ? [`TYPOGRAPHY (an essential part of the concept, not optional styling): ${context.concept.typography} Execute this as part of the advertisement's design: integrate the headline and the artwork into one intentional composition and follow the described scale, weight, colour and spatial relationship. Keep the headline's capitalisation and punctuation exactly as given. If a decorative treatment would endanger the spelling or legibility of any letter, simplify its execution, but do not fall back to a large black headline above the artwork.`]
+      ? [`TYPOGRAPHY (an essential part of the concept, not optional styling): ${context.concept.typography} Execute this as part of the advertisement's design: compose the artwork and the type together, so that the picture leaves the room the type needs and the type belongs to the scene; follow the described scale, weight, colour, position and spatial relationship, including where the brand name and web address sit. Do not automatically place the headline at the top or the brand details at the bottom. Keep the headline's capitalisation and punctuation exactly as given. If a decorative treatment would endanger the spelling or legibility of any letter, simplify its execution, but do not fall back to a large black headline above the artwork.`]
       : []),
     `The brand's colours, for reference: ${context.colors.accent} as its accent, ${context.colors.ink} for text, ${context.colors.background} as its background. Use them where they suit the picture, as an accent or a detail; they need not fill the scene.`,
     `LEGIBILITY applies to every treatment: each required text is complete, uncropped and unobstructed, has strong contrast against what is directly behind it, and would still be readable if the poster were shown at 360 pixels wide. Keep every element inside the frame with comfortable margins.`,
@@ -73,9 +73,14 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
 
 // ---- Reading the poster
 
+/** A rectangle on the poster: [left, top, right, bottom], each 0 to 1000 of the poster's width or height. An estimate by the model, never a measurement. */
+export type Box = [number, number, number, number];
+
 export interface CreativeReview {
-  /** Every separate region of visible text, in reading order. `readable` is false when the model could not be sure what it says. */
-  regions: Array<{ text: string; readable: boolean }>;
+  /** Every separate region of visible text, in reading order. `readable` is false when the model could not be sure what it says; `box` is where it is, or null when it could not say. */
+  regions: Array<{ text: string; readable: boolean; box?: Box | null }>;
+  /** Where each mark that was answered true is, when the reader could say. */
+  markBoxes?: Partial<Record<keyof CreativeReview['marks'], Box | null>>;
   marks: {
     graphicalLogoOrIcon: boolean;
     badgeSealAwardOrCertification: boolean;
@@ -90,6 +95,10 @@ export interface CreativeReview {
   composition: number;
   /** Whether the headline, the brand name and the web address would all still be readable if the poster were shown 360 pixels wide. */
   readableSmall: boolean;
+  /** Whether any required text covers an important part of the artwork. */
+  textOverImportantArt: boolean;
+  /** What the reader saw of people, whatever the plan said: observation, not a rule. */
+  people: { present: boolean; estimatedCount: number; prominent: boolean; description: string };
   notes: string;
 }
 
@@ -105,27 +114,37 @@ const MARK_REASON: Readonly<Record<(typeof MARK_KEYS)[number], string>> = {
 };
 
 const REVIEW_SYSTEM = `You inspect one finished social media poster, only to report what is on it. You do not judge whether the text is right: you transcribe it. Be literal and complete.
-1. regions: list EVERY separate piece of visible text on the poster, in reading order, exactly as it appears, including tiny text, text inside illustrations, interface labels, signs, watermarks, web addresses and the brand's name. Do not correct spelling, do not complete cut-off words, do not add words that are not there, do not leave out text because it is small or decorative. A line of a headline that wraps onto several lines is one region. Set "readable" to false for any region you are not sure you read correctly. If there is no text, return an empty list.
+1. regions: list EVERY separate piece of visible text on the poster, in reading order, exactly as it appears, including tiny text, text inside illustrations, interface labels, signs, watermarks, web addresses and the brand's name. Do not correct spelling, do not complete cut-off words, do not add words that are not there, do not leave out text because it is small or decorative. A line of a headline that wraps onto several lines is one region. Set "readable" to false for any region you are not sure you read correctly. Give each region a "box": [left, top, right, bottom], each a whole number from 0 to 1000 as a share of the poster's width (left, right) or height (top, bottom), or null when you cannot place it; never invent a box. If there is no text, return an empty list.
 2. marks: answer true or false for each question about what is drawn. Be strict about real problems and do not report ordinary illustration as a problem.
-   graphicalLogoOrIcon: true ONLY for a logo, emblem, app-icon tile or brand mark that looks like a company's brand identity: a made-up logo, a symbol placed beside or above the brand's name as if it were its logo, a monogram or a crest. FALSE for ordinary illustration elements such as a database, calendar, target, magnifier, chat bubble, document, gear, robot character or person drawn as part of the artwork.
+   graphicalLogoOrIcon: true ONLY for a logo, emblem, app-icon tile or brand mark that looks like a company's brand identity: a made-up logo, a symbol placed beside or above the brand's name as if it were its logo, a monogram or a crest. FALSE for the brand's name set as plain lettering (even when it is coloured, bold or styled as ordinary type, and even when it is in the brand colour: that is the allowed sign-off, not a logo), and FALSE for ordinary illustration elements such as a database, calendar, target, magnifier, chat bubble, document, gear, robot character or person drawn as part of the artwork. It is a logo only if there is a symbol, emblem, icon tile, monogram or lettering with graphic ornament that goes beyond plain type.
    badgeSealAwardOrCertification: true for a badge, seal, medal, trophy, ribbon, star rating or certification mark.
    inventedNumberPriceOrStatistic: true if a number, price, percentage or rating is shown that is NOT part of the approved text. The approved text is: {ALLOWED}. A number that is part of that text (for example "14-day" in an approved headline) is allowed and is FALSE.
    interfaceOrScreenshotWithText: true ONLY if a screen, app window or chat contains legible words or numbers, or looks like a real screenshot of a product. FALSE for abstract interface drawings made of shapes, bars, lines, dots and icons with no readable words.
    personPresentedAsCustomerOrEndorser: true only if a person is shown with a name, quote, caption or title as a customer, employee or endorser. A generic illustrated person is FALSE.
    flagOrReligiousSymbol: true for a national flag or a religious symbol.
+   For every mark you answer true, also give its place in "markBoxes" (the mark's name, then a box as above or null).
 3. relevance 0 to 2: does the artwork clearly communicate this message: "{MESSAGE}". 0 not at all, 1 partly, 2 clearly.
 4. composition 0 to 2: is the main text fully inside the frame, not cropped or hidden, and readable against what is directly behind it. The text may be large or small, plain or expressive; judge only whether every letter can be read. 0 no, 1 acceptable, 2 clear.
-5. readableSmall: true or false. Imagine the poster shown only 360 pixels wide on a phone. Would the headline, the brand name and the web address all still be readable? False if any of them would become illegible.
-6. notes: one short sentence on the biggest problem, or "none".
-Return JSON only: {"regions":[{"text":"...","readable":true}],"marks":{"graphicalLogoOrIcon":false,"badgeSealAwardOrCertification":false,"inventedNumberPriceOrStatistic":false,"interfaceOrScreenshotWithText":false,"personPresentedAsCustomerOrEndorser":false,"flagOrReligiousSymbol":false},"relevance":2,"composition":2,"readableSmall":true,"notes":"none"}`;
+5. readableSmall: true or false. Imagine the poster shown only 360 pixels wide on a phone. Would the headline, the brand name and the web address all still be readable? Answer false ONLY if some required text is plainly too small (its letters are smaller than about 2.5 percent of the poster's height) or has weak contrast against what is directly behind it. Small, quiet type that is clear and has good contrast is true.
+5b. textOverImportantArt: true or false. Does any required text cross or cover an important part of the artwork (the main subject, a face, the key object) so that the picture's meaning or the text's readability suffers? Text that sits on empty or quiet space is false.
+6. people: report what you see of people, whatever the poster is about. present: true if any person, face or human figure is drawn, however small or stylised. estimatedCount: how many (a whole number, 0 if none; an estimate for a crowd). prominent: true only if people are a main part of the picture (large, central or the subject); false for tiny figures in the background or scale figures. description: one short factual sentence of what you see ("three tiny illustrated figures in the background"), or an empty string.
+7. notes: one short sentence on the biggest problem, or "none".
+Return JSON only: {"regions":[{"text":"...","readable":true,"box":[0,0,1000,300]}],"markBoxes":{},"marks":{"graphicalLogoOrIcon":false,"badgeSealAwardOrCertification":false,"inventedNumberPriceOrStatistic":false,"interfaceOrScreenshotWithText":false,"personPresentedAsCustomerOrEndorser":false,"flagOrReligiousSymbol":false},"relevance":2,"composition":2,"readableSmall":true,"textOverImportantArt":false,"people":{"present":false,"estimatedCount":0,"prominent":false,"description":""},"notes":"none"}`;
+
+/** A box the model gave, or null: anything that is not four numbers from 0 to 1000 with the corners the right way round is no box, and is never repaired. */
+export function parseBox(value: unknown): Box | null {
+  if (!Array.isArray(value) || value.length !== 4 || !value.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1000)) return null;
+  const [l, t, r, b] = value as number[];
+  return (l as number) < (r as number) && (t as number) < (b as number) ? [l as number, t as number, r as number, b as number] : null;
+}
 
 function parseReview(value: unknown): CreativeReview {
-  const raw = value as { regions?: unknown; marks?: Record<string, unknown>; relevance?: unknown; composition?: unknown; readableSmall?: unknown; notes?: unknown };
+  const raw = value as { regions?: unknown; marks?: Record<string, unknown>; relevance?: unknown; composition?: unknown; readableSmall?: unknown; textOverImportantArt?: unknown; people?: unknown; notes?: unknown };
   if (!Array.isArray(raw.regions)) throw new Error('"regions" must be a list');
   const regions = raw.regions.map((r) => {
-    const region = r as { text?: unknown; readable?: unknown };
+    const region = r as { text?: unknown; readable?: unknown; box?: unknown };
     if (typeof region.text !== 'string' || typeof region.readable !== 'boolean') throw new Error('every region needs "text" (a string) and "readable" (true or false)');
-    return { text: region.text.trim(), readable: region.readable };
+    return { text: region.text.trim(), readable: region.readable, box: parseBox(region.box) };
   }).filter((r) => r.text !== '');
   const marks = {} as CreativeReview['marks'];
   for (const key of MARK_KEYS) {
@@ -139,18 +158,25 @@ function parseReview(value: unknown): CreativeReview {
     return v;
   };
   if (typeof raw.readableSmall !== 'boolean') throw new Error('"readableSmall" must be true or false');
-  return { regions, marks, relevance: score('relevance'), composition: score('composition'), readableSmall: raw.readableSmall, notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 300) : '' };
+  if (typeof raw.textOverImportantArt !== 'boolean') throw new Error('"textOverImportantArt" must be true or false');
+  const seen = raw.people as { present?: unknown; estimatedCount?: unknown; prominent?: unknown; description?: unknown } | undefined;
+  if (!seen || typeof seen.present !== 'boolean' || typeof seen.prominent !== 'boolean' || typeof seen.estimatedCount !== 'number' || !Number.isFinite(seen.estimatedCount) || seen.estimatedCount < 0) throw new Error('"people" must be {present, estimatedCount, prominent, description}');
+  const people = { present: seen.present, estimatedCount: Math.round(seen.estimatedCount), prominent: seen.prominent && seen.present, description: typeof seen.description === 'string' ? seen.description.slice(0, 200) : '' };
+  const markBoxes: NonNullable<CreativeReview['markBoxes']> = {};
+  const given = (raw as { markBoxes?: Record<string, unknown> }).markBoxes;
+  if (given && typeof given === 'object') for (const key of MARK_KEYS) if (marks[key] && key in given) markBoxes[key] = parseBox(given[key]);
+  return { regions, ...(Object.keys(markBoxes).length > 0 ? { markBoxes } : {}), marks, relevance: score('relevance'), composition: score('composition'), readableSmall: raw.readableSmall, textOverImportantArt: raw.textOverImportantArt, people, notes: typeof raw.notes === 'string' ? raw.notes.slice(0, 300) : '' };
 }
 
 /** One vision request that transcribes and describes the poster. The decision is not made here (see judgeCreative). A model does not read the same picture the same way every time, so a poster is read more than once and must pass every reading. */
-export async function reviewCreative(ai: AiConfig, imagePath: string, message: string, fetchFn?: typeof fetch, reading = 1, allowed: readonly string[] = []): Promise<CreativeReview> {
+export async function reviewCreative(ai: AiConfig, imagePath: string, message: string, fetchFn?: typeof fetch, reading = 1, allowed: readonly string[] = [], extraImages: readonly string[] = []): Promise<CreativeReview> {
   const bytes = await readFile(imagePath);
   return chatJson({
     ai,
     ...(fetchFn ? { fetchFn } : {}),
     system: REVIEW_SYSTEM.replace('{MESSAGE}', message.replace(/"/g, "'")).replace('{ALLOWED}', allowed.length > 0 ? allowed.map((a) => `"${a.replace(/"/g, "'")}"`).join(', ') : 'none'),
-    user: `Inspect this poster (independent reading ${reading}).`,
-    images: [`data:image/jpeg;base64,${bytes.toString('base64')}`],
+    user: extraImages.length > 0 ? `Inspect this poster (independent reading ${reading}). The first picture is the whole poster; the next is an enlarged crop of one part of it, to help you read small or faint writing. Transcribe everything you can see in the crop as well as in the whole poster, including faint or partial writing, and report the boxes for the whole poster.` : `Inspect this poster (independent reading ${reading}).`,
+    images: [`data:image/jpeg;base64,${bytes.toString('base64')}`, ...extraImages],
     parse: parseReview,
   });
 }
@@ -165,7 +191,9 @@ export type CreativeDefect =
   | { kind: 'forbidden_mark'; mark: keyof CreativeReview['marks']; reason: string }
   | { kind: 'not_relevant' }
   | { kind: 'poor_composition' }
-  | { kind: 'illegible_small' };
+  | { kind: 'illegible_small' }
+  | { kind: 'text_over_art' }
+  | { kind: 'people_plan_mismatch'; description: string };
 
 export interface CreativeVerdict {
   accepted: boolean;
@@ -194,7 +222,7 @@ function runsOf(words: readonly string[], needle: readonly string[]): number[] {
  * the brand's name must appear once (the headline may be what names it); nothing else may be readable; any text the reader was unsure of rejects the poster.
  * Only differences of case, accents, spacing and punctuation are ignored.
  */
-export function judgeCreative(manifest: TextManifest, review: CreativeReview): CreativeVerdict {
+export function judgeCreative(manifest: TextManifest, review: CreativeReview, plan: { people?: boolean } = {}): CreativeVerdict {
   const defects: CreativeDefect[] = [];
   for (const region of review.regions) if (!region.readable) defects.push({ kind: 'unreadable_text', text: region.text });
 
@@ -223,6 +251,9 @@ export function judgeCreative(manifest: TextManifest, review: CreativeReview): C
   if (review.relevance < 1) defects.push({ kind: 'not_relevant' });
   if (review.composition < 1) defects.push({ kind: 'poor_composition' });
   if (!review.readableSmall) defects.push({ kind: 'illegible_small' });
+  if (review.textOverImportantArt) defects.push({ kind: 'text_over_art' });
+  // The concept said there would be no people. Tiny background figures are noted elsewhere and do not reject; people that are a main part of the picture are a different poster from the one planned.
+  if (plan.people === false && review.people.present && review.people.prominent) defects.push({ kind: 'people_plan_mismatch', description: review.people.description || 'people are a main part of the picture' });
   return { accepted: defects.length === 0, defects };
 }
 
@@ -237,6 +268,8 @@ export function retryNoteFor(defects: readonly CreativeDefect[]): string {
       case 'forbidden_mark': return `${d.reason}; leave it out.`;
       case 'not_relevant': return 'the artwork did not communicate the message; make the idea more direct.';
       case 'poor_composition': return 'the headline was hard to read or cut off; make it larger with clear margins and strong contrast.';
+      case 'people_plan_mismatch': return `the picture showed people prominently (${d.description}) although this poster's concept has none; remove them and keep to the concept.`;
+      case 'text_over_art': return 'the text covered an important part of the artwork; compose the picture so that the text sits on quiet space and does not cross the main subject.';
       case 'illegible_small': return 'the text would not be readable at a small size; make the headline, the brand name and the web address larger and higher in contrast against what is behind them.';
     }
   });

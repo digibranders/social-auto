@@ -59,3 +59,52 @@ test('a client can be added with a website, and its website can be changed and c
   assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(changed))), changed);
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', website: 5 }] }), /website/);
 });
+
+import { parseClientPlan, setPlan } from './clients.ts';
+
+const NOW_MS = Date.parse('2026-11-05T12:00:00Z');
+const planOf = (over: Record<string, unknown> = {}) => ({ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1, ...over });
+
+test('a client can be added with a posting plan, which is checked and saved with it', () => {
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com', planOf({ durationDays: 31, postsPerWeek: 3, platforms: ['facebook', 'instagram'] }));
+  assert.deepEqual(made.file.clients[0]?.plan, { platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 31, time: '10:00', utcOffset: '+05:30', postsPerWeek: 3 });
+  assert.equal(made.file.clients[0]?.website, 'https://oyechats.com');
+  assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(made.file))), made.file, 'it survives a save and a load');
+});
+
+test('a posting plan needs the website, and a plan that is not sensible is refused with a plain reason', () => {
+  const add = (website: unknown, plan: unknown) => () => addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, website, plan);
+  assert.throws(add(undefined, planOf()), /needs the client's website/);
+  assert.throws(add('oyechats.com', planOf({ platforms: [] })), /at least one platform/);
+  assert.throws(add('oyechats.com', planOf({ platforms: ['tiktok'] })), /not a platform/);
+  assert.throws(add('oyechats.com', planOf({ startDate: '2026-11-04' })), /in the past/);
+  assert.throws(add('oyechats.com', planOf({ startDate: '2026-02-30' })), /real date/);
+  assert.throws(add('oyechats.com', planOf({ durationDays: 40 })), /1 to 31/);
+  assert.throws(add('oyechats.com', planOf({ postsPerWeek: 9, durationDays: 7 })), /1 to 7/);
+  assert.throws(add('oyechats.com', planOf({ weekdays: ['funday'], durationDays: 7 })), /weekdays/);
+  assert.throws(add('oyechats.com', planOf({ time: '99:00' })), /time must look like/);
+  assert.equal(addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file.clients[0]?.plan, undefined, 'a plan is optional');
+});
+
+test('exact weekdays are kept in week order and win over posts per week', () => {
+  const plan = parseClientPlan(planOf({ durationDays: 14, weekdays: ['Fri', 'mon', 'wednesday'], postsPerWeek: 5 }), NOW_MS);
+  assert.deepEqual(plan.weekdays, ['mon', 'wed', 'fri']);
+  assert.equal(plan.postsPerWeek, undefined);
+});
+
+test('a saved plan may have a start date that has passed, but is not accepted as a new one', () => {
+  const old = planOf({ startDate: '2026-10-01' });
+  assert.doesNotThrow(() => parseClientPlan(old, NOW_MS, { allowPast: true }));
+  assert.throws(() => parseClientPlan(old, NOW_MS), /in the past/);
+  assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', website: 'https://a.example', plan: { platforms: [] } }] }), /plan is not valid/);
+});
+
+test('a plan can be set or cleared later, for an added client with a website only', () => {
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
+  const withPlan = setPlan(made, 'oye-chats', planOf(), NOW_MS);
+  assert.equal(withPlan.clients[0]?.plan?.platforms.length, 2);
+  assert.equal(setPlan(withPlan, 'oye-chats', null, NOW_MS).clients[0]?.plan, undefined);
+  assert.throws(() => setPlan(made, 'nobody', planOf(), NOW_MS), /only a client added in the dashboard/);
+  const noSite = addClient({ clients: [] }, 'No Site', new Set(), NOW_MS).file;
+  assert.throws(() => setPlan(noSite, 'no-site', planOf(), NOW_MS), /add the client's website first/);
+});

@@ -14,6 +14,67 @@ export interface AddedClient {
   name?: string;
   /** The client's own website (plain https address) that posts are planned from. */
   website?: string;
+  /** What to post, where and for how long, chosen when the website was added. The content job makes the posters for it; nothing posts before they are approved. */
+  plan?: ClientPlan;
+}
+
+export const PLAN_PLATFORMS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
+export const PLAN_WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+export const MAX_PLAN_DAYS = 31;
+
+export interface ClientPlan {
+  platforms: string[];
+  /** YYYY-MM-DD, the first day that may be posted on. */
+  startDate: string;
+  /** 1 is a single day. */
+  durationDays: number;
+  postsPerWeek?: number;
+  weekdays?: string[];
+  time: string;
+  utcOffset: string;
+}
+
+const isRealDate = (date: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(date) && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
+
+/** Today's date at a UTC offset like "+05:30". */
+function todayAt(utcOffset: string, now: number): string {
+  const sign = utcOffset.startsWith('-') ? -1 : 1;
+  const [h = 0, m = 0] = utcOffset.slice(1).split(':').map(Number);
+  return new Date(now + sign * (h * 60 + m) * 60_000).toISOString().slice(0, 10);
+}
+
+/** Reads a posting plan from untrusted data, or says in plain words what is wrong. A saved plan may have a start date that has since passed. */
+export function parseClientPlan(raw: unknown, now: number, options: { allowPast?: boolean } = {}): ClientPlan {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new EditError('the posting plan is not valid');
+  const r = raw as Record<string, unknown>;
+  const platforms = r['platforms'];
+  if (!Array.isArray(platforms) || platforms.length === 0) throw new EditError('choose at least one platform to post on');
+  const chosen = new Set<string>();
+  for (const p of platforms) {
+    if (typeof p !== 'string' || !(PLAN_PLATFORMS as readonly string[]).includes(p)) throw new EditError(`"${String(p)}" is not a platform to post on`);
+    chosen.add(p);
+  }
+  const time = r['time'] === undefined ? '10:00' : r['time'];
+  const utcOffset = r['utcOffset'] === undefined ? '+05:30' : r['utcOffset'];
+  if (typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) throw new EditError('the time must look like 10:00');
+  if (typeof utcOffset !== 'string' || !/^[+-](0\d|1[0-4]):[0-5]\d$/.test(utcOffset)) throw new EditError('the time zone must look like +05:30');
+  const startDate = r['startDate'];
+  if (typeof startDate !== 'string' || !isRealDate(startDate)) throw new EditError('the start date must be a real date');
+  if (!options.allowPast && startDate < todayAt(utcOffset, now)) throw new EditError('the start date is in the past');
+  const durationDays = r['durationDays'];
+  if (typeof durationDays !== 'number' || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > MAX_PLAN_DAYS) throw new EditError(`the length must be from 1 to ${MAX_PLAN_DAYS} days`);
+  const plan: ClientPlan = { platforms: PLAN_PLATFORMS.filter((p) => chosen.has(p)), startDate, durationDays, time, utcOffset };
+  if (r['weekdays'] !== undefined) {
+    const days = r['weekdays'];
+    if (!Array.isArray(days) || days.length === 0 || !days.every((d) => typeof d === 'string' && (PLAN_WEEKDAYS as readonly string[]).includes(d.trim().toLowerCase().slice(0, 3)))) throw new EditError('the weekdays must be a list like mon, wed, fri');
+    const set = new Set((days as string[]).map((d) => d.trim().toLowerCase().slice(0, 3)));
+    plan.weekdays = PLAN_WEEKDAYS.filter((d) => set.has(d));
+  } else if (r['postsPerWeek'] !== undefined) {
+    const n = r['postsPerWeek'];
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 7) throw new EditError('posts per week must be from 1 to 7');
+    plan.postsPerWeek = n;
+  }
+  return plan;
 }
 
 export interface ClientsFile {
@@ -34,6 +95,13 @@ export function parseClientsFile(raw: unknown): ClientsFile {
       if (typeof c['createdAt'] !== 'string') throw new Error(`clients[${i}].createdAt must be a string`);
       for (const key of ['product', 'externalId', 'name', 'website'] as const) {
         if (c[key] !== undefined && typeof c[key] !== 'string') throw new Error(`clients[${i}].${key} must be a string`);
+      }
+      if (c['plan'] !== undefined) {
+        try {
+          parseClientPlan(c['plan'], 0, { allowPast: true });
+        } catch (error) {
+          throw new Error(`clients[${i}].plan is not valid: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       return c as unknown as AddedClient;
     }),
@@ -89,12 +157,14 @@ export function normalizeWebsite(input: unknown): string {
 }
 
 /** Adds a client, refusing a name that is already a client (planned or added). */
-export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySet<string>, now: number, website?: unknown): { file: ClientsFile; brand: string } {
+export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySet<string>, now: number, website?: unknown, plan?: unknown): { file: ClientsFile; brand: string } {
   const brand = slugFor(name);
   const site = website === undefined || website === null || (typeof website === 'string' && website.trim() === '') ? undefined : normalizeWebsite(website);
+  const posting = plan === undefined || plan === null ? undefined : parseClientPlan(plan, now);
+  if (posting && !site) throw new EditError('a posting plan needs the client\'s website to make the posts from');
   if (existing.has(brand) || file.clients.some((c) => c.brand === brand)) throw new EditError('there is already a client with that name', 409);
   if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many added clients; remove one first');
-  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}) }] }, brand };
+  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}), ...(posting ? { plan: posting } : {}) }] }, brand };
 }
 
 /** Sets or clears (empty) the website of a client added in the dashboard. */
@@ -105,6 +175,17 @@ export function setWebsite(file: ClientsFile, brand: string, website: unknown): 
   const site = clear ? undefined : normalizeWebsite(website);
   const { website: _old, ...rest } = file.clients[index] as AddedClient;
   return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(site ? { website: site } : {}) } : c)) };
+}
+
+/** Sets or clears (null) the posting plan of a client added in the dashboard. A plan needs the client's website. */
+export function setPlan(file: ClientsFile, brand: string, plan: unknown, now: number): ClientsFile {
+  const index = file.clients.findIndex((c) => c.brand === brand);
+  if (index === -1) throw new EditError('only a client added in the dashboard has a posting plan here', 404);
+  const current = file.clients[index] as AddedClient;
+  const { plan: _old, ...rest } = current;
+  if (plan === null || plan === undefined) return { clients: file.clients.map((c, i) => (i === index ? rest : c)) };
+  if (!current.website) throw new EditError('add the client\'s website first: the posts are made from it');
+  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, plan: parseClientPlan(plan, now) } : c)) };
 }
 
 /** Every client the system knows: the planned ones from the content job, then the ones added by hand. */

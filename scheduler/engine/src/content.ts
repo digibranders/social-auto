@@ -215,7 +215,7 @@ export class ContentValidationError extends Error {
   }
 }
 
-const INSTAGRAM_CAPTION_LIMIT = 2200;
+export const INSTAGRAM_CAPTION_LIMIT = 2200;
 const INSTAGRAM_HASHTAG_LIMIT = 30;
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
 

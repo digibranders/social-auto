@@ -105,8 +105,9 @@ test('too many posters with people are sent back, and a pair flagged only by mea
   assert.equal(result.concepts.filter((c) => c.people).length, 1);
   let compared = 0;
   const kept = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts: posts.slice(0, 2), history: [], peopleCap: 1 }, {
-    invent: async (ps) => ps.map((p, i) => concept(p.id, [LINE, CLAY][i] as string)),
-    embed: async (texts) => texts.map(() => [1, 0.01]),
+    invent: async (ps) => ps.map((p) => concept(p.id, p.id === 'p1' ? LINE : CLAY)),
+    // The two pictures are close in meaning; the headline treatments are not.
+    embed: async (texts) => texts.map((t, i) => (/^A (single|sculpted)/.test(t) ? [1, 0.01, 0] : [0, i % 2, 1 - (i % 2)])),
     sameIdea: async () => { compared += 1; return { same: false, why: 'a line against a hand and a key' }; },
   });
   assert.equal(compared, 1);
@@ -136,6 +137,9 @@ test('the director is told to invent, not to pick: no list of styles in its inst
   assert.match(DIRECTOR_SYSTEM, /Do not name a style category or choose from a list/);
   assert.match(DIRECTOR_SYSTEM, /Avoid the clichés/);
   assert.match(DIRECTOR_SYSTEM, /no writing of any kind/);
+  assert.match(DIRECTOR_SYSTEM, /TYPOGRAPHY AND TEXT PLACEMENT/);
+  assert.match(DIRECTOR_SYSTEM, /where the brand name and the web address sit/);
+  assert.match(DIRECTOR_SYSTEM, /Do not default to a headline at the top/);
 });
 
 test('concept memory keeps the newest 40, rejected ones included, and survives a missing file', async () => {
@@ -196,7 +200,7 @@ test('the side-by-side check sends every poster once and returns the pairs it na
 
 const brand = { name: 'OyeChats', website: 'https://www.oyechats.com', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4', tile: '#EEEEEE' } } as unknown as Brand;
 const planned = (id: string, headline: string): PlannedPost => ({ id, headline }) as unknown as PlannedPost;
-const reviewOk = async () => ({ regions: [{ text: 'x', readable: true }], marks: { graphicalLogoOrIcon: false, badgeSealAwardOrCertification: false, inventedNumberPriceOrStatistic: false, interfaceOrScreenshotWithText: false, personPresentedAsCustomerOrEndorser: false, flagOrReligiousSymbol: false }, relevance: 2, composition: 2, readableSmall: true, notes: 'none' });
+const reviewOk = async () => ({ regions: [{ text: 'x', readable: true }], marks: { graphicalLogoOrIcon: false, badgeSealAwardOrCertification: false, inventedNumberPriceOrStatistic: false, interfaceOrScreenshotWithText: false, personPresentedAsCustomerOrEndorser: false, flagOrReligiousSymbol: false }, relevance: 2, composition: 2, readableSmall: true, textOverImportantArt: false, people: { present: false, estimatedCount: 0, prominent: false, description: '' }, notes: 'none' });
 
 function ctx(): { dir: string; ai: ReturnType<typeof aiConfigFromEnv>; done: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'pipe-'));
@@ -280,7 +284,7 @@ test('typography that repeats is sent back with the reason, but never drops a po
   let call = 0;
   const seen: string[][] = [];
   const result = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts: posts.slice(0, 2), history: [], peopleCap: 1 }, {
-    invent: async (ps, _keep, problems) => { call += 1; seen.push([...problems]); return ps.map((p, i) => concept(p.id, [DOCS, LINE][i] as string, false, call === 1 ? (i === 0 ? SAME : SAME_AGAIN) : TYPE_C)); },
+    invent: async (ps, _keep, problems) => { call += 1; seen.push([...problems]); return ps.map((p) => concept(p.id, p.id === 'p1' ? DOCS : LINE, false, call === 1 ? (p.id === 'p1' ? SAME : SAME_AGAIN) : TYPE_C)); },
   });
   assert.equal(call, 2);
   assert.match(seen[1]?.[0] ?? '', /typography for p2 is too much like the typography for p1/);
@@ -288,7 +292,7 @@ test('typography that repeats is sent back with the reason, but never drops a po
   assert.equal(result.concepts[1]?.typography, TYPE_C);
   // If it never changes, the post is kept: a repeated headline treatment is a weaker fault than a repeated picture.
   const stubborn = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts: posts.slice(0, 2), history: [], peopleCap: 1 }, {
-    invent: async (ps) => ps.map((p, i) => concept(p.id, [DOCS, LINE][i] as string, false, i === 0 ? SAME : SAME_AGAIN)),
+    invent: async (ps) => ps.map((p) => concept(p.id, p.id === 'p1' ? DOCS : LINE, false, p.id === 'p1' ? SAME : SAME_AGAIN)),
     maxReplans: 1,
   });
   assert.equal(stubborn.concepts.length, 2);

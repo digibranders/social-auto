@@ -31,6 +31,7 @@ import { aiConfigFromEnv } from './ai.ts';
 import { appendUsageLog } from './usage.ts';
 import { CrawlError } from './crawl.ts';
 import { makeCreatives } from './ai-creative-pipeline.ts';
+import { modelReviewDeps, ordinaryChecks } from './copy-review.ts';
 import { registerForReview } from './review-register.ts';
 import { displayFact } from './evidence.ts';
 import { checkBrandIdentity, checkEvidence, checkLanguage, PreflightError } from './site-preflight.ts';
@@ -251,9 +252,16 @@ async function main(): Promise<void> {
       recentHeadlines: history.weeks.flatMap((w) => w.headlines ?? []),
       recentConcepts: history.weeks.flatMap((w) => w.concepts ?? []),
       ...(verdicts ? { copyJudge: { judge: modelJudge(ai), cache: verdicts } } : {}),
+      // The fully AI route writes more candidates than posts and reviews each with structured verdicts before any picture is bought.
+      ...(route === 'ai' && reviewed ? { candidates: { review: modelReviewDeps(ai, ordinaryChecks(brand.name)) } } : {}),
       ...(reviewed ? { evidence: { facts: reviewed.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []), ...(worthScores ? { worth: Object.fromEntries(Object.entries(worthScores).map(([id, sc]) => [id, effectiveTotal(sc)])) } : {}) } } : {}),
     });
     await verdicts?.save();
+    if (plan.candidateReport) {
+      await writeFileAtomic(join(brandDir, `candidates-${planFile}`), `${JSON.stringify(plan.candidateReport, null, 2)}\n`);
+      // Candidates that passed review but were not chosen wait as drafts; before any is used it must pass every check again.
+      if (plan.reserveDrafts && plan.reserveDrafts.length > 0) await writeFileAtomic(join(brandDir, 'reserve-drafts.json'), `${JSON.stringify({ savedAt: new Date().toISOString(), plan: planFile, note: 'drafts only: re-run freshness, claim, cooldown and novelty checks before any is used', drafts: plan.reserveDrafts }, null, 2)}\n`);
+    }
     console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}${verdicts ? (plan.evidenceCoverage === 'facts' ? ', copy checked against its facts by a model' : ' (the semantic check needs evidence facts and was not used)') : ''}.`);
     if (plan.insufficientConcepts) {
       const { requested, produced, reasons } = plan.insufficientConcepts;
