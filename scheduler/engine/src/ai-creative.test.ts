@@ -321,3 +321,23 @@ test('the first prompt asks for a sign-off that survives a phone screen, so the 
   assert.match(prompt, /WEB ADDRESS: "oyechats\.com", set at the same size and weight as the brand name/);
   assert.doesNotMatch(prompt, /small and secondary|small but clearly legible/);
 });
+
+test('without a concept the prompt asks for a picture that is specific to the fact and names the stock scenes to avoid, without offering a menu of styles', () => {
+  const prompt = buildCreativePrompt(manifest, { fact: 'OyeChats answers from your own documents.', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' } });
+  assert.match(prompt, /THE VISUAL IDEA/);
+  assert.match(prompt, /visible, specific relationship to this fact/);
+  assert.match(prompt, /people sitting at laptops, floating browser or app windows, targets, megaphones, growth arrows/);
+  assert.match(prompt, /only when the fact is actually about one/);
+  assert.match(prompt, /do not imply an outcome the fact does not state/);
+  assert.match(prompt, /Invent the treatment fresh/);
+  // The text contract and the legibility rule are untouched, and no list of allowed visual types is given.
+  assert.match(prompt, /TEXT CONTRACT/);
+  assert.match(prompt, /LEGIBILITY applies to every treatment/);
+  assert.doesNotMatch(prompt, /choose (one )?(of|from) the following|photographic still life|isometric|collage/i);
+});
+
+test("with a concept the director's picture is followed and the generic-visual instruction is not added on top of it", () => {
+  const prompt = buildCreativePrompt(manifest, { fact: 'f', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' }, concept: { concept: 'A clay key passes across a canyon.', factToPicture: 'It shows access.' } });
+  assert.match(prompt, /THE PICTURE \(follow it/);
+  assert.doesNotMatch(prompt, /THE VISUAL IDEA/);
+});
