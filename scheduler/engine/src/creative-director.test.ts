@@ -280,7 +280,7 @@ test('typography that repeats is sent back with the reason, but never drops a po
   let call = 0;
   const seen: string[][] = [];
   const result = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts: posts.slice(0, 2), history: [], peopleCap: 1 }, {
-    invent: async (ps, _keep, problems) => { call += 1; seen.push([...problems]); return ps.map((p, i) => concept(p.id, [DOCS, LINE][i] as string, false, call === 1 ? (i === 0 ? SAME : SAME_AGAIN) : TYPE_C)); },
+    invent: async (ps, _keep, problems) => { call += 1; seen.push([...problems]); return ps.map((p) => concept(p.id, p.id === 'p1' ? DOCS : LINE, false, call === 1 ? (p.id === 'p1' ? SAME : SAME_AGAIN) : TYPE_C)); },
   });
   assert.equal(call, 2);
   assert.match(seen[1]?.[0] ?? '', /typography for p2 is too much like the typography for p1/);
@@ -288,7 +288,7 @@ test('typography that repeats is sent back with the reason, but never drops a po
   assert.equal(result.concepts[1]?.typography, TYPE_C);
   // If it never changes, the post is kept: a repeated headline treatment is a weaker fault than a repeated picture.
   const stubborn = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts: posts.slice(0, 2), history: [], peopleCap: 1 }, {
-    invent: async (ps) => ps.map((p, i) => concept(p.id, [DOCS, LINE][i] as string, false, i === 0 ? SAME : SAME_AGAIN)),
+    invent: async (ps) => ps.map((p) => concept(p.id, p.id === 'p1' ? DOCS : LINE, false, p.id === 'p1' ? SAME : SAME_AGAIN)),
     maxReplans: 1,
   });
   assert.equal(stubborn.concepts.length, 2);
