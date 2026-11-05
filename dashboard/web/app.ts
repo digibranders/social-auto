@@ -35,6 +35,7 @@ import { googleLocationPicker } from './google-pick.ts';
 import { channelPicker, clientPage, clientsPage, type ClientsContext } from './clients-page.ts';
 import { summarizeClients, type ClientSummary } from './clients.ts';
 import { helpPage } from './help-page.ts';
+import { reviewPage, resetReview } from './review-page.ts';
 import { addClientForm } from './add-client.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { makeDraggable, type DragRules } from './drag.ts';
@@ -839,11 +840,11 @@ function go(route: Route): void {
 }
 
 /** The page a route belongs to, for the menu: a client's folder counts as Clients. */
-const sectionOf = (route: Route): 'clients' | 'calendar' | 'help' => (route.page === 'client' ? 'clients' : route.page);
+const sectionOf = (route: Route): 'clients' | 'calendar' | 'review' | 'help' => (route.page === 'client' ? 'clients' : route.page);
 
 function rail(): HTMLElement {
   const section = sectionOf(state.route);
-  const item = (name: 'clients' | 'calendar' | 'help', iconName: string, label: string): HTMLElement => {
+  const item = (name: 'clients' | 'calendar' | 'review' | 'help', iconName: string, label: string): HTMLElement => {
     const route: Route = name === 'help' ? { page: 'help', channel: 'facebook' } : { page: name };
     return button([icon(iconName), h('span', {}, label)], `rail-item rail-button${section === name ? ' rail-on' : ''}`, () => go(route), label);
   };
@@ -853,16 +854,17 @@ function rail(): HTMLElement {
     h('div', { class: 'logo', 'aria-hidden': 'true' }, h('img', { src: '/logo.svg', alt: '', width: '44', height: '44' })),
     item('clients', 'folder', 'Clients'),
     item('calendar', 'calendar', 'Calendar'),
+    item('review', 'review', 'Review'),
     h('span', { class: 'rail-spacer' }),
     item('help', 'help', 'Help'),
     button([icon('logout'), h('span', {}, 'Sign out')], 'rail-item rail-button', () => void signOut(), 'Sign out'),
   );
 }
 
-const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', help: 'Help · Connect a channel' } as const;
+const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', review: 'Review posters', help: 'Help · Connect a channel' } as const;
 
 function clientPicker(): HTMLElement {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] }, Date.now());
+  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now());
   const select = dropdown([{ value: '', label: 'All clients' }, ...clients.map((c) => clientOption(c.brand, c.label))], state.calendarClient ?? '', 'Client');
   select.addEventListener('change', () => {
     state.calendarClient = select.value || null;
@@ -893,7 +895,7 @@ function panelHeader(): HTMLElement {
 
 /** Pauses or resumes everything, one client or one channel, then reloads the feed so the page shows it at once. */
 async function setPause(scope: 'all' | 'brand' | 'channel', id: string | null, paused: boolean): Promise<void> {
-  const label = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] }, Date.now()).find((c) => c.brand === id)?.label;
+  const label = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now()).find((c) => c.brand === id)?.label;
   const what = scope === 'all' ? 'everything' : scope === 'brand' ? (label ?? brandLabel(id ?? '')) : 'this channel';
   if (paused && scope === 'all' && !confirm('Pause everything? Nothing will be sent for any client until you resume. Posts whose time comes in the meantime are skipped, not sent late.')) return;
   try {
@@ -945,7 +947,7 @@ async function disconnect(channel: ChannelHealth): Promise<void> {
 
 /** Opens the Add channel window; with no client chosen it asks which one the channel is for. */
 function openPicker(brand: string | null): void {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
+  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
   const connected: Record<string, Platform[]> = {};
   for (const channel of state.data?.channels ?? []) for (const b of channel.brands) (connected[b] ??= []).push(channel.platform);
   picker.replaceChildren(channelPicker(brand, clients, connected, clientsContext, () => picker.close()));
@@ -980,16 +982,16 @@ async function submitNewPost(post: { brand: string; day: string; time: string; c
 
 /** Opens the New post window; `channel` is ticked in advance. */
 function openNewPost(brand: string | null, channel: string | null): void {
-  const data = state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [] };
+  const data = state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] };
   const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
   picker.replaceChildren(newPostForm(brand, channel, { clients, channels: data.channels, submit: submitNewPost, close: () => picker.close() }));
   picker.showModal();
 }
 
 /** Adds a client, then opens its page so the channels can be connected. */
-async function submitNewClient(name: string, website: string): Promise<string | null> {
+async function submitNewClient(name: string, website: string, plan: Record<string, unknown> | null): Promise<string | null> {
   try {
-    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}) }) });
+    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}), ...(website && plan ? { plan } : {}) }) });
     if (response.status === 401) {
       location.replace('/login');
       return 'You were signed out.';
@@ -997,7 +999,7 @@ async function submitNewClient(name: string, website: string): Promise<string | 
     const answer = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     if (!response.ok || typeof answer?.['brand'] !== 'string') return messageOf(answer) ?? `The server answered ${response.status}`;
     picker.close();
-    state.notice = { kind: 'ok', text: 'Client added. Connect their channels next.' };
+    state.notice = { kind: 'ok', text: plan ? 'Client added. The posters are being made from the website; they will appear in Review for you to approve. Connect their channels next.' : 'Client added. Connect their channels next.' };
     await load();
     go({ page: 'client', brand: answer['brand'], tab: 'channels' });
     return null;
@@ -1067,6 +1069,7 @@ const clientsContext: ClientsContext = {
     go({ page: 'calendar' });
   },
   postCard,
+  postThumb: thumbnail,
   addChannel: openPicker,
   newPost: openNewPost,
   addClient: openAddClient,
@@ -1083,6 +1086,7 @@ function screen(): HTMLElement {
   if (route.page === 'help') {
     return helpPage(route.channel, (channel) => go({ page: 'help', channel }), render);
   }
+  if (route.page === 'review') return reviewPage(render);
   if (route.page === 'clients' || route.page === 'client') {
     if (!data) return h('p', { class: 'empty' }, state.error ? 'Could not load the clients.' : 'Loading…');
     const clients = summarizeClients(data, Date.now());
@@ -1121,6 +1125,7 @@ function messageOf(body: unknown): string | null {
 
 async function load(): Promise<void> {
   if (state.loading) return;
+  if (state.route.page === 'review') resetReview();
   state.loading = true;
   render();
   try {

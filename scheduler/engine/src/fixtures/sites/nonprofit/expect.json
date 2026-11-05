@@ -1,0 +1,1 @@
+{ "base": "https://clearwater.example", "mustSelect": ["/programs", "/about", "/donate"], "mustReject": ["/privacy", "/login"], "maxSelected": 7 }

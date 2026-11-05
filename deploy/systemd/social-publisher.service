@@ -11,6 +11,7 @@ EnvironmentFile=/etc/social-auto/publisher.env
 Environment=PORT=4021
 Environment=SCHEDULE_FILE=/home/social/social-auto/publisher/data/schedule.ts
 Environment=LOCAL_STORE_DIR=/var/lib/social-auto
+Environment=USAGE_LOG_FILE=/var/lib/social-auto/usage.jsonl
 ExecStart=/home/social/.local/node/bin/node --import ./dev/resolver.ts server/main.ts
 Restart=always
 RestartSec=3

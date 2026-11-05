@@ -1,0 +1,7 @@
+{
+  "base": "https://www.digibranders.com",
+  "mustSelect": ["/services", "/about"],
+  "atLeast": [{ "from": ["/services/website-development", "/services/ui-ux", "/services/seo", "/services/paid-ads", "/services/software-development", "/services/ar-vr-solutions", "/services/linkedin-account-management"], "count": 3 }],
+  "mustReject": ["/careers"],
+  "maxSelected": 7
+}

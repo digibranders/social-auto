@@ -1,0 +1,1 @@
+{ "base": "https://riverside.example", "mustSelect": ["/treatments", "/doctors", "/about", "/insurance"], "mustReject": ["/patient-portal/login", "/privacy", "/careers", "/sitemap"], "maxSelected": 7 }

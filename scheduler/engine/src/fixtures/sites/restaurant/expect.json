@@ -1,0 +1,1 @@
+{ "base": "https://mapletable.example", "mustSelect": ["/menu", "/reservations", "/about"], "mustReject": ["/privacy", "/terms", "/careers"], "maxSelected": 7 }

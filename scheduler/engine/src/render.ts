@@ -3,6 +3,11 @@
  *
  *   node src/render.ts --brand brands/brandbasket --plan week-01.json [--env <keys file>] [--model <id>]
  */
+import { loadArtSettings } from './art-pipeline.ts';
+import { sceneSizeFor } from './art-prompt.ts';
+import { familyById, layoutRegistry } from './layout-registry.ts';
+import { DEFAULT_FACT_MAX_AGE_DAYS } from './evidence-pipeline.ts';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,9 +15,18 @@ import { basename, extname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs, promisify } from 'node:util';
 import { composeCaption, escapeHtml, parseBrand, parseWeekPlan, readJson, type PlannedPost } from './content.ts';
+import { renderCreativePostHtml } from './creative.ts';
 import { CANVAS_SIZE, renderPostHtml } from './layout.ts';
 import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
-import { generateImage, resolveImageModel, seedFromId } from './pollinations.ts';
+import { measureLogoTone } from './logo-tone.ts';
+import { aiConfigFromEnv, generateScene, type AiConfig, type ImageBudget } from './ai.ts';
+import { seedFromId } from './pollinations.ts';
+import { loadFontManifest, resolveFont, type FontManifest } from './fonts.ts';
+import { renderPoster, type RenderOutcome } from './render-poster.ts';
+import type { PosterBrand } from './compose.ts';
+import type { RenderCandidate } from './art-resolve.ts';
+import type { ArtRecord } from './art-options.ts';
+import type { Brand } from './content.ts';
 
 const run = promisify(execFile);
 const JPEG_QUALITY = 90;
@@ -73,48 +87,180 @@ pre{white-space:pre-wrap;font:14px/1.45 system-ui,sans-serif;margin:0}
 export interface RenderOptions {
   brandDir: string;
   planFile: string;
-  pollinationsKey: string;
-  imageModel?: string;
+  ai: AiConfig;
   log?: (message: string) => void;
+  /** Directory of verified local fonts (with manifest.json); without it posters use system fonts and say so. Defaults to FONTS_DIR. */
+  fontsDir?: string;
+  /** What to do with an art-directed post that cannot be rendered: "fail" (default) or, only when explicitly allowed, "legacy" to use the older renderer. */
+  artFailure?: 'fail' | 'legacy';
+}
+
+/** What the art-directed poster needs from a brand profile. */
+export function posterBrand(brand: Brand, logoHtml: string | undefined, logoTone: PosterBrand['logoTone'], postCta?: Brand['cta'], options: { showIdentityLine?: boolean } = {}): PosterBrand {
+  const cta = postCta ?? brand.cta;
+  const identity = options.showIdentityLine === true && brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
+  const host = brand.handleUrl?.trim();
+  return {
+    name: brand.name,
+    colors: brand.colors,
+    ...(identity ? { identityLine: identity } : {}),
+    ...(cta ? { cta: { label: cta.label, host: host || cta.text } } : {}),
+    ...(logoHtml ? { logoHtml } : {}),
+    ...(logoTone ? { logoTone } : {}),
+  };
+}
+
+/** An offer read longer ago than a commercial fact may be current for is not shown. */
+export function offerIsStale(offer: { capturedAt: string }, now: Date = new Date(), maxAgeDays: number = DEFAULT_FACT_MAX_AGE_DAYS): boolean {
+  const age = (now.getTime() - Date.parse(offer.capturedAt)) / 86_400_000;
+  return !Number.isFinite(age) || age > maxAgeDays;
+}
+
+export interface PostRenderRecord {
+  postId: string;
+  status: RenderOutcome['status'];
+  optionId?: string;
+  /** The art record of the candidate that rendered: what actually happened, not what was asked for. */
+  record?: ArtRecord;
+  /** Set when an art post that failed was rendered by the older renderer because that was explicitly allowed. */
+  fallback?: 'legacy';
+  solved?: Record<string, number>;
+  warnings: RenderOutcome['warnings'];
+  attempts: RenderOutcome['attempts'];
+  chromeVersion: string;
+  failure?: string;
+}
+
+/** Everything an art-directed poster needs from the brand and the run, prepared once so a repair can render one post again. */
+export interface ArtRenderContext {
+  brandDir: string;
+  brand: Brand;
+  logoHtml: string;
+  logoTone: PosterBrand['logoTone'];
+  font: ReturnType<typeof resolveFont>;
+  outDir: string;
+  budget: ImageBudget;
+  ai: AiConfig;
+  log: (message: string) => void;
+  /** The tenant's choice to show the brand description line on its posters (off by default). */
+  showIdentityLine: boolean;
+}
+
+export async function createArtRenderContext(options: Pick<RenderOptions, 'brandDir' | 'planFile' | 'ai' | 'log' | 'fontsDir'>): Promise<ArtRenderContext> {
+  const brand = parseBrand(await readJson(join(options.brandDir, 'brand.json')), 'brand.json');
+  const outDir = resolve('out', basename(options.brandDir), basename(options.planFile, '.json'));
+  await mkdir(outDir, { recursive: true });
+  const logoHtml = await logoMarkup(join(options.brandDir, brand.logo));
+  const logoTone = await measureLogoTone(join(options.brandDir, brand.logo));
+  const fontsDir = options.fontsDir ?? process.env['FONTS_DIR'];
+  const manifest: FontManifest | undefined = fontsDir ? await loadFontManifest(fontsDir) : undefined;
+  return { brandDir: options.brandDir, brand, logoHtml, logoTone, font: resolveFont(brand.font, manifest), outDir, budget: { openaiImages: 0 }, ai: options.ai, log: options.log ?? console.log, showIdentityLine: (await loadArtSettings(options.brandDir)).showIdentityLine };
+}
+
+/** Where a picture made for a prompt is kept, so the same prompt never buys a second picture. */
+export const scenePathFor = (outDir: string, postId: string, imagePrompt: string): string =>
+  join(outDir, `${postId}-${createHash('sha256').update(imagePrompt).digest('hex').slice(0, 12)}-bg.jpg`);
+
+/** A change to how one post is drawn again after review: what to leave out, and which candidates to try. */
+export interface ArtRenderOverride {
+  /** Draws the post without its subline. */
+  withoutSubline?: boolean;
+  candidates?: readonly RenderCandidate[];
+  /** Never makes a picture: only one that already exists on disk may be used. */
+  cachedPicturesOnly?: boolean;
+  /** The file name (without extension) to write; defaults to the post id. */
+  outName?: string;
+}
+
+/** Renders one art-directed post into <outName>.jpg and returns what happened. Pictures are made at most once per prompt. */
+export async function renderArtPost(ctx: ArtRenderContext, post: PlannedPost, override: ArtRenderOverride = {}): Promise<PostRenderRecord> {
+  if (!post.art) return { postId: post.id, status: 'render_failed', warnings: [], attempts: [], chromeVersion: '', failure: `no art direction (${(post.artFailure?.reasons ?? ['none recorded']).join('; ')})` };
+  const { art } = post;
+  const name = override.outName ?? post.id;
+  const makePicture = async (candidate: RenderCandidate): Promise<string | undefined> => {
+    if (!candidate.imagePrompt) return undefined;
+    const scenePath = scenePathFor(ctx.outDir, post.id, candidate.imagePrompt);
+    if (!(await exists(scenePath))) {
+      if (override.cachedPicturesOnly) return undefined;
+      ctx.log(`${post.id}: generating AI scene for ${candidate.optionId}…`);
+      ctx.ai.usage.post = `${basename(ctx.brandDir)}-${post.id}`;
+      const panel = familyById(layoutRegistry, candidate.brief.layout)?.zones[candidate.brief.textZone]?.imageSlots.find((slot) => slot.id === candidate.brief.picture.role)?.rect;
+      const size = sceneSizeFor(panel, SCENE_SIZE);
+      const maker = await generateScene(ctx.ai, { prompt: candidate.imagePrompt, outPath: scenePath, width: size.width, height: size.height, seed: seedFromId(post.id) }, ctx.budget).finally(() => {
+        ctx.ai.usage.post = null;
+      });
+      ctx.log(`${post.id}: scene made by ${maker}`);
+    }
+    return pathToFileURL(scenePath).href;
+  };
+  const pngPath = join(ctx.outDir, `${name}.png`);
+  const subline = override.withoutSubline ? '' : post.subline;
+  const outcome = await renderPoster({
+    copy: { headline: post.headline, subline, ...(post.listItems?.length ? { listItems: post.listItems } : {}), ...(art.figure ? { figure: art.figure } : {}), ...(art.quote ? { quote: art.quote } : {}), ...(art.offer && !offerIsStale(art.offer) ? { offer: art.offer } : {}) },
+    brand: posterBrand(ctx.brand, ctx.logoHtml, ctx.logoTone, post.cta, { showIdentityLine: ctx.showIdentityLine }),
+    font: ctx.font,
+    candidates: override.candidates ?? art.candidates,
+    makePicture,
+    outPng: pngPath,
+  });
+  const record: PostRenderRecord = {
+    postId: post.id, status: outcome.status, ...(outcome.optionId ? { optionId: outcome.optionId } : {}), ...(outcome.record ? { record: outcome.record } : {}),
+    ...(outcome.solved ? { solved: outcome.solved } : {}), warnings: outcome.warnings, attempts: outcome.attempts, chromeVersion: outcome.chromeVersion, ...(outcome.failure ? { failure: outcome.failure } : {}),
+  };
+  if (outcome.status !== 'render_failed') {
+    await toJpeg(pngPath, join(ctx.outDir, `${name}.jpg`));
+    await rm(pngPath);
+    ctx.log(`${name}: rendered (${outcome.status}${outcome.warnings.length ? `, ${outcome.warnings.map((w) => w.code).join(', ')}` : ''})`);
+  }
+  return record;
 }
 
 /** Renders every post of a plan; AI scenes are cached per post id. Returns the output folder. */
 export async function renderPlan(options: RenderOptions): Promise<string> {
   const log = options.log ?? console.log;
-  const brand = parseBrand(await readJson(join(options.brandDir, 'brand.json')), 'brand.json');
   const plan = parseWeekPlan(await readJson(join(options.brandDir, options.planFile)), options.planFile);
-  const outDir = resolve('out', basename(options.brandDir), basename(options.planFile, '.json'));
-  await mkdir(outDir, { recursive: true });
-  const logoHtml = await logoMarkup(join(options.brandDir, brand.logo));
+  const ctx = await createArtRenderContext(options);
+  const { brand, logoHtml, logoTone, outDir } = ctx;
+  const budget = ctx.budget;
+  const records: PostRenderRecord[] = [];
 
   for (const [index, post] of plan.posts.entries()) {
+    if (plan.renderMode === 'art_v1' || post.art) {
+      const record = await renderArtPost(ctx, post);
+      records.push(record);
+      if (record.status !== 'render_failed') continue;
+      const failure = record.failure ?? 'render failed';
+      log(`${post.id}: art-directed render failed (${failure})`);
+      if (options.artFailure !== 'legacy') continue;
+      record.fallback = 'legacy';
+      log(`${post.id}: using the older renderer, which was explicitly allowed for this brand`);
+    }
     let visualUrl: string | undefined;
     if (post.mode === 'ai' && post.imagePrompt) {
       const scenePath = join(outDir, `${post.id}-bg.jpg`);
       if (!(await exists(scenePath))) {
         log(`${post.id}: generating AI scene…`);
-        await generateImage({
-          apiKey: options.pollinationsKey,
-          prompt: post.imagePrompt,
-          outPath: scenePath,
-          width: SCENE_SIZE,
-          height: SCENE_SIZE,
-          seed: seedFromId(post.id),
-          model: resolveImageModel(options.imageModel, process.env),
+        options.ai.usage.post = `${basename(options.brandDir)}-${post.id}`;
+        const maker = await generateScene(options.ai, { prompt: post.imagePrompt, outPath: scenePath, width: SCENE_SIZE, height: SCENE_SIZE, seed: seedFromId(post.id) }, budget).finally(() => {
+          options.ai.usage.post = null;
         });
+        log(`${post.id}: scene made by ${maker}`);
       }
       visualUrl = pathToFileURL(scenePath).href;
     }
     const htmlPath = join(outDir, `${post.id}.html`);
     const pngPath = join(outDir, `${post.id}.png`);
-    await writeFile(htmlPath, renderPostHtml({ brand, post, painPointNumber: index + 1, logoHtml, visualUrl }));
+    await writeFile(htmlPath, (post.format ? renderCreativePostHtml : renderPostHtml)({ brand, post, painPointNumber: index + 1, logoHtml, visualUrl, logoTone }));
     await screenshot(htmlPath, pngPath);
     await toJpeg(pngPath, join(outDir, `${post.id}.jpg`));
     await rm(pngPath);
     log(`${post.id}: rendered`);
   }
 
-  await writeFile(join(outDir, 'preview.html'), previewHtml(brand.name, plan.posts));
+  await writeFile(join(outDir, 'preview.html'), previewHtml(brand.name, plan.posts.filter((p) => !records.some((r) => r.postId === p.id && r.status === 'render_failed' && r.fallback !== 'legacy'))));
+  if (records.length > 0) await writeFile(join(outDir, 'render-report.json'), `${JSON.stringify(records, null, 2)}\n`);
+  const failed = records.filter((r) => r.status === 'render_failed' && r.fallback !== 'legacy');
+  if (failed.length > 0) throw new Error(`${failed.length} poster(s) could not be rendered: ${failed.map((r) => `${r.postId} (${r.failure ?? 'failed'})`).join('; ')}`);
   return outDir;
 }
 
@@ -128,18 +274,13 @@ async function main(): Promise<void> {
     },
   });
   if (!values.brand || !values.plan) {
-    throw new Error('Usage: --brand <dir> --plan <file.json> [--env <path>] [--model <pollinations model>]');
+    throw new Error('Usage: --brand <dir> --plan <file.json> [--env <path>] [--model <Pollinations picture model, used only for the backup>]');
   }
   const envPath = envFilePath(values.env, process.env);
   loadEnvIfPresent(envPath);
-  const key = process.env['POLLINATIONS_API_KEY'];
-  if (!key) throw new Error(`POLLINATIONS_API_KEY is not set (looked in the environment and in ${envPath})`);
-  const outDir = await renderPlan({
-    brandDir: resolve(values.brand),
-    planFile: values.plan,
-    pollinationsKey: key,
-    imageModel: values.model,
-  });
+  const ai = aiConfigFromEnv(process.env);
+  if (values.model) ai.pollinationsImageModel = values.model;
+  const outDir = await renderPlan({ brandDir: resolve(values.brand), planFile: values.plan, ai });
   console.log(`Done: ${outDir}`);
 }
 

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { mockStatus } from './mock-status.ts';
 
 const PORT = Number(process.env['PORT'] ?? 4010);
-const FEED_PORT = 4011;
+const FEED_PORT = Number(process.env['FEED_PORT'] ?? 4011);
 const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
 const POSTERS_DIR = fileURLToPath(new URL('../../publisher/public', import.meta.url));
 const PASSWORD = 'dev-password';

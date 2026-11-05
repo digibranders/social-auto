@@ -1,0 +1,1 @@
+{ "base": "https://flowdesk.example", "mustSelect": ["/product", "/pricing", "/about"], "mustReject": ["/privacy", "/terms", "/login", "/signup", "/careers", "/blog/tag/updates"], "maxSelected": 7 }

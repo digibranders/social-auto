@@ -1,9 +1,17 @@
 /** Turns a website into brands/<slug>/brand.json plus a downloaded logo. */
+import { buildSiteFacts, writeFacts, type BuildDeps } from './evidence-pipeline.ts';
+import { unsourcedClaim, verifyClaims, type ClaimBatch, type ClaimInput, type VerifiedClaim } from './claims.ts';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { parseBrand, type Brand } from './content.ts';
+import type { AiConfig } from './ai.ts';
+import { createHash } from 'node:crypto';
+import { chooseCallToAction } from './cta.ts';
+import { chooseIdentity, metadataSources, type IdentityCandidate } from './identity.ts';
+import { escapeHtml, parseBrand, type Brand, type BrandColors, type LogoSource } from './content.ts';
 import { crawlSite, type SiteSnapshot } from './crawl.ts';
 import { chatJson } from './llm.ts';
+import { checkLanguage, PreflightError } from './site-preflight.ts';
+import { safeFetchBytes, type FetchedBytes } from './safe-fetch.ts';
 
 const LOGO_EXTENSIONS = new Set(['.svg', '.png', '.jpg', '.jpeg', '.webp']);
 const DEFAULT_FONT = 'Inter';
@@ -22,23 +30,83 @@ export function slugFromSite(site: string): string {
   return label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 }
 
-async function downloadLogo(candidates: string[], assetsDir: string): Promise<string> {
+/** The first of these addresses that downloads as a picture; null when none does. */
+export async function downloadImage(candidates: string[], fetchBytes: (url: string) => Promise<FetchedBytes>, tried: LogoSource['tried'] = []): Promise<{ url: string; bytes: Buffer; type: string } | null> {
   for (const url of candidates) {
     try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-      const type = response.headers.get('content-type') ?? '';
-      if (!response.ok || !type.startsWith('image/')) continue;
-      const fromType = type.includes('svg') ? '.svg' : type.includes('png') ? '.png' : type.includes('webp') ? '.webp' : '.jpg';
-      const fromPath = extname(new URL(url).pathname).toLowerCase();
-      const ext = LOGO_EXTENSIONS.has(fromPath) ? fromPath : fromType;
-      const file = `logo${ext}`;
-      await writeFile(join(assetsDir, file), Buffer.from(await response.arrayBuffer()));
-      return `assets/${file}`;
-    } catch {
-      continue;
+      const { bytes, type } = await fetchBytes(url);
+      if (!type.startsWith('image/')) tried.push({ url, outcome: `failed: not an image (${type || 'unknown type'})` });
+      else if (bytes.length === 0) tried.push({ url, outcome: 'failed: empty file' });
+      else {
+        tried.push({ url, outcome: 'used' });
+        return { url, bytes, type };
+      }
+    } catch (error) {
+      tried.push({ url, outcome: `failed: ${error instanceof Error ? error.message : String(error)}` });
     }
   }
-  throw new AnalyzeError('No downloadable logo found on the website');
+  return null;
+}
+
+/** Saves the best logo that downloads; null when none does. */
+async function downloadLogo(candidates: string[], assetsDir: string, fetchBytes: (url: string) => Promise<FetchedBytes>, tried: LogoSource['tried']): Promise<{ path: string; image: { url: string; bytes: Buffer; type: string } } | null> {
+  const image = await downloadImage(candidates, fetchBytes, tried);
+  if (!image) return null;
+  const fromType = image.type.includes('svg') ? '.svg' : image.type.includes('png') ? '.png' : image.type.includes('webp') ? '.webp' : '.jpg';
+  const fromPath = extname(new URL(image.url).pathname).toLowerCase();
+  const ext = LOGO_EXTENSIONS.has(fromPath) ? fromPath : fromType;
+  const file = `logo${ext}`;
+  await writeFile(join(assetsDir, file), image.bytes);
+  return { path: `assets/${file}`, image };
+}
+
+const MAX_LOGO_NAME_CHARS = 24;
+
+/** The site's icon with the brand's name beside it, as one self-contained logo, for sites with an icon but no logo picture. */
+export function iconLogoSvg(name: string, icon: { bytes: Buffer; type: string }, colors: Pick<BrandColors, 'ink'>): string {
+  const shown = name.trim().slice(0, MAX_LOGO_NAME_CHARS);
+  const label = escapeHtml(shown);
+  const width = 96 + Math.max(shown.length, 4) * 34;
+  const mime = icon.type.split(';')[0]?.trim() || 'image/png';
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} 96" role="img" aria-label="${label}"><image x="0" y="8" width="80" height="80" preserveAspectRatio="xMidYMid meet" href="data:${mime};base64,${icon.bytes.toString('base64')}"/><text x="96" y="66" font-family="Inter, Arial, Helvetica, sans-serif" font-size="52" font-weight="800" fill="${colors.ink}">${label}</text></svg>
+`;
+}
+
+/** A simple logo made of the brand's name, for sites whose own logo could not be downloaded. */
+export function textLogoSvg(name: string, colors: Pick<BrandColors, 'ink' | 'accent'>): string {
+  const shown = name.trim().slice(0, MAX_LOGO_NAME_CHARS);
+  const initial = escapeHtml(shown.charAt(0).toUpperCase() || '?');
+  const label = escapeHtml(shown);
+  const width = 96 + Math.max(shown.length, 4) * 34;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} 96" role="img" aria-label="${label}"><rect width="80" height="80" y="8" rx="20" fill="${colors.accent}"/><text x="40" y="66" text-anchor="middle" font-family="Inter, Arial, Helvetica, sans-serif" font-size="54" font-weight="800" fill="#fff">${initial}</text><text x="96" y="66" font-family="Inter, Arial, Helvetica, sans-serif" font-size="52" font-weight="800" fill="${colors.ink}">${label}</text></svg>
+`;
+}
+
+/** The proof points the model proposed: sourced ones with their quote, and plain text, which has no source and cannot be checked. */
+function proofProposals(value: unknown): { inputs: ClaimInput[]; unsourced: string[] } {
+  const inputs: ClaimInput[] = [];
+  const unsourced: string[] = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    if (typeof item === 'string' && item.trim()) unsourced.push(item.trim());
+    else if (typeof item === 'object' && item !== null) {
+      const { claim, sourceUrl, quote } = item as Record<string, unknown>;
+      if (typeof claim !== 'string' || !claim.trim()) continue;
+      if (typeof sourceUrl === 'string' && typeof quote === 'string' && sourceUrl.trim() && quote.trim()) inputs.push({ text: claim.trim(), sourceUrl: sourceUrl.trim(), quote });
+      else unsourced.push(claim.trim());
+    }
+  }
+  return { inputs, unsourced };
+}
+
+/** The identity candidates the model offered: a line, the page it comes from and the exact words on that page. */
+function identityProposals(value: unknown): IdentityCandidate[] {
+  const found: IdentityCandidate[] = [];
+  for (const item of Array.isArray(value) ? value : []) {
+    if (typeof item !== 'object' || item === null) continue;
+    const { line, sourceUrl, quote } = item as Record<string, unknown>;
+    if (typeof line === 'string' && typeof sourceUrl === 'string' && typeof quote === 'string' && line.trim() && sourceUrl.trim() && quote.trim()) found.push({ line: line.trim(), sourceUrl: sourceUrl.trim(), quote });
+  }
+  return found;
 }
 
 const SYSTEM_PROMPT = `You are a brand strategist. From website content you build a factual brand profile used to write social media posts.
@@ -63,11 +131,12 @@ Return JSON with exactly these keys:
   "offer": "2-3 sentences: what they sell, to whom, key prices/terms exactly as stated",
   "audience": "who the customers are",
   "tone": "how the brand speaks, 1-2 sentences",
-  "proofPoints": ["5-8 short factual selling points taken from the site"],
-  "callToAction": "short call to action pointing to the website, ending with (link in bio)",
+  "proofPoints": [{"claim": "one short factual selling point", "sourceUrl": "the exact page address above that it comes from", "quote": "the exact words, copied unchanged, from that page that support it"}],  // 5-8 of them; only points a quote on the site supports, fewer is fine, never invent one
+  "identityCandidates": [{"line": "what this business is, in one plain sentence of at most 90 characters, using only the parts the site states (what it is, who it is for, what it does)", "sourceUrl": "the exact page address above it comes from, or metadata:title:<page address> / metadata:description:<page address> for a page's Title or Description", "quote": "the exact words, copied unchanged, that support it"}],  // up to 3 candidates; fewer is fine; never invent a category, audience or capability the site does not state
   "rules": ["3-5 content rules, e.g. no invented statistics, prices exactly as on the site, plus industry-specific cautions (medical, legal, financial)"],
   "colors": {"background": "#RRGGBB light page colour", "ink": "#RRGGBB dark text colour", "accent": "#RRGGBB main brand accent", "tile": "#RRGGBB a dark brand shade"},
   "font": "a Google Font family name for headlines, preferably one of the candidates",
+  "visualStyle": "one sentence for the people who make the pictures: the colour palette in plain words (for example deep teal, off-white, a touch of gold), the photographic mood and the kind of setting typical for this business, and what to avoid",
   "features": [
     {"icon": "monitor|gear|person|shield", "title": "2-3 words", "detail": "max 26 characters"}
   ]
@@ -78,24 +147,103 @@ Website content:
 ${pages}`;
 }
 
-export async function analyzeSite(site: string, brandsRoot: string, apiKey: string): Promise<{ dir: string; brand: Brand }> {
-  const snapshot = await crawlSite(site);
+/** What the brand reader uses to reach the outside; tests replace it. */
+export interface AnalyzeDeps {
+  crawl?: (site: string) => Promise<SiteSnapshot>;
+  fetchBytes?: (url: string) => Promise<FetchedBytes>;
+  chatFetch?: typeof fetch;
+  /** Evidence facts are built from the crawl by default; `false` skips them. */
+  facts?: false;
+  factsDeps?: BuildDeps;
+  log?: (message: string) => void;
+}
+
+/** The record of where a logo came from. */
+function sourceOf(kind: LogoSource['kind'], foundOn: string, image: { url: string; bytes: Buffer; type: string } | null, savedAs: string | null, tried: LogoSource['tried'], provenance?: LogoSource['provenance']): LogoSource {
+  return {
+    kind,
+    foundOn,
+    imageUrl: image?.url ?? null,
+    savedAs,
+    contentType: image ? (image.type.split(';')[0]?.trim() ?? image.type) : null,
+    bytes: image?.bytes.length ?? null,
+    contentHash: image ? `sha256:${createHash('sha256').update(image.bytes).digest('hex')}` : null,
+    fetchedAt: new Date().toISOString(),
+    tried: tried.map((t) => ({ ...t })),
+    ...(provenance ? { provenance } : {}),
+  };
+}
+
+export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig, deps: AnalyzeDeps = {}): Promise<{ dir: string; brand: Brand }> {
+  const snapshot = await (deps.crawl ?? crawlSite)(site);
+  // Before anything is bought or written: a site in a language the engine does not support stops here.
+  const unsupported = checkLanguage(snapshot.pages.map((p) => p.text).join('\n').slice(0, 6000), snapshot.htmlLang);
+  if (unsupported?.severity === 'stop') throw new PreflightError(unsupported);
   const dir = join(brandsRoot, slugFromSite(snapshot.origin));
   const assetsDir = join(dir, 'assets');
   await mkdir(assetsDir, { recursive: true });
-  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir);
+  const fetchBytes = deps.fetchBytes ?? ((url: string) => safeFetchBytes(url, { maxBytes: 5_000_000, accept: 'image/*,*/*' }));
+  const tried: LogoSource['tried'] = [];
+  const logo = await downloadLogo(snapshot.logoCandidates, assetsDir, fetchBytes, tried);
+  const logoPath = logo?.path ?? 'assets/logo.svg';
 
-  const brand = await chatJson({
-    apiKey,
+  const pageSources = snapshot.pages.map((p) => ({ url: p.url, text: p.text, ...(p.fetchedAt ? { fetchedAt: p.fetchedAt } : {}) }));
+  const metadata = metadataSources(snapshot.pages.map((p) => ({ url: p.url, title: p.title, description: p.description, ...(p.fetchedAt ? { fetchedAt: p.fetchedAt } : {}) })));
+  const host = snapshot.origin.replace(/^https?:\/\/(www\.)?/, '');
+  const cta = chooseCallToAction(snapshot.links ?? [], snapshot.origin, host, undefined, { language: snapshot.htmlLang ?? null });
+  const { brand, claims } = await chatJson({
+    ai,
+    ...(deps.chatFetch ? { fetchFn: deps.chatFetch } : {}),
     system: SYSTEM_PROMPT,
     user: userPrompt(snapshot),
     parse: (value) => {
-      const raw = { ...(value as Record<string, unknown>), website: snapshot.origin, logo, mark: logo };
+      const answer = value as Record<string, unknown>;
+      // Proof points are claims with a source: only those the site really makes, with the quote on a page that was read, are kept.
+      const proposed = proofProposals(answer['proofPoints']);
+      const checked = verifyClaims(proposed.inputs, pageSources, { now: new Date() });
+      const unsourced = proposed.unsourced.map((text) => unsourcedClaim(text));
+      // What the model proposed for fields that code decides is dropped; code writes those from evidence.
+      const fromModel = Object.fromEntries(Object.entries(answer).filter(([key]) => !['identityCandidates', 'identity', 'cta', 'logoSource'].includes(key)));
+      const raw = { ...fromModel, proofPoints: checked.verified.map((c) => c.text), website: snapshot.origin, logo: logoPath, mark: logoPath, callToAction: cta.text };
       const parsed = parseBrand(raw, 'brand profile');
-      return { ...parsed, font: parsed.font.trim() || DEFAULT_FONT };
+      const claims: ClaimBatch = { ...checked, rejected: [...checked.rejected, ...unsourced], all: [...checked.all, ...unsourced] };
+      // The identity is never taken on trust: a quote on a page that was read must support it, or the brand name stands alone.
+      const identity = chooseIdentity({ name: parsed.name, origin: snapshot.origin, candidates: identityProposals(answer['identityCandidates']), pages: pageSources, metadata, now: new Date() });
+      return { brand: { ...parsed, font: parsed.font.trim() || DEFAULT_FONT, identity, cta }, claims };
     },
   });
 
-  await writeFile(join(dir, 'brand.json'), `${JSON.stringify(brand, null, 2)}\n`);
-  return { dir, brand };
+  let logoSource: LogoSource = logo ? sourceOf('site-logo', snapshot.origin, logo.image, logo.path, tried, snapshot.logoEvidence?.[logo.image.url]) : sourceOf('name-only', snapshot.origin, null, null, tried);
+  if (!logo) {
+    // No logo picture: the site's own icon with the name beside it, and only without an icon the name alone, so the run goes on.
+    const icon = await downloadImage(snapshot.iconCandidates, fetchBytes, tried);
+    if (icon) {
+      const iconType = icon.type.includes('svg') ? '.svg' : icon.type.includes('png') ? '.png' : icon.type.includes('webp') ? '.webp' : icon.type.includes('icon') ? '.ico' : '.jpg';
+      await writeFile(join(assetsDir, `icon${iconType}`), icon.bytes);
+      logoSource = sourceOf('site-icon', snapshot.origin, icon, `assets/icon${iconType}`, tried);
+      await writeFile(join(assetsDir, 'logo.svg'), iconLogoSvg(brand.name, icon, brand.colors));
+    } else {
+      logoSource = sourceOf('name-only', snapshot.origin, null, null, tried);
+      await writeFile(join(assetsDir, 'logo.svg'), textLogoSvg(brand.name, brand.colors));
+    }
+  }
+  const profile: Brand = { ...brand, logoSource };
+  await writeFile(join(dir, 'brand.json'), `${JSON.stringify(profile, null, 2)}\n`);
+  // Every proof point the model proposed, with its source and the outcome of each check, so nothing in the profile is unexplained.
+  const evidence = { checkedAt: new Date().toISOString(), verified: claims.verified, uncertain: claims.uncertain, rejected: claims.rejected };
+  await writeFile(join(dir, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
+  // Which pages the profile was built from and which were left out, with scores and reasons, so a wrong choice can be seen.
+  const pages = { read: snapshot.pageDecisions.filter((d) => d.selected), skipped: snapshot.pageDecisions.filter((d) => !d.selected) };
+  await writeFile(join(dir, 'pages.json'), `${JSON.stringify(pages, null, 2)}\n`);
+  // Evidence facts: what the pages state, as exact words with their structure. A failure here never stops the profile; the brand stays on legacy coverage.
+  if (deps.facts !== false && (snapshot.sources?.length ?? 0) > 0) {
+    try {
+      const file = await buildSiteFacts(snapshot, deps.factsDeps);
+      await writeFacts(dir, file);
+      deps.log?.(`evidence facts: ${file.coverage.usable} usable, ${file.coverage.needsReview} held for review, from ${file.coverage.structured} of ${file.coverage.pages} pages read with structure${file.coverage.notes.length ? ` (${file.coverage.notes.length} note${file.coverage.notes.length === 1 ? '' : 's'} in facts.json)` : ''}`);
+    } catch (error) {
+      deps.log?.(`evidence facts were not built: ${error instanceof Error ? error.message : String(error)}; the brand stays on legacy evidence coverage`);
+    }
+  }
+  return { dir, brand: profile };
 }

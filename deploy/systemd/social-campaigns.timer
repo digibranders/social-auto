@@ -1,0 +1,10 @@
+[Unit]
+Description=Check every 30 minutes whether a client's posting plan has posters left to make
+
+[Timer]
+OnCalendar=*:0/30
+Persistent=true
+Unit=social-campaigns.service
+
+[Install]
+WantedBy=timers.target

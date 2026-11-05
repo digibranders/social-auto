@@ -35,6 +35,20 @@ export function chromeArgs(profileDir: string, pngPath: string, pageUrl: string,
   ];
 }
 
+/** Chrome's arguments for printing a page as it looks after its scripts ran (used to read sites that build themselves in the browser). */
+export function chromeDumpArgs(profileDir: string, pageUrl: string, env: Env, extra: readonly string[] = []): string[] {
+  return [
+    '--headless=new',
+    '--disable-gpu',
+    ...(env['CHROME_NO_SANDBOX'] === '1' ? ['--no-sandbox'] : []),
+    `--user-data-dir=${profileDir}`,
+    '--virtual-time-budget=8000',
+    '--dump-dom',
+    ...extra,
+    pageUrl,
+  ];
+}
+
 /** macOS has sips; elsewhere ImageMagick's `convert` does the same job. */
 export function jpegCommand(platform: NodeJS.Platform, pngPath: string, jpgPath: string, quality: number): { file: string; args: string[] } {
   if (platform === 'darwin') {

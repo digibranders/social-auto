@@ -302,3 +302,22 @@ test('a waiting Google connection opens only for its client, before it ends, and
   assert.throws(() => openPending('v1.junk', 'brandbasket', KEY, T0), /not valid/);
   assert.throws(() => openPending(sealed, 'brandbasket', parseKey('22'.repeat(32)), T0), /not valid/);
 });
+
+test('a post that names platforms goes only to those platforms: a Facebook-only campaign skips Instagram, an Instagram-only one skips the Facebook Page', async () => {
+  const api = fakeApi();
+  const onlyFacebook = await run(api, { post: { ...post, channels: ['facebook'] } });
+  assert.equal(onlyFacebook.results[0]?.status, 'posted');
+  const onlyInstagram = await run(fakeApi(), { post: { ...post, channels: ['instagram'] } });
+  assert.deepEqual(onlyInstagram.results, [], 'the Page is not wanted, so nothing is sent');
+  const byId = await run(fakeApi(), { post: { ...post, channels: ['facebook:77'] } });
+  assert.equal(byId.results[0]?.status, 'posted', 'a channel id still works');
+  const everywhere = await run(fakeApi(), { post });
+  assert.equal(everywhere.results[0]?.status, 'posted', 'no channel list means every connected channel, as before');
+});
+
+test('the status of a post follows the platforms it names', () => {
+  const named = (list: string[]) => crosspostStatusFor({ id: 'p9', brand: 'brandbasket', date: '2099-10-31T10:00:00+05:30', channels: list }, channels, {}, T0);
+  assert.equal(named(['facebook']).length, 1);
+  assert.equal(named(['instagram']).length, 0);
+  assert.equal(named(['facebook:77']).length, 1);
+});

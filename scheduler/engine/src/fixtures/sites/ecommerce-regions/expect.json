@@ -1,0 +1,1 @@
+{"base": "https://orchard.example", "mustSelect": ["/phone", "/laptop", "/store"], "mustReject": ["/ae", "/ae-ar", "/am", "/jp", "/uk", "/privacy", "/legal"], "maxSelected": 7}

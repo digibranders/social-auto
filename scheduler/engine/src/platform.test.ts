@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { chromeArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
+import { chromeArgs, chromeDumpArgs, chromePath, envFilePath, jpegCommand, loadEnvIfPresent } from './platform.ts';
 
 test('chromePath uses CHROME_PATH first, then the usual place for the operating system', () => {
   assert.equal(chromePath({ CHROME_PATH: '/opt/chrome/chrome' }, 'linux'), '/opt/chrome/chrome');
@@ -49,4 +49,11 @@ test('loadEnvIfPresent loads a file, never overrides what is already set, and to
     delete process.env['PLATFORM_TEST_SET'];
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test('chromeDumpArgs prints the page after its scripts ran, and adds --no-sandbox only when asked for', () => {
+  const plain = chromeDumpArgs('/tmp/p', 'https://acme.com/', {});
+  assert.ok(plain.includes('--dump-dom') && plain.includes('--headless=new') && !plain.includes('--no-sandbox'));
+  assert.equal(plain.at(-1), 'https://acme.com/');
+  assert.ok(chromeDumpArgs('/tmp/p', 'https://acme.com/', { CHROME_NO_SANDBOX: '1' }).includes('--no-sandbox'));
 });

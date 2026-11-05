@@ -68,13 +68,45 @@ export interface Pauses {
 
 export const NO_PAUSES: Pauses = { all: false, brands: [], channels: [] };
 
+export type CostPurpose = 'picture' | 'writing' | 'profile';
+export const COST_PURPOSES: readonly CostPurpose[] = ['picture', 'writing', 'profile'];
+
+/** What the AI cost for one client and one thing, in dollars (estimated). `post` is null for reading the website. */
+export interface CostEntry {
+  brand: string;
+  post: string | null;
+  purpose: CostPurpose;
+  /** When the latest of these calls was made. */
+  at: string;
+  usd: number;
+}
+
+/** What to post, where and for how long, as a client carries it (see publisher/lib/clients.ts). */
+export interface ClientPlanData {
+  platforms: string[];
+  startDate: string;
+  durationDays: number;
+  postsPerWeek?: number;
+  weekdays?: string[];
+  time: string;
+  utcOffset: string;
+}
+
+function planData(value: unknown): ClientPlanData | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const p = value as Record<string, unknown>;
+  if (!Array.isArray(p['platforms']) || !p['platforms'].every((x) => typeof x === 'string') || typeof p['startDate'] !== 'string' || typeof p['durationDays'] !== 'number' || typeof p['time'] !== 'string' || typeof p['utcOffset'] !== 'string') return undefined;
+  return { platforms: p['platforms'] as string[], startDate: p['startDate'], durationDays: p['durationDays'], time: p['time'], utcOffset: p['utcOffset'], ...(typeof p['postsPerWeek'] === 'number' ? { postsPerWeek: p['postsPerWeek'] } : {}), ...(Array.isArray(p['weekdays']) ? { weekdays: (p['weekdays'] as unknown[]).filter((d): d is string => typeof d === 'string') } : {}) };
+}
+
 export interface StatusResponse {
   generatedAt: string;
   pauses: Pauses;
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
-  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string }>;
+  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plan?: ClientPlanData }>;
+  costs: CostEntry[];
 }
 
 export class StatusParseError extends Error {
@@ -196,12 +228,23 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}) };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(planData(entry['plan']) ? { plan: planData(entry['plan']) as ClientPlanData } : {}) };
   });
 
   const pauseRoot = root['pauses'] === undefined ? {} : record(root['pauses'], 'status.pauses');
   const names = (key: string): string[] => (Array.isArray(pauseRoot[key]) ? (pauseRoot[key] as unknown[]).filter((v): v is string => typeof v === 'string') : []);
   const pauses: Pauses = { all: pauseRoot['all'] === true, brands: names('brands'), channels: names('channels') };
 
-  return { generatedAt, pauses, channels, posts, runway };
+  
+  const costs = list(root['costs'] ?? [], 'status.costs').map((item, i): CostEntry => {
+    const where = `costs[${i}]`;
+    const entry = record(item, where);
+    const at = text(entry, 'at', where);
+    if (Number.isNaN(Date.parse(at))) throw new StatusParseError(`${where}.at is not a date`);
+    const usd = entry['usd'];
+    if (typeof usd !== 'number' || !Number.isFinite(usd) || usd < 0) throw new StatusParseError(`${where}.usd must be zero or more`);
+    return { brand: text(entry, 'brand', where), post: textOrNull(entry, 'post', where), purpose: oneOf(text(entry, 'purpose', where), COST_PURPOSES, `${where}.purpose`), at, usd };
+  });
+
+  return { generatedAt, pauses, channels, posts, runway, costs };
 }

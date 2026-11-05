@@ -24,3 +24,50 @@ test('posterFileName is a 32-character hex name that reveals nothing about the p
   assert.match(name, /^[0-9a-f]{32}\.jpg$/);
   assert.ok(!name.includes('w01'));
 });
+
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { exportToPublisher } from './export-publisher.ts';
+import { ReviewStore } from './review-store.ts';
+
+function aiBrand(platforms?: string[]): { root: string; brandDir: string; publisher: string; done: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'export-'));
+  const brandDir = join(root, 'brands', 'oyechats');
+  const publisher = join(root, 'publisher');
+  mkdirSync(brandDir, { recursive: true });
+  const post = (id: string, date: string) => ({ id, date, painPoint: 'p', mode: 'ai', headline: 'Answers from your own docs', subline: '', caption: 'Hook.\n\nFacts.', hashtags: ['#a'], imagePrompt: 'a picture' });
+  writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify({ brand: 'oyechats', timezone: '+05:30', renderMode: 'ai_v1', posts: [post('w01-d1', '2099-11-10T10:00:00+05:30'), post('w01-d2', '2099-11-12T10:00:00+05:30')] }));
+  if (platforms) writeFileSync(join(brandDir, 'campaign.json'), JSON.stringify({ campaign: 'abc', platforms }));
+  const picture = join(root, 'p.jpg');
+  writeFileSync(picture, 'approved picture');
+  const store = new ReviewStore(brandDir, 'oyechats');
+  for (const postId of ['w01-d1', 'w01-d2']) {
+    const v = store.addVersion({ postId, planFile: 'week-01.json', headline: 'Answers from your own docs', caption: `Approved caption of ${postId}`, ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], imagePath: picture, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.02 });
+    if (postId === 'w01-d1') store.approve(v.versionId, 'owner');
+  }
+  return { root, brandDir, publisher, done: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+test('an approved AI poster is exported with the platforms the owner chose, and an unapproved one is not exported at all', async () => {
+  const b = aiBrand(['instagram', 'facebook']);
+  try {
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.deepEqual(posts.map((p) => p.id), ['oyechats-w01-d1']);
+    assert.deepEqual(posts[0]?.channels, ['instagram', 'facebook']);
+    assert.equal(posts[0]?.caption, 'Approved caption of w01-d1');
+    assert.match(readFileSync(join(b.publisher, 'data', 'schedule.ts'), 'utf8'), /"channels": \[\s*"instagram",\s*"facebook"\s*\]/);
+  } finally {
+    b.done();
+  }
+});
+
+test('with no campaign the export has no channel list, so the post goes to every connected channel as before', async () => {
+  const b = aiBrand();
+  try {
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.equal(posts[0]?.channels, undefined);
+  } finally {
+    b.done();
+  }
+});

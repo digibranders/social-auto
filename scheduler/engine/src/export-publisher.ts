@@ -14,7 +14,8 @@ import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { composeCaption, parseWeekPlan, readJson } from './content.ts';
+import { composeCaption, isPublishable, parseWeekPlan, readJson } from './content.ts';
+import { ReviewStore } from './review-store.ts';
 
 const WEEK_FILE = /^week-\d+\.json$/;
 /** Posters are kept for posts from the last 20 hours onwards, so a post due today can still be published. */
@@ -27,6 +28,8 @@ export interface ExportedPost {
   caption: string;
   /** Poster path in the publisher, or null once the poster was pruned. */
   image: string | null;
+  /** The platforms the owner chose for this client's campaign ("instagram", "facebook", ...); missing means every connected channel. */
+  channels?: string[];
 }
 
 /** 128-bit content hash: stable for the same image, unguessable without it. */
@@ -63,6 +66,16 @@ async function readSchedule(path: string): Promise<ExportedPost[]> {
   }
 }
 
+/** The platforms chosen for the brand's campaign, written by the campaign runner; undefined when the brand has no campaign (it then goes to every connected channel). */
+async function campaignPlatforms(brandDir: string): Promise<string[] | undefined> {
+  try {
+    const raw = JSON.parse(await readFile(join(brandDir, 'campaign.json'), 'utf8')) as { platforms?: unknown };
+    return Array.isArray(raw.platforms) && raw.platforms.length > 0 && raw.platforms.every((p) => typeof p === 'string') ? (raw.platforms as string[]) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function exportToPublisher(brandDir: string, publisherDir: string, now = Date.now()): Promise<ExportedPost[]> {
   const brand = basename(brandDir);
   const postsDir = join(publisherDir, 'public', 'posts', brand);
@@ -71,14 +84,18 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
   await mkdir(join(publisherDir, 'data'), { recursive: true });
 
   const exported: ExportedPost[] = [];
+  const platforms = await campaignPlatforms(brandDir);
   const files = (await readdir(brandDir)).filter((f) => WEEK_FILE.test(f)).sort();
   for (const file of files) {
     const plan = parseWeekPlan(await readJson(join(brandDir, file)), file);
     const outDir = resolve('out', brand, basename(file, '.json'));
     for (const post of plan.posts) {
+      // Fully AI posters are exported only as the exact approved version (its picture and its caption); every other plan by its own approval.
+      const approved = plan.renderMode === 'ai_v1' ? new ReviewStore(brandDir, brand).approvedFor(post.id) : undefined;
+      if (plan.renderMode === 'ai_v1' ? !approved : !isPublishable(plan, post)) continue;
       let poster: string | null = null;
       if (Date.parse(post.date) >= now - KEEP_RECENT_MS) {
-        const image = await readFile(join(outDir, `${post.id}.jpg`));
+        const image = await readFile(approved ? approved.path : join(outDir, `${post.id}.jpg`));
         const fileName = posterFileName(image);
         await writeFile(join(postsDir, fileName), image);
         poster = `/posts/${brand}/${fileName}`;
@@ -87,8 +104,10 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
         brand,
         id: `${brand}-${post.id}`,
         date: post.date,
-        caption: composeCaption(post),
+        caption: approved ? approved.version.caption : composeCaption(post),
         image: poster,
+        // A fully AI poster goes only to the platforms the owner chose; every other plan keeps going to every connected channel.
+        ...(approved && platforms ? { channels: platforms } : {}),
       });
     }
   }

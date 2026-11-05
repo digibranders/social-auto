@@ -1,4 +1,5 @@
 import { escapeHtml, LAYOUTS, parseHeadline, type Brand, type FeatureIcon, type LayoutName, type PlannedPost } from './content.ts';
+import type { LogoTone } from './logo-tone.ts';
 
 export const CANVAS_SIZE = 1080;
 
@@ -11,6 +12,8 @@ export interface LayoutInput {
   logoHtml: string;
   /** file:// URL of the AI visual; omitted for text-only posters. */
   visualUrl?: string;
+  /** How pale and how dark the logo is, when it was measured; the creative posters put a mostly pale logo on a dark plate. */
+  logoTone?: LogoTone | null;
 }
 
 const ICONS: Record<FeatureIcon, string> = {
@@ -54,6 +57,22 @@ export function visualStyleFor(layout: LayoutName, withComposition = false): str
   return `${hint}, ${light}, premium commercial advertising photography, realistic, shallow depth of field, absolutely no text, no letters, no words, no logos anywhere`;
 }
 
+/** Relative luminance of a #RRGGBB colour, 0 (black) to 1 (white). */
+export function luminance(hex: string): number {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const channel = Number.parseInt(hex.slice(i, i + 2), 16) / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+const FALLBACK_WASH = '#F7F1E8';
+
+/** The colour of the fade over the picture: the brand's own background when it is light enough for dark text, else cream. */
+export function washColor(background: string): string {
+  return luminance(background) >= 0.6 ? background : FALLBACK_WASH;
+}
+
 /** Lightens a #RRGGBB colour by the given fraction towards white (used for accents on dark backgrounds). */
 export function lighten(hex: string, amount: number): string {
   const channels = [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
@@ -85,7 +104,7 @@ function headlineHtml(post: PlannedPost): string {
     .join('');
 }
 
-function fontLink(font: string): string {
+export function fontLink(font: string): string {
   const family = encodeURIComponent(font).replaceAll('%20', '+');
   return `https://fonts.googleapis.com/css2?family=${family}:wght@400;500;700;800;900&display=block`;
 }
@@ -132,7 +151,7 @@ function layoutCss(layout: LayoutName, colors: Brand['colors'], cream: string): 
 export function renderPostHtml({ brand, post, painPointNumber, logoHtml, visualUrl }: LayoutInput): string {
   const { colors } = brand;
   const accentText = darken(colors.accent, 0.22);
-  const cream = '#F7F1E8';
+  const cream = washColor(colors.background);
   const layout = post.layout ?? 'left';
   const visual = visualUrl ? `url("${visualUrl}") center / cover no-repeat,` : '';
 

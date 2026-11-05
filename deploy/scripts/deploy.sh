@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 ENV_FILE=/etc/social-auto/publisher.env
 # The commit the running apps were started from. Not the same as the checkout: the weekly job pulls main too.
 MARKER=/var/lib/social-auto/deployed-commit
-JOBS=(social-auto-weekly.service social-cron.service social-cron-frequent.service social-refresh.service)
+JOBS=(social-auto-weekly.service social-cron.service social-cron-frequent.service social-refresh.service social-campaigns.service)
 MAX_WAIT_SECONDS=900
 
 # The alert text stays plain ASCII (it becomes an HTTP header) and never holds a secret.
