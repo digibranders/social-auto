@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { channelsFor } from './channels.js';
 import { buildManualPost, dateOfNow, editManualPost, isManualId, pictureInUse, MAX_MANUAL_POSTS, toScheduled, type ManualChanges, type ManualPost } from './manual.js';
 import { EditError, isEditable, MAX_IMAGE_BYTES, validateJpeg } from './overrides.js';
+import { mergeVariants, variantKeys } from './variants.js';
 import { deleteImage, loadChannels, loadImage, loadManual, loadOverrides, saveImage, saveManual, saveOverrides } from './store.js';
 
 /** Hand-made posts: shared by the dashboard's New post window and the product API. */
@@ -30,6 +31,8 @@ export interface NewPostInput {
   imageKey: unknown;
   /** Channel ids; left out means every channel the client has connected right now. */
   channels?: unknown;
+  /** Own caption and/or picture per platform (see variants.ts). */
+  variants?: unknown;
   /** Whether the shared Instagram account may be chosen (only the content job's own clients). */
   allowInstagram: boolean;
 }
@@ -41,8 +44,10 @@ export async function saveNewPost(input: NewPostInput, now: number): Promise<Man
   const connected = channelsFor(channels, input.brand).map((c) => c.id);
   const allowed = [...(input.allowInstagram ? ['instagram'] : []), ...connected];
   const chosen = input.channels === undefined ? connected : input.channels;
-  const post = buildManualPost({ brand: input.brand, day: input.day, time: input.time, caption: input.caption, imageKey: input.imageKey, channels: chosen }, allowed, now);
-  if (!(await imageExists(post.imageKey))) throw new EditError('the picture was not found. Add it again.');
+  const post = buildManualPost({ brand: input.brand, day: input.day, time: input.time, caption: input.caption, imageKey: input.imageKey, channels: chosen, variants: input.variants }, allowed, now);
+  for (const key of [post.imageKey, ...variantKeys(post.variants)]) {
+    if (!(await imageExists(key))) throw new EditError('the picture was not found. Add it again.');
+  }
   await saveManual({ posts: [...file.posts, post] }, etag);
   return post;
 }
@@ -62,7 +67,7 @@ export async function removeNewPost(id: unknown, now: number, brand?: string): P
   const edit = overrides[id];
   const { [id]: _removed, ...rest } = overrides;
   if (edit) await saveOverrides(rest, overridesEtag).catch(() => undefined);
-  for (const key of new Set([post.imageKey, edit?.imageKey])) {
+  for (const key of new Set([post.imageKey, edit?.imageKey, ...variantKeys(post.variants), ...variantKeys(edit?.variants)])) {
     if (key !== undefined && !pictureInUse(key, remaining, rest)) await deleteImage(key).catch(() => undefined);
   }
 }
@@ -79,17 +84,20 @@ export async function updateNewPost(id: unknown, changes: ManualChanges, now: nu
   if (!isEditable(toScheduled(stored), now)) throw new EditError('this post is already due or sent, so it can no longer be changed', 409);
 
   const dashboardEdit = overrides[id];
-  const current: ManualPost = { ...stored, caption: dashboardEdit?.caption ?? stored.caption, imageKey: dashboardEdit?.imageKey ?? stored.imageKey };
+  const foldedVariants = mergeVariants(stored.variants, dashboardEdit?.variants);
+  const current: ManualPost = { ...stored, caption: dashboardEdit?.caption ?? stored.caption, imageKey: dashboardEdit?.imageKey ?? stored.imageKey, ...(foldedVariants ? { variants: foldedVariants } : {}) };
   const connected = channelsFor(channels, stored.brand).map((c) => c.id);
   const edited = editManualPost(current, changes, connected, now);
-  if (edited.imageKey !== current.imageKey && !(await imageExists(edited.imageKey))) throw new EditError('the picture was not found. Add it again.');
+  for (const key of new Set([...(edited.imageKey !== current.imageKey ? [edited.imageKey] : []), ...variantKeys(edited.variants).filter((k) => !variantKeys(current.variants).includes(k))])) {
+    if (!(await imageExists(key))) throw new EditError('the picture was not found. Add it again.');
+  }
 
   const posts = file.posts.map((p) => (p.id === id ? edited : p));
   await saveManual({ posts }, etag);
   // Tidy up after the change is saved; a failure here only leaves an unused file behind. A picture another post still uses stays.
   const { [id]: _folded, ...rest } = overrides;
   if (dashboardEdit) await saveOverrides(rest, overridesEtag).catch(() => undefined);
-  for (const key of new Set([stored.imageKey, dashboardEdit?.imageKey])) {
+  for (const key of new Set([stored.imageKey, dashboardEdit?.imageKey, ...variantKeys(stored.variants), ...variantKeys(dashboardEdit?.variants)])) {
     if (key !== undefined && !pictureInUse(key, posts, rest)) await deleteImage(key).catch(() => undefined);
   }
   return edited;
@@ -105,7 +113,8 @@ export async function dateNewPostNow(id: unknown, now: number, brand?: string): 
   const stored = file.posts.find((p) => p.id === id);
   if (!stored || (brand !== undefined && stored.brand !== brand)) throw new EditError('no such post', 404);
   const dashboardEdit = overrides[id];
-  const sending: ManualPost = { ...stored, date: dateOfNow(now), caption: dashboardEdit?.caption ?? stored.caption, imageKey: dashboardEdit?.imageKey ?? stored.imageKey };
+  const sendingVariants = mergeVariants(stored.variants, dashboardEdit?.variants);
+  const sending: ManualPost = { ...stored, date: dateOfNow(now), caption: dashboardEdit?.caption ?? stored.caption, imageKey: dashboardEdit?.imageKey ?? stored.imageKey, ...(sendingVariants ? { variants: sendingVariants } : {}) };
   await saveManual({ posts: file.posts.map((p) => (p.id === id ? { ...p, date: sending.date } : p)) }, etag);
   return sending;
 }

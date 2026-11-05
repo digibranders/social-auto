@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { EditError, imagePathFor, isImageKey, validateCaption, type OverrideMap } from './overrides.js';
 import type { ScheduledPost } from './schedule.js';
+import { applyVariantPatch, parseStoredVariants, toVariants, validateVariants, variantKeys, type StoredVariants } from './variants.js';
 
 /** A post written by hand in the dashboard, kept apart from the posts the content job plans. */
 export interface ManualPost {
@@ -13,6 +14,8 @@ export interface ManualPost {
   imageKey: string;
   /** "instagram" and/or channel ids. Never empty. */
   channels: string[];
+  /** Own caption and/or picture for single platforms; a platform without one uses the main caption and picture. */
+  variants?: StoredVariants;
   createdAt: string;
 }
 
@@ -45,7 +48,11 @@ export function parseManualFile(raw: unknown): ManualFile {
     if (!Array.isArray(channels) || channels.length === 0 || channels.some((c) => typeof c !== 'string')) {
       throw new Error(`manual posts[${i}].channels must list at least one channel`);
     }
-    return p as unknown as ManualPost;
+    const variants = parseStoredVariants(p['variants']);
+    const post = { ...(p as unknown as ManualPost) };
+    if (variants) post.variants = variants;
+    else delete post.variants;
+    return post;
   });
   return { posts };
 }
@@ -60,6 +67,7 @@ export function toScheduled(post: ManualPost): ScheduledPost {
     image: imagePathFor(post.imageKey),
     manual: true,
     channels: post.channels,
+    ...(toVariants(post.variants) ? { variants: toVariants(post.variants) } : {}),
   };
 }
 
@@ -90,6 +98,7 @@ export interface NewManualPost {
   caption: unknown;
   imageKey: unknown;
   channels: unknown;
+  variants?: unknown;
 }
 
 /**
@@ -105,6 +114,7 @@ export function buildManualPost(input: NewManualPost, allowedChannels: readonly 
   if (channels.length === 0) throw new EditError('choose at least one channel');
   const unknown = channels.find((c) => !allowedChannels.includes(c));
   if (unknown) throw new EditError('one of the chosen channels is not connected for this client');
+  const variants = input.variants === undefined ? {} : validateVariants(input.variants);
   return {
     id: `manual-${randomBytes(6).toString('hex')}`,
     brand: input.brand,
@@ -112,6 +122,7 @@ export function buildManualPost(input: NewManualPost, allowedChannels: readonly 
     caption,
     imageKey: input.imageKey,
     channels,
+    ...(Object.keys(variants).length > 0 ? { variants } : {}),
     createdAt: new Date(now).toISOString(),
   };
 }
@@ -123,6 +134,8 @@ export interface ManualChanges {
   caption?: unknown;
   imageKey?: unknown;
   channels?: unknown;
+  /** A change to some platforms' own versions (see applyVariantPatch): left out stays, null goes back to the main ones. */
+  variants?: unknown;
 }
 
 /**
@@ -131,7 +144,7 @@ export interface ManualChanges {
  * change is not allowed.
  */
 export function editManualPost(post: ManualPost, changes: ManualChanges, allowedChannels: readonly string[], now: number): ManualPost {
-  if (changes.day === undefined && changes.time === undefined && changes.caption === undefined && changes.imageKey === undefined && changes.channels === undefined) {
+  if (changes.day === undefined && changes.time === undefined && changes.caption === undefined && changes.imageKey === undefined && changes.channels === undefined && changes.variants === undefined) {
     throw new EditError('nothing to change');
   }
   const edited: ManualPost = { ...post, channels: [...post.channels] };
@@ -152,6 +165,11 @@ export function editManualPost(post: ManualPost, changes: ManualChanges, allowed
     if (channels.some((c) => !allowedChannels.includes(c))) throw new EditError('one of the chosen channels is not connected for this client');
     edited.channels = channels;
   }
+  if (changes.variants !== undefined) {
+    const variants = applyVariantPatch(post.variants, changes.variants);
+    if (Object.keys(variants).length > 0) edited.variants = variants;
+    else delete edited.variants;
+  }
   return edited;
 }
 
@@ -162,5 +180,5 @@ export const dateOfNow = (now: number): string => `${new Date(now + IST_OFFSET_M
 
 /** Whether a picture is still the picture of one of these posts (as made, or as edited in the dashboard); a product may use one picture for several posts. */
 export function pictureInUse(key: string, posts: readonly ManualPost[], overrides: OverrideMap): boolean {
-  return posts.some((p) => p.imageKey === key || overrides[p.id]?.imageKey === key);
+  return posts.some((p) => p.imageKey === key || overrides[p.id]?.imageKey === key || variantKeys(p.variants).includes(key) || variantKeys(overrides[p.id]?.variants).includes(key));
 }

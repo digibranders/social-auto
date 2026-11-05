@@ -3,6 +3,7 @@ import { crosspostStatusFor, type CrosspostStatus } from './crosspost.js';
 import type { ChannelFile, PostedLog } from './channels.js';
 import { toScheduled, type ManualPost } from './manual.js';
 import type { ScheduledPost } from './schedule.js';
+import { PLATFORMS } from './variants.js';
 
 export type PostState = 'scheduled' | 'due' | 'published' | 'missed' | 'skipped' | 'paused';
 
@@ -31,6 +32,8 @@ export function scheduledView(post: ScheduledPost, channels: ChannelFile, posted
     caption: post.caption,
     ...(post.image && origin ? { imageUrl: `${origin}${post.image}` } : {}),
     manual: post.manual === true,
+    // Only the platforms that have a version of their own are listed; the others use the main caption and picture.
+    ...(post.variants ? { variants: Object.fromEntries(PLATFORMS.flatMap((p) => { const v = post.variants?.[p]; return v ? [[p, { ...(v.caption !== undefined ? { caption: v.caption } : {}), ...(v.image && origin ? { imageUrl: `${origin}${v.image}` } : {}) }]] : []; })) } : {}),
     state: overallState(states, Date.parse(post.date), now),
     channels: states.map((s) => ({ id: s.id, platform: s.platform, account: s.account, state: s.state, permalink: s.permalink })),
   };

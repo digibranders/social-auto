@@ -1,4 +1,5 @@
 import type { Channel } from './channels.js';
+import { forPlatform, PLATFORMS, type Variants } from './variants.js';
 export interface ScheduledPost {
   /** Client the post belongs to; posts without one count as a single "default" client. */
   brand?: string;
@@ -12,6 +13,8 @@ export interface ScheduledPost {
   manual?: boolean;
   /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc" or "google:123". Missing means every connected channel. */
   channels?: string[];
+  /** Own caption and/or picture for a platform; a platform without one uses the main caption and picture. */
+  variants?: Variants;
   /** Skipped in the dashboard: it stays on the calendar but is never sent. */
   skipped?: boolean;
   /** A planned post given a day or time of its own in the dashboard: like a hand-made post, the frequent run sends it at that time. */
@@ -148,6 +151,8 @@ export interface StatusPost {
   manual: boolean;
   /** Where a hand-made post goes ('instagram' and channel ids); null for planned posts, which go everywhere. */
   channels: string[] | null;
+  /** The platforms that have a caption and/or picture of their own (picture as an absolute URL); the main caption and picture stand for the rest. */
+  variants?: Partial<Record<Channel['platform'], { caption?: string; image?: string }>>;
   crossposts: Array<{ platform: Channel['platform']; account: string; state: 'published' | 'scheduled' | 'due' | 'missed' | 'skipped' | 'paused'; permalink: string | null }>;
 }
 
@@ -167,7 +172,8 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
   const statusPosts = ordered.map((post): StatusPost => {
     const at = Date.parse(post.date);
     const onInstagram = isWantedOn(post, 'instagram');
-    const match = onInstagram ? (media?.find((m) => !used.has(m.id) && sameCaption(m.caption, post.caption)) ?? null) : null;
+    const onInstagramAs = forPlatform(post, 'instagram');
+    const match = onInstagram ? (media?.find((m) => !used.has(m.id) && sameCaption(m.caption, onInstagramAs.caption)) ?? null) : null;
     if (match) used.add(match.id);
 
     let state: PostState;
@@ -185,6 +191,7 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
       date: post.date,
       caption: post.caption,
       image: post.image ? `${origin}${post.image}` : null,
+      ...(post.variants ? { variants: Object.fromEntries(PLATFORMS.flatMap((p) => { const v = post.variants?.[p]; return v ? [[p, { ...(v.caption !== undefined ? { caption: v.caption } : {}), ...(v.image ? { image: `${origin}${v.image}` } : {}) }]] : []; })) } : {}),
       state,
       permalink: match?.permalink ?? null,
       publishedAt: match?.timestamp ?? null,

@@ -15,6 +15,7 @@ import { notify } from './notify.js';
 import { channelLabel, postedKey, type PostedEntry } from './channels.js';
 import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
 import { isWantedOn, sameCaption, type ScheduledPost } from './schedule.js';
+import { forPlatform } from './variants.js';
 import { loadChannels, loadClients, loadPosted, savePosted } from './store.js';
 
 const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
@@ -26,7 +27,8 @@ const googleApi: GoogleApi = {
   locationHealth: (refreshToken) => locationHealth(googleApp(), refreshToken),
 };
 
-async function sendToInstagram(post: ScheduledPost, origin: string, dryRun: boolean): Promise<Record<string, unknown>> {
+async function sendToInstagram(mainPost: ScheduledPost, origin: string, dryRun: boolean): Promise<Record<string, unknown>> {
+  const post = forPlatform(mainPost, 'instagram');
   const token = requireEnv('INSTAGRAM_TOKEN');
   const userId = requireEnv('INSTAGRAM_USER_ID');
   if (!post.image) throw new Error(`${post.id} has no picture to send`);
@@ -59,7 +61,9 @@ async function recordHeld(postId: string, channelIds: readonly string[], now: nu
 }
 
 /** Never throws: a problem here must not hide what happened on Instagram or another channel. */
-async function sendToChannels(platform: Platform, post: ScheduledPost, origin: string, dryRun: boolean, pauses: PauseFile): Promise<CrosspostResult[]> {
+async function sendToChannels(platform: Platform, mainPost: ScheduledPost, origin: string, dryRun: boolean, pauses: PauseFile): Promise<CrosspostResult[]> {
+  // Each platform gets its own caption and picture when the post has them.
+  const post = forPlatform(mainPost, platform);
   try {
     const { file } = await loadChannels();
     if (!file.channels.some((c) => c.platform === platform)) return [];

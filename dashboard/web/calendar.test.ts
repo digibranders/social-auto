@@ -40,6 +40,7 @@ const post = (id: string, date: string): StatusPost => ({
   editable: true,
   manual: false,
   channels: null,
+  variants: {},
   crossposts: [],
 });
 
@@ -130,7 +131,7 @@ test('captionStats counts characters and hashtags, and captionProblem names the 
 
 const aPost = (over: Partial<StatusPost>): StatusPost => ({
   id: 'p', brand: 'acme', platform: 'instagram', date: '2026-11-10T10:00:00+05:30', caption: 'c', image: null, state: 'scheduled', permalink: null, publishedAt: null, mediaUrl: null,
-  edited: false, editable: true, manual: false, channels: null, crossposts: [], ...over,
+  edited: false, editable: true, manual: false, channels: null, variants: {}, crossposts: [], ...over,
 });
 const NOW = Date.parse('2026-11-05T00:00:00Z');
 
