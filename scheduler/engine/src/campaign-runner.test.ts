@@ -66,7 +66,9 @@ test('a failed run is recorded with the end of its output and is not retried by 
   const r = root();
   try {
     const calls: string[][] = [];
-    const [made] = await makeCampaigns([client({ plan: { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 31 } })], r.dir, deps({ calls, exec: async (a) => { calls.push(a); return { code: 1, tail: 'INSUFFICIENT_EVIDENCE: the site gave 0 facts' }; } }));
+    const logs: string[] = [];
+    const [made] = await makeCampaigns([client({ plan: { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 31 } })], r.dir, deps({ calls, log: (m) => logs.push(m), exec: async (a) => { calls.push(a); return { code: 1, tail: 'INSUFFICIENT_EVIDENCE: the site gave 0 facts\n' }; } }));
+    assert.ok(logs.some((m) => /batch 1 failed: INSUFFICIENT_EVIDENCE/.test(m)), 'the reason is in the service log, not only in the state file');
     assert.equal(calls.length, 1, 'the later batches were not tried');
     assert.equal(made?.status, 'failed');
     assert.match(made?.batches[0]?.tail ?? '', /INSUFFICIENT_EVIDENCE/);

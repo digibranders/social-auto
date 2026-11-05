@@ -85,12 +85,17 @@ test('a long plan is made in runs of at most eight posters, and each run asks th
   const single = autopilotArgsFor(plan(), 'https://oyechats.com', planBatches(plan())[0] as never);
   assert.ok(!single.includes('--weekdays'), 'a single day needs no weekday pattern');
   assert.deepEqual(single.slice(5, 9), ['--days', '1', '--start', '2026-11-06']);
+  // The autopilot refuses a run with no destination before it looks at the route, so one is always named; the AI route ignores it.
+  assert.deepEqual(single.slice(-2), ['--target', 'publisher']);
+  assert.ok(!single.includes('--channel') && !single.includes('--dry-run'));
 });
 
 test('the autopilot args never schedule or publish: the route is ai, which only fills the review queue', () => {
   const args = autopilotArgsFor(plan(), 'https://oyechats.com', planBatches(plan())[0] as never);
   assert.equal(args[args.indexOf('--route') + 1], 'ai');
-  assert.ok(!args.includes('--channel') && !args.includes('--target'));
+  // A destination is required by the autopilot's own check; the AI route returns before using it, so nothing is scheduled or exported.
+  assert.equal(args[args.indexOf('--target') + 1], 'publisher');
+  assert.ok(!args.includes('--channel'));
 });
 
 test('the summary reads like a sentence', () => {
