@@ -13,9 +13,10 @@
  * dollar. It is durable: restarting the engine never forgets what was spent or what was in flight. What this cannot do is make a provider
  * charge exactly once after a lost answer; it can only refuse to ask twice.
  */
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
+import { appendDurable, LockError, withFileLock } from './file-lock.ts';
 
 export type PaidOperation = 'text' | 'image' | 'vision';
 export type PaidStatus = 'reserved' | 'in_flight' | 'completed' | 'failed' | 'unknown';
@@ -101,7 +102,6 @@ export interface ReserveRequest {
 const roundUsd = (value: number): number => Math.round(value * 1e8) / 1e8;
 const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 const dayOf = (iso: string): string => iso.slice(0, 10);
-const sleepSync = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** What a call counts for against a cap: its real cost when it ended, otherwise everything it might still cost. */
 function chargeOf(call: PaidCall): number {
@@ -110,35 +110,13 @@ function chargeOf(call: PaidCall): number {
   return call.reservedCostUsd;
 }
 
-/** Runs `work` while holding the ledger's lock file, so reads and writes of the log by two processes never interleave. */
+/** Runs `work` while holding the ledger's lock (see file-lock.ts). A lock that cannot be had stops the caller, so nothing is spent. */
 export function withLock<T>(lockPath: string, work: () => T): T {
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    try {
-      const fd = openSync(lockPath, 'wx');
-      writeSync(fd, String(process.pid));
-      closeSync(fd);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      // A lock older than a few seconds belongs to a process that died inside the critical section, which is milliseconds long.
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > 10_000) unlinkSync(lockPath);
-      } catch {
-        /* the holder released it between the two calls */
-      }
-      if (Date.now() > deadline) throw new BudgetError('KILL_SWITCH', 'the paid-call ledger is locked by another process, so nothing is spent');
-      sleepSync(10);
-    }
-  }
   try {
-    return work();
-  } finally {
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      /* already gone */
-    }
+    return withFileLock(lockPath, work);
+  } catch (error) {
+    if (error instanceof LockError) throw new BudgetError('KILL_SWITCH', `the paid-call ledger is locked (${error.message}), so nothing is spent`);
+    throw error;
   }
 }
 
@@ -196,7 +174,7 @@ export class PaidLedger {
 
   private append(event: Event): void {
     try {
-      appendFileSync(this.file, `${JSON.stringify(event)}\n`);
+      appendDurable(this.file, JSON.stringify(event));
     } catch (error) {
       throw new BudgetError('KILL_SWITCH', `the paid-call ledger could not be written (${error instanceof Error ? error.message : String(error)}), so nothing is spent`);
     }

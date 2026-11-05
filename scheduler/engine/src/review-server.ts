@@ -17,6 +17,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
+import { acquireLock, LockError } from './file-lock.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -34,7 +35,7 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
   res.end(text);
 }
 
-const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500 };
+const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503 };
 
 function fail(res: ServerResponse, error: unknown): void {
   if (error instanceof ReviewError) {
@@ -150,7 +151,18 @@ export function createReviewServer(options: ReviewServerOptions): Server {
 if (import.meta.main) {
   const secret = process.env['REVIEW_SECRET'];
   if (!secret || secret.length < 16) throw new Error('REVIEW_SECRET must be set to a secret of at least 16 characters');
-  const server = createReviewServer({ brandsRoot: process.env['BRANDS_ROOT'] ?? resolve('brands'), secret });
+  const brandsRoot = process.env['BRANDS_ROOT'] ?? resolve('brands');
+  // Only one review service may run on a brands folder: a second one refuses to start instead of competing for the same log.
+  let releaseService: () => void;
+  try {
+    releaseService = acquireLock(join(resolve(brandsRoot), '.review-service.lock'), { timeoutMs: 0 });
+  } catch (error) {
+    if (error instanceof LockError) throw new Error(`another review service is already running for ${brandsRoot} (${error.message})`);
+    throw error;
+  }
+  process.on('exit', releaseService);
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => process.exit(0));
+  const server = createReviewServer({ brandsRoot, secret });
   const port = Number(process.env['PORT'] ?? 4012);
   const host = process.env['HOST'] ?? '127.0.0.1';
   server.listen(port, host, () => console.log(`review service listening on http://${host}:${port}`));

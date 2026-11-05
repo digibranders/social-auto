@@ -136,3 +136,23 @@ test('oversized or malformed bodies are refused', async () => {
     await s.done();
   }
 });
+
+test('only one review service may run on a brands folder: the second refuses to start', async () => {
+  const { spawn } = await import('node:child_process');
+  const s = await start();
+  const env = { ...process.env, REVIEW_SECRET: SECRET, BRANDS_ROOT: join(s.root, 'brands'), HOST: '127.0.0.1' };
+  const first = spawn(process.execPath, [new URL('./review-server.ts', import.meta.url).pathname], { env: { ...env, PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    await new Promise<void>((resolve) => first.stdout?.on('data', (d: Buffer) => d.toString().includes('listening') && resolve()));
+    const second = spawn(process.execPath, [new URL('./review-server.ts', import.meta.url).pathname], { env: { ...env, PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let errors = '';
+    second.stderr?.on('data', (d: Buffer) => (errors += d.toString()));
+    const code = await new Promise<number | null>((resolve) => second.on('close', resolve));
+    assert.notEqual(code, 0);
+    assert.match(errors, /another review service is already running/);
+  } finally {
+    first.kill('SIGTERM');
+    await new Promise((resolve) => first.on('close', resolve));
+    await s.done();
+  }
+});

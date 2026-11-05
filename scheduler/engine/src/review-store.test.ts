@@ -199,3 +199,21 @@ test('a version of one brand is never found in another brand\'s store', () => {
     done();
   }
 });
+
+test('while another live process holds the store\'s lock nothing is decided, and the caller is told it is busy; once it lets go the decision is made once', async () => {
+  const { spawn } = await import('node:child_process');
+  const { dir, picture, done } = setup();
+  try {
+    const brandDir = join(dir, 'brand');
+    const store = new ReviewStore(brandDir, 'acme', () => new Date(), 300);
+    const v = store.addVersion(input(picture('a.jpg', 'x')));
+    const holder = spawn(process.execPath, [new URL('./lock-worker.ts', import.meta.url).pathname, 'hold', join(brandDir, 'reviews.jsonl.lock'), '1500'], { stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise<void>((resolve) => holder.stdout?.on('data', (d: Buffer) => d.toString().includes('HELD') && resolve()));
+    assert.equal(code(() => store.approve(v.versionId, 'owner')), 'LOCKED');
+    assert.equal(store.get(v.versionId).status, 'pending', 'nothing was decided while the lock was held elsewhere');
+    await new Promise((resolve) => holder.on('close', resolve));
+    assert.equal(store.approve(v.versionId, 'owner').decision, 'approve');
+  } finally {
+    done();
+  }
+});
