@@ -4,6 +4,7 @@
  * names every sentence it turns back so the model can rewrite it or drop it. It works on facts, never on industry words, and its word
  * lists are the claim settings.
  */
+import { assessProofClaim } from './proof-hold.ts';
 import { claimType, defaultClaimConfig, extractFacts, normalizeForQuote, present, stem, type ClaimConfig } from './claims.ts';
 
 export interface PostCopy {
@@ -189,6 +190,13 @@ export function checkCopy(copy: PostCopy, evidence: readonly string[], options: 
       const cannotRead = unreadable(sentence);
       if (cannotRead) {
         violations.push({ field, sentence, reason: cannotRead, kind: 'unchecked' });
+        continue;
+      }
+      // Proof claims are held from the automatic flow whatever the claims say, so a writer cannot restate a held fact in its own words. Offers
+      // are judged against their page elsewhere; here, with no page, only the claim classes apply.
+      const proof = assessProofClaim(sentence);
+      if (proof.decision === 'HOLD' && proof.code !== 'HOLD_STALE_OFFER' && proof.code !== 'HOLD_PRICE_QUALIFIER' && proof.code !== 'HOLD_ELIGIBILITY') {
+        violations.push({ field, sentence, reason: `a proof claim is not used by the automatic flow: ${proof.reason}`, kind: 'unsupported' });
         continue;
       }
       const needs = needsOf(sentence, config, cta, gate);

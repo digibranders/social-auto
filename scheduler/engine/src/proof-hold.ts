@@ -148,6 +148,8 @@ function credential(t: string, c: ProofConfig): ProofAssessment | undefined {
   if (!has(c.credentialTerms, t)) return undefined;
   // A standard named in a sentence that teaches about it is not a claim about the company.
   if (has(c.educationalMarkers, t)) return undefined;
+  // A standard named with no assertion about the company ("built around ISO 27001 controls") says nothing about whether it is met.
+  if (!has(c.credentialAssertions, t)) return undefined;
   return hold('HOLD_CREDENTIAL', 'a certification or compliance claim needs evidence that can be checked outside the site');
 }
 

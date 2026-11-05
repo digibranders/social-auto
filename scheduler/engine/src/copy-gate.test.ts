@@ -58,8 +58,9 @@ test('facts mixed from different claims do not make a supported sentence', () =>
 test('a superlative or guarantee must be in the evidence', () => {
   assert.equal(checkCopy(copy({ headline: 'The |best| way to get paid' }), evidence).length, 1);
   assert.equal(checkCopy(copy({ subline: 'Acme is risk-free.' }), evidence).length, 1);
-  assert.deepEqual(checkCopy(copy({ subline: 'Acme is the number one choice for small clinics.' }), evidence), []);
-  assert.deepEqual(checkCopy(copy({ caption: 'Every plan has a 30-day money-back guarantee.' }), evidence), []);
+  // Even when the evidence states them, proof claims are not used by the automatic flow (proof-hold.ts).
+  assert.match(checkCopy(copy({ subline: 'Acme is the number one choice for small clinics.' }), evidence)[0]?.reason ?? '', /proof claim/);
+  assert.match(checkCopy(copy({ caption: 'Every plan has a 30-day money-back guarantee.' }), evidence)[0]?.reason ?? '', /proof claim/);
 });
 
 test('list-size numbers and call-to-action words are not claims', () => {
@@ -130,7 +131,7 @@ test('vague quantities need proof: "trusted by many", "thousands of", "award-win
   assert.equal(checkCopy(copy({ caption: 'Thousands of clinics use Acme.' }), evidence).length, 1);
   assert.equal(checkCopy(copy({ subline: 'Acme is award-winning software.' }), evidence).length, 1);
   assert.equal(checkCopy(copy({ subline: 'Acme is industry-leading.' }), evidence).length, 1);
-  assert.deepEqual(checkCopy(copy({ subline: 'Acme is award-winning software.' }), [...evidence, 'Acme is award-winning software.']), []);
+  assert.match(checkCopy(copy({ subline: 'Acme is award-winning software.' }), [...evidence, 'Acme is award-winning software.'])[0]?.reason ?? '', /proof claim/);
 });
 
 test('"best practices" is advice, not a claim of leadership', () => {
@@ -171,4 +172,11 @@ test('text the checker cannot read is reported as unchecked, never silently pass
   assert.equal(decimalComma[0]?.kind, 'unchecked');
   assert.equal(checkCopy(copy({ subline: 'Acme saves 12 hours.' }), evidence)[0]?.kind, 'unsupported');
   assert.throws(() => assertCopySupported(copy({ subline: 'Acme आपके लिए सबसे अच्छा है।' }), evidence, 1), /cannot be checked/);
+});
+
+test('a proof claim is turned back even when a claim states it, so a writer cannot restate a held fact', () => {
+  const copy = { headline: 'Trusted by 1,000+ agencies', subline: 'Plan your week in one place.', caption: 'SOC 2 certified. Start your free trial today.' };
+  const found = checkCopy(copy, ['Trusted by 1,000+ agencies', 'SOC 2 certified']);
+  assert.deepEqual(found.map((v) => v.sentence), ['Trusted by 1,000+ agencies', 'SOC 2 certified.']);
+  assert.ok(found.every((v) => /proof claim/.test(v.reason)));
 });
