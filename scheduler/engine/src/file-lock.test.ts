@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireLock, appendDurable, LockError, withFileLock } from './file-lock.ts';
+import { acquireLock, appendDurable, copyDurable, LockError, withFileLock } from './file-lock.ts';
 
 const WORKER = new URL('./lock-worker.ts', import.meta.url).pathname;
 
@@ -90,18 +91,80 @@ test('six processes racing over a lock left by a dead one: exactly one gets it a
   }
 });
 
-test('a lock file that is not a lock is waited on, and removed only once it is old enough that no writer could still be filling it in', () => {
+test('a lock file that is not a lock is never removed, however old: file age does not show that its creator is gone', () => {
   const d = dir();
   try {
     const lock = join(d.path, 'x.lock');
     writeFileSync(lock, '');
-    assert.throws(() => acquireLock(lock, { timeoutMs: 200 }), LockError, 'a fresh empty file might be a lock being written');
-    assert.equal(existsSync(lock), true);
-    const old = new Date(Date.now() - 120_000);
+    const old = new Date(Date.now() - 7 * 24 * 3600 * 1000);
     utimesSync(lock, old, old);
-    let ran = false;
-    withFileLock(lock, () => { ran = true; }, { timeoutMs: 1000 });
-    assert.equal(ran, true);
+    assert.throws(() => acquireLock(lock, { timeoutMs: 300 }), /damaged lock file/);
+    assert.equal(existsSync(lock), true, 'the file is still there for a person to recover');
+    assert.equal(readFileSync(lock, 'utf8'), '');
+    writeFileSync(lock, '{not json');
+    utimesSync(lock, old, old);
+    assert.throws(() => acquireLock(lock, { timeoutMs: 300 }), LockError);
+    assert.equal(readFileSync(lock, 'utf8'), '{not json');
+  } finally {
+    d.done();
+  }
+});
+
+test('a takeover guard that is not valid is never removed by age either, so recovery of a dead holder stops instead of racing', () => {
+  const d = dir();
+  try {
+    const lock = join(d.path, 'x.lock');
+    writeFileSync(lock, JSON.stringify({ pid: 99999999, token: 'dead', host: hostname() }));
+    writeFileSync(`${lock}.takeover`, '');
+    const old = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    utimesSync(`${lock}.takeover`, old, old);
+    assert.throws(() => acquireLock(lock, { timeoutMs: 300 }), LockError);
+    assert.equal(existsSync(`${lock}.takeover`), true);
+    assert.equal(existsSync(lock), true, 'the dead holder\'s lock was not removed under a guard nobody can vouch for');
+  } finally {
+    d.done();
+  }
+});
+
+test('a lock is created whole: a reader watching the file while another process takes and releases it again and again never sees an empty or half-written lock', async () => {
+  const d = dir();
+  try {
+    const lock = join(d.path, 'x.lock');
+    const runner = worker('cycle', lock, '400');
+    let seen = 0;
+    let bad = 0;
+    const watching = (async () => {
+      for (let i = 0; i < 60_000; i++) {
+        let text: string;
+        try {
+          text = readFileSync(lock, 'utf8');
+        } catch {
+          continue;
+        }
+        seen += 1;
+        try {
+          const value = JSON.parse(text) as { pid?: unknown; token?: unknown; host?: unknown };
+          if (typeof value.pid !== 'number' || typeof value.token !== 'string' || typeof value.host !== 'string') bad += 1;
+        } catch {
+          bad += 1;
+        }
+        if (i % 500 === 0) await new Promise((resolve) => setImmediate(resolve));
+      }
+    })();
+    await Promise.all([watching, finished(runner)]);
+    assert.equal(bad, 0, `${bad} of ${seen} reads saw a lock that was not whole`);
+  } finally {
+    d.done();
+  }
+});
+
+test('a copied picture is complete under its final name, with no private copy left behind', () => {
+  const d = dir();
+  try {
+    writeFileSync(join(d.path, 'a.jpg'), 'picture bytes');
+    copyDurable(join(d.path, 'a.jpg'), join(d.path, 'b.jpg'));
+    assert.equal(readFileSync(join(d.path, 'b.jpg'), 'utf8'), 'picture bytes');
+    assert.deepEqual(readdirSync(d.path).sort(), ['a.jpg', 'b.jpg']);
   } finally {
     d.done();
   }
@@ -149,6 +212,24 @@ test('an appended record is written whole, with its newline', () => {
     appendDurable(file, '{"a":1}');
     appendDurable(file, '{"b":2}\n');
     assert.equal(readFileSync(file, 'utf8'), '{"a":1}\n{"b":2}\n');
+  } finally {
+    d.done();
+  }
+});
+
+test('a holder can check that the lock is still its own right before committing, and a lock that was replaced is not', () => {
+  const d = dir();
+  try {
+    const lock = join(d.path, 'x.lock');
+    let before = false;
+    let after = true;
+    withFileLock(lock, (owns) => {
+      before = owns();
+      writeFileSync(lock, JSON.stringify({ pid: process.pid, token: 'someone-else', host: hostname() }));
+      after = owns();
+    });
+    assert.equal(before, true);
+    assert.equal(after, false);
   } finally {
     d.done();
   }

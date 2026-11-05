@@ -7,10 +7,10 @@
  * The store is an append-only JSON-lines file per brand, written under a lock so two requests cannot make conflicting decisions, and each picture is
  * copied once into a folder named by its own hash so a later run can never overwrite what was approved. Nothing here is ever deleted or edited.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { appendDurable, LockError, withFileLock } from './file-lock.ts';
+import { appendDurable, copyDurable, LockError, withFileLock } from './file-lock.ts';
 
 export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | 'superseded';
 export const REJECTION_REASONS = ['weak_copy', 'irrelevant_image', 'poor_design', 'incorrect_branding', 'factual_issue', 'repetitive', 'style', 'other'] as const;
@@ -122,12 +122,12 @@ export class ReviewStore {
   }
 
   /** Runs a change to the log under the lock. A lock that cannot be had stops the change: nothing is decided without it. */
-  private locked<T>(work: () => T): T {
+  private locked<T>(work: (owns: () => boolean) => T): T {
     try {
-      return withFileLock(this.lockPath, () => {
+      return withFileLock(this.lockPath, (owns) => {
         this.holding = true;
         try {
-          return work();
+          return work(owns);
         } finally {
           this.holding = false;
         }
@@ -136,6 +136,11 @@ export class ReviewStore {
       if (error instanceof LockError) throw new ReviewError('LOCKED', 'the review store is busy or its lock needs a person to look at it, so nothing was changed');
       throw error;
     }
+  }
+
+  /** Just before a change is written: the lock must still be this process's, or nothing is written. */
+  private mustOwn(owns: () => boolean): void {
+    if (!owns()) throw new ReviewError('LOCKED', 'this process no longer holds the review store\'s lock, so nothing was written');
   }
 
   private events(): Event[] {
@@ -213,12 +218,12 @@ export class ReviewStore {
     const imageSha256 = sha256(bytes);
     const imageFile = join('versions', `${imageSha256}.jpg`);
     const contentSha256 = contentHashOf(input);
-    return this.locked(() => {
+    return this.locked((owns) => {
       const items = this.fold().filter((i) => i.version.postId === input.postId);
       const same = items.find((i) => i.version.imageSha256 === imageSha256 && i.version.contentSha256 === contentSha256);
       if (same) return same.version;
       const target = join(this.brandDir, imageFile);
-      if (!existsSync(target)) copyFileSync(input.imagePath, target);
+      if (!existsSync(target)) copyDurable(input.imagePath, target);
       const versionNumber = items.reduce((max, i) => Math.max(max, i.version.versionNumber), 0) + 1;
       const version: PostVersion = {
         versionId: `${this.brand}.${sha256(`${input.postId}|${versionNumber}|${imageSha256}|${contentSha256}`).slice(0, 16)}`,
@@ -228,6 +233,7 @@ export class ReviewStore {
         ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
         createdAt: this.now().toISOString(), createdBy: input.createdBy ?? 'engine',
       };
+      this.mustOwn(owns);
       appendDurable(this.file, JSON.stringify({ type: 'version', version } satisfies Event));
       return version;
     });
@@ -248,7 +254,7 @@ export class ReviewStore {
   /** Approves one exact version. The same request twice gives the same decision, never a second one. */
   approve(versionId: string, by: string): Decision {
     if (by.trim() === '') throw new ReviewError('INVALID', 'an approval needs the name of the person who approved it');
-    return this.locked(() => {
+    return this.locked((owns) => {
       const item = this.get(versionId);
       if (item.status === 'approved' && item.decision) return item.decision;
       if (item.status === 'blocked') throw new ReviewError('BLOCKED', 'the system\'s checks did not pass for this version, so it cannot be approved');
@@ -256,6 +262,7 @@ export class ReviewStore {
       if (item.status === 'rejected') throw new ReviewError('ALREADY_DECIDED', 'this version was rejected; a new version has to be made');
       this.verify(item.version);
       const decision: Decision = { versionId, decision: 'approve', by, at: this.now().toISOString(), imageSha256: item.version.imageSha256, contentSha256: item.version.contentSha256 };
+      this.mustOwn(owns);
       appendDurable(this.file, JSON.stringify({ type: 'decision', decision } satisfies Event));
       return decision;
     });
@@ -265,11 +272,12 @@ export class ReviewStore {
   reject(versionId: string, by: string, reason: RejectionReason, comment?: string): Decision {
     if (by.trim() === '') throw new ReviewError('INVALID', 'a rejection needs the name of the person who made it');
     if (!(REJECTION_REASONS as readonly string[]).includes(reason)) throw new ReviewError('INVALID', `the reason must be one of ${REJECTION_REASONS.join(', ')}`);
-    return this.locked(() => {
+    return this.locked((owns) => {
       const item = this.get(versionId);
       if (item.status === 'rejected' && item.decision) return item.decision;
       if (item.status === 'blocked') throw new ReviewError('BLOCKED', 'this version never passed the system\'s checks and is already excluded');
       const decision: Decision = { versionId, decision: 'reject', by, at: this.now().toISOString(), reason, ...(comment ? { comment: comment.slice(0, 500) } : {}), imageSha256: item.version.imageSha256, contentSha256: item.version.contentSha256 };
+      this.mustOwn(owns);
       appendDurable(this.file, JSON.stringify({ type: 'decision', decision } satisfies Event));
       return decision;
     });

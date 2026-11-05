@@ -4,6 +4,7 @@
  *   node src/lock-worker.ts hold <lock> <milliseconds>      take the lock, print HELD, keep it that long, release it, print DONE
  *   node src/lock-worker.ts hold-forever <lock>             take the lock, print HELD, and never let go (to be killed)
  *   node src/lock-worker.ts counter <lock> <file> <times>   add one to the number in <file>, <times> times, each time under the lock
+ *   node src/lock-worker.ts cycle <lock> <times>            take and release the lock <times> times as fast as possible (for watching the lock file from outside)
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { withFileLock } from './file-lock.ts';
@@ -28,6 +29,9 @@ if (mode === 'hold' || mode === 'hold-forever') {
       writeFileSync(a as string, String(value + 1));
     }, { timeoutMs: 30_000 });
   }
+  console.log('DONE');
+} else if (mode === 'cycle') {
+  for (let i = 0; i < Number(a); i++) withFileLock(lock, () => undefined, { timeoutMs: 30_000 });
   console.log('DONE');
 } else {
   throw new Error(`unknown mode ${mode}`);

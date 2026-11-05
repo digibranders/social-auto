@@ -87,6 +87,8 @@ export interface LedgerContext {
   tenantId: string;
   brandId: string;
   now?: () => Date;
+  /** How long a change waits for another live process's lock before it fails (tests shorten it). */
+  lockTimeoutMs?: number;
 }
 
 export interface ReserveRequest {
@@ -111,9 +113,9 @@ function chargeOf(call: PaidCall): number {
 }
 
 /** Runs `work` while holding the ledger's lock (see file-lock.ts). A lock that cannot be had stops the caller, so nothing is spent. */
-export function withLock<T>(lockPath: string, work: () => T): T {
+export function withLock<T>(lockPath: string, work: () => T, timeoutMs?: number): T {
   try {
-    return withFileLock(lockPath, work);
+    return withFileLock(lockPath, work, timeoutMs === undefined ? {} : { timeoutMs });
   } catch (error) {
     if (error instanceof LockError) throw new BudgetError('KILL_SWITCH', `the paid-call ledger is locked (${error.message}), so nothing is spent`);
     throw error;
@@ -140,6 +142,10 @@ export class PaidLedger {
   /** No picture may be bought for the rest of this ledger's life (a site whose identity could not be confirmed). Everything else goes on. */
   disablePictures(): void {
     this.picturesOff = true;
+  }
+
+  private locked<T>(work: () => T): T {
+    return withLock(this.lockPath, work, this.context.lockTimeoutMs);
   }
 
   private now(): Date {
@@ -197,7 +203,7 @@ export class PaidLedger {
 
   /** A call left reserved or in flight by a process that is gone may have been accepted: it becomes "unknown", keeps its reservation, and is never replayed. */
   private markInterruptedUnknown(): void {
-    withLock(this.lockPath, () => {
+    this.locked(() => {
       this.repairTornTail();
       for (const call of this.load().values()) {
         if (call.status === 'reserved' || call.status === 'in_flight') this.append({ type: 'update', callId: call.callId, patch: { status: 'unknown', note: 'the process ended before the answer was stored' } });
@@ -220,7 +226,7 @@ export class PaidLedger {
   reserve(request: ReserveRequest): string {
     const { limits, context } = this;
     const requestHash = sha256(`${request.operation}|${request.model}|${request.requestKey}`);
-    return withLock(this.lockPath, () => {
+    return this.locked(() => {
       const calls = this.load();
       const createdAt = this.now().toISOString();
       const used = summarize(calls, context, dayOf(createdAt), request.postId);
@@ -247,7 +253,7 @@ export class PaidLedger {
   }
 
   private update(callId: string, patch: Partial<PaidCall>): void {
-    withLock(this.lockPath, () => this.append({ type: 'update', callId, patch }));
+    this.locked(() => this.append({ type: 'update', callId, patch }));
   }
 
   /** Call just before the request leaves. */
