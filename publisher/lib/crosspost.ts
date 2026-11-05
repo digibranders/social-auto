@@ -82,7 +82,7 @@ export async function postToFacebook(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'facebook').filter((c) => isWantedOn(post, c.id))) {
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'facebook').filter((c) => isWantedOn(post, c.id, 'facebook'))) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -131,7 +131,7 @@ export async function postToLinkedIn(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'linkedin').filter((c) => isWantedOn(post, c.id))) {
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'linkedin').filter((c) => isWantedOn(post, c.id, 'linkedin'))) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -184,7 +184,7 @@ export async function postToGoogle(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'google').filter((c) => isWantedOn(post, c.id))) {
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'google').filter((c) => isWantedOn(post, c.id, 'google'))) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -232,7 +232,7 @@ export async function postToInstagram(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'instagram').filter((c) => isWantedOn(post, c.id))) {
+  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'instagram').filter((c) => isWantedOn(post, c.id, 'instagram'))) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -287,7 +287,7 @@ export function crosspostStatusFor(
 ): CrosspostStatus[] {
   const at = Date.parse(post.date);
   return channelsFor(channels, post.brand ?? 'default')
-    .filter((channel) => isWantedOn(post, channel.id))
+    .filter((channel) => isWantedOn(post, channel.id, channel.platform))
     .filter((channel) => at >= Date.parse(channel.connectedAt))
     .map((channel): CrosspostStatus => {
       const done = log[postedKey(post.id, channel.id)];

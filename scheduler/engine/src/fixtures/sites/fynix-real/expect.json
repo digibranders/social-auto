@@ -1,0 +1,7 @@
+{
+  "base": "https://www.fynix.digital",
+  "mustSelect": ["/services", "/about", "/case-studies", "/faqs"],
+  "atLeast": [{ "from": ["/services/ui-ux", "/services/development", "/services/seo", "/services/lead-generation", "/services/linkedin-personal-account", "/services/social-media-advertisement"], "count": 3 }],
+  "mustReject": ["/privacy", "/terms"],
+  "maxSelected": 7
+}

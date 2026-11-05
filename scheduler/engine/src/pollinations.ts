@@ -28,6 +28,8 @@ export interface GenerateImageOptions {
   /** Fixed seed keeps re-runs reproducible for the same post. */
   seed: number;
   model?: string;
+  /** For tests: replaces the network call. */
+  fetchFn?: typeof fetch;
 }
 
 export async function generateImage(options: GenerateImageOptions): Promise<void> {
@@ -38,7 +40,7 @@ export async function generateImage(options: GenerateImageOptions): Promise<void
   url.searchParams.set('seed', String(options.seed));
   url.searchParams.set('nologo', 'true');
 
-  const response = await fetch(url, {
+  const response = await (options.fetchFn ?? fetch)(url, {
     headers: { Authorization: `Bearer ${options.apiKey}` },
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });

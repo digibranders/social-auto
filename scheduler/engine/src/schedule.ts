@@ -7,7 +7,8 @@
 import { access, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { composeCaption, parseWeekPlan, readJson } from './content.ts';
+import { composeCaption, isPublishable, parseWeekPlan, readJson } from './content.ts';
+import { ReviewStore } from './review-store.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { SchedulerClient } from './scheduler-client.ts';
 
@@ -53,7 +54,21 @@ export async function schedulePlan(options: ScheduleOptions): Promise<number> {
   let count = 0;
   const now = Date.now();
   for (const post of plan.posts) {
-    const imagePath = join(outDir, `${post.id}.jpg`);
+    let imagePath = join(outDir, `${post.id}.jpg`);
+    let caption = composeCaption(post);
+    if (plan.renderMode === 'ai_v1') {
+      // Fully AI posters go out only as the exact approved version: its picture and its caption, checked against the hashes it was approved with.
+      const approved = new ReviewStore(options.brandDir, basename(options.brandDir)).approvedFor(post.id);
+      if (!approved) {
+        log(`${post.id}: no approved version, not scheduled until the owner approves it`);
+        continue;
+      }
+      imagePath = approved.path;
+      caption = approved.version.caption;
+    } else if (!isPublishable(plan, post)) {
+      log(`${post.id}: ${post.approval?.status ?? 'not reviewed'}, not scheduled until it is approved`);
+      continue;
+    }
     if (scheduled[post.id]) {
       log(`${post.id}: already scheduled (${scheduled[post.id]?.postId}), skipping`);
       continue;
@@ -72,7 +87,7 @@ export async function schedulePlan(options: ScheduleOptions): Promise<number> {
       integrationId: channel.id,
       providerIdentifier: channel.identifier,
       date: post.date,
-      caption: composeCaption(post),
+      caption,
       image,
     });
     scheduled[post.id] = { postId: created.postId, date: post.date, scheduledAt: new Date().toISOString() };

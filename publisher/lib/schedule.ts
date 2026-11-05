@@ -108,8 +108,12 @@ export function dueManualPosts(posts: ScheduledPost[], now: number, windowMs: nu
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
 }
 
-/** Whether a post is meant for this channel ("instagram" or a channel id). */
-export const isWantedOn = (post: { channels?: string[] }, channel: string): boolean => !post.channels || post.channels.includes(channel);
+/**
+ * Whether a post is meant for this channel. A post's `channels` may name channels by id or whole platforms ("instagram", "facebook", "linkedin", "google"),
+ * which is how a campaign says "post on Instagram and Facebook" without knowing the ids; missing means every connected channel.
+ */
+export const isWantedOn = (post: { channels?: string[] }, channel: string, platform?: string): boolean =>
+  !post.channels || post.channels.includes(channel) || (platform !== undefined && post.channels.includes(platform));
 
 /** Instagram may normalise whitespace, so compare captions loosely. */
 export function sameCaption(a: string, b: string): boolean {

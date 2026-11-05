@@ -1,0 +1,1 @@
+{ "base": "https://brightline.example", "mustSelect": ["/in/pricing", "/in/about", "/in/services"], "mustReject": ["/us/pricing", "/uk/pricing", "/us/about", "/de/impressum", "/in/privacy"], "maxSelected": 7 }

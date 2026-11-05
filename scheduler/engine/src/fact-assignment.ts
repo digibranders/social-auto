@@ -1,0 +1,86 @@
+/**
+ * Which evidence facts each post of a week may use. Code decides, not the model: facts rotate across weeks with a cooldown (a fact used
+ * recently is ranked later, never banned, because a narrow brand may have only a few), a post gets one fact, or two when the page ties them together, and
+ * only facts that are usable and state a claim of the brand itself are ever offered.
+ */
+import { displayFact, type EvidenceFact } from './evidence.ts';
+
+/** Facts a post may be written from: usable, the brand's own claim, one fact per wording and scope. */
+export function offerableFacts(facts: readonly EvidenceFact[]): EvidenceFact[] {
+  const seen = new Set<string>();
+  const out: EvidenceFact[] = [];
+  for (const fact of facts) {
+    if (fact.status !== 'usable' || fact.intent !== 'claim' || fact.attribution !== 'brand') continue;
+    const key = displayFact(fact).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(fact);
+  }
+  return out;
+}
+
+const words = (text: string): number => text.split(/\s+/).filter(Boolean).length;
+
+/**
+ * Offerable facts, best first: those not used recently (the longer ago, the earlier), then those from marketing pages rather than reference
+ * pages, then those that say enough to build a post on (a bare cell such as "2" is a weak start), then in the order the pages gave them.
+ */
+export function rankFacts(facts: readonly EvidenceFact[], recentFactIds: readonly string[], worth: Readonly<Record<string, number>> = {}): EvidenceFact[] {
+  const lastUsed = (id: string): number => recentFactIds.lastIndexOf(id);
+  // Poster-worthy facts come first (a total of 5 or 6, then 3 or 4, then unjudged, then 2 or less), whatever was used before: a weak fact is not rescued by rotation.
+  const tier = (id: string): number => { const w = worth[id]; return w === undefined ? 2 : w >= 5 ? 0 : w >= 3 ? 1 : 3; };
+  return [...facts].map((fact, index) => ({ fact, index })).sort((a, b) => {
+    const [ta, tb] = [tier(a.fact.id), tier(b.fact.id)];
+    if (ta !== tb) return ta - tb;
+    const [ua, ub] = [lastUsed(a.fact.id), lastUsed(b.fact.id)];
+    if (ua !== ub) return ua - ub;
+    // Marketing pages say what the brand wants said; reference pages (docs, other) are a second choice. A bare label or cell is a weak start.
+    const [pa, pb] = [a.fact.source.pageRole === 'docs' || a.fact.source.pageRole === 'other' ? 1 : 0, b.fact.source.pageRole === 'docs' || b.fact.source.pageRole === 'other' ? 1 : 0];
+    if (pa !== pb) return pa - pb;
+    const [ra, rb] = [words(displayFact(a.fact)) >= 6 ? 0 : 1, words(displayFact(b.fact)) >= 6 ? 0 : 1];
+    return ra !== rb ? ra - rb : a.index - b.index;
+  }).map((x) => x.fact);
+}
+
+/**
+ * Two facts may share a post only when the page itself ties them to the same thing: the same plan or card (or table column) on the same page.
+ * A shared heading is not enough (a long page puts unrelated facts under one heading), nor are shared words or a shared page. When no tie is
+ * established the post gets one fact, and one message.
+ */
+export function related(a: EvidenceFact, b: EvidenceFact): boolean {
+  return a.source.url === b.source.url && a.scope !== undefined && a.scope === b.scope;
+}
+
+export interface FactAssignmentInput {
+  facts: readonly EvidenceFact[];
+  /** One entry per post: the fact that must be the post's first, when a pillar fixed it. */
+  anchors: ReadonlyArray<EvidenceFact | undefined>;
+  recentFactIds: readonly string[];
+  perPost?: number;
+  worth?: Readonly<Record<string, number>>;
+}
+
+/**
+ * The facts of each post: its anchor or the best ranked fact not yet used this week, then a second fact when the page ties it to the first.
+ * Facts a pillar fixed as anchors are reserved first, so a post with no anchor never takes the fact a later post is built on: two posts of one
+ * batch do not share a primary fact while there are other facts to use.
+ */
+export function assignFacts(input: FactAssignmentInput): EvidenceFact[][] {
+  const perPost = Math.min(Math.max(input.perPost ?? 2, 1), 2);
+  const ranked = rankFacts(input.facts, input.recentFactIds, input.worth);
+  const reserved = new Set(input.anchors.flatMap((a) => (a ? [a.id] : [])));
+  const usedThisWeek = new Set<string>();
+  return input.anchors.map((anchor) => {
+    const fresh = ranked.filter((f) => !usedThisWeek.has(f.id) && (anchor?.id === f.id || !reserved.has(f.id)));
+    const pool = fresh.length > 0 ? fresh : ranked;
+    const first = anchor ?? pool[0];
+    if (first === undefined) return [];
+    const chosen = [first];
+    if (perPost > 1) {
+      const second = pool.find((f) => f.id !== first.id && related(first, f));
+      if (second) chosen.push(second);
+    }
+    for (const fact of chosen) usedThisWeek.add(fact.id);
+    return chosen;
+  });
+}
