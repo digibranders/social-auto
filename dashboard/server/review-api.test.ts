@@ -97,3 +97,9 @@ test('without its settings the queue says so and calls nothing', async () => {
   assert.equal((await POST(post({ id: ID, action: 'approve' }))).status, 503);
   assert.equal(calls.length, 0);
 });
+
+test('the queue can be asked for what is open and what is held', async () => {
+  upstream(200, { posts: [] });
+  for (const status of ['open', 'held']) assert.equal((await GET(get(`view=list&status=${status}`))).status, 200, status);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/posts?status=open');
+});

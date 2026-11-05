@@ -3,7 +3,7 @@
  *
  *   REVIEW_SECRET=... BRANDS_ROOT=brands node src/review-server.ts        (PORT defaults to 4012, HOST to 127.0.0.1)
  *
- *   GET  /review/posts?status=pending|approved|rejected|blocked|superseded|all     the queue, every brand
+ *   GET  /review/posts?status=open|pending|held|approved|rejected|blocked|superseded|all     the queue, every brand (open = pending and held)
  *   GET  /review/posts/<versionId>                                                 one version with its evidence and history
  *   GET  /review/posts/<versionId>/image                                           the picture, for looking at (any status)
  *   GET  /review/posts/<versionId>/download                                        the picture, approved versions only
@@ -22,7 +22,7 @@ import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type Revi
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
-const STATUSES: readonly (ReviewStatus | 'all')[] = ['pending', 'approved', 'rejected', 'blocked', 'superseded', 'all'];
+const STATUSES: readonly (ReviewStatus | 'all' | 'open')[] = ['pending', 'approved', 'rejected', 'blocked', 'superseded', 'held', 'all', 'open'];
 
 export interface ReviewServerOptions {
   brandsRoot: string;
@@ -108,7 +108,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (!(STATUSES as readonly string[]).includes(status)) return send(res, 400, { error: `status must be one of ${STATUSES.join(', ')}` });
         const items = brands().flatMap((brand) => {
           try {
-            return storeFor(brand).list(status === 'all' ? undefined : { status: status as ReviewStatus });
+            const all = storeFor(brand).list();
+            return status === 'all' ? all : status === 'open' ? all.filter((i) => i.status === 'pending' || i.status === 'held') : all.filter((i) => i.status === status);
           } catch (error) {
             if (error instanceof ReviewError && error.code === 'TAMPERED') return [];
             throw error;

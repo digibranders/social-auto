@@ -1,6 +1,6 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
-import { costText, failureText, imageUrl, parseQueue, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { costText, failureText, imageUrl, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] } };
@@ -35,7 +35,7 @@ async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; sta
 
 async function loadQueue(redraw: () => void): Promise<void> {
   state.error = null;
-  const result = await call(`/api/review?view=list&status=${state.filter}`).catch(() => null);
+  const result = await call(`/api/review?view=list&status=${queryStatus(state.filter)}`).catch(() => null);
   if (!result?.ok) state.error = result ? failureText(result.body, result.status) : 'The review queue could not be reached.';
   else {
     const parsed = parseQueue(result.body);
@@ -88,9 +88,9 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
   const v = detail.version;
   const decided = detail.status === 'approved' || detail.status === 'rejected';
   const actions = h('div', { class: 'rv-actions' });
-  if (detail.status === 'pending') {
+  if (detail.status === 'pending' || detail.status === 'held') {
     actions.append(
-      button('Approve', 'btn btn-primary', () => void decide(v.versionId, { action: 'approve' }, 'Approved. It can now be downloaded.', redraw), undefined, state.busy),
+      button(detail.status === 'held' ? 'Confirm approval again' : 'Approve', 'btn btn-primary', () => void decide(v.versionId, { action: 'approve' }, 'Approved. It can now be downloaded.', redraw), undefined, state.busy),
       button('Reject', 'btn', () => { state.rejecting = true; redraw(); }, undefined, state.busy),
     );
   }
@@ -116,6 +116,7 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
       detail.decision ? h('p', { class: 'muted' }, `${detail.decision.by}, ${when(detail.decision.at)}${detail.decision.reason ? ` · ${REASON_LABELS[detail.decision.reason] ?? detail.decision.reason}` : ''}${detail.decision.comment ? ` · “${detail.decision.comment}”` : ''}`) : null,
       detail.status === 'blocked' ? h('p', { class: 'muted' }, 'This poster did not pass the automatic checks, so it cannot be approved.') : null,
       detail.status === 'superseded' ? h('p', { class: 'muted' }, 'A newer version of this post replaced it.') : null,
+      detail.status === 'held' ? h('p', { class: 'muted' }, 'The review record was repaired after a crash and it could not be told whether this approval had been withdrawn. It cannot be downloaded until you approve this exact poster again.') : null,
       actions,
       rejectForm,
       h('h3', {}, 'Caption'),

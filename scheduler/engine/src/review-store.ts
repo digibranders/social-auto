@@ -12,7 +12,8 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { appendDurable, copyDurable, LockError, withFileLock } from './file-lock.ts';
 
-export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | 'superseded';
+/** "held": approved before a log recovery that could not tell whether the approval was withdrawn in the damaged tail; it goes nowhere until the owner confirms it again. */
+export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | 'superseded' | 'held';
 export const REJECTION_REASONS = ['weak_copy', 'irrelevant_image', 'poor_design', 'incorrect_branding', 'factual_issue', 'repetitive', 'style', 'other'] as const;
 export type RejectionReason = (typeof REJECTION_REASONS)[number];
 
@@ -61,7 +62,23 @@ export interface Decision {
   contentSha256: string;
 }
 
-type Event = { type: 'version'; version: PostVersion } | { type: 'decision'; decision: Decision };
+/** What an administrator did to repair the log, written into the log itself. */
+export interface RecoveryRecord {
+  at: string;
+  actor: string;
+  reason: string;
+  /** What was found: a record cut short at the end of the log, or only a missing line ending. */
+  kind: 'torn_tail' | 'missing_newline';
+  originalSha256: string;
+  repairedSha256: string;
+  quarantinedBytes: number;
+  quarantinedSha256: string;
+  /** Approvals that were in force before the repair and are now held until confirmed again. */
+  heldVersionIds: string[];
+  evidenceDir: string;
+}
+
+export type Event = { type: 'version'; version: PostVersion } | { type: 'decision'; decision: Decision } | { type: 'recovery'; recovery: RecoveryRecord };
 
 export class ReviewError extends Error {
   readonly code: 'NOT_FOUND' | 'BLOCKED' | 'STALE' | 'ALREADY_DECIDED' | 'TAMPERED' | 'NOT_APPROVED' | 'INVALID' | 'LOCKED';
@@ -173,21 +190,28 @@ export class ReviewStore {
   private foldUnlocked(): ReviewItem[] {
     const versions = new Map<string, PostVersion>();
     const decisions = new Map<string, Decision>();
+    const held = new Set<string>();
     for (const event of this.events()) {
       if (event.type === 'version') versions.set(event.version.versionId, event.version);
-      else decisions.set(event.decision.versionId, event.decision);
+      else if (event.type === 'recovery') {
+        // After a repair that could not tell whether the lost tail withdrew an approval, every approval then in force waits for a new, explicit confirmation.
+        if (event.recovery.heldVersionIds.length > 0) for (const [id, decision] of decisions) if (decision.decision === 'approve') held.add(id);
+      } else {
+        decisions.set(event.decision.versionId, event.decision);
+        held.delete(event.decision.versionId);
+      }
     }
     const latest = new Map<string, number>();
     for (const v of versions.values()) latest.set(v.postId, Math.max(latest.get(v.postId) ?? 0, v.versionNumber));
     return [...versions.values()].map((version): ReviewItem => {
       const decision = decisions.get(version.versionId);
       const status: ReviewStatus = !version.validation.accepted ? 'blocked'
-        : decision?.decision === 'approve' ? 'approved'
+        : decision?.decision === 'approve' ? (held.has(version.versionId) ? 'held' : 'approved')
         : decision?.decision === 'reject' ? 'rejected'
         : version.versionNumber < (latest.get(version.postId) ?? 0) ? 'superseded'
         : 'pending';
       // A later version supersedes an approval too: the earlier one stays on record as approved history but is no longer what goes out.
-      const final: ReviewStatus = status === 'approved' && version.versionNumber < (latest.get(version.postId) ?? 0) ? 'superseded' : status;
+      const final: ReviewStatus = (status === 'approved' || status === 'held') && version.versionNumber < (latest.get(version.postId) ?? 0) ? 'superseded' : status;
       return { version, status: final, ...(decision ? { decision } : {}) };
     });
   }

@@ -145,6 +145,17 @@ function removeDead(path: string): void {
   }
 }
 
+export type LockState = { state: 'free' } | { state: 'held'; pid: number; host: string } | { state: 'dead_holder'; pid: number; host: string } | { state: 'foreign_holder'; pid: number; host: string } | { state: 'damaged' };
+
+/** What a lock file says right now, without touching it. */
+export function lockState(path: string): LockState {
+  const holder = readHolder(path);
+  if (holder === 'missing') return { state: 'free' };
+  if (holder === 'garbage') return { state: 'damaged' };
+  if (holder.host !== HOST) return { state: 'foreign_holder', pid: holder.pid, host: holder.host };
+  return alive(holder.pid) ? { state: 'held', pid: holder.pid, host: holder.host } : { state: 'dead_holder', pid: holder.pid, host: holder.host };
+}
+
 /** Takes the lock, or fails after the timeout without ever taking it from a live process. Returns what releases it. */
 export type Release = (() => void) & {
   /** True while the lock file still names this holder: checked just before a protected change is committed. */

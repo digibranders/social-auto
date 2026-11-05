@@ -3,7 +3,7 @@
  * decides what may be approved or downloaded; this function only passes requests to it with the secret the browser never sees, and only from this
  * site's own pages for anything that changes something.
  *
- *   GET  /api/review?view=list&status=pending|approved|rejected|blocked|superseded|all
+ *   GET  /api/review?view=list&status=open|pending|held|approved|rejected|blocked|superseded|all
  *   GET  /api/review?view=detail|image|download&id=<versionId>
  *   POST /api/review   { "id": "<versionId>", "action": "approve" }  or  { "id": "...", "action": "reject", "reason": "...", "comment": "..." }
  */
@@ -11,7 +11,7 @@ import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
 const VERSION_ID = /^[a-z0-9][a-z0-9-]{0,62}\.[0-9a-f]{16}$/;
-const STATUS = /^(pending|approved|rejected|blocked|superseded|all)$/;
+const STATUS = /^(open|pending|held|approved|rejected|blocked|superseded|all)$/;
 const TIMEOUT_MS = 25_000;
 const MAX_BODY_BYTES = 4 * 1024;
 /** Who is recorded as having decided: the dashboard has one password, so there is one reviewer. */

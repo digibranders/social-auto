@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { costText, failureText, imageUrl, parseQueue, REASON_LABELS } from './review.ts';
+import { costText, failureText, imageUrl, parseQueue, queryStatus, REASON_LABELS } from './review.ts';
 import { parseRoute, routeHash } from './route.ts';
 
 const good = { versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'w01-d1', versionNumber: 2, status: 'pending', headline: 'H', caption: 'C', createdAt: '2026-11-05T10:00:00Z', costUsd: 0.016 };
@@ -28,4 +28,11 @@ test('failures use the service\'s own words, or say what failed', () => {
 test('the review page has its own address', () => {
   assert.deepEqual(parseRoute('#/review'), { page: 'review' });
   assert.equal(routeHash({ page: 'review' }), '#/review');
+});
+
+test('the "To review" tab asks for what waits and what must be confirmed again; a held poster is a valid entry', () => {
+  assert.equal(queryStatus('pending'), 'open');
+  assert.equal(queryStatus('approved'), 'approved');
+  const parsed = parseQueue({ posts: [{ versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'p', versionNumber: 1, status: 'held', headline: 'H', caption: 'C', createdAt: '', costUsd: 0 }] });
+  assert.equal(parsed.posts[0]?.status, 'held');
 });

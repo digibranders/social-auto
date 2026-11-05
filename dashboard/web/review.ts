@@ -1,5 +1,5 @@
 /** What the review page shows, kept apart from the drawing so it can be tested: the labels, the filters and the wording of each state. */
-export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | 'superseded';
+export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | 'superseded' | 'held';
 export type ReviewFilter = 'pending' | 'approved' | 'rejected';
 export const REVIEW_FILTERS: readonly { key: ReviewFilter; label: string }[] = [
   { key: 'pending', label: 'To review' },
@@ -24,6 +24,7 @@ export const STATUS_LABELS: Readonly<Record<ReviewStatus, string>> = {
   rejected: 'Rejected',
   blocked: 'Failed the checks',
   superseded: 'Replaced by a newer version',
+  held: 'Confirm again (the record was repaired)',
 };
 
 export interface ReviewSummary {
@@ -41,7 +42,7 @@ export interface ReviewSummary {
   reason?: string;
 }
 
-const STATUSES: readonly string[] = ['pending', 'approved', 'rejected', 'blocked', 'superseded'];
+const STATUSES: readonly string[] = ['pending', 'approved', 'rejected', 'blocked', 'superseded', 'held'];
 
 /** The list the service sends, kept only where it is well formed: a malformed entry is dropped, never drawn. */
 export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: string[] } {
@@ -58,6 +59,9 @@ export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: s
   const reasons = Array.isArray(raw?.reasons) ? raw.reasons.filter((r): r is string => typeof r === 'string' && r in REASON_LABELS) : Object.keys(REASON_LABELS);
   return { posts, reasons: reasons.length > 0 ? reasons : Object.keys(REASON_LABELS) };
 }
+
+/** The status the service is asked for: the "To review" tab shows what is waiting and what must be confirmed again. */
+export const queryStatus = (filter: ReviewFilter): string => (filter === 'pending' ? 'open' : filter);
 
 /** Where to ask for a version's picture, as a preview or as a download. */
 export const imageUrl = (versionId: string, view: 'image' | 'download' = 'image'): string => `/api/review?view=${view}&id=${encodeURIComponent(versionId)}`;
