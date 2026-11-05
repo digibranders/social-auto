@@ -30,6 +30,8 @@ export interface StatusPost {
   manual: boolean;
   /** Where a hand-made post goes ('instagram' and channel ids); null means every connected channel. */
   channels: string[] | null;
+  /** Platforms with a caption and/or picture of their own; the main caption and picture stand for the others. */
+  variants: Partial<Record<Platform, { caption?: string; image?: string }>>;
   crossposts: Crosspost[];
 }
 
@@ -113,6 +115,19 @@ function oneOf<T extends string>(value: string, allowed: readonly T[], where: st
   return found;
 }
 
+function variantsOf(raw: unknown): StatusPost['variants'] {
+  const result: StatusPost['variants'] = {};
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return result;
+  for (const platform of PLATFORMS) {
+    const value = (raw as Record<string, unknown>)[platform];
+    if (typeof value !== 'object' || value === null) continue;
+    const { caption, image } = value as Record<string, unknown>;
+    const own = { ...(typeof caption === 'string' ? { caption } : {}), ...(typeof image === 'string' ? { image } : {}) };
+    if (Object.keys(own).length > 0) result[platform] = own;
+  }
+  return result;
+}
+
 export function parseStatus(raw: unknown): StatusResponse {
   const root = record(raw, 'status');
   const generatedAt = text(root, 'generatedAt', 'status');
@@ -160,6 +175,7 @@ export function parseStatus(raw: unknown): StatusResponse {
       editable: post['editable'] === true,
       manual: post['manual'] === true,
       channels: Array.isArray(post['channels']) ? post['channels'].filter((c): c is string => typeof c === 'string') : null,
+      variants: variantsOf(post['variants']),
       crossposts: list(post['crossposts'] ?? [], `${where}.crossposts`).map((entry, j): Crosspost => {
         const w = `${where}.crossposts[${j}]`;
         const c = record(entry, w);

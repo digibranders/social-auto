@@ -77,3 +77,12 @@ test('parseStatus reads what is paused, and a paused channel, and defaults to no
   assert.deepEqual(parsed.posts.map((p) => p.state), ['skipped', 'paused']);
   assert.throws(() => parseStatus({ ...valid, pauses: 'yes' }), /status\.pauses must be an object/);
 });
+
+test('a post carries the captions and pictures platforms have of their own, and nothing else', () => {
+  const parsed = parseStatus({
+    ...valid,
+    posts: [{ ...valid.posts[0], variants: { linkedin: { caption: 'Long', image: 'https://x.test/wide.jpg', secret: 1 }, fax: { caption: 'no' }, google: 'bad' } }],
+  });
+  assert.deepEqual(parsed.posts[0]?.variants, { linkedin: { caption: 'Long', image: 'https://x.test/wide.jpg' } });
+  assert.deepEqual(parseStatus(valid).posts[0]?.variants, {});
+});

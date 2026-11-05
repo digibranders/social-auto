@@ -10,6 +10,7 @@ import {
   type PostOverride,
 } from './overrides.js';
 import type { ScheduledPost } from './schedule.js';
+import { applyVariantPatch, variantKeys } from './variants.js';
 
 /** What editing needs from storage; the real one is lib/store.ts, tests use memory. */
 export interface EditStore {
@@ -23,6 +24,7 @@ export type EditAction =
   | { kind: 'caption'; caption: unknown }
   | { kind: 'image'; bytes: Uint8Array }
   | { kind: 'move'; day: unknown; time?: unknown }
+  | { kind: 'variants'; variants: unknown }
   | { kind: 'skip' }
   | { kind: 'unskip' }
   | { kind: 'revert' };
@@ -91,6 +93,14 @@ export async function editPost(
       if (taken) throw new EditError('another post is already planned for that day', 409);
       next = { ...current, date, updatedAt };
     }
+  } else if (action.kind === 'variants') {
+    // A change to some platforms' own versions; the others stay as they are, and null puts a platform back on the main ones.
+    const variants = applyVariantPatch(current?.variants, action.variants);
+    const kept = new Set(variantKeys(variants));
+    staleImages.push(...variantKeys(current?.variants).filter((key) => !kept.has(key)));
+    next = { ...current, updatedAt };
+    if (Object.keys(variants).length > 0) next.variants = variants;
+    else delete next.variants;
   } else if (action.kind === 'skip') {
     next = { ...current, skipped: true, updatedAt };
   } else if (action.kind === 'unskip') {
@@ -99,11 +109,12 @@ export async function editPost(
   } else {
     // Reverting discards the words and the picture, not the decision to skip the post or the day it was moved to.
     if (current?.imageKey) staleImages.push(current.imageKey);
+    staleImages.push(...variantKeys(current?.variants));
     next = current?.skipped || current?.date ? { ...(current.skipped ? { skipped: true } : {}), ...(current.date ? { date: current.date } : {}), updatedAt } : undefined;
   }
 
   const updated: OverrideMap = { ...overrides };
-  if (next && (next.caption !== undefined || next.imageKey !== undefined || next.skipped === true || next.date !== undefined)) updated[id] = next;
+  if (next && (next.caption !== undefined || next.imageKey !== undefined || next.variants !== undefined || next.skipped === true || next.date !== undefined)) updated[id] = next;
   else delete updated[id];
 
   try {
@@ -115,5 +126,5 @@ export async function editPost(
   }
   for (const key of staleImages) await store.deleteImage(key).catch(() => undefined);
   const kept = updated[id];
-  return { post: id, edited: kept !== undefined && (kept.caption !== undefined || kept.imageKey !== undefined) };
+  return { post: id, edited: kept !== undefined && (kept.caption !== undefined || kept.imageKey !== undefined || kept.variants !== undefined) };
 }

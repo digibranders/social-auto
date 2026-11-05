@@ -4,6 +4,7 @@
  *
  * POST /api/edit?post=<id>&action=caption   body: {"caption": "..."}
  * POST /api/edit?post=<id>&action=image     body: the JPG file
+ * POST /api/edit?post=<id>&action=variants body: {"variants": {"linkedin": {"caption": "...", "pictureId": "..."}, ...}}  own caption and/or picture per platform; a platform left out stays as it is, null puts it back on the main ones
  * POST /api/edit?post=<id>&action=revert
  * POST /api/edit?post=<id>&action=move       body: {"day": "2026-11-12", "time"?: "14:30"}  a post takes a new day and time; one planned post per client per day, and a time left out stays as planned
  * POST /api/edit?post=<id>&action=skip      the post stays on the calendar but is never sent (while its time is still ahead)
@@ -38,6 +39,11 @@ async function readAction(request: Request, action: string | null): Promise<Edit
     const body: unknown = await request.json().catch(() => null);
     if (typeof body !== 'object' || body === null) throw new EditError('send {"caption": "..."} as JSON');
     return { kind: 'caption', caption: (body as Record<string, unknown>)['caption'] };
+  }
+  if (action === 'variants') {
+    const body: unknown = await request.json().catch(() => null);
+    if (typeof body !== 'object' || body === null) throw new EditError('send {"variants": {...}} as JSON');
+    return { kind: 'variants', variants: (body as Record<string, unknown>)['variants'] };
   }
   if (action === 'image') {
     const declared = Number(request.headers.get('content-length') ?? 0);

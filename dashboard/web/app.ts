@@ -1,5 +1,5 @@
 /** The calendar page. Every piece of text goes into the page as text, never as HTML. */
-import { NO_PAUSES, parseStatus, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
+import { NO_PAUSES, parseStatus, PLATFORMS, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
 import {
   addDays,
   addMonths,
@@ -248,7 +248,7 @@ function editedTag(post: StatusPost): HTMLElement | false {
 const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
 
 /** Sends one change to the server; resolves to an explanation when it did not work. */
-async function sendEdit(post: StatusPost, action: 'caption' | 'image' | 'revert' | 'skip' | 'unskip' | 'move', body?: BodyInit, contentType?: string): Promise<string | null> {
+async function sendEdit(post: StatusPost, action: 'caption' | 'variants' | 'image' | 'revert' | 'skip' | 'unskip' | 'move', body?: BodyInit, contentType?: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/edit?post=${encodeURIComponent(post.id)}&action=${action}`, {
       method: 'POST',
@@ -276,6 +276,21 @@ async function reopenAfterChange(id: string, mode: 'view' | 'edit'): Promise<voi
   else dialog.close();
 }
 
+/** What each platform reads best as; shown under its caption so a client knows what to aim for. */
+const PLATFORM_HINTS: Record<Platform, string> = {
+  instagram: 'Instagram reads best short, with 3 to 5 hashtags.',
+  facebook: 'Facebook reads best at 40 to 80 words, with 0 to 2 hashtags.',
+  linkedin: 'LinkedIn reads best a little longer, 120 to 250 words, with 0 to 3 hashtags.',
+  google: 'Google shows plain text only: 2 to 4 sentences, no hashtags.',
+};
+
+/** The platforms a post goes to, in the usual order; only these can have a caption of their own. */
+function platformsOf(post: StatusPost): Platform[] {
+  const going = new Set<Platform>(post.crossposts.map((c) => c.platform));
+  if (post.channels === null || post.channels.includes('instagram')) going.add('instagram');
+  return PLATFORMS.filter((p) => going.has(p));
+}
+
 function editPanel(post: StatusPost): HTMLElement {
   const message = h('p', { class: 'form-message', role: 'status' });
   const show = (text: string, isError: boolean): void => {
@@ -290,12 +305,69 @@ function editPanel(post: StatusPost): HTMLElement {
   const area = h('textarea', { class: 'caption-input', rows: '12', 'aria-label': 'Caption', maxlength: String(MAX_CAPTION_LENGTH * 2) });
   area.value = post.caption;
   const count = h('p', { class: 'muted counter' });
+
+  // One caption for everything, or a caption of its own for a platform. `texts` holds what is typed for each tab, `own` the platforms that have their own.
+  const targets = platformsOf(post);
+  let tab: 'main' | Platform = 'main';
+  const texts: Record<string, string> = { main: post.caption };
+  const own = new Set<Platform>();
+  for (const platform of targets) {
+    const saved = post.variants[platform]?.caption;
+    if (saved !== undefined) {
+      own.add(platform);
+      texts[platform] = saved;
+    }
+  }
+  const hint = h('p', { class: 'muted' });
+  const useMain = button('Use the main caption', 'btn btn-quiet', () => {
+    if (tab === 'main') return;
+    own.delete(tab);
+    texts[tab] = texts['main'] ?? '';
+    area.value = texts['main'] ?? '';
+    update();
+  });
+  const tabBar = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Caption for' });
   const update = (): void => {
     const { length, hashtags } = captionStats(area.value);
     count.textContent = `${length} / ${MAX_CAPTION_LENGTH} characters · ${hashtags} / ${MAX_HASHTAGS} hashtags`;
     count.classList.toggle('is-error', captionProblem(area.value) !== null);
+    if (tab === 'main') {
+      hint.textContent = targets.length > 1 ? 'Goes to every channel that has no caption of its own.' : '';
+    } else {
+      hint.textContent = `${own.has(tab) ? `This is the ${platformLabel(tab)} caption.` : `${platformLabel(tab)} uses the main caption until you change it here.`} ${PLATFORM_HINTS[tab]}`;
+    }
+    useMain.hidden = tab === 'main' || !own.has(tab);
+    for (const element of tabBar.querySelectorAll<HTMLButtonElement>('button')) {
+      const on = element.dataset['tab'] === tab;
+      element.classList.toggle('tab-on', on);
+      element.setAttribute('aria-selected', String(on));
+    }
   };
-  area.addEventListener('input', update);
+  const remember = (): void => {
+    texts[tab] = area.value;
+    if (tab !== 'main') {
+      if (area.value.trim() !== (texts['main'] ?? '').trim() && area.value.trim() !== '') own.add(tab);
+      else own.delete(tab);
+    }
+  };
+  const showTab = (next: 'main' | Platform): void => {
+    remember();
+    tab = next;
+    area.value = texts[next] ?? texts['main'] ?? '';
+    update();
+  };
+  area.addEventListener('input', () => {
+    remember();
+    update();
+  });
+  if (targets.length > 1) {
+    for (const key of ['main', ...targets] as const) {
+      const tabButton = button(key === 'main' ? 'Main' : platformLabel(key), 'tab', () => showTab(key));
+      tabButton.dataset['tab'] = key;
+      tabButton.setAttribute('role', 'tab');
+      tabBar.append(tabButton);
+    }
+  }
   update();
 
   const run = async (work: () => Promise<string | null>, mode: 'view' | 'edit'): Promise<void> => {
@@ -311,9 +383,32 @@ function editPanel(post: StatusPost): HTMLElement {
   };
 
   const save = button('Save caption', 'btn btn-primary', () => {
-    const problem = captionProblem(area.value);
-    if (problem) return show(problem, true);
-    void run(() => sendEdit(post, 'caption', JSON.stringify({ caption: area.value }), 'application/json'), 'view');
+    remember();
+    const main = texts['main'] ?? '';
+    const mainProblem = captionProblem(main);
+    if (mainProblem) return show(mainProblem, true);
+    // Only what changed is sent: the main caption, and each platform that got, changed or lost a caption of its own.
+    const patch: Record<string, { caption: string | null }> = {};
+    for (const platform of targets) {
+      const saved = post.variants[platform]?.caption;
+      if (own.has(platform)) {
+        const text = texts[platform] ?? '';
+        const problem = captionProblem(text);
+        if (problem) return show(`${platformLabel(platform)}: ${problem}`, true);
+        if (text !== saved) patch[platform] = { caption: text };
+      } else if (saved !== undefined) {
+        patch[platform] = { caption: null };
+      }
+    }
+    const mainChanged = main !== post.caption;
+    if (!mainChanged && Object.keys(patch).length === 0) return show('Nothing has changed.', true);
+    void run(async () => {
+      if (mainChanged) {
+        const problem = await sendEdit(post, 'caption', JSON.stringify({ caption: main }), 'application/json');
+        if (problem) return problem;
+      }
+      return Object.keys(patch).length > 0 ? sendEdit(post, 'variants', JSON.stringify({ variants: patch }), 'application/json') : null;
+    }, 'view');
   });
   buttons.push(save);
 
@@ -377,8 +472,12 @@ function editPanel(post: StatusPost): HTMLElement {
     { class: 'edit-panel' },
     schedule,
     h('h3', {}, 'Caption'),
+    targets.length > 1 ? h('p', { class: 'muted' }, 'Write one caption for everything, or give a channel its own: Instagram short, LinkedIn a little longer.') : null,
+    tabBar,
     area,
     count,
+    hint,
+    useMain,
     h('p', { class: 'muted' }, 'The pictures must be square JPG, up to 4 MB. Changes go out at the scheduled time.'),
     h('div', { class: 'actions' }, save, pick, file, revert, cancel),
     h('div', { class: 'actions actions-more' }, skip, remove),
@@ -445,6 +544,10 @@ function openDetail(post: StatusPost, mode: 'view' | 'edit' = post.editable ? 'e
                 post.editable && (post.state === 'scheduled' || post.state === 'paused') ? button('Skip this post', 'btn btn-quiet', () => void skipPost(post, true)) : null,
                 h('h3', {}, 'Caption'),
                 h('p', { class: 'caption' }, post.caption),
+                ...platformsOf(post).flatMap((platform) => {
+                  const own = post.variants[platform]?.caption;
+                  return own === undefined ? [] : [h('h3', {}, `${platformLabel(platform)} caption`), h('p', { class: 'caption' }, own)];
+                }),
               ),
         ),
       ),

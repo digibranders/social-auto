@@ -60,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
   const caller = await workspaceFor(request, body['externalId']);
   if (caller instanceof Response) return caller;
   try {
-    const post = await saveNewPost({ brand: caller.brand, day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], allowInstagram: false }, Date.now());
+    const post = await saveNewPost({ brand: caller.brand, day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], variants: body['variants'], allowInstagram: false }, Date.now());
     const [{ file: channels }, { log }, { file: pauses }] = await Promise.all([loadChannels(), loadPosted(), loadPauses()]);
     return json(201, { post: postView(post, channels, log, Date.now(), originOf(request), pauses) });
   } catch (error) {
@@ -98,7 +98,7 @@ export async function PATCH(request: Request): Promise<Response> {
   const caller = await workspaceFor(request, params.get('externalId'));
   if (caller instanceof Response) return caller;
   try {
-    const post = await updateNewPost(params.get('postId'), { day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'] }, Date.now(), caller.brand);
+    const post = await updateNewPost(params.get('postId'), { day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], variants: body['variants'] }, Date.now(), caller.brand);
     const [{ file: channels }, { log }, { file: pauses }] = await Promise.all([loadChannels(), loadPosted(), loadPauses()]);
     return json(200, { post: postView(post, channels, log, Date.now(), originOf(request), pauses) });
   } catch (error) {
