@@ -167,7 +167,7 @@ test('unit: classification from hand-built blocks', () => {
   // A result the site claims for itself is held from the automatic flow (proof-hold.ts), however well it is quoted.
   assert.equal(by('reduced support').status, 'needs_review');
   assert.equal(by('reduced support').proofHold?.code, 'HOLD_PERFORMANCE');
-  assert.deepEqual(by('uptime goal').reasonCodes, ['target_not_guarantee']);
+  assert.deepEqual(by('uptime goal').reasonCodes, ['target_not_guarantee', 'proof_claim_held']);
   assert.equal(by('5 users').scope, 'Team');
   assert.equal(by('ISO 27001').category, 'credential');
   assert.equal(by('ISO 27001').proofHold?.code, 'HOLD_CREDENTIAL');
