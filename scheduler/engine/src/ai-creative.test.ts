@@ -311,3 +311,11 @@ test('with the creative director off (the default), no director call, comparison
     ctx.done();
   }
 });
+
+test('the first prompt asks for a sign-off that survives a phone screen, so the first attempt is not rejected for small print', () => {
+  const prompt = buildCreativePrompt(manifest, { fact: 'f', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' } });
+  assert.match(prompt, /BRAND NAME: "OyeChats", as a clear sign-off in bold or semibold lettering/);
+  assert.match(prompt, /at least 4 percent of the poster's height/);
+  assert.match(prompt, /WEB ADDRESS: "oyechats\.com", set at the same size and weight as the brand name/);
+  assert.doesNotMatch(prompt, /small and secondary|small but clearly legible/);
+});

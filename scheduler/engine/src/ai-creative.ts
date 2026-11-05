@@ -50,8 +50,8 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
     'TEXT CONTRACT. The only visible text on the poster is the following, each exactly once and spelled character for character:',
     `1. HEADLINE: "${manifest.headline}"`,
     ...(manifest.subline ? [`2. SUPPORTING LINE: "${manifest.subline}"`] : []),
-    `${manifest.subline ? 3 : 2}. BRAND NAME: "${manifest.brandName}", in plain, clearly legible lettering, small and secondary to the headline, placed wherever it fits the composition naturally${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`,
-    `${manifest.subline ? 4 : 3}. WEB ADDRESS: "${manifest.domain}", small but clearly legible, next to or near the brand name.`,
+    `${manifest.subline ? 3 : 2}. BRAND NAME: "${manifest.brandName}", as a clear sign-off in bold or semibold lettering, its letters at least 4 percent of the poster's height tall (about 40 pixels on a 1024 pixel poster), smaller than the headline but never small, with strong contrast against what is directly behind it, placed wherever it fits the composition naturally${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`,
+    `${manifest.subline ? 4 : 3}. WEB ADDRESS: "${manifest.domain}", set at the same size and weight as the brand name, next to or directly beneath it, as part of the same sign-off.`,
     'Show no other words, letters, numbers or symbols that resemble writing anywhere: no labels, buttons, slogans, interface messages, captions, watermarks, signs, screens with writing, or made-up text.',
     'Never draw or imitate a logo, an app icon, a custom wordmark, a certification badge, a seal, a medal or an award.',
     ...(context.concept
