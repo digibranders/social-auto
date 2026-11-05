@@ -30,7 +30,7 @@ export function slugFromSite(site: string): string {
 }
 
 /** The first of these addresses that downloads as a picture; null when none does. */
-async function downloadImage(candidates: string[], fetchBytes: (url: string) => Promise<FetchedBytes>, tried: LogoSource['tried'] = []): Promise<{ url: string; bytes: Buffer; type: string } | null> {
+export async function downloadImage(candidates: string[], fetchBytes: (url: string) => Promise<FetchedBytes>, tried: LogoSource['tried'] = []): Promise<{ url: string; bytes: Buffer; type: string } | null> {
   for (const url of candidates) {
     try {
       const { bytes, type } = await fetchBytes(url);

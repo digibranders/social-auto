@@ -16,7 +16,7 @@ test('the prompt carries the accepted subject and action, the medium, the scene 
   const prompt = buildImagePrompt({ brief: briefOf(hero), brand, textSlots: slotsOf('split-composition', 'left') }) ?? '';
   assert.match(prompt, /Flat geometric vector illustration/);
   assert.match(prompt, /a project board, with overdue cards glowing/);
-  assert.match(prompt, /Setting: a quiet workspace\. Composition: close three-quarter view\. Mood: calm\./);
+  assert.match(prompt, /Surroundings, only as needed: a quiet workspace\. Composition: close three-quarter view\. Mood: calm\./);
   assert.match(prompt, /#14213D/);
   assert.match(prompt, /#FCA311/);
 });
@@ -68,10 +68,10 @@ test('identical inputs give an identical prompt', () => {
 
 test('a hero picture is asked for depth and lighting only where they help, and flat or minimal is allowed; a texture is not', () => {
   const heroPrompt = buildImagePrompt({ brief: briefOf(hero), brand, textSlots: slotsOf('split-composition', 'left') }) ?? '';
-  assert.match(heroPrompt, /depth, environmental context, a clear focal subject and coherent lighting where they improve the idea/);
+  assert.match(heroPrompt, /Use depth and environment only where they help show the idea/);
   assert.match(heroPrompt, /minimal, flat or abstract composition is equally valid/);
   const texture = buildImagePrompt({ brief: briefOf({ ...hero, role: 'texture', medium: 'abstract' }, 'typography-hero', 'center'), brand, textSlots: slotsOf('typography-hero', 'center') }) ?? '';
-  assert.doesNotMatch(texture, /environmental context/);
+  assert.doesNotMatch(texture, /Use depth and environment/);
 });
 
 
@@ -100,4 +100,21 @@ test('the scene is requested in the panel\'s shape, and the crop guidance accoun
   assert.match(cropGuidance({ x: 0, y: 680, w: 1080, h: 400 }, { width: 1536, height: 1024 }), /middle 56% of its height/);
   assert.match(cropGuidance({ x: 600, y: 200, w: 416, h: 720 }, { width: 1024, height: 1536 }), /middle 87% of its width/);
   assert.equal(cropGuidance({ x: 0, y: 0, w: 1000, h: 640 }, { width: 1536, height: 1024 }), '');
+});
+
+test('the hero prompt makes the subject and action the whole picture and keeps unrelated places and props out; a texture prompt does not', () => {
+  const prompt = buildImagePrompt({ brief: briefOf(hero), brand, textSlots: [] }) ?? '';
+  assert.match(prompt, /The subject and what happens to it are the whole picture/);
+  assert.match(prompt, /Do not add unrelated places, furniture or props/);
+  assert.ok(prompt.indexOf('a project board') < prompt.indexOf('Surroundings'), 'the idea comes before the surroundings');
+  const texture = buildImagePrompt({ brief: briefOf({ ...hero, role: 'texture', medium: 'abstract' }, 'typography-hero', 'center'), brand, textSlots: [] }) ?? '';
+  assert.doesNotMatch(texture, /whole picture/);
+});
+
+test('a picture with a stated relationship is told what it must visibly show; a texture is not', () => {
+  const withRelationship = buildImagePrompt({ brief: briefOf({ ...hero, relationship: 'a card passing from one tray into a second tray' }), brand, textSlots: [] }) ?? '';
+  assert.match(withRelationship, /What the picture must visibly show: a card passing from one tray into a second tray\./);
+  assert.ok(withRelationship.indexOf('What the picture must visibly show') < withRelationship.indexOf('Surroundings'));
+  const texture = buildImagePrompt({ brief: briefOf({ ...hero, role: 'texture', medium: 'abstract', relationship: 'ignored' }, 'typography-hero', 'center'), brand, textSlots: [] }) ?? '';
+  assert.doesNotMatch(texture, /must visibly show/);
 });

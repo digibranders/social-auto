@@ -111,3 +111,25 @@ test('the picture judge sends one request for the batch, with the message and th
   assert.match(bodies[0] ?? '', /a maze; a path opens/);
   assert.deepEqual(verdicts, [{ key: 'a', answer: 'unsupported', reason: 'a maze is not routing' }, { key: 'b', answer: 'supported' }]);
 });
+
+test('when a model judges the picture idea, a metaphor that the headline does not name is not refused by word overlap, but a missing or vague subject still is', () => {
+  const metaphor = concept({ visualSubject: 'a glossy clock face', visualAction: 'ticking quietly' });
+  assert.equal(pictureEligibility({ ...copy, concept: metaphor }).eligible, false);
+  assert.equal(pictureEligibility({ ...copy, concept: metaphor }, { requireWordOverlap: false }).eligible, true);
+  assert.equal(pictureEligibility({ ...copy }, { requireWordOverlap: false }).eligible, false);
+  assert.equal(pictureEligibility({ ...copy, concept: concept({ visualSubject: 'an abstract idea' }) }, { requireWordOverlap: false }).eligible, false);
+});
+
+test('the picture judge is told what the picture must visibly show and the creative move, and not the writer\'s explanation of the mapping', async () => {
+  let seen: Array<{ quote: string; context: string }> = [];
+  await judgePictures(
+    [{ id: 'a', headline: 'Chats reach a person', subline: '', concept: { visualSubject: 'a chat bubble', visualAction: 'passes to a second bubble', moveId: 'direct_demonstration', visualRelationship: 'a bubble handed along a line to a person icon' } }],
+    [{ picture: { eligible: true, reasons: [] } }],
+    async (items) => {
+      seen = items;
+      return items.map((i) => ({ key: i.key, answer: 'supported' as const }));
+    },
+  );
+  assert.match(seen[0]?.quote ?? '', /It must visibly show: a bubble handed along a line to a person icon/);
+  assert.match(seen[0]?.context ?? '', /creative move: direct_demonstration/);
+});

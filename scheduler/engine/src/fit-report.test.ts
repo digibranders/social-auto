@@ -85,3 +85,16 @@ test('a picture that fills the lower part, a brand element near the bottom, or a
   assert.deepEqual(judgeReport(short, { ...expectations, minContentReach: 0.6 }).warnings, []);
   assert.deepEqual(judgeReport(report(), expectations).warnings, []);
 });
+
+test('text laid over the picture\'s subject is a hard failure; a brush against its loose box, brand elements and a subject elsewhere are not', () => {
+  const over = judgeReport(report(), { ...expectations, subjectRect: { x: 200, y: 300, w: 400, h: 300 } });
+  assert.deepEqual(over.hard.map((i) => i.code), ['text_over_subject']);
+  assert.equal(over.hard[0]?.slot, 'headline');
+  const brush = judgeReport(report(), { ...expectations, subjectRect: { x: 800, y: 430, w: 200, h: 200 } });
+  assert.deepEqual(brush.hard, [], 'only 30 px of the text box is touched, which is a brush, not a collision');
+  const elsewhere = judgeReport(report(), { ...expectations, subjectRect: { x: 700, y: 600, w: 300, h: 300 } });
+  assert.deepEqual(elsewhere.hard, []);
+  const brand = judgeReport(report(), { ...expectations, subjectRect: { x: 64, y: 960, w: 500, h: 80 } });
+  assert.deepEqual(brand.hard, [], 'a brand element (identity, CTA, logo) over a picture has its own backing and is not the headline');
+  assert.deepEqual(judgeReport(report(), expectations).hard, [], 'no subject known, nothing to check');
+});

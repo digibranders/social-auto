@@ -15,12 +15,18 @@ export interface GateConfig {
   vagueWords: readonly string[];
   stopWords: readonly string[];
   minWordLength: number;
+  /**
+   * Requires the picture's words to appear in what the post says. A cheap guard for when no model judges the picture idea; it rejects every
+   * metaphor, because a good metaphor is not named in the headline, so a model judge replaces it when one is available.
+   */
+  requireWordOverlap: boolean;
 }
 
 export const defaultGateConfig: GateConfig = {
   vagueWords: ['concept', 'idea', 'abstract', 'metaphor', 'symbol', 'feeling', 'essence', 'something', 'thing', 'object'],
   stopWords: ['the', 'and', 'for', 'with', 'your', 'that', 'this', 'from', 'into', 'over', 'then', 'them', 'their', 'while', 'about', 'a', 'an', 'of', 'in', 'on', 'to', 'is', 'are', 'it', 'its', 'one', 'close', 'slowly', 'gently'],
   minWordLength: 4,
+  requireWordOverlap: true,
 };
 
 const stemOf = (word: string): string => (word.length > 3 && word.endsWith('s') && !word.endsWith('ss') ? word.slice(0, -1) : word).slice(0, 5);
@@ -41,6 +47,7 @@ export function pictureEligibility(post: { headline: string; subline: string; ca
   const subjectWords = [...stems(subject, { ...config, minWordLength: 3 })];
   const concrete = normalizeForQuote(subject).split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3 && !vague.has(w));
   if (concrete.length === 0) return { eligible: false, reasons: [`the picture subject "${subject}" names nothing concrete`] };
+  if (!config.requireWordOverlap) return { eligible: true, reasons: [] };
   const message = stems([post.headline, post.subline, post.caption ?? '', concept.subject, concept.angle, concept.message].join(' '), config);
   const picture = new Set([...subjectWords, ...stems(action, config)]);
   const shared = [...picture].filter((s) => message.has(s));
@@ -52,7 +59,7 @@ export interface PictureCheckInput {
   id: string;
   headline: string;
   subline: string;
-  concept?: Pick<Concept, 'visualSubject' | 'visualAction'>;
+  concept?: Pick<Concept, 'visualSubject' | 'visualAction' | 'moveId' | 'visualRelationship'>;
 }
 
 type JudgeFn = (items: Array<{ key: string; claim: string; quote: string; context: string }>) => Promise<Array<{ key: string; answer: 'supported' | 'unsupported' | 'unclear'; reason?: string }>>;
@@ -69,7 +76,7 @@ export async function judgePictures<T extends { picture?: { eligible: boolean; r
   const answers = new Map<string, { answer: string; reason?: string }>();
   let failure: string | undefined;
   try {
-    const items = asked.map(({ post }) => ({ key: post.id, claim: `${post.headline.replaceAll('|', '')}\n${post.subline}`, quote: `Picture: ${post.concept?.visualSubject}; ${post.concept?.visualAction}`, context: 'poster message and picture idea' }));
+    const items = asked.map(({ post }) => ({ key: post.id, claim: `${post.headline.replaceAll('|', '')}\n${post.subline}`, quote: `Picture: ${post.concept?.visualSubject}; ${post.concept?.visualAction}${post.concept?.visualRelationship ? `. It must visibly show: ${post.concept.visualRelationship}` : ''}`, context: post.concept?.moveId ? `poster message and picture idea; creative move: ${post.concept.moveId}` : 'poster message and picture idea' }));
     for (const v of await judge(items)) answers.set(v.key, { answer: v.answer, ...(v.reason ? { reason: v.reason } : {}) });
   } catch (error) {
     failure = error instanceof Error ? error.message : String(error);

@@ -80,11 +80,15 @@ export type IssueCode =
   | 'text_overflow'
   | 'missing_slot'
   | 'collision'
+  | 'text_over_subject'
   | 'outside_margin'
   | 'missing_glyphs'
   | 'image_failed'
   | 'contrast'
   | 'identity_omitted'
+  | 'layout_changed_after_picture'
+  | 'cta_stacked'
+  | 'cta_label_omitted'
   | 'possible_unbalanced_composition';
 
 export interface Issue {
@@ -110,6 +114,8 @@ export interface Expectations {
   contrast: readonly ContrastCheck[];
   /** Where pictures sit; what a picture fills is not empty. */
   pictureRects?: ReadonlyArray<{ y: number; h: number }>;
+  /** Where the picture's subject is on the poster; text laid over it (beyond a small overlap) is a defect, whatever the layout. */
+  subjectRect?: { x: number; y: number; w: number; h: number };
   /** Content should reach this share of the canvas height (text, brand strip or picture) before the poster is called unbalanced. Advisory only. */
   minContentReach?: number;
 }
@@ -119,6 +125,10 @@ export function contentReach(report: RenderReport, pictureRects: ReadonlyArray<{
   const bottoms = [...report.elements.map((e) => e.rect.y + e.rect.h), ...pictureRects.map((r) => r.y + r.h)];
   return bottoms.length === 0 ? 1 : Math.max(...bottoms) / canvas;
 }
+
+/** Text may brush the subject's loose bounding box: it counts as laid over the subject only when the overlap is wider and taller than this and covers more than this share of the text box. */
+const MIN_OVERLAP_PX = 24;
+const MIN_OVERLAP_SHARE = 0.06;
 
 export function judgeReport(report: RenderReport, expect: Expectations): Judgement {
   const hard: Issue[] = [];
@@ -148,6 +158,17 @@ export function judgeReport(report: RenderReport, expect: Expectations): Judgeme
     if (element.role !== 'logo') solved[element.slot] = element.fontSize;
     if (!element.fits) {
       add({ code: 'text_overflow', severity: 'hard', message: `"${element.slot}" does not fit its slot even at ${element.min}px (${element.lines} line${element.lines === 1 ? '' : 's'}, ${Math.round(element.height)}px tall in ${element.slotH}px)`, slot: element.slot });
+    }
+  }
+  if (expect.subjectRect && expect.subjectRect.w > 0 && expect.subjectRect.h > 0) {
+    const s = expect.subjectRect;
+    for (const e of report.elements) {
+      if (e.layer !== 'text') continue;
+      const w = Math.min(e.rect.x + e.rect.w, s.x + s.w) - Math.max(e.rect.x, s.x);
+      const h = Math.min(e.rect.y + e.rect.h, s.y + s.h) - Math.max(e.rect.y, s.y);
+      if (w > MIN_OVERLAP_PX && h > MIN_OVERLAP_PX && (w * h) / Math.max(1, e.rect.w * e.rect.h) > MIN_OVERLAP_SHARE) {
+        add({ code: 'text_over_subject', severity: 'hard', message: `"${e.slot}" is laid over the picture's subject`, slot: e.slot });
+      }
     }
   }
   for (const [a, b] of report.collisions) add({ code: 'collision', severity: 'hard', message: `"${a}" and "${b}" collide`, slot: a });

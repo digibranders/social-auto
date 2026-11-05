@@ -47,11 +47,19 @@ export const SOLVER_SCRIPT = String.raw`
       var fits = el.scrollWidth <= slotW + 1 && height <= slotH + 0.5 && (maxLines === 0 || lines <= maxLines);
       return { lines: lines, height: height, fits: fits };
     }
-    var lo = min, hi = Math.max(max, min), best = null;
-    while (lo <= hi) {
-      var mid = (lo + hi) >> 1;
-      if (measure(mid).fits) { best = mid; lo = mid + 1; } else { hi = mid - 1; }
+    // A preferred line count is tried first (the largest size that stays within it); only when no size does is the full limit used.
+    var preferLines = Number(el.getAttribute('data-prefer-lines') || 0), limit = maxLines;
+    function search() {
+      var lo = min, hi = Math.max(max, min), found = null;
+      while (lo <= hi) {
+        var mid = (lo + hi) >> 1;
+        if (measure(mid).fits) { found = mid; lo = mid + 1; } else { hi = mid - 1; }
+      }
+      return found;
     }
+    var best = null;
+    if (preferLines > 0 && (maxLines === 0 || preferLines < maxLines)) { maxLines = preferLines; best = search(); maxLines = limit; }
+    if (best === null) best = search();
     var size = best === null ? min : best;
     var m = measure(size);
     return { slot: el.getAttribute('data-slot'), role: el.getAttribute('data-role'), layer: el.getAttribute('data-layer') || 'text', fontSize: size, min: min, max: max, lines: m.lines, maxLines: maxLines, height: m.height, slotH: slotH, slotW: slotW, fits: best !== null, rect: contentRect(el) };

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseArtBrief, type ArtBrief } from './art-brief.ts';
-import { composePoster, ComposeError, type ComposeInput, type PosterBrand, type PosterCopy } from './compose.ts';
+import { beside, composePoster, ComposeError, type ComposeInput, type PosterBrand, type PosterCopy } from './compose.ts';
 import { backingAlpha, composite, contrastRatio, TARGET_RATIO } from './contrast.ts';
 import { familyById, layoutRegistry } from './layout-registry.ts';
 import { scriptOf, systemFont, textStyleFor } from './typography.ts';
@@ -237,4 +237,48 @@ test('the lower-anchored typography variant is a light page with no picture and 
   assert.notEqual(bottom.match(/body\{background:[^;]+/)?.[0], center.match(/body\{background:[^;]+/)?.[0]);
   assert.ok(!bottom.includes('<div data-layer="decor"') && !bottom.includes('<img'));
   assert.equal(familyById(layoutRegistry, 'typography-hero')?.zones['bottom']?.imageSlots.length, 0);
+});
+
+test('a headline in a narrow column beside a picture asks for three lines first; a wide or pictureless headline does not', () => {
+  const narrow = compose(briefOf('split-composition', 'left', hero), { pictureUrl: 'file:///tmp/x.png' }).html;
+  assert.match(narrow, /data-slot="headline"[^>]*data-prefer-lines="3"/);
+  const wide = compose(briefOf('split-composition', 'top', hero), { pictureUrl: 'file:///tmp/x.png' }).html;
+  assert.doesNotMatch(wide, /data-slot="headline"[^>]*data-prefer-lines/);
+  const textOnly = compose(briefOf('typography-hero', 'top', { role: 'none' })).html;
+  assert.doesNotMatch(textOnly, /data-slot="headline"[^>]*data-prefer-lines/);
+});
+
+test('display text is never split inside a word, and a stacked call to action puts the label and the link on two lines', () => {
+  const { html } = compose(briefOf('typography-hero', 'top', { role: 'none' }));
+  assert.match(html, /\.fit\[data-role="headline"\][^}]*overflow-wrap: normal; word-break: normal; hyphens: none/);
+  const stacked = compose(briefOf('typography-hero', 'top', { role: 'none' }), { brand: { ...brand, cta: { label: 'Explore our services', host: 'acme.example', stacked: true } } }).html;
+  assert.match(stacked, /Explore our services<br><span class="host">acme\.example<\/span>/);
+  assert.match(stacked, /data-slot="cta"[^>]*data-max-lines="2"/);
+  const single = compose(briefOf('typography-hero', 'top', { role: 'none' }), { brand: { ...brand, cta: { label: 'Explore our services', host: 'acme.example' } } }).html;
+  assert.match(single, /data-slot="cta"[^>]*data-max-lines="1"/);
+});
+
+test('a picture focus positions a cropped picture on its subject; without one the crop stays centred; a texture is never moved', () => {
+  const brief = briefOf('split-composition', 'left', hero);
+  const focused = compose(brief, { pictureUrl: 'file:///tmp/x.png', pictureFocus: { x: 100, y: 50 } }).html;
+  assert.match(focused, /object-position:100% 50%;/);
+  assert.doesNotMatch(compose(brief, { pictureUrl: 'file:///tmp/x.png' }).html, /object-position/);
+  const texture = compose(briefOf('typography-hero', 'center', { ...hero, role: 'texture', medium: 'abstract' }), { pictureUrl: 'file:///tmp/x.png', pictureFocus: { x: 100, y: 50 } }).html;
+  assert.doesNotMatch(texture, /object-position:100%/);
+});
+
+test('a line that would cross the edge of a picture panel is kept on the page side of it; one wholly clear or wholly over the picture is left alone', () => {
+  const rightPanel = { x: 560, y: 0, w: 520, h: 1080 };
+  const strip = { x: 64, y: 140, w: 900, h: 48 };
+  assert.deepEqual(beside(rightPanel, strip), { x: 64, y: 140, w: 472, h: 48 });
+  const leftPanel = { x: 0, y: 0, w: 520, h: 1080 };
+  const narrowToRight = beside(leftPanel, { x: 64, y: 140, w: 900, h: 48 });
+  assert.equal(narrowToRight.x, 544);
+  assert.equal(narrowToRight.x + narrowToRight.w, 964);
+  assert.deepEqual(beside(undefined, strip), strip);
+  assert.deepEqual(beside({ x: 0, y: 680, w: 1080, h: 400 }, strip), strip, 'a picture band that is not at the same height is not in the way');
+  assert.deepEqual(beside(rightPanel, { x: 600, y: 140, w: 300, h: 48 }), { x: 600, y: 140, w: 300, h: 48 }, 'wholly over the picture');
+  assert.deepEqual(beside({ x: 300, y: 0, w: 780, h: 1080 }, strip), strip, 'too little room beside it to read');
+  const { html } = compose(briefOf('split-composition', 'left', hero), { pictureUrl: 'file:///tmp/x.png' });
+  assert.match(html, /data-slot="identity"[^>]*data-slot-w="472"/);
 });

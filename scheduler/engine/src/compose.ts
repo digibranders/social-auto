@@ -14,7 +14,7 @@ import { CANVAS_SIZE, darken, lighten, luminance, washColor } from './layout.ts'
 import { plateFor, type LogoTone } from './logo-tone.ts';
 import { layoutRegistry, familyById, type LayoutFamily, type Rect, type SlotDefinition, type ZoneLayout } from './layout-registry.ts';
 import { SOLVER_SCRIPT } from './measure-script.ts';
-import { ROLE_RANGE, headlineRange, textStyleFor, type ResolvedFont, type TextRole } from './typography.ts';
+import { ROLE_RANGE, SCALE_MAX_PX, headlineRange, textStyleFor, type ResolvedFont, type TextRole } from './typography.ts';
 
 export class ComposeError extends Error {
   constructor(message: string) {
@@ -40,7 +40,8 @@ export interface PosterBrand {
   name: string;
   colors: BrandColors;
   identityLine?: string;
-  cta?: { label: string; host: string };
+  /** `stacked` puts the label on one line and the link on the next, for a call to action that does not fit one line. */
+  cta?: { label: string; host: string; stacked?: boolean };
   /** Inline <svg> or an <img> of a local file; absent when the brand has no logo. */
   logoHtml?: string;
   logoTone?: LogoTone | null;
@@ -61,6 +62,8 @@ export interface ComposeInput {
   brand: PosterBrand;
   /** A file: URL of the generated picture; without one a measuring page shows a placeholder and a frozen page refuses. */
   pictureUrl?: string;
+  /** Where the picture's subject is, as object-position percentages, so a cropped picture keeps it in view; without it the crop is centred. */
+  pictureFocus?: { x: number; y: number };
   font: ResolvedFont;
   mode: ComposeMode;
   registry?: readonly LayoutFamily[];
@@ -147,6 +150,13 @@ class Canvas {
     return this.zone.textSlots.find((s) => s.id === id);
   }
 
+  /** The panel of the poster's hero or supporting picture, when it has one beside the text. */
+  pictureRect(): Rect | undefined {
+    const role = this.input.brief.picture.role;
+    if (role === 'none' || role === 'texture') return undefined;
+    return this.zone.imageSlots.find((s) => s.id === role)?.rect;
+  }
+
   surfaceAt(rect: Rect): SurfaceKind {
     const cx = rect.x + rect.w / 2;
     const cy = rect.y + rect.h / 2;
@@ -186,9 +196,11 @@ class Canvas {
     plain: string;
     rect: Rect;
     surface: SurfaceKind;
-    anchor?: 'start' | 'end';
+    anchor?: 'start' | 'center' | 'end';
     weight?: number;
     fit: { max: number; min: number; maxLines: number };
+    /** A line count the fit tries to stay within before it allows the full limit. */
+    preferLines?: number;
     hug?: boolean;
     justify?: 'flex-start' | 'flex-end';
     backing?: boolean;
@@ -207,11 +219,11 @@ class Canvas {
     const wrapper =
       opts.hug === true
         ? `display:flex;align-items:center;justify-content:${opts.justify ?? 'flex-start'};`
-        : `display:flex;flex-direction:column;justify-content:${opts.anchor === 'end' ? 'flex-end' : 'flex-start'};`;
+        : `display:flex;flex-direction:column;justify-content:${opts.anchor === 'end' ? 'flex-end' : opts.anchor === 'center' ? 'center' : 'flex-start'};`;
     this.parts.push(
       `<div class="slot" style="${rectCss(rect)}${wrapper}">` +
         `<div class="fit" data-fit="1" data-slot="${opts.slot}" data-role="${opts.role}" data-layer="${opts.role === 'identity' || opts.role === 'cta' || opts.role === 'brand' ? 'brand' : 'text'}" ` +
-        `data-fit-max="${opts.fit.max}" data-fit-min="${opts.fit.min}" data-max-lines="${opts.fit.maxLines}" data-slot-w="${Math.round(opts.rect.w)}" data-slot-h="${Math.round(opts.rect.h)}" ` +
+        `data-fit-max="${opts.fit.max}" data-fit-min="${opts.fit.min}" data-max-lines="${opts.fit.maxLines}" data-slot-w="${Math.round(opts.rect.w)}" data-slot-h="${Math.round(opts.rect.h)}"${opts.preferLines ? ` data-prefer-lines="${opts.preferLines}"` : ''} ` +
         `dir="${style.dir}" style="color:${text};--accent:${accent};font-size:${size}px;line-height:${style.lineHeight};letter-spacing:${style.letterSpacingEm}em;text-align:${align};font-weight:${opts.weight ?? 600};` +
         `${opts.hug === true ? 'width:fit-content;max-width:100%;' : 'width:100%;'}${backing}${opts.extraStyle ?? ''}">${opts.html}</div></div>`,
     );
@@ -224,7 +236,7 @@ class Canvas {
     const url = this.input.pictureUrl;
     if (url !== undefined) {
       if (!isLocalFileUrl(url)) throw new ComposeError('the picture must be a local file: URL');
-      this.parts.push(`<img data-layer="picture" data-slot="picture" alt="" decoding="sync" loading="eager" src="${escapeHtml(url)}" style="${rectCss(slot.rect)}object-fit:cover;${extra.opacity !== undefined ? `opacity:${extra.opacity};` : ''}${extra.radius ? `border-radius:${extra.radius}px;` : ''}${extra.style ?? ''}">`);
+      this.parts.push(`<img data-layer="picture" data-slot="picture" alt="" decoding="sync" loading="eager" src="${escapeHtml(url)}" style="${rectCss(slot.rect)}object-fit:cover;${this.input.pictureFocus && role !== 'texture' ? `object-position:${this.input.pictureFocus.x}% ${this.input.pictureFocus.y}%;` : ''}${extra.opacity !== undefined ? `opacity:${extra.opacity};` : ''}${extra.radius ? `border-radius:${extra.radius}px;` : ''}${extra.style ?? ''}">`);
     } else if (this.input.mode.kind === 'frozen') {
       throw new ComposeError('a frozen poster needs its picture');
     } else {
@@ -251,13 +263,52 @@ function isLocalFileUrl(url: string): boolean {
   }
 }
 
-function headlineAndSubline(c: Canvas, surface: SurfaceKind, anchor: 'start' | 'end' = 'end'): void {
+/** A headline in a column narrower than this, beside a picture, is kept to this many lines when a smaller size allows it, so it does not become a tall stack of short lines. */
+const NARROW_COLUMN_PX = 600;
+const PREFERRED_HEADLINE_LINES = 3;
+
+/** The vertical band a headline with nothing under it may use, clear of the brand strip above and the CTA below. */
+const ALONE_BAND = { y: 220, h: 680 };
+
+/**
+ * `fillWhenAlone` is for text-only posters: with no subline the headline has the whole band to itself, is centred in it and may grow to the family's
+ * largest scale, so a short statement fills the poster instead of sitting in its top half.
+ */
+function headlineAndSubline(c: Canvas, surface: SurfaceKind, anchor: 'start' | 'end' = 'end', fillWhenAlone = false): void {
   const { copy, brief } = c.input;
   const headline = c.slot('headline');
   if (!headline) throw new ComposeError(`${c.family.id}/${c.zoneName} has no headline slot`);
-  c.text({ slot: 'headline', role: 'headline', html: headlineHtml(copy.headline), plain: parseHeadline(copy.headline).map((s) => s.text).join(''), rect: headline.rect, surface, anchor, weight: 900, fit: headlineRange(c.family, brief.headlineScale) });
+  const alone = fillWhenAlone && !copy.subline.trim();
+  const range = headlineRange(c.family, brief.headlineScale);
+  const fit = alone ? { ...range, max: Math.max(range.max, SCALE_MAX_PX.xl) } : range;
+  const rect = alone ? { ...headline.rect, ...ALONE_BAND } : headline.rect;
+  const narrowBesidePicture = c.input.brief.picture.role !== 'none' && rect.w < NARROW_COLUMN_PX;
+  c.text({ slot: 'headline', role: 'headline', html: headlineHtml(copy.headline), plain: parseHeadline(copy.headline).map((s) => s.text).join(''), rect, surface, anchor: alone ? 'center' : anchor, weight: 900, fit, ...(narrowBesidePicture ? { preferLines: PREFERRED_HEADLINE_LINES } : {}) });
   const subline = c.slot('subline');
   if (subline && copy.subline.trim()) c.text({ slot: 'subline', role: 'subline', html: escapeHtml(copy.subline), plain: copy.subline, rect: subline.rect, surface, weight: 500, fit: ROLE_RANGE.subline });
+}
+
+const SIDE_GAP = 24;
+const MIN_SIDE_WIDTH = 260;
+
+/**
+ * A line that would run across the edge of a picture panel is kept on the page side of it instead, so text never straddles a picture's edge. A line that
+ * lies wholly over or clear of the picture is left where it is, and so is one whose room beside the picture would be too narrow to read.
+ */
+export function beside(picture: Rect | undefined, rect: Rect): Rect {
+  if (!picture) return rect;
+  const overlapsY = rect.y < picture.y + picture.h && rect.y + rect.h > picture.y;
+  if (!overlapsY) return rect;
+  const right = rect.x + rect.w;
+  if (rect.x < picture.x && right > picture.x) {
+    const w = picture.x - SIDE_GAP - rect.x;
+    return w >= MIN_SIDE_WIDTH ? { ...rect, w } : rect;
+  }
+  if (rect.x < picture.x + picture.w && right > picture.x + picture.w && rect.x >= picture.x) {
+    const x = picture.x + picture.w + SIDE_GAP;
+    return right - x >= MIN_SIDE_WIDTH ? { ...rect, x, w: right - x } : rect;
+  }
+  return rect;
 }
 
 /** The logo (or the brand name), identity line and CTA, each in its own slot over whatever surface lies beneath it. */
@@ -281,15 +332,20 @@ function brandStrip(c: Canvas): void {
   }
 
   if (brand.identityLine?.trim()) {
-    const surface = c.surfaceAt(identitySlot.rect);
-    c.text({ slot: 'identity', role: 'identity', html: escapeHtml(brand.identityLine), plain: brand.identityLine, rect: identitySlot.rect, surface, weight: 600, fit: ROLE_RANGE.identity, hug: true, backing: surface === 'picture' });
+    const rect = beside(c.pictureRect(), identitySlot.rect);
+    const surface = c.surfaceAt(rect);
+    c.text({ slot: 'identity', role: 'identity', html: escapeHtml(brand.identityLine), plain: brand.identityLine, rect, surface, weight: 600, fit: ROLE_RANGE.identity, hug: true, backing: surface === 'picture' });
   }
   if (brand.cta) {
     const surface = c.surfaceAt(ctaSlot.rect);
     const right = ctaSlot.rect.x + ctaSlot.rect.w / 2 > CANVAS_SIZE / 2;
+    const label = brand.cta.label.trim();
+    const stacked = brand.cta.stacked === true && label !== '';
+    const html = stacked ? `${escapeHtml(brand.cta.label)}<br><span class="host">${escapeHtml(brand.cta.host)}</span>` : `${label ? `${escapeHtml(brand.cta.label)} ` : ''}<span class="host">${escapeHtml(brand.cta.host)}</span>`;
     c.text({
-      slot: 'cta', role: 'cta', html: `${escapeHtml(brand.cta.label)} <span class="host">${escapeHtml(brand.cta.host)}</span>`, plain: `${brand.cta.label} ${brand.cta.host}`,
-      rect: ctaSlot.rect, surface, weight: 800, fit: ROLE_RANGE.cta, hug: true, justify: right ? 'flex-end' : 'flex-start', backing: surface === 'picture',
+      slot: 'cta', role: 'cta', html, plain: `${brand.cta.label} ${brand.cta.host}`.trim(),
+      rect: ctaSlot.rect, surface, weight: 800, fit: stacked ? { ...ROLE_RANGE.cta, maxLines: 2 } : ROLE_RANGE.cta, hug: true, justify: right ? 'flex-end' : 'flex-start', backing: surface === 'picture',
+      ...(stacked ? { extraStyle: 'line-height:1.15;' } : {}),
     });
   }
 }
@@ -300,6 +356,16 @@ function listHtml(items: readonly string[]): string {
 
 type Composer = (c: Canvas) => void;
 
+function composeSplit(c: Canvas, radius: number | undefined): void {
+  const { light } = c.palette;
+  c.css.push(`body{background:${light};}`);
+  c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'light');
+  const rect = c.picture('hero', radius ? { radius } : {});
+  // No divider between the picture and the page: the picture's own edge already separates them, and a rule added nothing.
+  if (rect) c.surface(rect, 'picture');
+  headlineAndSubline(c, 'light');
+}
+
 const composers: Record<string, Composer> = {
   'typography-hero': (c) => {
     if (c.zoneName === 'left' || c.zoneName === 'bottom') {
@@ -309,7 +375,7 @@ const composers: Record<string, Composer> = {
       c.css.push(`body{background:${light};}`);
       c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'light');
       if (c.zoneName === 'left') c.decor({ x: 0, y: 0, w: 28, h: CANVAS_SIZE }, `background:${accentOnLight};`);
-      headlineAndSubline(c, 'light', c.zoneName === 'left' ? 'start' : 'end');
+      headlineAndSubline(c, 'light', c.zoneName === 'left' ? 'start' : 'end', true);
       return;
     }
     const { dark } = c.palette;
@@ -318,18 +384,15 @@ const composers: Record<string, Composer> = {
     const texture = c.picture('texture', { opacity: 0.28 });
     if (texture) c.check('texture', '#FFFFFF', composite('#FFFFFF', 0.28, dark));
     // No decorative rule between headline and subline: it sat at a fixed height the headline could run into, and nothing measures decor.
-    headlineAndSubline(c, 'dark');
+    headlineAndSubline(c, 'dark', 'end', true);
   },
 
-  'split-composition': (c) => {
-    const { light } = c.palette;
-    c.css.push(`body{background:${light};}`);
-    c.surface({ x: 0, y: 0, w: CANVAS_SIZE, h: CANVAS_SIZE }, 'light');
-    const rect = c.picture('hero');
-    // No divider between the picture and the page: the picture's own edge already separates them, and a rule added nothing.
-    if (rect) c.surface(rect, 'picture');
-    headlineAndSubline(c, 'light');
-  },
+  'split-composition': (c) => composeSplit(c, undefined),
+  // The same page as a split, with a slimmer or wider picture column (the geometry is in the registry).
+  'split-slim': (c) => composeSplit(c, undefined),
+  'split-wide': (c) => composeSplit(c, undefined),
+  // The picture as an inset card with rounded corners and the page's margin around it.
+  'inset-card': (c) => composeSplit(c, 28),
 
   'full-bleed-editorial': (c) => {
     const { dark, textOnDark } = c.palette;
@@ -417,6 +480,8 @@ const FRAME_CSS = `
   body { position: relative; }
   .slot, [data-layer="picture"], [data-layer="scrim"], [data-layer="decor"] { position: absolute; }
   .fit { overflow-wrap: break-word; hyphens: manual; }
+  /* Display text is never split inside a word: a word that is too wide makes the size smaller, and at the smallest size the layout fails and another is tried. */
+  .fit[data-role="headline"], .fit[data-role="figure"], .fit[data-role="offer"], .fit[data-role="quote"] { overflow-wrap: normal; word-break: normal; hyphens: none; }
   .fit .accent { color: var(--accent); }
   .fit .host { font-weight: 600; opacity: 0.88; }
   .plate svg, .plate img { height: 54px; width: auto; max-width: 420px; object-fit: contain; display: block; }

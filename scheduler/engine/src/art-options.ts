@@ -150,7 +150,8 @@ const plain = (text: string): string => text.replaceAll('|', '').trim();
 const words = (text: string): string[] => normalizeHeadline(text).split(' ').filter((w) => w.length >= 5).map(stem);
 
 /** The facts a layout can use from one accepted post. A figure counts only when the verified anchor and the post's own copy both state it. */
-export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'features' | 'proofPoints'>, evidence: readonly EvidenceFact[] = []): PostFacts {
+/** `modelJudgesPictures` hands the question of whether a picture idea suits the post to a model, so the word-overlap guard is not applied. */
+export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'features' | 'proofPoints'>, evidence: readonly EvidenceFact[] = [], options: { modelJudgesPictures?: boolean } = {}): PostFacts {
   const listItems: string[] = [];
   const seen = new Set<string>();
   for (const item of post.listItems ?? []) {
@@ -174,7 +175,7 @@ export function postFacts(post: PlannedPost, brand: Pick<Brand, 'offer' | 'featu
   const postWords = words([post.headline, post.subline, post.concept?.subject ?? '', post.concept?.message ?? ''].join(' '));
   const concernsOffering = brand.offer.trim().length > 0 && postWords.some((w) => offerWords.has(w));
 
-  const picture = pictureEligibility({ headline: plain(post.headline), subline: plain(post.subline), caption: post.caption, ...(post.concept ? { concept: post.concept } : {}) });
+  const picture = pictureEligibility({ headline: plain(post.headline), subline: plain(post.subline), caption: post.caption, ...(post.concept ? { concept: post.concept } : {}) }, options.modelJudgesPictures ? { requireWordOverlap: false } : {});
   // An offer shown large next to a headline or subline that says the same thing is the same sentence twice: the offer is then not used.
   const found = offerFrom(post.factIds, evidence);
   const repeats = (other: string): boolean => validateEditorial({ headline: found?.text ?? '', subline: plain(other) }, { brandName: '' }).hard.length > 0;

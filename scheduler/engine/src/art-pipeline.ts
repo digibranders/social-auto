@@ -31,6 +31,8 @@ export interface ArtTenantSettings {
   fallbackToLegacy: boolean;
   maxCostUsd?: number;
   maxPostsPerBatch?: number;
+  /** Show the brand's one-line description on its posters. Off unless set: it is brand-level text, and a line above every headline makes every poster alike. */
+  showIdentityLine: boolean;
 }
 
 export async function loadArtSettings(brandDir: string): Promise<ArtTenantSettings> {
@@ -38,7 +40,7 @@ export async function loadArtSettings(brandDir: string): Promise<ArtTenantSettin
   try {
     text = await readFile(join(brandDir, 'art.json'), 'utf8');
   } catch {
-    return { enabled: false, fallbackToLegacy: false };
+    return { enabled: false, fallbackToLegacy: false, showIdentityLine: false };
   }
   let raw: unknown;
   try {
@@ -49,12 +51,14 @@ export async function loadArtSettings(brandDir: string): Promise<ArtTenantSettin
   const r = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
   if (typeof r['enabled'] !== 'boolean') throw new ArtNotAllowedError('art.json: "enabled" must be true or false');
   if (r['fallbackToLegacy'] !== undefined && typeof r['fallbackToLegacy'] !== 'boolean') throw new ArtNotAllowedError('art.json: "fallbackToLegacy" must be true or false');
+  if (r['showIdentityLine'] !== undefined && typeof r['showIdentityLine'] !== 'boolean') throw new ArtNotAllowedError('art.json: "showIdentityLine" must be true or false');
   for (const key of ['maxCostUsd', 'maxPostsPerBatch'] as const) {
     if (r[key] !== undefined && (typeof r[key] !== 'number' || !Number.isFinite(r[key]) || (r[key] as number) <= 0)) throw new ArtNotAllowedError(`art.json: "${key}" must be a positive number`);
   }
   return {
     enabled: r['enabled'],
     fallbackToLegacy: r['fallbackToLegacy'] === true,
+    showIdentityLine: r['showIdentityLine'] === true,
     ...(typeof r['maxCostUsd'] === 'number' ? { maxCostUsd: r['maxCostUsd'] } : {}),
     ...(typeof r['maxPostsPerBatch'] === 'number' ? { maxPostsPerBatch: r['maxPostsPerBatch'] } : {}),
   };
@@ -94,7 +98,7 @@ export async function artDirectPlan(input: {
   pictureJudge?: Judge;
 }): Promise<{ plan: WeekPlan; report: ArtReport }> {
   const { plan, brand, history } = input;
-  const basic = plan.posts.map((post) => postFacts(post, brand, input.facts ?? []));
+  const basic = plan.posts.map((post) => postFacts(post, brand, input.facts ?? [], { modelJudgesPictures: input.pictureJudge !== undefined }));
   // Optional, before any picture is paid for: a post whose picture idea a model cannot see explaining its message goes to a picture-free treatment.
   const facts = input.pictureJudge ? await judgePictures(plan.posts.map((post) => ({ id: post.id, headline: post.headline, subline: post.subline, ...(post.concept ? { concept: post.concept } : {}) })), basic, input.pictureJudge) : basic;
   const planned = planShortlists({ posts: facts, history });

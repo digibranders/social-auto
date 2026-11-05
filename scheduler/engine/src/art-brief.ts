@@ -35,6 +35,8 @@ export type PictureBrief =
       subject: string;
       /** From the accepted concept. */
       action: string;
+      /** From the accepted concept: what the picture must visibly show, as the fact states it. */
+      relationship?: string;
       /** The setting and background around the subject. */
       scene: string;
       /** Camera angle and arrangement. */
@@ -103,6 +105,7 @@ function parsePicture(raw: unknown, where: string): PictureBrief {
     medium: requireOne(raw, 'medium', PICTURE_MEDIUMS, where, 'picture.medium'),
     subject: field('subject'),
     action: field('action'),
+    ...(typeof raw['relationship'] === 'string' && raw['relationship'].trim() ? { relationship: clipToLimit(raw['relationship']) } : {}),
     scene: field('scene'),
     composition: field('composition'),
     mood: field('mood'),

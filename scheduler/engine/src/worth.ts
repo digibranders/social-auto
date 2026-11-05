@@ -11,7 +11,7 @@ import { writeFileAtomic } from './art-pipeline.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
 
 export const WORTH_FILE = 'facts-worth.json';
-export const WORTH_VERSION = 1;
+export const WORTH_VERSION = 2;
 /** A fact needs at least this total to be a post's one message. */
 export const MIN_WORTH = 3;
 

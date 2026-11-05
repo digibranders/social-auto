@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { aiConfigFromEnv } from './ai.ts';
-import { decide, parseReview, REVIEW_COST_ESTIMATE_USD, reviewPosters, ReviewBudget, type PosterReview } from './poster-review.ts';
+import { decide, decideAfterRepair, parseReview, REVIEW_COST_ESTIMATE_USD, reviewPosters, ReviewBudget, type PosterReview } from './poster-review.ts';
 
 const ai = () => aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-123456' });
 const base = { observed: 'A knot of purple cord on a desk.', defects: [] as PosterReview['defects'] };
@@ -39,8 +39,32 @@ test('a poster repeating itself loses its subline, with no model call, and can t
   assert.deepEqual((decision as { repairs: string[] }).repairs, ['drop_subline', 'relayout']);
 });
 
+test('a weak headline is a note on a picture poster but a discard on a text-only one, and a 0 is always a discard, because rewriting is not automated', () => {
+  assert.deepEqual(decide({ ...base, scores: scores({ message: 1 }), defects: [{ code: 'message_unclear', detail: '' }] }), { action: 'accept' });
+  assert.equal(decide({ ...base, scores: scores({ message: 1, picture: null, subject: null }), defects: [{ code: 'message_unclear', detail: '' }] }).action, 'discard');
+  assert.equal(decide({ ...base, scores: scores({ message: 0, picture: null, subject: null }), defects: [{ code: 'message_unclear', detail: '' }] }).action, 'discard');
+});
+
+test('a slightly cropped picture is a note; a picture cut beyond recognition is dropped', () => {
+  assert.deepEqual(decide({ ...base, scores: scores({ subject: 1 }), defects: [{ code: 'subject_cropped', detail: '' }] }), { action: 'accept' });
+  assert.deepEqual((decide({ ...base, scores: scores({ subject: 0 }), defects: [{ code: 'subject_cropped', detail: '' }] }) as { repairs: string[] }).repairs, ['drop_picture']);
+});
+
+test('after the one repair, a critical failure discards and anything else is accepted', () => {
+  assert.equal(decideAfterRepair({ ...base, scores: scores({ layout: 1 }) }).action, 'accept');
+  assert.equal(decideAfterRepair({ ...base, scores: scores({ picture: 0 }) }).action, 'discard');
+  assert.equal(decideAfterRepair({ ...base, scores: scores({ picture: null, subject: null }) }).action, 'accept');
+});
+
+test('after the repair, a text-only poster must have a clear message, and a picture poster cannot be so-so on both message and picture', () => {
+  assert.equal(decideAfterRepair({ ...base, scores: scores({ message: 1, picture: null, subject: null, layout: 2 }) }).action, 'discard');
+  assert.equal(decideAfterRepair({ ...base, scores: scores({ message: 2, picture: null, subject: null, layout: 1 }) }).action, 'accept');
+  assert.equal(decideAfterRepair({ ...base, scores: scores({ message: 1, picture: 1 }) }).action, 'discard');
+  assert.equal(decideAfterRepair({ ...base, scores: scores({ message: 1, picture: 2 }) }).action, 'accept');
+});
+
 test('three kinds of repair, or two critical failures, are discarded instead of patched', () => {
-  const three = decide({ ...base, scores: scores({ message: 1, subject: 1, layout: 1 }), defects: [{ code: 'message_unclear', detail: '' }, { code: 'subject_cropped', detail: '' }, { code: 'text_overlap', detail: '' }] });
+  const three = decide({ ...base, scores: scores({ message: 1, layout: 1 }), defects: [{ code: 'copy_repeats_itself', detail: '' }, { code: 'text_overlap', detail: '' }, { code: 'cta_covers_subject', detail: '' }] });
   assert.equal(three.action, 'discard');
   const twoZeros = decide({ ...base, scores: scores({ message: 0, layout: 0 }), defects: [{ code: 'message_unclear', detail: '' }, { code: 'text_overlap', detail: '' }] });
   assert.equal(twoZeros.action, 'discard');

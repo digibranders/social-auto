@@ -45,7 +45,9 @@ function model(copy: (slot: number, prompt: string, headline: string) => { subli
       
       const headline = hook === 'question' ? `Thinking about ${TOPICS[i]}?` : hook === 'numbered_list' ? `3 things about ${TOPICS[i]}` : `Notes on ${TOPICS[i]}`;
       const written = copy(i, body, headline);
-      return { concept: concept(i), painPoint: `A post about ${TOPICS[i]}`, headline, ...written, ...(anchor ? { caption: `${written.caption} ${anchor}` } : {}), visual: 'A single glowing key on a table.', visualLink: 'the key stands for access', hashtags: ['#acme'],
+      const moveId = /Creative move for this post's picture idea.*?(direct_demonstration|input_output|evidence_hero|mapped_metaphor):/s.exec(segments[i] ?? '')?.[1];
+      const moved = moveId ? { moveId, visualRelationship: `the picture shows ${TOPICS[i]} as its fact states it`, relationshipExplanation: 'each part of the picture matches a part of the fact' } : {};
+      return { concept: { ...concept(i), ...moved }, painPoint: `A post about ${TOPICS[i]}`, headline, ...written, ...(anchor ? { caption: `${written.caption} ${anchor}` } : {}), visual: 'A single glowing key on a table.', visualLink: 'the key stands for access', hashtags: ['#acme'],
         ...(hook === 'numbered_list' ? { listItems: ['Ask us anything', 'Plan one small step', 'Share what you learn'] } : {}) };
     });
     return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ posts }) } }] }), { status: 200 });

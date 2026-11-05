@@ -44,12 +44,12 @@ function mockDirector(plan: WeekPlan, skip: string[] = []): typeof fetch {
   return (async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ directions }) } }] }), { status: 200 })) as typeof fetch;
 }
 
-const enabled: ArtTenantSettings = { enabled: true, fallbackToLegacy: false };
+const enabled: ArtTenantSettings = { enabled: true, fallbackToLegacy: false, showIdentityLine: false };
 
 test('art direction is refused unless the tenant enabled it, the kill switch is off, and a paid dry run is allowed', () => {
   const ok = { settings: enabled, env: {}, dryRun: false, allowPaidAi: false };
   assert.doesNotThrow(() => assertArtAllowed(ok));
-  assert.throws(() => assertArtAllowed({ ...ok, settings: { enabled: false, fallbackToLegacy: false } }), /not enabled for this brand/);
+  assert.throws(() => assertArtAllowed({ ...ok, settings: { enabled: false, fallbackToLegacy: false, showIdentityLine: false } }), /not enabled for this brand/);
   assert.throws(() => assertArtAllowed({ ...ok, env: { ART_DIRECTION_DISABLED: '1' } }), /switched off/);
   assert.throws(() => assertArtAllowed({ ...ok, dryRun: true }), /--allow-paid-ai/);
   assert.doesNotThrow(() => assertArtAllowed({ ...ok, dryRun: true, allowPaidAi: true }));
@@ -59,9 +59,13 @@ test('art direction is refused unless the tenant enabled it, the kill switch is 
 test('tenant settings come from art.json: absent means off, and bad values are refused', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'art-settings-'));
   try {
-    assert.deepEqual(await loadArtSettings(dir), { enabled: false, fallbackToLegacy: false });
+    assert.deepEqual(await loadArtSettings(dir), { enabled: false, fallbackToLegacy: false, showIdentityLine: false });
     await writeFile(join(dir, 'art.json'), JSON.stringify({ enabled: true, maxCostUsd: 0.5, maxPostsPerBatch: 7 }));
-    assert.deepEqual(await loadArtSettings(dir), { enabled: true, fallbackToLegacy: false, maxCostUsd: 0.5, maxPostsPerBatch: 7 });
+    assert.deepEqual(await loadArtSettings(dir), { enabled: true, fallbackToLegacy: false, showIdentityLine: false, maxCostUsd: 0.5, maxPostsPerBatch: 7 });
+    await writeFile(join(dir, 'art.json'), JSON.stringify({ enabled: true, showIdentityLine: true }));
+    assert.equal((await loadArtSettings(dir)).showIdentityLine, true);
+    await writeFile(join(dir, 'art.json'), JSON.stringify({ enabled: true, showIdentityLine: 'yes' }));
+    await assert.rejects(loadArtSettings(dir), /showIdentityLine/);
     await writeFile(join(dir, 'art.json'), JSON.stringify({ enabled: 'yes' }));
     await assert.rejects(loadArtSettings(dir), /enabled/);
     await writeFile(join(dir, 'art.json'), JSON.stringify({ enabled: true, maxCostUsd: -1 }));

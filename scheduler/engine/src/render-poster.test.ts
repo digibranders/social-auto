@@ -113,7 +113,7 @@ test('real Chrome: the measuring page cannot reach the network', real, async () 
   assert.match(composed.html, /default-src 'none'/);
 });
 
-test('real Chrome: the six families all measure and render without hard failures on a short headline', real, async () => {
+test('real Chrome: every family, including the slim, wide and inset picture layouts in both text zones, measures and renders without hard failures on a short headline', real, async () => {
   const dir = await mkdtemp(join(tmpdir(), 'render-test-'));
   try {
     const picture = join(dir, 'p.png');
@@ -123,6 +123,12 @@ test('real Chrome: the six families all measure and render without hard failures
     const set: Array<[ArtBrief, string | undefined]> = [
       [brief('typography-hero', 'center', { ...hero, role: 'texture', medium: 'abstract' }), url],
       [brief('split-composition', 'left', hero), url],
+      [brief('split-slim', 'left', hero), url],
+      [brief('split-slim', 'right', hero), url],
+      [brief('split-wide', 'left', hero), url],
+      [brief('split-wide', 'right', hero), url],
+      [brief('inset-card', 'top', hero), url],
+      [brief('inset-card', 'bottom', hero), url],
       [brief('full-bleed-editorial', 'bottom', hero), url],
       [brief('feature-spotlight', 'left', hero), url],
       [brief('structured-information', 'top', { role: 'none' }, { hierarchy: 'list-first' }), undefined],
@@ -257,6 +263,67 @@ test('real Chrome: a realistic identity line fits its slot on the first candidat
     assert.equal(dropped.status, 'capture_complete');
     assert.ok(dropped.warnings.some((w) => w.code === 'identity_omitted'));
     assert.deepEqual(pngSize(await readFile(out)), { width: 1080, height: 1080 });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('real Chrome: a call to action is stacked on two lines when one line is too long, keeps only its link when even that does not fit, and a normal one is untouched', real, async () => {
+  const { dir, out } = await job();
+  try {
+    const layout = [candidate(brief('typography-hero', 'top', { role: 'none' }))];
+    const normal = await renderPoster({ copy: SHORT, brand: { ...brand, cta: { label: 'Book a demo', host: 'acme.example' } }, font, candidates: layout, outPng: out });
+    assert.notEqual(normal.status, 'render_failed', JSON.stringify(normal.attempts));
+    assert.ok(!normal.warnings.some((w) => w.code === 'cta_stacked' || w.code === 'cta_label_omitted'));
+
+    const stacked = await renderPoster({ copy: SHORT, brand: { ...brand, cta: { label: 'Explore our services and our work', host: 'digibranders.example' } }, font, candidates: layout, outPng: out });
+    assert.equal(stacked.status, 'capture_complete', JSON.stringify(stacked.attempts));
+    assert.ok(stacked.warnings.some((w) => w.code === 'cta_stacked'), JSON.stringify(stacked.warnings));
+    assert.ok(!stacked.warnings.some((w) => w.code === 'cta_label_omitted'));
+
+    const long: PosterBrand = { ...brand, cta: { label: 'Book a free fifteen minute strategy consultation with our whole team today', host: 'acme.example' } };
+    const compact = await renderPoster({ copy: SHORT, brand: long, font, candidates: layout, outPng: out });
+    assert.equal(compact.status, 'capture_complete', JSON.stringify(compact.attempts));
+    assert.ok(compact.warnings.some((w) => w.code === 'cta_label_omitted'));
+    assert.deepEqual(pngSize(await readFile(out)), { width: 1080, height: 1080 });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('real Chrome: a long word is made smaller instead of being split across lines, and a word too wide at the smallest size fails the layout', real, async () => {
+  const { dir, out } = await job();
+  try {
+    const layout = [candidate(brief('typography-hero', 'top', { role: 'none' }))];
+    const fits = await renderPoster({ copy: { ...SHORT, headline: 'Internationalization is |ready|', subline: '' }, brand, font, candidates: layout, outPng: out });
+    assert.notEqual(fits.status, 'render_failed', JSON.stringify(fits.attempts));
+    assert.ok((fits.solved?.['headline'] ?? 999) < 160, 'the size was reduced so the word stays whole');
+
+    const tooWide = await renderPoster({ copy: { ...SHORT, headline: 'Antidisestablishmentarianismandthensome is |here|', subline: '' }, brand, font, candidates: layout, outPng: out });
+    assert.equal(tooWide.status, 'render_failed');
+    assert.match(JSON.stringify(tooWide.attempts), /text_overflow/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('real Chrome: when the headline would sit over the picture\'s subject, the later layouts are tried with the same picture and the picture is bought only once', real, async () => {
+  const { dir, out } = await job();
+  try {
+    const picture = join(dir, 'subject.svg');
+    await writeFile(picture, '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="1000"><rect width="1000" height="1000" fill="#f4503c"/><rect x="80" y="180" width="640" height="340" fill="#111111"/></svg>');
+    let bought = 0;
+    const fullBleed = candidate(brief('full-bleed-editorial', 'top', hero));
+    const typography = candidate(brief('typography-hero', 'top', { role: 'none' }));
+    const result = await renderPoster({
+      copy: SHORT, brand, font, candidates: [fullBleed, typography], outPng: out,
+      makePicture: async () => { bought++; return pathToFileURL(picture).href; },
+    });
+    assert.equal(bought, 1);
+    assert.equal(result.status, 'capture_complete', JSON.stringify(result.attempts));
+    assert.equal(result.optionId, typography.optionId, 'the layout that does not cover the subject was used');
+    assert.ok(result.warnings.some((w) => w.code === 'layout_changed_after_picture'));
+    assert.ok(result.attempts.some((a) => a.stage === 'final' && a.issues.some((i) => i.code === 'text_over_subject')));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

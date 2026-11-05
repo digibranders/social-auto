@@ -92,12 +92,15 @@ export function buildImagePrompt({ brief, brand, textSlots, pictureSlot }: Image
     picture.role === 'texture'
       ? `a subtle background texture suggested by ${subject}, with no single focal subject`
       : `${subject}, ${action}`;
+  const relationship = picture.role === 'texture' ? '' : (picture.relationship ?? '').replace(/[.\s]+$/, '');
   const region = textRegion(textSlots);
   const room = region ? `Leave ${describeRegion(region)} calm, low in detail and free of the subject, because text is placed there.` : '';
   return [
     `${LOOKS[picture.medium]}: ${idea}.`,
-    `Setting: ${picture.scene.replace(/[.\s]+$/, '')}. Composition: ${picture.composition.replace(/[.\s]+$/, '')}. Mood: ${picture.mood.replace(/[.\s]+$/, '')}.`,
-    ...(picture.role === 'hero' ? ['Use depth, environmental context, a clear focal subject and coherent lighting where they improve the idea; a minimal, flat or abstract composition is equally valid when it says the idea better.'] : []),
+    ...(relationship ? [`What the picture must visibly show: ${relationship}.`] : []),
+    ...(picture.role === 'hero' ? ['The subject and what happens to it are the whole picture: make them unmistakable and give them most of the visible frame. Do not add unrelated places, furniture or props.'] : []),
+    `Surroundings, only as needed: ${picture.scene.replace(/[.\s]+$/, '')}. Composition: ${picture.composition.replace(/[.\s]+$/, '')}. Mood: ${picture.mood.replace(/[.\s]+$/, '')}.`,
+    ...(picture.role === 'hero' ? ['Use depth and environment only where they help show the idea; a minimal, flat or abstract composition is equally valid when it says the idea better.'] : []),
     `${palette(picture.paletteUse, brand.colors)}.`,
     room,
     picture.role === 'hero' ? cropGuidance(pictureSlot, sceneSizeFor(pictureSlot)) : '',

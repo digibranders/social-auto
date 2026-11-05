@@ -78,3 +78,11 @@ test('the poster shows the post\'s own call to action when it has one, and the b
   assert.equal(posterBrand(brand, undefined, undefined, neutralCta('acme.example')).cta?.label, 'Visit the website');
   assert.equal(posterBrand(brand, undefined, undefined, neutralCta('acme.example')).cta?.host, 'acme.example');
 });
+
+test('the brand description line is left off the poster unless the tenant asks for it', () => {
+  const brand = { name: 'Acme', handleUrl: 'acme.example', colors: { ink: '#111111', accent: '#FCA311', background: '#FFFFFF', tile: '#F2F2F2' }, identity: { line: 'Acme is a studio for small teams.', kind: 'about' } } as never;
+  assert.equal(posterBrand(brand, undefined, undefined).identityLine, undefined);
+  assert.equal(posterBrand(brand, undefined, undefined, undefined, { showIdentityLine: true }).identityLine, 'Acme is a studio for small teams.');
+  const nameOnly = { ...(brand as object), identity: { line: 'Acme', kind: 'name-only' } } as never;
+  assert.equal(posterBrand(nameOnly, undefined, undefined, undefined, { showIdentityLine: true }).identityLine, undefined, 'a bare name is never shown as a description');
+});

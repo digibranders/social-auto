@@ -4,7 +4,7 @@
  *   node src/autopilot.ts --site example.com --channel their_insta [--days 7] [--time 10:00]
  *                         [--weekdays mon,wed,fri] [--start YYYY-MM-DD] [--utc-offset +05:30] [--image-model zimage]
  *                         [--refresh-brand] [--dry-run] [--target scheduler|publisher]
- *                         [--art] [--semantic-check] [--allow-paid-ai]
+ *                         [--art] [--semantic-check] [--review [--review-budget 0.015]] [--allow-paid-ai]
  *
  * First run for a site builds brands/<slug>/brand.json from the website. Every run writes the
  * next week-NN.json with new pain points (history.json prevents repeats) and renders the posters.
@@ -14,6 +14,9 @@
  * --art adds art direction (a separate model call per plan, measured rendering, review before scheduling). It only runs
  * when the brand's art.json enables it, is switched off by ART_DIRECTION_DISABLED=1, and needs --allow-paid-ai with --dry-run.
  * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
+ * --plan-only stops after the posts are written (no art direction, pictures or rendering), for a renderer that works from the plan on its own.
+ * --review (needs --art) has a vision model look at each finished poster, repairs what can be repaired without a new picture, and rejects the rest
+ * (see review-loop.ts). It never approves anything. --review-budget caps what review and repair may spend per batch, in dollars.
  */
 import { loadFacts } from './evidence-pipeline.ts';
 import { applyReview, loadReview } from './fact-review.ts';
@@ -31,12 +34,14 @@ import { parseWeekdays } from './cadence.ts';
 import { parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
 import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
 import { recordRenderedArt } from './art-review.ts';
+import { reviewAndRepair } from './review-loop.ts';
+import { ensureSiteAssets } from './site-assets.ts';
 import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { normalizeHeadline } from './hooks.ts';
 import type { ConceptRecord } from './concepts.ts';
 import { conceptRecordOf, planWeek } from './planner.ts';
-import { renderPlan } from './render.ts';
+import { createArtRenderContext, renderPlan, type PostRenderRecord } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
 
 const BRANDS_ROOT = resolve('brands');
@@ -123,6 +128,9 @@ async function main(): Promise<void> {
       'dry-run': { type: 'boolean', default: false },
       art: { type: 'boolean', default: false },
       'semantic-check': { type: 'boolean', default: false },
+      review: { type: 'boolean', default: false },
+      'plan-only': { type: 'boolean', default: false },
+      'review-budget': { type: 'string', default: '0.015' },
       'allow-paid-ai': { type: 'boolean', default: false },
       target: { type: 'string', default: 'scheduler' },
       publisher: { type: 'string', default: '../../publisher' },
@@ -130,6 +138,10 @@ async function main(): Promise<void> {
   });
   if (!values.site) throw new Error('Usage: --site <website> --channel <instagram username> [--days 7] [--dry-run]');
   const target = values.target;
+  const reviewBudget = Number(values['review-budget']);
+  if (!Number.isFinite(reviewBudget) || reviewBudget <= 0) throw new Error('--review-budget must be a positive number of dollars');
+  if (values.review && !values.art) throw new Error('--review looks at art-directed posters, so it needs --art');
+  if (values.review && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--review makes a vision request per poster: with --dry-run it needs --allow-paid-ai');
   if (target !== 'scheduler' && target !== 'publisher') throw new Error('--target must be "scheduler" or "publisher"');
   if (target === 'scheduler' && !values.channel && !values['dry-run']) {
     throw new Error('--channel is required for --target scheduler unless --dry-run is set');
@@ -159,6 +171,8 @@ async function main(): Promise<void> {
   } else {
     console.log(`1/4 Using saved brand profile ${join('brands', slug, 'brand.json')}`);
   }
+  // A website link is all a run needs: the facts the site states and its icon are gathered here when the brand lacks them (one crawl, no picture is bought).
+  await ensureSiteAssets({ brandDir, site: values.site, ai, log: (m) => console.log(`    ${m}`) });
   const brand = parseBrand(await readJson(join(brandDir, 'brand.json')), 'brand.json');
   const releaseLock = artSettings ? await acquireTenantLock(brandDir) : undefined;
   try {
@@ -218,7 +232,7 @@ async function main(): Promise<void> {
       console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);
     }
     let finalPlan: WeekPlan = plan;
-    if (artSettings) {
+    if (artSettings && !values['plan-only']) {
       console.log('2b/4 Art direction (one batched model call)…');
       const directed = await artDirectPlan({ ai, plan, brand, history: readArtHistory(history), settings: artSettings, ...(loaded ? { facts: loaded.facts } : {}), ...(values['semantic-check'] ? { pictureJudge: modelPictureJudge(ai) } : {}) });
       finalPlan = directed.plan;
@@ -231,6 +245,10 @@ async function main(): Promise<void> {
     history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(plan.posts.some((p) => p.factIds) ? { factIds: plan.posts.flatMap((p) => p.factIds ?? []) } : {}) });
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
+    if (values['plan-only']) {
+      console.log(`Plan only: ${planFile} is written with its copy and facts; no picture was made and nothing was rendered. ${ai.usage.format()}`);
+      return;
+    }
     console.log('3/4 Rendering posters…');
     let outDir: string;
     try {
@@ -250,6 +268,18 @@ async function main(): Promise<void> {
         const recorded = await recordRenderedArt({ brandDir, planFile }).catch(() => 0);
         if (recorded > 0) console.log(`    ${recorded} art-directed poster(s) are waiting for review: node src/art-review.ts --brand ${brandDir} --plan ${planFile} --list`);
       }
+    }
+    if (values.review) {
+      const rendered = parseWeekPlan(await readJson(join(brandDir, planFile)), planFile);
+      const records = JSON.parse(await readFile(join(outDir, 'render-report.json'), 'utf8')) as PostRenderRecord[];
+      const factById = new Map((reviewed?.facts ?? []).map((f) => [f.id, f.text]));
+      console.log('3b/4 Reviewing the finished posters…');
+      ai.usage.purpose = 'review';
+      await reviewAndRepair({
+        ai, plan: rendered, planFile, records, budgetUsd: reviewBudget, factText: (id) => factById.get(id),
+        ctx: await createArtRenderContext({ brandDir, planFile, ai, log: (m) => console.log(`    ${m}`) }),
+        log: (m) => console.log(`    ${m}`),
+      });
     }
     console.log(ai.usage.format());
     const usageLog = process.env['USAGE_LOG_FILE'];

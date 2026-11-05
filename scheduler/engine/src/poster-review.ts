@@ -8,6 +8,7 @@
  * budget is reported as unreviewed and must not be treated as approved.
  */
 import { readFile } from 'node:fs/promises';
+import { extname } from 'node:path';
 import type { AiConfig } from './ai.ts';
 import { chatJson } from './llm.ts';
 
@@ -116,21 +117,46 @@ export function parseReview(value: unknown, hasPicture: boolean): Omit<PosterRev
 }
 
 /**
- * Turns scores and defects into a decision. Dropping the picture removes every defect that belongs to the picture (its crop, a button over it,
- * the empty space around it), so those are not counted on top of it. What is left must need at most two kinds of repair, and no more than one
- * score may be 0; otherwise the poster is discarded rather than patched.
+ * Turns scores and defects into a decision. Only repairs that cost no new picture are automated (drop the picture, drop the subline, move the
+ * CTA, choose another layout). A defect that would need a rewrite or a new crop is a note when its score is 1 and a discard when it is 0
+ * (except a badly cropped picture, which is dropped). Dropping the picture also settles everything that belongs to it, so those are not counted
+ * on top. What is left must need at most two kinds of repair, and no more than one score may be 0; otherwise the poster is discarded.
  */
 export function decide(review: Omit<PosterReview, 'decision'>): ReviewDecision {
   const { scores, defects } = review;
   const all = [scores.message, scores.picture, scores.subject, scores.layout].filter((s): s is Score => s !== null);
   if (all.every((s) => s === 2)) return { action: 'accept' };
-  const wanted = new Set(defects.map((d) => DEFECTS[d.code]));
-  if (wanted.size === 0) return { action: 'discard', reason: 'scored below 2 with no defect that can be repaired' };
-  if (wanted.has('drop_picture')) for (const covered of ['recrop', 'move_cta', 'relayout'] as const) wanted.delete(covered);
-  const repairs = REPAIR_ORDER.filter((kind) => wanted.has(kind));
   if (all.filter((s) => s === 0).length > 1) return { action: 'discard', reason: 'more than one critical failure' };
+  const wanted = new Set<RepairKind>();
+  for (const { code } of defects) {
+    const kind = DEFECTS[code];
+    if (kind === 'rewrite_copy') {
+      // A text-only poster is its headline, so an unclear one is not a note: there is nothing else to carry the message.
+      if (scores.message === 0 || scores.picture === null) return { action: 'discard', reason: 'the headline is unclear and rewriting copy is not automated' };
+    } else if (kind === 'recrop') {
+      if (scores.subject === 0) wanted.add('drop_picture');
+    } else {
+      wanted.add(kind);
+    }
+  }
+  if (wanted.has('drop_picture')) for (const covered of ['move_cta', 'relayout'] as const) wanted.delete(covered);
+  const repairs = REPAIR_ORDER.filter((kind) => wanted.has(kind));
+  if (repairs.length === 0) return all.includes(0) ? { action: 'discard', reason: 'a critical failure with no automatic repair' } : { action: 'accept' };
   if (repairs.length > MAX_REPAIRS) return { action: 'discard', reason: `needs ${repairs.length} kinds of repair (${repairs.join(', ')}); only ${MAX_REPAIRS} are attempted` };
   return { action: 'repair', repairs, defects: defects.map((d) => d.code) };
+}
+
+/**
+ * After a repair there is no second one. A critical failure is discarded. So is a poster that is weak on everything it has: a text-only poster
+ * whose message is not clear (a 2), or a picture poster whose message and picture are both only so-so. Anything else is accepted with its notes.
+ */
+export function decideAfterRepair(review: Omit<PosterReview, 'decision'>): ReviewDecision {
+  const { scores } = review;
+  const all = [scores.message, scores.picture, scores.subject, scores.layout].filter((s): s is Score => s !== null);
+  if (all.includes(0)) return { action: 'discard', reason: 'still has a critical failure after the repair' };
+  if (scores.picture === null && scores.message < 2) return { action: 'discard', reason: 'a text-only poster whose message is still not clear after the repair' };
+  if (scores.picture !== null && scores.message === 1 && scores.picture === 1) return { action: 'discard', reason: 'both the message and the picture are only partly working after the repair' };
+  return { action: 'accept' };
 }
 
 /** Tracks what review and repair may still spend: the cap applies to the money added since the budget was created. */
@@ -171,7 +197,7 @@ async function reviewOne(options: ReviewOptions, input: ReviewInput): Promise<Po
     ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
     system: SYSTEM,
     user,
-    images: [`data:image/jpeg;base64,${bytes.toString('base64')}`],
+    images: [`data:${extname(input.imagePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg'};base64,${bytes.toString('base64')}`],
     parse: (value) => parseReview(value, input.hasPicture),
   });
   return { ...parsed, decision: decide(parsed) };

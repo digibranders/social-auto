@@ -138,3 +138,14 @@ test('the decision is a pure function: the same inputs give the same result', ()
   const history = [record(), record({ concept: { angle: 'other' } })];
   assert.deepEqual(check(candidate(), history), check(candidate(), history));
 });
+
+test('with creative moves offered, the concept must name one of them with what the picture shows and why it matches; without, a move is optional', () => {
+  const base = { subject: 'handoff', angle: 'to a person', message: 'a human takes over', visualSubject: 'a chat bubble', visualAction: 'passes to a second bubble', visualComposition: 'wide' };
+  assert.throws(() => parseConcept(base, ['direct_demonstration']), /moveId/);
+  assert.throws(() => parseConcept({ ...base, moveId: 'evidence_hero', visualRelationship: 'x', relationshipExplanation: 'y' }, ['direct_demonstration']), /one of: direct_demonstration/);
+  assert.throws(() => parseConcept({ ...base, moveId: 'direct_demonstration', visualRelationship: 'x' }, ['direct_demonstration']), /relationshipExplanation/);
+  const ok = parseConcept({ ...base, moveId: 'direct_demonstration', visualRelationship: 'a bubble passing along a line to a second bubble', relationshipExplanation: 'the hand-off in the fact is the pass between bubbles' }, ['direct_demonstration', 'mapped_metaphor']);
+  assert.equal(ok.moveId, 'direct_demonstration');
+  assert.match(ok.visualRelationship ?? '', /passing/);
+  assert.equal(parseConcept(base).moveId, undefined);
+});

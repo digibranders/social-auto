@@ -45,6 +45,20 @@ export interface LogoSource {
   tried: Array<{ url: string; outcome: string }>;
 }
 
+/** The brand's own symbol without its name, taken from the site, and whether a model confirmed it is the same mark that appears in the logo. */
+export interface LogoIcon {
+  /** The file in the brand folder. */
+  savedAs: string;
+  imageUrl: string;
+  contentType: string;
+  contentHash: string;
+  fetchedAt: string;
+  /** True only when the symbol was checked against the logo and matches it; a generic favicon is never used as the brand's mark. */
+  matchesLogo: boolean;
+  /** What the check said, for a person to read. */
+  reason?: string;
+}
+
 export interface Brand {
   name: string;
   website: string;
@@ -64,6 +78,8 @@ export interface Brand {
   visualStyle?: string;
   /** Where the logo was taken from. Older profiles have none. */
   logoSource?: LogoSource;
+  /** The brand's symbol alone, when the site has one that matches its logo. Older profiles have none. */
+  logoIcon?: LogoIcon;
   /** What the business is in one plain line, with the source that supports it. Older profiles have none. */
   identity?: BrandIdentity;
   /** The action the posters invite, and the link on the site that shows it is real. Older profiles have none. */
@@ -231,6 +247,7 @@ export function parseBrand(raw: unknown, source: string): Brand {
   return {
     ...(visualStyle ? { visualStyle } : {}),
     ...(raw['logoSource'] !== undefined ? { logoSource: parseLogoSource(raw['logoSource'], source) } : {}),
+    ...(raw['logoIcon'] !== undefined ? { logoIcon: parseLogoIcon(raw['logoIcon'], source) } : {}),
     ...(raw['identity'] !== undefined ? { identity: parseIdentity(raw['identity'], source) } : {}),
     ...(raw['cta'] !== undefined ? { cta: parseCta(raw['cta'], source) } : {}),
     name: requireString(raw, 'name', source),
@@ -282,6 +299,20 @@ function parseLogoSource(raw: unknown, source: string): LogoSource {
     fetchedAt,
     tried: (tried as Array<Record<string, string>>).map((t) => ({ url: t['url'] as string, outcome: t['outcome'] as string })),
   };
+}
+
+function parseLogoIcon(raw: unknown, source: string): LogoIcon {
+  const where = `${source} logoIcon`;
+  if (!isRecord(raw)) throw new ContentValidationError(where, '"logoIcon" must be an object');
+  const text = (key: string): string => {
+    const value = raw[key];
+    if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"logoIcon.${key}" must be text`);
+    return value;
+  };
+  if (typeof raw['matchesLogo'] !== 'boolean') throw new ContentValidationError(where, '"logoIcon.matchesLogo" must be true or false');
+  const reason = raw['reason'];
+  if (reason !== undefined && typeof reason !== 'string') throw new ContentValidationError(where, '"logoIcon.reason" must be text');
+  return { savedAs: text('savedAs'), imageUrl: text('imageUrl'), contentType: text('contentType'), contentHash: text('contentHash'), fetchedAt: text('fetchedAt'), matchesLogo: raw['matchesLogo'], ...(reason ? { reason } : {}) };
 }
 
 const IDENTITY_KINDS = ['approved', 'homepage', 'about', 'offering', 'metadata', 'name-only'];

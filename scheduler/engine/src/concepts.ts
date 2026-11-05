@@ -6,6 +6,7 @@
  */
 import { clipToLimit } from './art-brief.ts';
 import { normalizeHeadline } from './hooks.ts';
+import { isMoveId, type MoveId } from './creative-moves.ts';
 
 export interface Concept {
   /** What the post is about, in a few words. */
@@ -20,6 +21,12 @@ export interface Concept {
   visualAction: string;
   /** The framing: close-up, overhead, wide... */
   visualComposition: string;
+  /** The creative move the picture idea was made for (see creative-moves.ts); absent on concepts written before moves existed. */
+  moveId?: MoveId;
+  /** What the picture visibly shows, in one sentence: the relationship the fact states, as the picture depicts it. */
+  visualRelationship?: string;
+  /** Why what the picture shows corresponds to what the fact states. It describes the mapping and is never evidence. */
+  relationshipExplanation?: string;
 }
 
 export interface ConceptRecord {
@@ -74,14 +81,15 @@ export const defaultConceptConfig: ConceptConfig = {
   commonTermWeight: 0.3,
 };
 
-const FIELDS: ReadonlyArray<keyof Concept> = ['subject', 'angle', 'message', 'visualSubject', 'visualAction', 'visualComposition'];
+type RequiredField = 'subject' | 'angle' | 'message' | 'visualSubject' | 'visualAction' | 'visualComposition';
+const FIELDS: ReadonlyArray<RequiredField> = ['subject', 'angle', 'message', 'visualSubject', 'visualAction', 'visualComposition'];
 const MAX_FIELD_CHARS = 100;
 /** The picture's subject and action establish what the picture shows; they are kept whole up to the picture limit and never cut. */
-const ESSENTIAL_FIELDS: ReadonlyArray<keyof Concept> = ['visualSubject', 'visualAction'];
+const ESSENTIAL_FIELDS: ReadonlyArray<RequiredField> = ['visualSubject', 'visualAction'];
 const MAX_ESSENTIAL_CHARS = 160;
 
 /** The concept the model wrote, checked field by field; a missing or malformed concept fails, so the repeat check can never be skipped. */
-export function parseConcept(raw: unknown): Concept {
+export function parseConcept(raw: unknown, allowedMoves?: readonly MoveId[]): Concept {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new Error('"concept" must be an object with subject, angle, message, visualSubject, visualAction and visualComposition');
   const record = raw as Record<string, unknown>;
   const concept = {} as Concept;
@@ -94,6 +102,22 @@ export function parseConcept(raw: unknown): Concept {
     } else {
       // A descriptive field a little over the limit is cut at a word, not refused: refusing it threw away a whole post and its facts over wording that only feeds the repeat check.
       concept[field] = clipToLimit(value, MAX_FIELD_CHARS);
+    }
+  }
+  if (allowedMoves !== undefined && allowedMoves.length > 0) {
+    const moveId = record['moveId'];
+    if (!isMoveId(moveId) || !allowedMoves.includes(moveId)) throw new Error(`"concept.moveId" must be one of: ${allowedMoves.join(', ')}`);
+    concept.moveId = moveId;
+    for (const field of ['visualRelationship', 'relationshipExplanation'] as const) {
+      const value = record[field];
+      if (typeof value !== 'string' || !value.trim()) throw new Error(`"concept.${field}" must be one short sentence`);
+      concept[field] = clipToLimit(value, MAX_ESSENTIAL_CHARS);
+    }
+  } else if (isMoveId(record['moveId'])) {
+    concept.moveId = record['moveId'];
+    for (const field of ['visualRelationship', 'relationshipExplanation'] as const) {
+      const value = record[field];
+      if (typeof value === 'string' && value.trim()) concept[field] = clipToLimit(value, MAX_ESSENTIAL_CHARS);
     }
   }
   return concept;

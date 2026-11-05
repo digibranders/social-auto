@@ -3,6 +3,7 @@
  *
  *   node src/render.ts --brand brands/brandbasket --plan week-01.json [--env <keys file>] [--model <id>]
  */
+import { loadArtSettings } from './art-pipeline.ts';
 import { sceneSizeFor } from './art-prompt.ts';
 import { familyById, layoutRegistry } from './layout-registry.ts';
 import { DEFAULT_FACT_MAX_AGE_DAYS } from './evidence-pipeline.ts';
@@ -95,9 +96,9 @@ export interface RenderOptions {
 }
 
 /** What the art-directed poster needs from a brand profile. */
-export function posterBrand(brand: Brand, logoHtml: string | undefined, logoTone: PosterBrand['logoTone'], postCta?: Brand['cta']): PosterBrand {
+export function posterBrand(brand: Brand, logoHtml: string | undefined, logoTone: PosterBrand['logoTone'], postCta?: Brand['cta'], options: { showIdentityLine?: boolean } = {}): PosterBrand {
   const cta = postCta ?? brand.cta;
-  const identity = brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
+  const identity = options.showIdentityLine === true && brand.identity && brand.identity.kind !== 'name-only' ? brand.identity.line : undefined;
   const host = brand.handleUrl?.trim();
   return {
     name: brand.name,
@@ -130,69 +131,108 @@ export interface PostRenderRecord {
   failure?: string;
 }
 
-/** Renders every post of a plan; AI scenes are cached per post id. Returns the output folder. */
-export async function renderPlan(options: RenderOptions): Promise<string> {
-  const log = options.log ?? console.log;
+/** Everything an art-directed poster needs from the brand and the run, prepared once so a repair can render one post again. */
+export interface ArtRenderContext {
+  brandDir: string;
+  brand: Brand;
+  logoHtml: string;
+  logoTone: PosterBrand['logoTone'];
+  font: ReturnType<typeof resolveFont>;
+  outDir: string;
+  budget: ImageBudget;
+  ai: AiConfig;
+  log: (message: string) => void;
+  /** The tenant's choice to show the brand description line on its posters (off by default). */
+  showIdentityLine: boolean;
+}
+
+export async function createArtRenderContext(options: Pick<RenderOptions, 'brandDir' | 'planFile' | 'ai' | 'log' | 'fontsDir'>): Promise<ArtRenderContext> {
   const brand = parseBrand(await readJson(join(options.brandDir, 'brand.json')), 'brand.json');
-  const plan = parseWeekPlan(await readJson(join(options.brandDir, options.planFile)), options.planFile);
   const outDir = resolve('out', basename(options.brandDir), basename(options.planFile, '.json'));
   await mkdir(outDir, { recursive: true });
   const logoHtml = await logoMarkup(join(options.brandDir, brand.logo));
   const logoTone = await measureLogoTone(join(options.brandDir, brand.logo));
-  const budget: ImageBudget = { openaiImages: 0 };
   const fontsDir = options.fontsDir ?? process.env['FONTS_DIR'];
   const manifest: FontManifest | undefined = fontsDir ? await loadFontManifest(fontsDir) : undefined;
-  const font = resolveFont(brand.font, manifest);
+  return { brandDir: options.brandDir, brand, logoHtml, logoTone, font: resolveFont(brand.font, manifest), outDir, budget: { openaiImages: 0 }, ai: options.ai, log: options.log ?? console.log, showIdentityLine: (await loadArtSettings(options.brandDir)).showIdentityLine };
+}
+
+/** Where a picture made for a prompt is kept, so the same prompt never buys a second picture. */
+export const scenePathFor = (outDir: string, postId: string, imagePrompt: string): string =>
+  join(outDir, `${postId}-${createHash('sha256').update(imagePrompt).digest('hex').slice(0, 12)}-bg.jpg`);
+
+/** A change to how one post is drawn again after review: what to leave out, and which candidates to try. */
+export interface ArtRenderOverride {
+  /** Draws the post without its subline. */
+  withoutSubline?: boolean;
+  candidates?: readonly RenderCandidate[];
+  /** Never makes a picture: only one that already exists on disk may be used. */
+  cachedPicturesOnly?: boolean;
+  /** The file name (without extension) to write; defaults to the post id. */
+  outName?: string;
+}
+
+/** Renders one art-directed post into <outName>.jpg and returns what happened. Pictures are made at most once per prompt. */
+export async function renderArtPost(ctx: ArtRenderContext, post: PlannedPost, override: ArtRenderOverride = {}): Promise<PostRenderRecord> {
+  if (!post.art) return { postId: post.id, status: 'render_failed', warnings: [], attempts: [], chromeVersion: '', failure: `no art direction (${(post.artFailure?.reasons ?? ['none recorded']).join('; ')})` };
+  const { art } = post;
+  const name = override.outName ?? post.id;
+  const makePicture = async (candidate: RenderCandidate): Promise<string | undefined> => {
+    if (!candidate.imagePrompt) return undefined;
+    const scenePath = scenePathFor(ctx.outDir, post.id, candidate.imagePrompt);
+    if (!(await exists(scenePath))) {
+      if (override.cachedPicturesOnly) return undefined;
+      ctx.log(`${post.id}: generating AI scene for ${candidate.optionId}…`);
+      ctx.ai.usage.post = `${basename(ctx.brandDir)}-${post.id}`;
+      const panel = familyById(layoutRegistry, candidate.brief.layout)?.zones[candidate.brief.textZone]?.imageSlots.find((slot) => slot.id === candidate.brief.picture.role)?.rect;
+      const size = sceneSizeFor(panel, SCENE_SIZE);
+      const maker = await generateScene(ctx.ai, { prompt: candidate.imagePrompt, outPath: scenePath, width: size.width, height: size.height, seed: seedFromId(post.id) }, ctx.budget).finally(() => {
+        ctx.ai.usage.post = null;
+      });
+      ctx.log(`${post.id}: scene made by ${maker}`);
+    }
+    return pathToFileURL(scenePath).href;
+  };
+  const pngPath = join(ctx.outDir, `${name}.png`);
+  const subline = override.withoutSubline ? '' : post.subline;
+  const outcome = await renderPoster({
+    copy: { headline: post.headline, subline, ...(post.listItems?.length ? { listItems: post.listItems } : {}), ...(art.figure ? { figure: art.figure } : {}), ...(art.quote ? { quote: art.quote } : {}), ...(art.offer && !offerIsStale(art.offer) ? { offer: art.offer } : {}) },
+    brand: posterBrand(ctx.brand, ctx.logoHtml, ctx.logoTone, post.cta, { showIdentityLine: ctx.showIdentityLine }),
+    font: ctx.font,
+    candidates: override.candidates ?? art.candidates,
+    makePicture,
+    outPng: pngPath,
+  });
+  const record: PostRenderRecord = {
+    postId: post.id, status: outcome.status, ...(outcome.optionId ? { optionId: outcome.optionId } : {}), ...(outcome.record ? { record: outcome.record } : {}),
+    ...(outcome.solved ? { solved: outcome.solved } : {}), warnings: outcome.warnings, attempts: outcome.attempts, chromeVersion: outcome.chromeVersion, ...(outcome.failure ? { failure: outcome.failure } : {}),
+  };
+  if (outcome.status !== 'render_failed') {
+    await toJpeg(pngPath, join(ctx.outDir, `${name}.jpg`));
+    await rm(pngPath);
+    ctx.log(`${name}: rendered (${outcome.status}${outcome.warnings.length ? `, ${outcome.warnings.map((w) => w.code).join(', ')}` : ''})`);
+  }
+  return record;
+}
+
+/** Renders every post of a plan; AI scenes are cached per post id. Returns the output folder. */
+export async function renderPlan(options: RenderOptions): Promise<string> {
+  const log = options.log ?? console.log;
+  const plan = parseWeekPlan(await readJson(join(options.brandDir, options.planFile)), options.planFile);
+  const ctx = await createArtRenderContext(options);
+  const { brand, logoHtml, logoTone, outDir } = ctx;
+  const budget = ctx.budget;
   const records: PostRenderRecord[] = [];
 
   for (const [index, post] of plan.posts.entries()) {
     if (plan.renderMode === 'art_v1' || post.art) {
-      let failure: string | undefined;
-      if (!post.art) {
-        failure = `no art direction (${(post.artFailure?.reasons ?? ['none recorded']).join('; ')})`;
-        records.push({ postId: post.id, status: 'render_failed', warnings: [], attempts: [], chromeVersion: '', failure });
-      } else {
-        const { art } = post;
-        const makePicture = async (candidate: RenderCandidate): Promise<string | undefined> => {
-          if (!candidate.imagePrompt) return undefined;
-          const key = createHash('sha256').update(candidate.imagePrompt).digest('hex').slice(0, 12);
-          const scenePath = join(outDir, `${post.id}-${key}-bg.jpg`);
-          if (!(await exists(scenePath))) {
-            log(`${post.id}: generating AI scene for ${candidate.optionId}…`);
-            options.ai.usage.post = `${basename(options.brandDir)}-${post.id}`;
-            const panel = familyById(layoutRegistry, candidate.brief.layout)?.zones[candidate.brief.textZone]?.imageSlots.find((slot) => slot.id === candidate.brief.picture.role)?.rect;
-            const size = sceneSizeFor(panel, SCENE_SIZE);
-            const maker = await generateScene(options.ai, { prompt: candidate.imagePrompt, outPath: scenePath, width: size.width, height: size.height, seed: seedFromId(post.id) }, budget).finally(() => {
-              options.ai.usage.post = null;
-            });
-            log(`${post.id}: scene made by ${maker}`);
-          }
-          return pathToFileURL(scenePath).href;
-        };
-        const pngPath = join(outDir, `${post.id}.png`);
-        const outcome = await renderPoster({
-          copy: { headline: post.headline, subline: post.subline, ...(post.listItems?.length ? { listItems: post.listItems } : {}), ...(art.figure ? { figure: art.figure } : {}), ...(art.quote ? { quote: art.quote } : {}), ...(art.offer && !offerIsStale(art.offer) ? { offer: art.offer } : {}) },
-          brand: posterBrand(brand, logoHtml, logoTone, post.cta),
-          font,
-          candidates: art.candidates,
-          makePicture,
-          outPng: pngPath,
-        });
-        records.push({
-          postId: post.id, status: outcome.status, ...(outcome.optionId ? { optionId: outcome.optionId } : {}), ...(outcome.record ? { record: outcome.record } : {}),
-          ...(outcome.solved ? { solved: outcome.solved } : {}), warnings: outcome.warnings, attempts: outcome.attempts, chromeVersion: outcome.chromeVersion, ...(outcome.failure ? { failure: outcome.failure } : {}),
-        });
-        if (outcome.status !== 'render_failed') {
-          await toJpeg(pngPath, join(outDir, `${post.id}.jpg`));
-          await rm(pngPath);
-          log(`${post.id}: rendered (${outcome.status}${outcome.warnings.length ? `, ${outcome.warnings.map((w) => w.code).join(', ')}` : ''})`);
-          continue;
-        }
-        failure = outcome.failure ?? 'render failed';
-      }
+      const record = await renderArtPost(ctx, post);
+      records.push(record);
+      if (record.status !== 'render_failed') continue;
+      const failure = record.failure ?? 'render failed';
       log(`${post.id}: art-directed render failed (${failure})`);
       if (options.artFailure !== 'legacy') continue;
-      (records[records.length - 1] as PostRenderRecord).fallback = 'legacy';
+      record.fallback = 'legacy';
       log(`${post.id}: using the older renderer, which was explicitly allowed for this brand`);
     }
     let visualUrl: string | undefined;

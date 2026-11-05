@@ -23,10 +23,10 @@ const briefFor = (layout: string, over: Record<string, unknown> = {}): ArtBrief 
 
 const kinds = (brief: ArtBrief, registry: readonly LayoutFamily[] = layoutRegistry): string[] => checkBriefAgainstFamily(brief, registry).problems.map((p) => p.kind);
 
-test('v1 ships six families with distinct ids, all validated for the square canvas', () => {
+test('v1 ships nine families with distinct ids, all validated for the square canvas', () => {
   assert.deepEqual(
     layoutRegistry.map((f) => f.id),
-    ['typography-hero', 'split-composition', 'full-bleed-editorial', 'feature-spotlight', 'structured-information', 'evidence-spotlight'],
+    ['typography-hero', 'split-composition', 'split-slim', 'split-wide', 'inset-card', 'full-bleed-editorial', 'feature-spotlight', 'structured-information', 'evidence-spotlight'],
   );
   assert.deepEqual(validateRegistry(layoutRegistry), []);
   for (const family of layoutRegistry) assert.ok(family.supportedRatios.includes('1:1'), family.id);
@@ -144,8 +144,8 @@ test('only the square ratio is accepted in v1 even though the schema names three
 test('a family can be switched off per tenant by id, and the rest stay', () => {
   const left = enabledFamilies(layoutRegistry, { disabled: ['full-bleed-editorial'] });
   assert.ok(!left.some((f) => f.id === 'full-bleed-editorial'));
-  assert.equal(left.length, 5);
-  assert.equal(enabledFamilies(layoutRegistry, {}).length, 6);
+  assert.equal(left.length, 8);
+  assert.equal(enabledFamilies(layoutRegistry, {}).length, 9);
   assert.deepEqual(kinds(briefFor('full-bleed-editorial'), left), ['unknown_layout']);
 });
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { aiConfigFromEnv } from './ai.ts';
-import { directWeek, optionId, type DirectedPost, type DirectorBrand } from './art-director.ts';
+import { directWeek, optionId, SYSTEM_PROMPT, type DirectedPost, type DirectorBrand } from './art-director.ts';
 import { planShortlists, type ArtRecord, type PostFacts } from './art-options.ts';
 
 const ai = () => aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-openai-key' });
@@ -336,4 +336,9 @@ test('a scene, composition or mood that runs past the limit is cut at a word bou
     assert.ok(long.startsWith(r.brief.picture.composition.slice(0, 40)));
     assert.ok(r.warnings.some((w) => /composition.*was \d+ characters and was cut/.test(w)));
   }
+});
+
+test('the director is told the brand style is for colour and mood, not for the setting of the scene', () => {
+  assert.match(SYSTEM_PROMPT, /"visualStyle" is guidance for colour, material and mood only/);
+  assert.match(SYSTEM_PROMPT, /Do not take the kind of place it describes/);
 });

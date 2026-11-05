@@ -102,7 +102,7 @@ test('the shortlist spans families instead of returning three layouts of one fam
 });
 
 test('one eligible family returns its best option without padding', () => {
-  const settings = { familyWeights: { 'split-composition': 0, 'full-bleed-editorial': 0 }, disabled: ['feature-spotlight', 'structured-information', 'evidence-spotlight'] };
+  const settings = { familyWeights: { 'split-composition': 0, 'full-bleed-editorial': 0 }, disabled: ['split-slim', 'split-wide', 'inset-card', 'feature-spotlight', 'structured-information', 'evidence-spotlight'] };
   const scored = scoreOptions(eligibleOptions(facts(), layoutRegistry, settings).options, facts(), [], settings, layoutRegistry);
   assert.deepEqual([...new Set(scored.map((o) => o.layout))], [SAFE_FAMILY]);
   assert.equal(shortlistOf(scored, 3).length, 1);
@@ -142,7 +142,7 @@ test('a preferred family is used more, without removing the others', () => {
     return counts;
   };
   const even = usage({});
-  const heavy = usage({ 'typography-hero': 3 });
+  const heavy = usage({ 'typography-hero': 12 });
   assert.ok((heavy.get('typography-hero') ?? 0) > (even.get('typography-hero') ?? 0));
   assert.ok(heavy.size >= 3, 'other families still appear');
 });

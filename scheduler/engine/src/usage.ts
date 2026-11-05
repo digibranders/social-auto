@@ -59,8 +59,8 @@ export interface UsageLine {
   estimated: boolean;
 }
 
-/** What a call was for: a poster's picture, the week's post writing, or reading the client's website. */
-export type Purpose = 'picture' | 'writing' | 'profile';
+/** What a call was for: a poster's picture, the week's post writing, reading the client's website, or the automatic review of finished posters. */
+export type Purpose = 'picture' | 'writing' | 'profile' | 'review';
 
 /** One line of the usage log: a single AI call (or a post's share of one), with the client and post it belongs to. */
 export interface UsageRecord {

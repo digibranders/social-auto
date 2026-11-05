@@ -210,6 +210,7 @@ function buildFor(
       medium,
       subject: concept.visualSubject,
       action: concept.visualAction,
+      ...(concept.visualRelationship ? { relationship: concept.visualRelationship } : {}),
       scene: conceptSafe ? fromConcept : rotate(settings.scenes ?? defaultScenes, seed, undefined),
       composition: rotate(compositions, seed, previous),
       mood: rotate(settings.moods ?? defaultMoods, seed),

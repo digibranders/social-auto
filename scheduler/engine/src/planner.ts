@@ -5,6 +5,7 @@ import { assertCopySupported } from './copy-gate.ts';
 import { creativePrompt, formatFor } from './creative.ts';
 import { checkConcept, parseConcept, type Concept, type ConceptConfig, type ConceptRecord } from './concepts.ts';
 import { assignHooks, checkHook, defaultHooks, fallbackHeadline, HookError, normalizeHeadline, repetitionWarnings, type HookSpec } from './hooks.ts';
+import { eligibleMoves, moveBrief } from './creative-moves.ts';
 import { assignWeek, checkAnchored, defaultPillars, type PillarSpec, type PostAssignment } from './pillars.ts';
 import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
@@ -71,8 +72,10 @@ function assignmentLines(assignments: readonly PostPlan[], facts: ReadonlyArray<
     const factLines = mine.map((f, n) => (n === 0 ? ` Main fact (the one message of this post): "${displayFact(f)}"` : ` Supporting detail (it may qualify or explain the main fact; it is never a second message): \"${displayFact(f)}\"`));
     const allowed = mine.length > 0 ? ` Facts you may use for this post, in the website's exact words (use no other figure, price, plan, trial or term; write one proposition, and say nothing that is not in these facts):${factLines.join('')}.` : '';
     const target = mine.length > 0 ? ` Caption length for this post: ${captionTarget(mine.length)}; say each fact once and add no claim that is not in the facts; do not repeat a point to fill space.` : '';
+    const moves = mine.length > 0 ? eligibleMoves(mine) : [];
+    const move = moves.length > 0 ? ` Creative move for this post's picture idea: choose exactly one of these and write the concept for it, so the picture shows what the main fact states and nothing more: ${moveBrief(moves)}.` : '';
     const cta = a.cta ? ` Call to action for this post (use this one, not the profile's): "${a.cta.text}".` : '';
-    return `Post ${i + 1} (${a.hook ? `${a.pillar}, ${a.hook}` : a.pillar}): ${a.brief}${a.anchor ? ` Build it on this proof point: "${a.anchor}".` : ''}${allowed}${target}${cta}${a.hookBrief ? ` Headline hook: ${a.hookBrief}` : ''}`;
+    return `Post ${i + 1} (${a.hook ? `${a.pillar}, ${a.hook}` : a.pillar}): ${a.brief}${a.anchor ? ` Build it on this proof point: "${a.anchor}".` : ''}${allowed}${target}${move}${cta}${a.hookBrief ? ` Headline hook: ${a.hookBrief}` : ''}`;
   });
   return `\n\nEvery post belongs to a content pillar and opens with an assigned hook. Write the posts in this order, each following its pillar and hook:\n${lines.join('\n')}`;
 }
@@ -127,9 +130,9 @@ Return JSON:
       "painPoint": "one sentence describing what the post is about (for a problem post, the customer's problem)",
       "headline": "max 45 characters, a punchy question or statement about the pain in everyday words; wrap the 2-4 most important words in |pipes| for the accent colour, e.g. 'Is your website |costing you customers?|'",
       "subline": ${withFacts ? `"optional, max 70 characters: return an empty string unless it adds a detail, condition or fact from the post's facts that the headline does not already say; never restate the headline in other words"` : `"max 70 characters, plain words, no jargon: it names the brand (${brand.name}) and says what it does about this pain, e.g. '${brand.name} keeps all of this in one place.' Use only facts from the profile."`},
-      "visual": "one fresh visual idea for this pain point: a single symbolic object or abstract scene, in the way a clever magazine cover would. It must contain one object that belongs to the topic of the headline (a calendar for scheduling, a file or parcel for uploads, chat bubbles for conversation, a stack of tasks for repeated work), so a viewer links the picture to the headline within two seconds, plus one simple metaphor for the pain (a knot that unravels, a maze with one lit path). No people, no faces, no hands, no offices, desks or meeting rooms, no screens, no text. Max 30 words.",
+      "visual": "one fresh visual idea for this pain point: a single symbolic object or abstract scene, in the way a clever magazine cover would. It must contain one object that belongs to the topic of the headline (a calendar for scheduling, a file or parcel for uploads, chat bubbles for conversation, a stack of tasks for repeated work), so a viewer links the picture to the headline within two seconds, plus a picture idea that shows what the headline says rather than a symbol for a feeling. No people, no faces, no hands, no offices, desks or meeting rooms, no screens, no text. Max 30 words.",
       "visualLink": "one short sentence: how a viewer connects this picture to the headline, e.g. 'the parcel stands for big files and the narrow door for friction'",
-      "concept": {"subject": "what the post is about, 2-5 words", "angle": "the particular angle on that subject", "message": "the one thing the post asserts", "visualSubject": "the main object in the picture", "visualAction": "what happens to it", "visualComposition": "the framing, e.g. close-up, overhead, wide"},
+      "concept": {"subject": "what the post is about, 2-5 words", "angle": "the particular angle on that subject", "message": "the one thing the post asserts", "visualSubject": "the main object in the picture", "visualAction": "what happens to it", "visualComposition": "the framing, e.g. close-up, overhead, wide"${withFacts ? `, "moveId": "the one creative move chosen for this post, from its list", "visualRelationship": "one sentence: what the picture visibly shows, as the fact states it (no knots, tangles, mazes or cords unless the fact is about them)", "relationshipExplanation": "one sentence: why what the picture shows corresponds to what the fact states"` : ''}},
       "listItems": ["only for a numbered_list post: exactly as many distinct short items as the number the headline starts with; omit it for every other post"],
       "caption": "${withFacts ? `Instagram caption (length as set for each post above): a hook line, then what the post's facts say, in plain words, then the call to action. Do not add benefits, outcomes, scenarios, customers, scope or capabilities that the facts do not state; the reader's situation may be put only as a question. Short paragraphs separated by blank lines (\\n\\n).` : `Instagram caption (450-900 characters): hook line, the problem in the customer's words, how ${brand.name} solves it using real proof points, then the call to action. Use short paragraphs separated by blank lines (\\n\\n).`}",
       "hashtags": ["6-8 relevant hashtags, each starting with #, last one the brand name"]
@@ -391,7 +394,7 @@ export async function planWeek(options: {
           }
           let concept: Concept;
           try {
-            concept = parseConcept(draft.concept);
+            concept = parseConcept(draft.concept, evidenceMode ? eligibleMoves(factsPerPost[offset + i] ?? []) : undefined);
           } catch (error) {
             throw new Error(`post ${i + 1}: ${error instanceof Error ? error.message : String(error)}`);
           }
