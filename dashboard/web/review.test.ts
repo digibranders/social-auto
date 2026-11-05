@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { costText, failureText, imageUrl, parseQueue, queryStatus, REASON_LABELS } from './review.ts';
+import { BATCH_QUESTION, costText, failureText, groupBatches, imageUrl, parseQueue, queryStatus, REASON_LABELS } from './review.ts';
 import { parseRoute, routeHash } from './route.ts';
 
 const good = { versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'w01-d1', versionNumber: 2, status: 'pending', headline: 'H', caption: 'C', createdAt: '2026-11-05T10:00:00Z', costUsd: 0.016 };
@@ -36,4 +36,17 @@ test('the "To review" tab asks for what waits and what must be confirmed again; 
   assert.equal(queryStatus('approved'), 'approved');
   const parsed = parseQueue({ posts: [{ versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'p', versionNumber: 1, status: 'held', headline: 'H', caption: 'C', createdAt: '', costUsd: 0 }] });
   assert.equal(parsed.posts[0]?.status, 'held');
+});
+
+test('posters are grouped into the batch they were made in, one brand and one plan, so a week can be judged as a whole', () => {
+  const entry = (brand: string, planFile: string, postId: string) => ({ versionId: `${brand}.${postId.padStart(16, '0')}`, brand, postId, planFile, versionNumber: 1, status: 'pending', headline: postId, caption: 'c', createdAt: '', costUsd: 0 });
+  const parsed = parseQueue({ posts: [entry('acme', 'week-02.json', 'w02-d2'), entry('globex', 'week-01.json', 'w01-d1'), entry('acme', 'week-02.json', 'w02-d1'), entry('acme', 'week-01.json', 'w01-d1')] });
+  const batches = groupBatches(parsed.posts);
+  assert.deepEqual(batches.map((b) => [b.brand, b.planFile, b.posts.map((p) => p.postId)]), [
+    ['acme', 'week-02.json', ['w02-d1', 'w02-d2']],
+    ['acme', 'week-01.json', ['w01-d1']],
+    ['globex', 'week-01.json', ['w01-d1']],
+  ]);
+  assert.match(BATCH_QUESTION, /meaningfully different/);
+  assert.equal(parseQueue({ posts: [{ ...entry('acme', 'x', 'p'), planFile: 5 }] }).posts[0]?.planFile, '', 'a missing plan name is tolerated, not drawn as a batch of its own');
 });

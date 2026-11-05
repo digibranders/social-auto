@@ -1,6 +1,6 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
-import { costText, failureText, imageUrl, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, costText, failureText, groupBatches, imageUrl, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] } };
@@ -11,6 +11,8 @@ interface Detail {
 
 interface State {
   filter: ReviewFilter;
+  /** "cards": one poster at a time. "compare": the whole batch side by side. */
+  view: 'cards' | 'compare';
   queue: ReviewSummary[] | null;
   reasons: string[];
   problems: string[];
@@ -22,7 +24,7 @@ interface State {
   rejecting: boolean;
 }
 
-const state: State = { filter: 'pending', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
+const state: State = { filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
 
 async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: unknown }> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
@@ -135,12 +137,42 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
   );
 }
 
+function compareView(redraw: () => void): HTMLElement {
+  const batches = groupBatches(state.queue ?? []);
+  if (batches.length === 0) return h('p', { class: 'empty' }, 'Nothing to compare here yet.');
+  return h(
+    'div',
+    { class: 'rv-compare' },
+    ...batches.map((batch) => h(
+      'section',
+      { class: 'rv-batch' },
+      h('h2', {}, `${batch.brand} · ${batch.planFile.replace(/\.json$/, '')} · ${batch.posts.length} poster${batch.posts.length === 1 ? '' : 's'}`),
+      h('p', { class: 'muted' }, BATCH_QUESTION),
+      h('div', { class: 'rv-compare-grid' }, ...batch.posts.map((post) => {
+        const tile = h(
+          'button',
+          { type: 'button', class: `rv-tile${state.openId === post.versionId ? ' rv-on' : ''}`, 'aria-label': `${post.brand}: ${post.headline}` },
+          h('img', { class: 'rv-tile-image', src: imageUrl(post.versionId), alt: '', loading: 'lazy' }),
+          h('span', { class: 'rv-tile-text' }, h('b', {}, post.headline), h('small', {}, STATUS_LABELS[post.status])),
+        );
+        tile.addEventListener('click', () => void open(post.versionId, redraw));
+        return tile;
+      })),
+    )),
+  );
+}
+
 export function reviewPage(redraw: () => void): HTMLElement {
   if (state.queue === null && !state.error) void loadQueue(redraw);
   const tabs = h('div', { class: 'rv-tabs', role: 'tablist' }, ...REVIEW_FILTERS.map((f) => {
     const tab = button(f.label, `btn${state.filter === f.key ? ' btn-primary' : ''}`, () => { state.filter = f.key; state.queue = null; state.openId = null; state.detail = null; state.error = null; redraw(); }, f.label);
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-selected', String(state.filter === f.key));
+    return tab;
+  }));
+  const views = h('div', { class: 'rv-tabs' }, ...(['cards', 'compare'] as const).map((view) => {
+    const tab = button(view === 'cards' ? 'One by one' : 'Compare the batch', `btn${state.view === view ? ' btn-primary' : ''}`, () => { state.view = view; redraw(); });
+    tab.setAttribute('aria-pressed', String(state.view === view));
     return tab;
   }));
   const list = h('div', { class: 'rv-list' }, ...(state.queue ?? []).map((p) => card(p, redraw)));
@@ -153,7 +185,9 @@ export function reviewPage(redraw: () => void): HTMLElement {
     ...state.problems.map((p) => h('p', { class: 'rv-error', role: 'alert' }, p)),
     tabs,
     state.queue === null && !state.error ? h('p', { class: 'empty' }, 'Loading…') : null,
-    h('div', { class: 'rv-grid' }, h('div', {}, list, empty), state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
+    views,
+    state.view === 'compare' && state.queue !== null ? compareView(redraw) : null,
+    h('div', { class: 'rv-grid' }, state.view === 'compare' ? h('div', {}) : h('div', {}, list, empty), state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
   );
 }
 

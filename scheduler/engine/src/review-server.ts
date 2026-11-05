@@ -92,7 +92,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   const brands = (): string[] => readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && BRAND.test(d.name)).map((d) => d.name);
 
   const summary = (item: ReviewItem) => ({
-    versionId: item.version.versionId, brand: item.version.brand, postId: item.version.postId, versionNumber: item.version.versionNumber, status: item.status,
+    versionId: item.version.versionId, brand: item.version.brand, postId: item.version.postId, planFile: item.version.planFile, versionNumber: item.version.versionNumber, status: item.status,
     headline: item.version.headline, caption: item.version.caption, createdAt: item.version.createdAt, costUsd: item.version.costUsd,
     ...(item.decision ? { decidedBy: item.decision.by, decidedAt: item.decision.at, reason: item.decision.reason } : {}),
   });

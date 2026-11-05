@@ -31,6 +31,8 @@ export interface ReviewSummary {
   versionId: string;
   brand: string;
   postId: string;
+  /** The plan the poster belongs to: posters of one brand and plan are one week's batch. */
+  planFile: string;
   versionNumber: number;
   status: ReviewStatus;
   headline: string;
@@ -55,7 +57,7 @@ export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: s
     const e = p as Partial<ReviewSummary> | null;
     if (!e || typeof e.versionId !== 'string' || typeof e.brand !== 'string' || typeof e.postId !== 'string' || typeof e.headline !== 'string' || typeof e.caption !== 'string' || typeof e.status !== 'string' || !STATUSES.includes(e.status)) return [];
     return [{
-      versionId: e.versionId, brand: e.brand, postId: e.postId, versionNumber: Number(e.versionNumber) || 1, status: e.status as ReviewStatus, headline: e.headline, caption: e.caption,
+      versionId: e.versionId, brand: e.brand, postId: e.postId, planFile: typeof e.planFile === 'string' ? e.planFile : '', versionNumber: Number(e.versionNumber) || 1, status: e.status as ReviewStatus, headline: e.headline, caption: e.caption,
       createdAt: typeof e.createdAt === 'string' ? e.createdAt : '', costUsd: Number(e.costUsd) || 0,
       ...(typeof e.decidedBy === 'string' ? { decidedBy: e.decidedBy } : {}), ...(typeof e.decidedAt === 'string' ? { decidedAt: e.decidedAt } : {}), ...(typeof e.reason === 'string' ? { reason: e.reason } : {}),
     }];
@@ -78,3 +80,25 @@ export function failureText(body: unknown, status: number): string {
 
 /** The poster's cost as shown to the owner. */
 export const costText = (usd: number): string => (usd > 0 ? `$${usd.toFixed(3)}` : 'free');
+
+export interface Batch {
+  key: string;
+  brand: string;
+  planFile: string;
+  posts: ReviewSummary[];
+}
+
+/** Posters grouped into the batch they were made in (one brand, one plan), in the order posts were planned, so a week can be judged as a whole. */
+export function groupBatches(posts: readonly ReviewSummary[]): Batch[] {
+  const batches = new Map<string, Batch>();
+  for (const post of posts) {
+    const key = `${post.brand}|${post.planFile}`;
+    const batch = batches.get(key) ?? { key, brand: post.brand, planFile: post.planFile, posts: [] };
+    batch.posts.push(post);
+    batches.set(key, batch);
+  }
+  return [...batches.values()].map((b) => ({ ...b, posts: [...b.posts].sort((x, y) => x.postId.localeCompare(y.postId)) })).sort((a, b) => a.brand.localeCompare(b.brand) || b.planFile.localeCompare(a.planFile));
+}
+
+/** The question the owner is asked when looking at a batch together. */
+export const BATCH_QUESTION = 'Would these look meaningfully different if they were all published in the same week\'s feed?';

@@ -516,3 +516,13 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-error { margin: 0; color: var(--missed); }
 .rv-more summary { cursor: pointer; color: var(--muted); }
 @media (max-width: 800px) { .rv-grid { grid-template-columns: minmax(0, 1fr); } .rv-hint { display: none; } }
+
+.rv-compare { display: grid; gap: 22px; }
+.rv-batch h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.rv-compare-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 10px; }
+.rv-tile { display: grid; gap: 6px; text-align: left; background: var(--cell); border: 1px solid var(--cell-border); border-radius: var(--radius); padding: 8px; color: var(--text); cursor: pointer; font: inherit; }
+.rv-tile:hover { background: var(--surface-hover); }
+.rv-tile.rv-on { border-color: var(--focus); }
+.rv-tile-image { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 8px; background: var(--surface); }
+.rv-tile-text { display: grid; gap: 2px; }
+.rv-tile-text small { color: var(--muted); }

@@ -46,7 +46,8 @@ test('the queue lists pending posters of every brand, with filters, and nothing 
   try {
     const a = s.stores.acme.addVersion(version(s.pictures('a.jpg', 'acme picture')));
     const g = s.stores.globex.addVersion(version(s.pictures('g.jpg', 'globex picture'), { postId: 'w01-d2' }));
-    const list = (await (await s.call('/review/posts')).json()) as { posts: Array<{ versionId: string; status: string }> };
+    const list = (await (await s.call('/review/posts')).json()) as { posts: Array<{ versionId: string; status: string; planFile: string }> };
+    assert.ok(list.posts.every((p) => p.planFile === 'week-01.json'), 'each poster names its plan, so a batch can be shown together');
     assert.deepEqual(list.posts.map((p) => p.versionId).sort(), [a.versionId, g.versionId].sort());
     assert.equal((await s.call(`/review/posts/${a.versionId}/download`)).status, 409, 'a pending poster is not a download');
     assert.equal((await s.call('/review/posts?status=nonsense')).status, 400);

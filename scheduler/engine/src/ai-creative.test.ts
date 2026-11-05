@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aiConfigFromEnv } from './ai.ts';
 import { buildCreativePrompt, displayDomain, judgeCreative, plainHeadline, retryNoteFor, reviewCreative, type CreativeReview, type TextManifest } from './ai-creative.ts';
+import { defaultHeadlineGate } from './headline-gate.ts';
 import { makeCreatives, manifestOf } from './ai-creative-pipeline.ts';
 import type { DirectorResult } from './creative-director.ts';
 import { BudgetError, defaultBudgetLimits, PaidLedger } from './paid-ledger.ts';
@@ -144,7 +145,7 @@ const directed = (posts: ReadonlyArray<{ id: string }>): Promise<DirectorResult>
   Promise.resolve({ concepts: posts.map((p, i) => ({ postId: p.id, concept: CONCEPTS[i % CONCEPTS.length] as string, people: false, factToPicture: 'The picture shows the fact as one clear idea.', typography: 'The headline is set large in the top left in a plain heavy letterform.', replans: 0 })), dropped: [], flags: [] });
 
 const run = (ctx: ReturnType<typeof setup>, posts: PlannedPost[], deps: Parameters<typeof makeCreatives>[0]['deps']) =>
-  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), directorEnabled: true, deps: { direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
+  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), directorEnabled: true, deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
 
 const scene = (calls: string[]) => async (prompt: string, out: string): Promise<void> => {
   calls.push(prompt);
@@ -292,6 +293,7 @@ test('with the creative director off (the default), no director call, comparison
       ai: ctx.ai, brand, brandSlug: 'oyechats', brandDir: join(ctx.dir, 'brand'), outDir: join(ctx.dir, 'out'),
       posts: [post('w01-d1', 'Answers from your own docs'), post('w01-d2', 'Plan your week')], factOf: () => 'OyeChats answers from your own documents.',
       deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
         direct: forbidden,
         lookAlikes: forbidden,
         scene: scene(prompts),

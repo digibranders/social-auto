@@ -12,6 +12,7 @@ import { generateScene } from './ai.ts';
 import { buildCreativePrompt, displayDomain, isRecoverable, judgeReadings, plainHeadline, retryNoteFor, reviewCreative, type CreativeDefect, type CreativeReview, type TextManifest } from './ai-creative.ts';
 import type { Brand, PlannedPost } from './content.ts';
 import { BudgetError } from './paid-ledger.ts';
+import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines, type HeadlineGateConfig, type HeadlineScore } from './headline-gate.ts';
 import { batchLookAlikes, compareIdeas, directBatch, loadConceptHistory, openAiEmbedder, saveConceptHistory, type DirectorResult, type LookAlikes, type PlannedConcept } from './creative-director.ts';
 
 export interface CreativeAttempt {
@@ -30,6 +31,8 @@ export interface CreativeResult {
   postId: string;
   manifest: TextManifest;
   status: 'accepted' | 'rejected' | 'budget_stopped' | 'failed' | 'dropped';
+  /** How the editorial check judged the headline, when the check ran. */
+  headline?: HeadlineScore;
   /** The picture the creative director chose for this post. */
   concept?: PlannedConcept;
   /** The file of the accepted poster. */
@@ -59,6 +62,10 @@ export interface CreativeDeps {
   review?: (imagePath: string, message: string, reading: number) => Promise<CreativeReview>;
   /** How many independent readings a poster must pass. */
   readings?: number;
+  /** For tests: replaces the editorial check of the headlines (one score per post). */
+  headlines?: (items: ReadonlyArray<{ id: string; headline: string; fact: string }>) => Promise<HeadlineScore[]>;
+  /** For tests: the editorial gate's settings; otherwise they come from the environment. */
+  headlineGate?: { enabled: boolean; config: HeadlineGateConfig };
   /** For tests: replaces the creative director (concepts for the batch). */
   direct?: (posts: ReadonlyArray<{ id: string; headline: string; fact: string }>, history: readonly string[]) => Promise<DirectorResult>;
   /** For tests: replaces the side-by-side check of the finished posters. */
@@ -119,10 +126,38 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   let allowedTexts: string[] = [];
   const spent = (postId: string): number => ai.ledger?.spend(postId).poster ?? 0;
 
+  // The editorial gate: a headline that gives the reader nothing, or does not read as natural copy, is dropped before any picture is paid for.
+  const gate = deps.headlineGate ?? headlineGateFromEnv(process.env);
+  const dropped = new Map<string, { reason: string; score: HeadlineScore }>();
+  const scored = new Map<string, HeadlineScore>();
+  if (gate.enabled && posts.length > 0) {
+    ai.usage.post = null;
+    ai.usage.purpose = 'review';
+    try {
+      const items = posts.map((post) => ({ id: post.id, headline: plainHeadline(post.headline), fact: input.factOf(post) }));
+      const scores = await (deps.headlines ?? ((list) => scoreHeadlines(ai, list)))(items);
+      for (const verdict of judgeHeadlines(scores, gate.config)) {
+        scored.set(verdict.id, verdict.score);
+        if (!verdict.keep) dropped.set(verdict.id, { reason: verdict.reason ?? 'weak headline', score: verdict.score });
+      }
+    } catch (error) {
+      if (error instanceof BudgetError) {
+        report.stoppedBy = `${error.code}: ${error.message}`;
+        for (const post of posts) report.results.push({ postId: post.id, manifest: manifestOf(post, brand), status: 'budget_stopped', attempts: [], reason: error.message, costUsd: 0 });
+        await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
+        return report;
+      }
+      // The check could not be made: the posts go on, as they did before the gate existed, with a note in the log. A gate that fails must not stop the engine.
+      log(`the headline check could not be made (${error instanceof Error ? error.message : String(error)}); the headlines were not checked`);
+    } finally {
+      ai.usage.purpose = 'writing';
+    }
+  }
+
   // The creative director (when it is switched on) plans every post of the batch together, and the plan is checked, before any picture is bought.
   const director = input.directorEnabled === true;
   const past = director && input.brandDir ? await loadConceptHistory(input.brandDir) : [];
-  const batch = posts.map((post) => ({ id: post.id, headline: plainHeadline(post.headline), fact: input.factOf(post) }));
+  const batch = posts.filter((post) => !dropped.has(post.id)).map((post) => ({ id: post.id, headline: plainHeadline(post.headline), fact: input.factOf(post) }));
   let direction: DirectorResult = { concepts: [], dropped: [], flags: [] };
   ai.usage.post = null;
   ai.usage.purpose = 'writing';
@@ -155,6 +190,14 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     allowedTexts = [manifest.headline, ...(manifest.subline ? [manifest.subline] : []), manifest.brandName, manifest.domain];
     const result: CreativeResult = { postId: post.id, manifest, status: 'rejected', attempts: [], costUsd: 0 };
     report.results.push(result);
+    if (scored.has(post.id)) result.headline = scored.get(post.id) as HeadlineScore;
+    const weak = dropped.get(post.id);
+    if (weak) {
+      result.status = 'dropped';
+      result.reason = weak.reason;
+      log(`${post.id}: dropped before any picture was bought (${weak.reason})`);
+      continue;
+    }
     const concept = conceptOf.get(post.id);
     if (director && !concept) {
       result.status = 'dropped';
