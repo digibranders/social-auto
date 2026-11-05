@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aiConfigFromEnv } from './ai.ts';
@@ -144,7 +144,7 @@ const directed = (posts: ReadonlyArray<{ id: string }>): Promise<DirectorResult>
   Promise.resolve({ concepts: posts.map((p, i) => ({ postId: p.id, concept: CONCEPTS[i % CONCEPTS.length] as string, people: false, factToPicture: 'The picture shows the fact as one clear idea.', typography: 'The headline is set large in the top left in a plain heavy letterform.', replans: 0 })), dropped: [], flags: [] });
 
 const run = (ctx: ReturnType<typeof setup>, posts: PlannedPost[], deps: Parameters<typeof makeCreatives>[0]['deps']) =>
-  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), deps: { direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
+  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), directorEnabled: true, deps: { direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
 
 const scene = (calls: string[]) => async (prompt: string, out: string): Promise<void> => {
   calls.push(prompt);
@@ -280,4 +280,34 @@ test('a poster-level limit drops that poster only', async () => {
 
 test('manifestOf strips the accent markers and shows the plain address', () => {
   assert.deepEqual(manifestOf(post('p', 'Track |tasks|'), brand), { headline: 'Track tasks', brandName: 'OyeChats', domain: 'oyechats.com' });
+});
+
+test('with the creative director off (the default), no director call, comparison, side-by-side check or concept memory happens, and each poster is drawn on its own', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    let touched = 0;
+    const forbidden = async (): Promise<never> => { touched += 1; throw new Error('the creative director must not run'); };
+    const report = await makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', brandDir: join(ctx.dir, 'brand'), outDir: join(ctx.dir, 'out'),
+      posts: [post('w01-d1', 'Answers from your own docs'), post('w01-d2', 'Plan your week')], factOf: () => 'OyeChats answers from your own documents.',
+      deps: {
+        direct: forbidden,
+        lookAlikes: forbidden,
+        scene: scene(prompts),
+        review: async (file) => review([file.includes('d1') ? 'Answers from your own docs' : 'Plan your week', 'OyeChats', 'oyechats.com']),
+      },
+    });
+    assert.equal(touched, 0);
+    assert.deepEqual(report.results.map((r) => r.status), ['accepted', 'accepted']);
+    assert.equal(prompts.length, 2, 'one picture each, nothing extra');
+    assert.ok(prompts.every((p) => !/THE PICTURE \(follow it/.test(p)), 'no concept was chosen for either poster');
+    assert.equal(report.direction, undefined);
+    assert.equal(report.lookAlikes, undefined);
+    assert.ok(report.results.every((r) => r.concept === undefined));
+    assert.equal(existsSync(join(ctx.dir, 'brand', 'creative-history.json')), false, 'no concept memory is written');
+    assert.equal(ctx.ledger.calls().length, 0, 'no paid call was made for the director');
+  } finally {
+    ctx.done();
+  }
 });

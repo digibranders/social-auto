@@ -81,6 +81,11 @@ export interface CreativeRunInput {
   brandDir?: string;
   /** The most posters of a batch that may show people prominently. */
   peopleCap?: number;
+  /**
+   * Whether the creative director plans the batch (concepts, similarity checks, a replan, a side-by-side check and the concept memory). Off unless set:
+   * with it off every poster is drawn on its own from the prompt contract, and no director call, embedding, comparison or side-by-side check is made.
+   */
+  directorEnabled?: boolean;
   log?: (message: string) => void;
   deps?: CreativeDeps;
 }
@@ -114,13 +119,14 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   let allowedTexts: string[] = [];
   const spent = (postId: string): number => ai.ledger?.spend(postId).poster ?? 0;
 
-  // The creative director plans every post of the batch together, and the plan is checked, before any picture is bought.
-  const past = input.brandDir ? await loadConceptHistory(input.brandDir) : [];
+  // The creative director (when it is switched on) plans every post of the batch together, and the plan is checked, before any picture is bought.
+  const director = input.directorEnabled === true;
+  const past = director && input.brandDir ? await loadConceptHistory(input.brandDir) : [];
   const batch = posts.map((post) => ({ id: post.id, headline: plainHeadline(post.headline), fact: input.factOf(post) }));
-  let direction: DirectorResult;
+  let direction: DirectorResult = { concepts: [], dropped: [], flags: [] };
   ai.usage.post = null;
   ai.usage.purpose = 'writing';
-  try {
+  if (director) try {
     direction = deps.direct
       ? await deps.direct(batch, past.map((r) => r.concept))
       : await directBatch(
@@ -140,7 +146,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
     return report;
   }
-  report.direction = { flags: direction.flags, dropped: direction.dropped };
+  if (director) report.direction = { flags: direction.flags, dropped: direction.dropped };
   const conceptOf = new Map(direction.concepts.map((c) => [c.postId, c]));
 
   for (const post of posts) {
@@ -150,13 +156,13 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     const result: CreativeResult = { postId: post.id, manifest, status: 'rejected', attempts: [], costUsd: 0 };
     report.results.push(result);
     const concept = conceptOf.get(post.id);
-    if (!concept) {
+    if (director && !concept) {
       result.status = 'dropped';
       result.reason = direction.dropped.find((d) => d.postId === post.id)?.reason ?? 'the creative director gave this post no concept';
       log(`${post.id}: dropped (${result.reason})`);
       continue;
     }
-    result.concept = concept;
+    if (concept) result.concept = concept;
     ai.usage.post = `${input.brandSlug}-${post.id}`;
     // The ledger counts a poster's calls under the same id.
     const ledgerId = ai.usage.post;
@@ -164,7 +170,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     try {
       for (let n = 1; n <= maxAttempts; n++) {
         const imageFile = join(outDir, `${post.id}.attempt${n}.jpg`);
-        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography }, ...(note ? { retryNote: note } : {}) });
+        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(note ? { retryNote: note } : {}) });
         const attempt: CreativeAttempt = { n, prompt, imageFile, readings: [], accepted: false, defects: [] };
         result.attempts.push(attempt);
         log(`${post.id}: attempt ${n}, drawing the poster…`);
@@ -225,7 +231,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   ai.usage.post = null;
   // The finished posters side by side: a poster that repeats an earlier one of the batch is rejected (no second picture is bought for it in this first version).
   const kept = report.results.filter((r) => r.status === 'accepted' && r.file);
-  if (kept.length >= 2 && !report.stoppedBy) {
+  if (director && kept.length >= 2 && !report.stoppedBy) {
     ai.usage.purpose = 'review';
     try {
       const pairs = await (deps.lookAlikes ?? ((posters) => batchLookAlikes(ai, posters)))(kept.map((r) => ({ id: r.postId, file: r.file as string })));
@@ -250,7 +256,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     }
   }
   // Every concept is remembered, the rejected ones too, so that next week does not repeat them.
-  if (input.brandDir) {
+  if (director && input.brandDir) {
     await saveConceptHistory(input.brandDir, past, report.results.flatMap((r) => (r.concept ? [{ at: report.generatedAt, postId: `${input.brandSlug}-${r.postId}`, concept: r.concept.concept, typography: r.concept.typography, people: r.concept.people, accepted: r.status === 'accepted' }] : [])));
   }
   await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);

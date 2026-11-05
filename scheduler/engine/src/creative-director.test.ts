@@ -210,7 +210,7 @@ test('each poster is drawn from its own concept, a dropped post buys nothing, an
   try {
     const prompts: string[] = [];
     const report = await makeCreatives({
-      ai: c.ai, brand, brandSlug: 'oyechats', brandDir: c.dir, outDir: join(c.dir, 'out'),
+      ai: c.ai, brand, brandSlug: 'oyechats', brandDir: c.dir, outDir: join(c.dir, 'out'), directorEnabled: true,
       posts: [planned('p1', 'Answers from your own docs'), planned('p2', 'One thread'), planned('p3', 'Free plan')],
       factOf: () => 'a fact',
       deps: {
@@ -239,7 +239,7 @@ test('if the director fails, no picture is bought', async () => {
   try {
     let drawn = 0;
     const report = await makeCreatives({
-      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), posts: [planned('p1', 'A'), planned('p2', 'B')], factOf: () => 'f',
+      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), directorEnabled: true, posts: [planned('p1', 'A'), planned('p2', 'B')], factOf: () => 'f',
       deps: { direct: async () => { throw new Error('No valid response'); }, scene: async () => { drawn += 1; } },
     });
     assert.equal(drawn, 0);
@@ -254,7 +254,7 @@ test('posters that look alike side by side: the later one is rejected and its fi
   const c = ctx();
   try {
     const report = await makeCreatives({
-      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), posts: [planned('p1', 'Answers from your own docs'), planned('p2', 'Answers from your own docs')], factOf: () => 'f',
+      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), directorEnabled: true, posts: [planned('p1', 'Answers from your own docs'), planned('p2', 'Answers from your own docs')], factOf: () => 'f',
       deps: {
         direct: async (ps) => ({ concepts: ps.map((p, i) => ({ postId: p.id, concept: [DOCS, LINE][i] as string, people: false, factToPicture: 'It shows the fact as an idea.', typography: TYPE_A, replans: 0 })), dropped: [], flags: [] }),
         scene: async (_p, out) => writeFileSync(out, 'x'),

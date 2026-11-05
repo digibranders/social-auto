@@ -30,6 +30,7 @@ import { parseArgs } from 'node:util';
 import { aiConfigFromEnv } from './ai.ts';
 import { appendUsageLog } from './usage.ts';
 import { CrawlError } from './crawl.ts';
+import { assertPublishingEnabled, PublishingDisabledError } from './publishing-switch.ts';
 import { makeCreatives } from './ai-creative-pipeline.ts';
 import { registerForReview } from './review-register.ts';
 import { displayFact } from './evidence.ts';
@@ -153,9 +154,11 @@ async function main(): Promise<void> {
   if (values.review && !values.art) throw new Error('--review looks at art-directed posters, so it needs --art');
   if (values.review && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--review makes a vision request per poster: with --dry-run it needs --allow-paid-ai');
   if (target !== 'scheduler' && target !== 'publisher') throw new Error('--target must be "scheduler" or "publisher"');
-  if (target === 'scheduler' && !values.channel && !values['dry-run']) {
+  if (route === 'template' && target === 'scheduler' && !values.channel && !values['dry-run']) {
     throw new Error('--channel is required for --target scheduler unless --dry-run is set');
   }
+  // The template route schedules or exports for real unless it is a dry run: refused up front (the AI route never does either; its posters wait for approval), before any paid work, unless publishing is switched on for this server.
+  if (route === 'template' && !values['dry-run']) assertPublishingEnabled(target === 'publisher' ? 'exporting to the publisher' : 'scheduling');
   const weekdays = values.weekdays ? parseWeekdays(values.weekdays.split(',')) : undefined;
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
@@ -276,12 +279,14 @@ async function main(): Promise<void> {
 
     if (route === 'ai' && !values['plan-only']) {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
-      console.log('3/4 Drawing the posters with the picture model (no template)…');
+      // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
+      const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
+      console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
       const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai`);
       const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
       ai.usage.purpose = 'writing';
       const made = await makeCreatives({
-        ai, brand, brandSlug: slug, brandDir, posts: finalPlan.posts, outDir, log: (m) => console.log(`    ${m}`),
+        ai, brand, brandSlug: slug, brandDir, posts: finalPlan.posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled,
         factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
       });
       const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
@@ -366,7 +371,8 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   main().catch((error: unknown) => {
-    if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    if (error instanceof PublishingDisabledError) console.error(`PUBLISHING_DISABLED: ${error.message}`);
+    else if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof PreflightError) console.error(`${error.code}: ${error.message}. No posters were made.`);
     else console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);

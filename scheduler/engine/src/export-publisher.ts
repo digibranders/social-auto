@@ -15,6 +15,7 @@ import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { composeCaption, isPublishable, parseWeekPlan, readJson } from './content.ts';
+import { assertPublishingEnabled } from './publishing-switch.ts';
 import { ReviewStore } from './review-store.ts';
 
 const WEEK_FILE = /^week-\d+\.json$/;
@@ -65,6 +66,8 @@ async function readSchedule(path: string): Promise<ExportedPost[]> {
 }
 
 export async function exportToPublisher(brandDir: string, publisherDir: string, now = Date.now()): Promise<ExportedPost[]> {
+  // The publisher app sends what it is given to the platforms, so handing it posts is publishing: refused (and nothing is written) while the switch is off.
+  assertPublishingEnabled('exporting to the publisher');
   const brand = basename(brandDir);
   const postsDir = join(publisherDir, 'public', 'posts', brand);
   await rm(postsDir, { recursive: true, force: true });
