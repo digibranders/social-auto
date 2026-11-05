@@ -7,7 +7,7 @@
  * The store is an append-only JSON-lines file per brand, written under a lock so two requests cannot make conflicting decisions, and each picture is
  * copied once into a folder named by its own hash so a later run can never overwrite what was approved. Nothing here is ever deleted or edited.
  */
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { appendDurable, copyDurable, LockError, withFileLock } from './file-lock.ts';
@@ -265,14 +265,53 @@ export class ReviewStore {
 
   /** Checks that the picture and the content are still what they were when the version was made. */
   private verify(version: PostVersion): void {
+    this.readVerified(version);
+  }
+
+  /**
+   * The picture's bytes, read in a way that cannot be steered out of the brand's folder, and checked against the hash they were approved with. The brand
+   * folder and its `versions` folder must be real folders (not links), the picture's name must be exactly `versions/<hash>.jpg`, and the file is opened
+   * without following a link and must be a plain file: a link to a file with the same bytes elsewhere is refused, because the hash alone would not notice it.
+   * The bytes that were hashed are the bytes returned, so there is no gap between the check and the use.
+   */
+  private readVerified(version: PostVersion): Buffer {
+    const refuse = (what: string): never => {
+      throw new ReviewError('TAMPERED', `the picture of ${version.versionId} ${what}`);
+    };
+    if (!/^versions\/[0-9a-f]{64}\.jpg$/.test(version.imageFile)) return refuse('is named outside the allowed folder');
+    for (const folder of [this.brandDir, join(this.brandDir, 'versions')]) {
+      let info;
+      try {
+        info = lstatSync(folder);
+      } catch {
+        return refuse('is missing');
+      }
+      if (info.isSymbolicLink() || !info.isDirectory()) return refuse('is in a folder that is not a plain folder');
+    }
+    let fd: number;
+    try {
+      fd = openSync(join(this.brandDir, version.imageFile), constants.O_RDONLY | constants.O_NOFOLLOW);
+    } catch {
+      return refuse('is missing or is a link');
+    }
     let bytes: Buffer;
     try {
-      bytes = readFileSync(join(this.brandDir, version.imageFile));
-    } catch {
-      throw new ReviewError('TAMPERED', `the picture of ${version.versionId} is missing`);
+      const info = fstatSync(fd);
+      if (!info.isFile()) return refuse('is not a plain file');
+      bytes = Buffer.alloc(info.size);
+      let read = 0;
+      while (read < info.size) {
+        const n = readSync(fd, bytes, read, info.size - read, read);
+        if (n === 0) break;
+        read += n;
+      }
+      if (read !== info.size) return refuse('changed while it was being read');
+    } finally {
+      closeSync(fd);
     }
-    if (sha256(bytes) !== version.imageSha256) throw new ReviewError('TAMPERED', `the picture of ${version.versionId} is not the one that was made`);
+    if (sha256(bytes) !== version.imageSha256) return refuse('is not the one that was made');
     if (contentHashOf(version) !== version.contentSha256) throw new ReviewError('TAMPERED', `the content of ${version.versionId} does not match its record`);
+    return bytes;
   }
 
   /** Approves one exact version. The same request twice gives the same decision, never a second one. */
@@ -311,16 +350,16 @@ export class ReviewStore {
    * The only way to get a file for publishing or download: the version must be approved, the latest of its post, and its picture and content must
    * still match what was approved. Returns the picture's path and the version.
    */
-  approvedFile(versionId: string): { version: PostVersion; path: string } {
+  approvedFile(versionId: string): { version: PostVersion; path: string; bytes: Buffer } {
     const item = this.get(versionId);
     if (item.status !== 'approved' || !item.decision) throw new ReviewError('NOT_APPROVED', `version ${versionId} is ${item.status}, not approved`);
-    this.verify(item.version);
+    const bytes = this.readVerified(item.version);
     if (item.decision.imageSha256 !== item.version.imageSha256 || item.decision.contentSha256 !== item.version.contentSha256) throw new ReviewError('TAMPERED', 'the approval was made against a different picture or content');
-    return { version: item.version, path: join(this.brandDir, item.version.imageFile) };
+    return { version: item.version, path: join(this.brandDir, item.version.imageFile), bytes };
   }
 
   /** The approved version of a post that may go out now, if there is one. */
-  approvedFor(postId: string): { version: PostVersion; path: string } | undefined {
+  approvedFor(postId: string): { version: PostVersion; path: string; bytes: Buffer } | undefined {
     const item = this.history(postId).find((i) => i.status === 'approved');
     return item ? this.approvedFile(item.version.versionId) : undefined;
   }
@@ -330,5 +369,10 @@ export class ReviewStore {
     const item = this.get(versionId);
     this.verify(item.version);
     return join(this.brandDir, item.version.imageFile);
+  }
+
+  /** The bytes of any version's picture, checked as they are read (what the review page shows). */
+  previewBytes(versionId: string): Buffer {
+    return this.readVerified(this.get(versionId).version);
   }
 }

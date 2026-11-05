@@ -14,7 +14,7 @@
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
@@ -27,6 +27,8 @@ const STATUSES: readonly (ReviewStatus | 'all' | 'open')[] = ['pending', 'approv
 export interface ReviewServerOptions {
   brandsRoot: string;
   secret: string;
+  /** How long a change waits for another process's lock before the request is answered "busy" (tests shorten it). */
+  lockTimeoutMs?: number;
 }
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -84,7 +86,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       isDir = false;
     }
     if (!isDir) throw new ReviewError('NOT_FOUND', 'no such brand');
-    return new ReviewStore(dir, brand);
+    return new ReviewStore(dir, brand, undefined, options.lockTimeoutMs);
   };
   const storeOf = (versionId: string): ReviewStore => storeFor(versionId.split('.')[0] ?? '');
   const brands = (): string[] => readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && BRAND.test(d.name)).map((d) => d.name);
@@ -106,16 +108,21 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
         const status = url.searchParams.get('status') ?? 'pending';
         if (!(STATUSES as readonly string[]).includes(status)) return send(res, 400, { error: `status must be one of ${STATUSES.join(', ')}` });
+        // A brand whose log is damaged is reported, never silently left out: an owner must not be told "nothing is waiting" when the record is broken.
+        const problems: Array<{ brand: string; message: string }> = [];
         const items = brands().flatMap((brand) => {
           try {
             const all = storeFor(brand).list();
             return status === 'all' ? all : status === 'open' ? all.filter((i) => i.status === 'pending' || i.status === 'held') : all.filter((i) => i.status === status);
           } catch (error) {
-            if (error instanceof ReviewError && error.code === 'TAMPERED') return [];
+            if (error instanceof ReviewError && (error.code === 'TAMPERED' || error.code === 'LOCKED')) {
+              problems.push({ brand, message: error.code === 'TAMPERED' ? 'The review record needs administrator recovery.' : 'The review record is busy or locked.' });
+              return [];
+            }
             throw error;
           }
         });
-        return send(res, 200, { posts: items.sort((a, b) => b.version.createdAt.localeCompare(a.version.createdAt)).map(summary), reasons: REJECTION_REASONS });
+        return send(res, 200, { posts: items.sort((a, b) => b.version.createdAt.localeCompare(a.version.createdAt)).map(summary), problems, reasons: REJECTION_REASONS });
       }
 
       const versionId = decodeURIComponent(parts[2] ?? '');
@@ -126,13 +133,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         return send(res, 200, { ...item, history: store.history(item.version.postId).map(summary) });
       }
       if (parts.length === 4 && action === 'image' && req.method === 'GET') {
-        const bytes = readFileSync(store.previewPath(versionId));
+        const bytes = store.previewBytes(versionId);
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
         return void res.end(bytes);
       }
       if (parts.length === 4 && action === 'download' && req.method === 'GET') {
-        const { path, version } = store.approvedFile(versionId);
-        const bytes = readFileSync(path);
+        const { bytes, version } = store.approvedFile(versionId);
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': bytes.length, 'Content-Disposition': `attachment; filename="${version.postId}-v${version.versionNumber}.jpg"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
         return void res.end(bytes);
       }

@@ -9,7 +9,8 @@ test('the queue keeps well formed entries and drops anything else', () => {
   const parsed = parseQueue({ posts: [good, { ...good, status: 'weird' }, { ...good, versionId: 5 }, null, 'x'], reasons: ['weak_copy', 'made_up'] });
   assert.equal(parsed.posts.length, 1);
   assert.deepEqual(parsed.reasons, ['weak_copy']);
-  assert.deepEqual(parseQueue(null), { posts: [], reasons: Object.keys(REASON_LABELS) });
+  assert.deepEqual(parseQueue(null), { posts: [], reasons: Object.keys(REASON_LABELS), problems: [] });
+  assert.deepEqual(parseQueue({ posts: [], problems: [{ brand: 'acme', message: 'The review record needs administrator recovery.' }, { brand: 5 }] }).problems, ['acme: The review record needs administrator recovery.']);
 });
 
 test('pictures are asked for by version, as a preview or a download, with the id escaped', () => {

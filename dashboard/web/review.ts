@@ -45,8 +45,12 @@ export interface ReviewSummary {
 const STATUSES: readonly string[] = ['pending', 'approved', 'rejected', 'blocked', 'superseded', 'held'];
 
 /** The list the service sends, kept only where it is well formed: a malformed entry is dropped, never drawn. */
-export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: string[] } {
-  const raw = value as { posts?: unknown; reasons?: unknown } | null;
+export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: string[]; problems: string[] } {
+  const raw = value as { posts?: unknown; reasons?: unknown; problems?: unknown } | null;
+  const problems = Array.isArray(raw?.problems) ? raw.problems.flatMap((p): string[] => {
+    const e = p as { brand?: unknown; message?: unknown } | null;
+    return e && typeof e.brand === 'string' && typeof e.message === 'string' ? [`${e.brand}: ${e.message}`] : [];
+  }) : [];
   const posts = Array.isArray(raw?.posts) ? raw.posts.flatMap((p): ReviewSummary[] => {
     const e = p as Partial<ReviewSummary> | null;
     if (!e || typeof e.versionId !== 'string' || typeof e.brand !== 'string' || typeof e.postId !== 'string' || typeof e.headline !== 'string' || typeof e.caption !== 'string' || typeof e.status !== 'string' || !STATUSES.includes(e.status)) return [];
@@ -57,7 +61,7 @@ export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: s
     }];
   }) : [];
   const reasons = Array.isArray(raw?.reasons) ? raw.reasons.filter((r): r is string => typeof r === 'string' && r in REASON_LABELS) : Object.keys(REASON_LABELS);
-  return { posts, reasons: reasons.length > 0 ? reasons : Object.keys(REASON_LABELS) };
+  return { posts, reasons: reasons.length > 0 ? reasons : Object.keys(REASON_LABELS), problems };
 }
 
 /** The status the service is asked for: the "To review" tab shows what is waiting and what must be confirmed again. */

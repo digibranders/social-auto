@@ -167,26 +167,32 @@ export function acquireLock(path: string, options: LockOptions = {}): Release {
   const token = randomUUID();
   const deadline = Date.now() + timeoutMs;
   let wait = 2;
-  for (;;) {
-    if (create(path, token)) {
-      const release = (() => {
-        const holder = readHolder(path);
-        if (holder !== 'missing' && holder !== 'garbage' && holder.token === token) {
-          try {
-            unlinkSync(path);
-            syncDir(path);
-          } catch {
-            /* already gone */
-          }
+  const take = (): Release | undefined => {
+    if (!create(path, token)) return undefined;
+    const release = (() => {
+      const holder = readHolder(path);
+      if (holder !== 'missing' && holder !== 'garbage' && holder.token === token) {
+        try {
+          unlinkSync(path);
+          syncDir(path);
+        } catch {
+          /* already gone */
         }
-      }) as Release;
-      release.owns = () => {
-        const holder = readHolder(path);
-        return holder !== 'missing' && holder !== 'garbage' && holder.token === token && holder.pid === process.pid;
-      };
-      return release;
-    }
+      }
+    }) as Release;
+    release.owns = () => {
+      const holder = readHolder(path);
+      return holder !== 'missing' && holder !== 'garbage' && holder.token === token && holder.pid === process.pid;
+    };
+    return release;
+  };
+  for (;;) {
+    const got = take();
+    if (got) return got;
+    // A lock left by a process that is gone is cleared, and the lock is tried for again straight away, even with no time to wait.
     removeDead(path);
+    const again = take();
+    if (again) return again;
     if (Date.now() > deadline) {
       const holder = readHolder(path);
       const who = holder === 'missing' ? 'another process' : holder === 'garbage' ? 'a damaged lock file (needs a person to recover it, see the recovery procedure)' : `process ${holder.pid} on ${holder.host}`;

@@ -85,7 +85,7 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
       if (plan.renderMode === 'ai_v1' ? !approved : !isPublishable(plan, post)) continue;
       let poster: string | null = null;
       if (Date.parse(post.date) >= now - KEEP_RECENT_MS) {
-        const image = await readFile(approved ? approved.path : join(outDir, `${post.id}.jpg`));
+        const image = approved ? approved.bytes : await readFile(join(outDir, `${post.id}.jpg`));
         const fileName = posterFileName(image);
         await writeFile(join(postsDir, fileName), image);
         poster = `/posts/${brand}/${fileName}`;

@@ -13,6 +13,7 @@ interface State {
   filter: ReviewFilter;
   queue: ReviewSummary[] | null;
   reasons: string[];
+  problems: string[];
   openId: string | null;
   detail: Detail | null;
   error: string | null;
@@ -21,7 +22,7 @@ interface State {
   rejecting: boolean;
 }
 
-const state: State = { filter: 'pending', queue: null, reasons: Object.keys(REASON_LABELS), openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
+const state: State = { filter: 'pending', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
 
 async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: unknown }> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
@@ -41,6 +42,7 @@ async function loadQueue(redraw: () => void): Promise<void> {
     const parsed = parseQueue(result.body);
     state.queue = parsed.posts;
     state.reasons = parsed.reasons;
+    state.problems = parsed.problems;
   }
   redraw();
 }
@@ -148,6 +150,7 @@ export function reviewPage(redraw: () => void): HTMLElement {
     { class: 'rv' },
     state.notice ? h('p', { class: 'rv-notice', role: 'status' }, state.notice) : null,
     state.error ? h('p', { class: 'rv-error', role: 'alert' }, state.error) : null,
+    ...state.problems.map((p) => h('p', { class: 'rv-error', role: 'alert' }, p)),
     tabs,
     state.queue === null && !state.error ? h('p', { class: 'empty' }, 'Loading…') : null,
     h('div', { class: 'rv-grid' }, h('div', {}, list, empty), state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
