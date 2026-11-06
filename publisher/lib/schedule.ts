@@ -33,6 +33,15 @@ export class ScheduleError extends Error {
 /** A post is due from its scheduled time until this long after it (covers Vercel Hobby's hourly cron window). */
 export const DUE_WINDOW_MS = 20 * 60 * 60 * 1000;
 
+/**
+ * A post with a time of its own (made by hand, or from a posting plan) is meant for that time: it is sent within this long after it, and a day later is too late
+ * for it, so it is missed rather than posted the next morning. It is twice the frequent run's look-back, so one late tick does not lose it.
+ */
+export const OWN_TIME_WINDOW_MS = 30 * 60 * 1000;
+
+/** How long after its time a post may still be sent: the day's run covers a plain planned post, a post with its own time has a short window. */
+export const dueWindowFor = (post: { manual?: boolean; ownTime?: boolean }): number => (post.manual === true || post.ownTime === true ? OWN_TIME_WINDOW_MS : DUE_WINDOW_MS);
+
 export function parseSchedule(raw: unknown): ScheduledPost[] {
   const posts = (raw as { posts?: unknown }).posts;
   if (!Array.isArray(posts)) throw new ScheduleError('schedule.json must contain a "posts" array');
@@ -85,7 +94,7 @@ export function duePost(posts: ScheduledPost[], now: number): ScheduledPost | nu
   const due = posts
     .filter((p) => {
       const at = Date.parse(p.date);
-      return p.image !== null && at <= now && now - at < DUE_WINDOW_MS;
+      return p.image !== null && at <= now && now - at < dueWindowFor(p);
     })
     .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   return due[0] ?? null;
@@ -104,7 +113,7 @@ export function duePlannedPost(posts: ScheduledPost[], now: number): ScheduledPo
  * Posts with a time of their own whose time has passed within the due window: those made by hand, and planned posts that were moved or
  * given a time in the dashboard. Unlike the plain planned posts (one a day, at the daily run), several can go out on one day.
  */
-export function dueManualPosts(posts: ScheduledPost[], now: number, windowMs: number = DUE_WINDOW_MS): ScheduledPost[] {
+export function dueManualPosts(posts: ScheduledPost[], now: number, windowMs: number = OWN_TIME_WINDOW_MS): ScheduledPost[] {
   return posts
     .filter((p) => (p.manual === true || p.ownTime === true) && p.skipped !== true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < windowMs)
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
@@ -194,7 +203,7 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
     else if (post.skipped) state = 'skipped';
     else if (at > now) state = 'scheduled';
     else if (onInstagram && media === null) state = 'unknown';
-    else if (now - at < DUE_WINDOW_MS) state = 'due';
+    else if (now - at < dueWindowFor(post)) state = 'due';
     else state = 'missed';
 
     return {

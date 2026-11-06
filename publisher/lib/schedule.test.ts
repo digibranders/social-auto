@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError, usesTeamInstagram } from './schedule.ts';
+import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError, usesTeamInstagram, type ScheduledPost } from './schedule.ts';
 
 const hour = 60 * 60 * 1000;
 const NOW = Date.parse('2026-12-10T12:00:00+05:30');
@@ -126,3 +126,13 @@ test('a post made from a plan is never matched to the shared Instagram account\'
   assert.equal(buildStatus([plain], null, NOW, 'https://pub.example').posts[0]?.state, 'unknown');
 });
 
+
+test('a post with its own time that was never sent is missed after half an hour, and a plain planned post keeps the day', () => {
+  const at = '2026-11-06T14:00:00+05:30';
+  const post = (extra: Partial<ScheduledPost>): ScheduledPost => ({ id: 'x', brand: 'acme', date: at, caption: 'c', image: '/x.jpg', ...extra });
+  const stateAt = (p: ScheduledPost, minutes: number) => buildStatus([p], [], Date.parse(at) + minutes * 60_000, 'https://example.test').posts[0]?.state;
+  assert.equal(stateAt(post({ ownTime: true, channels: ['linkedin'] }), 10), 'due');
+  assert.equal(stateAt(post({ ownTime: true, channels: ['linkedin'] }), 31), 'missed');
+  assert.equal(stateAt(post({ manual: true, channels: ['linkedin'] }), 31), 'missed');
+  assert.equal(stateAt(post({ channels: ['linkedin'] }), 31), 'due', 'a plain planned post is sent by the daily run, which may come hours later');
+});

@@ -102,7 +102,7 @@ test('skipped flags are read from the overrides file and refused when malformed'
 });
 
 test('a skipped post is never picked to be sent, and skipping today\'s planned post does not bring yesterday\'s back', () => {
-  const now = Date.parse('2026-11-05T06:00:00Z');
+  const now = Date.parse('2026-11-05T04:40:00Z'); // 10:10 in India
   const yesterday: ScheduledPost = { id: 'y', brand: 'acme', date: '2026-11-04T10:00:00+05:30', caption: 'Y', image: '/y.jpg' };
   const today: ScheduledPost = { id: 't', brand: 'acme', date: '2026-11-05T10:00:00+05:30', caption: 'T', image: '/t.jpg' };
   assert.equal(duePlannedPost([yesterday, today], now)?.id, 't');

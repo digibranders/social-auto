@@ -67,12 +67,13 @@ test('the frequent run only picks up hand-made posts that became due in its shor
   const now = Date.parse('2026-11-03T06:40:00Z'); // 12:10 in India
   const posts = [planned, extra('fresh', '2026-11-03T12:05:00+05:30'), extra('stale', '2026-11-03T10:00:00+05:30'), extra('later', '2026-11-03T12:30:00+05:30')];
   assert.deepEqual(dueManualPosts(posts, now, 15 * 60 * 1000).map((p) => p.id), ['fresh']);
-  assert.deepEqual(dueManualPosts(posts, now).map((p) => p.id), ['stale', 'fresh']);
+  assert.deepEqual(dueManualPosts(posts, now).map((p) => p.id), ['fresh'], 'a post two hours late is too late for its own time: it is missed, not posted the next morning');
+  assert.deepEqual(dueManualPosts([extra('recent', '2026-11-03T11:50:00+05:30')], now).map((p) => p.id), ['recent'], 'twenty minutes late is still sent');
 });
 
 test('several hand-made posts can be due together; they are oldest first, only inside the window, and planned ones are excluded', () => {
-  const now = Date.parse('2026-11-03T05:00:00Z');
-  const posts = [planned, extra('b', '2026-11-03T10:00:00+05:30'), extra('a', '2026-11-03T09:00:00+05:30'), extra('late', '2026-11-04T10:00:00+05:30'), extra('old', '2026-11-01T10:00:00+05:30')];
+  const now = Date.parse('2026-11-03T04:50:00Z'); // 10:20 in India
+  const posts = [planned, extra('b', '2026-11-03T10:00:00+05:30'), extra('a', '2026-11-03T09:55:00+05:30'), extra('early', '2026-11-03T09:00:00+05:30'), extra('late', '2026-11-04T10:00:00+05:30'), extra('old', '2026-11-01T10:00:00+05:30')];
   assert.deepEqual(dueManualPosts(posts, now).map((p) => p.id), ['a', 'b']);
 });
 

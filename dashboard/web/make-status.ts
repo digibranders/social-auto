@@ -8,6 +8,8 @@ import { button, h, icon } from './ui.ts';
 
 const FAST_MS = 5_000;
 const SLOW_MS = 30_000;
+/** While approved posters have not reached the calendar, it is loaded again this often. */
+const CALENDAR_MS = 30_000;
 const STORE = { collapsed: 'makeStatus.collapsed', dismissed: 'makeStatus.dismissed', firstSeen: 'makeStatus.firstSeen' } as const;
 
 export interface MakeStatusDeps {
@@ -15,6 +17,8 @@ export interface MakeStatusDeps {
   clients(): ClientForStatus[];
   /** The posts on the calendar now, or undefined while the dashboard has not loaded them. */
   calendar(): readonly CalendarPost[] | undefined;
+  /** Loads the calendar again; asked for while approved posters are on their way to it, so they appear without the page being refreshed by hand. */
+  reloadCalendar(): void;
   /** Goes to the Review page. */
   openReview(): void;
 }
@@ -76,6 +80,7 @@ export function startMakeStatus(deps: MakeStatusDeps): { refresh(): void } {
   const dismissed = new Set<string>(read<string[]>(STORE.dismissed, []));
   const firstSeen = read<Record<string, number>>(STORE.firstSeen, {});
   let timer: number | undefined;
+  let calendarAskedAt = 0;
 
   const dismissKey = (item: StatusItem): string => `${item.key}|${item.updatedAt}`;
 
@@ -95,6 +100,10 @@ export function startMakeStatus(deps: MakeStatusDeps): { refresh(): void } {
 
   function draw(): void {
     const shown = items();
+    if (shown.some((i) => i.state === 'approved' || i.state === 'unplaced') && Date.now() - calendarAskedAt >= CALENDAR_MS) {
+      calendarAskedAt = Date.now();
+      deps.reloadCalendar();
+    }
     panel.hidden = shown.length === 0;
     if (shown.length === 0) return;
     const busy = shown.filter(active).length;
