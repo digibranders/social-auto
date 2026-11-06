@@ -318,3 +318,23 @@ test('the campaign list gives the dashboard what each plan is doing, a short rea
   }
 });
 
+test('a failed run remembers the step it had reached, and one that stopped before the first step remembers none', async () => {
+  const r = root();
+  try {
+    await makeCampaigns([client()], r.dir, deps({ exec: async (_args, onLine) => { onLine?.('1/4 Reading https://oyechats.com…'); onLine?.('2/4 Writing 1 new pain-point posts…'); return { code: 1, tail: 'Error: insufficient_distinct_concepts: none of the 1 posts was a new idea' }; } }));
+    const stopped = (await listCampaigns(r.dir))[0]?.batches[0];
+    assert.equal(stopped?.status, 'failed');
+    assert.equal(stopped?.stoppedAt, 'writing');
+    assert.equal(stopped?.stage, undefined, 'what it was doing is cleared');
+    const r2 = root();
+    try {
+      await makeCampaigns([client()], r2.dir, deps({ exec: async () => ({ code: 1, tail: 'Error: LOGO_REQUIRED: no logo' }) }));
+      assert.equal((await listCampaigns(r2.dir))[0]?.batches[0]?.stoppedAt, undefined);
+    } finally {
+      r2.done();
+    }
+  } finally {
+    r.done();
+  }
+});
+

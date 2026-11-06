@@ -40,6 +40,8 @@ export interface BatchState {
   drawn?: number;
   /** How many posters of this batch really reached the review queue (the autopilot says so when it ends). Missing in older records. */
   queued?: number;
+  /** The step a failed run had reached when it stopped; missing when it stopped before the first step (a logo that is required and cannot be had, say). */
+  stoppedAt?: BatchStage;
   note?: string;
 }
 
@@ -209,6 +211,7 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       else if (outcome.code === 0) { batch.note = 'could not tell which plan file this run wrote, so its posters are not tied to this plan\'s platforms'; log(`${client.brand}: ${batch.note}`); }
       batch.status = outcome.code === 0 ? 'done' : 'failed';
       batch.finishedAt = stamp(deps);
+      if (outcome.code !== 0 && batch.stage) batch.stoppedAt = batch.stage;
       delete batch.stage;
       delete batch.detail;
       batch.tail = outcome.tail.slice(-1500);
@@ -239,7 +242,7 @@ export interface CampaignSummary {
   status: CampaignStatus;
   createdAt: string;
   updatedAt: string;
-  batches: Array<{ index: number; dates: string[]; status: BatchStatus; stage?: BatchStage; detail?: string; drawn?: number; queued?: number; startedAt?: string; finishedAt?: string; failure?: string; note?: string }>;
+  batches: Array<{ index: number; dates: string[]; status: BatchStatus; stage?: BatchStage; stoppedAt?: BatchStage; detail?: string; drawn?: number; queued?: number; startedAt?: string; finishedAt?: string; failure?: string; note?: string }>;
 }
 
 /** The last line of a failed run's output, cut short: enough to say why, with no room for anything long. */
@@ -273,7 +276,7 @@ export async function listCampaigns(brandsRoot: string): Promise<CampaignSummary
         status: state.status, createdAt: state.createdAt, updatedAt: state.updatedAt,
         batches: state.batches.map((b) => ({
           index: b.index, dates: b.dates, status: b.status,
-          ...(b.stage ? { stage: b.stage } : {}), ...(b.detail ? { detail: b.detail } : {}), ...(typeof b.drawn === 'number' ? { drawn: b.drawn } : {}), ...(typeof b.queued === 'number' ? { queued: b.queued } : {}),
+          ...(b.stage ? { stage: b.stage } : {}), ...(b.stoppedAt ? { stoppedAt: b.stoppedAt } : {}), ...(b.detail ? { detail: b.detail } : {}), ...(typeof b.drawn === 'number' ? { drawn: b.drawn } : {}), ...(typeof b.queued === 'number' ? { queued: b.queued } : {}),
           ...(b.startedAt ? { startedAt: b.startedAt } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}),
           ...(b.status === 'failed' || b.status === 'interrupted' ? { failure: failureOf(b.tail) ?? b.note } : {}),
           ...(b.note ? { note: b.note.slice(0, 240) } : {}),

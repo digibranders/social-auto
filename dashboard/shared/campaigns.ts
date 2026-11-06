@@ -22,6 +22,8 @@ export interface CampaignBatch {
   dates: string[];
   status: BatchStatus;
   stage?: BatchStage;
+  /** The step a failed run had reached; missing when it stopped before the first one. */
+  stoppedAt?: BatchStage;
   detail?: string;
   drawn?: number;
   /** How many posters of this batch reached the review queue; missing in older records. */
@@ -84,6 +86,7 @@ export function parseCampaigns(raw: unknown): Campaign[] {
       const bstatus = str(r['status'], 20);
       if (!bstatus || !BATCH_STATUSES.includes(bstatus) || !Array.isArray(r['dates']) || typeof r['index'] !== 'number') continue;
       const stage = str(r['stage'], 20);
+      const stoppedAt = str(r['stoppedAt'], 20);
       const detail = str(r['detail'], 200);
       const failure = str(r['failure'], 300);
       const note = str(r['note'], 300);
@@ -91,7 +94,7 @@ export function parseCampaigns(raw: unknown): Campaign[] {
       const finishedAt = str(r['finishedAt'], 40);
       batches.push({
         index: r['index'], dates: (r['dates'] as unknown[]).filter((d): d is string => typeof d === 'string'), status: bstatus as BatchStatus,
-        ...(stage && STAGES.includes(stage) ? { stage: stage as BatchStage } : {}), ...(detail ? { detail } : {}), ...(typeof r['drawn'] === 'number' ? { drawn: r['drawn'] } : {}), ...(typeof r['queued'] === 'number' ? { queued: r['queued'] } : {}),
+        ...(stage && STAGES.includes(stage) ? { stage: stage as BatchStage } : {}), ...(stoppedAt && STAGES.includes(stoppedAt) ? { stoppedAt: stoppedAt as BatchStage } : {}), ...(detail ? { detail } : {}), ...(typeof r['drawn'] === 'number' ? { drawn: r['drawn'] } : {}), ...(typeof r['queued'] === 'number' ? { queued: r['queued'] } : {}),
         ...(startedAt ? { startedAt } : {}), ...(finishedAt ? { finishedAt } : {}), ...(failure ? { failure } : {}), ...(note ? { note } : {}),
       });
     }
@@ -150,6 +153,7 @@ export interface StatusItem {
 
 const STEP_LABELS = ['Waiting to start', 'Reading the website', 'Writing the posts', 'Drawing the posters', 'Ready for you'] as const;
 
+/** `index` is the step a plan is on (0 waiting, 1 reading, 2 writing, 3 drawing, 4 ready); -1 marks none, for a plan that stopped before the first step. */
 function stepsFor(index: number, finished: boolean): StatusItem['steps'] {
   return STEP_LABELS.map((label, i) => ({ label, state: finished || i < index ? 'done' : i === index ? 'now' : 'todo' }));
 }
@@ -187,6 +191,8 @@ const FAILURE_HINTS: Readonly<Record<string, string>> = {
  */
 export function plainFailure(text: string): string {
   const line = text.replace(/^\s*(?:[A-Za-z]*Error):\s*/, '').trim();
+  // The writing step gives its reasons post by post, in the engine's own words; the owner needs the meaning, not the list.
+  if (/^insufficient_distinct_concepts\b/.test(line)) return 'The posts written from this website did not pass the checks, so no poster was drawn and nothing was spent on pictures. This happens when a site gives too few facts that can be stated safely. Try again later, or add a plan for a different day.';
   const coded = /^([A-Z][A-Z_]{3,})(?::\s*(.*))?$/.exec(line);
   if (!coded) return line;
   const code = coded[1] as string;
@@ -268,8 +274,10 @@ export function statusItems(clients: readonly ClientForStatus[], campaigns: read
 
       if (failed.length > 0) {
         const first = failed[0] as CampaignBatch;
+        // The red dot goes where the run stopped; a run that stopped before its first step has no step to blame.
+        const stoppedIndex = doneCount > 0 ? 3 : first.stoppedAt === 'reading' ? 1 : first.stoppedAt === 'writing' ? 2 : first.stoppedAt ? 3 : -1;
         items.push({
-          ...base, state: 'failed', percent: Math.round((doneCount / total) * 100), steps: stepsFor(doneCount > 0 ? 3 : 1, false),
+          ...base, state: 'failed', percent: Math.round((doneCount / total) * 100), steps: stepsFor(stoppedIndex, false),
           headline: doneCount > 0 ? `${posters(doneCount)} made, the rest did not work` : 'It did not work',
           failure: plainFailure(first.failure ?? first.note ?? 'The run stopped. The reason was not recorded.'), ...(doneCount > 0 ? { ready: doneCount } : {}),
         });

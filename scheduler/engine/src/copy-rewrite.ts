@@ -13,6 +13,9 @@ import { chatJson } from './llm.ts';
 import type { ClaimVerdict } from './claim-verdict.ts';
 import { assessProofClaim } from './proof-hold.ts';
 
+/** The headline limit the rest of the copy stage enforces (60); the writer is asked for 45 and the check allows this much. */
+const MAX_REWRITE_HEADLINE = 60;
+
 export interface RewriteRequest {
   factId: string;
   sourceQuote: string;
@@ -26,6 +29,8 @@ export interface RewriteRequest {
   requiredNegations: string[];
   /** The plan, card or column the fact belongs to, which must be named next to any figure of it. */
   requiredPlanName: string | null;
+  /** The longest headline that will be accepted, in characters. */
+  maxHeadlineChars: number;
 }
 
 export interface Rewrite {
@@ -51,6 +56,7 @@ export function buildRewriteRequest(draft: { headline: string; subline: string; 
     requiredQualifiers: qualifiers,
     requiredNegations: negations,
     requiredPlanName: fact.scope ?? null,
+    maxHeadlineChars: 45,
   };
 }
 
@@ -59,6 +65,7 @@ export function validateRewrite(request: RewriteRequest, rewrite: Rewrite, fact:
   const problems: string[] = [];
   if (rewrite.factId !== request.factId) problems.push(`it is about fact ${rewrite.factId}, not ${request.factId}: a rewrite never changes the fact`);
   if (rewrite.headline.trim() === '') problems.push('the headline is empty');
+  if (rewrite.headline.replace(/\|/g, '').length > MAX_REWRITE_HEADLINE) problems.push(`the headline is ${rewrite.headline.replace(/\|/g, '').length} characters; it must be at most ${MAX_REWRITE_HEADLINE}`);
   const all = `${rewrite.headline}\n${rewrite.subline}\n${rewrite.caption}`;
   const said = tokens(all);
   const normalizedAll = ` ${said.join(' ')} `;
@@ -89,7 +96,7 @@ export function validateRewrite(request: RewriteRequest, rewrite: Rewrite, fact:
   return [...new Set(problems)];
 }
 
-const REWRITE_SYSTEM = `You rewrite a social media post whose copy said more than its source says. You are given the source quote, the draft, and the exact words that are not supported with the reason. Rewrite the headline, the subline and the caption so that they say only what the source quote says, in plain words: narrow the claim, never invent a new one. You MUST keep every qualifier, negation and plan name listed in the request, keep the same fact, and add no figure, price, period, guarantee, superlative or benefit that the source does not state. The subline may be an empty string. The caption has short paragraphs separated by blank lines and no hashtags and no call to action. Return JSON only: {"factId":"...","headline":"...","subline":"...","caption":"..."}`;
+const REWRITE_SYSTEM = `You rewrite a social media post whose copy said more than its source says. You are given the source quote, the draft, and the exact words that are not supported with the reason. Rewrite the headline, the subline and the caption so that they say only what the source quote says, in plain words: narrow the claim, never invent a new one. You MUST keep every qualifier, negation and plan name listed in the request, keep the same fact, and add no figure, price, period, guarantee, superlative or benefit that the source does not state. The headline is at most 45 characters, a short plain statement (never longer: a longer one is thrown away). The subline is at most 70 characters and may be an empty string. The caption has short paragraphs separated by blank lines and no hashtags and no call to action. Return JSON only: {"factId":"...","headline":"...","subline":"...","caption":"..."}`;
 
 /** Asks the writer once for the rewrite. The answer is only a candidate: validateRewrite and the ordinary checks decide. */
 export async function rewriteCandidate(ai: AiConfig, request: RewriteRequest, fetchFn?: typeof fetch): Promise<Rewrite> {
