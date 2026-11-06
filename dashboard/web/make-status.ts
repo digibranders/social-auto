@@ -56,6 +56,7 @@ function itemView(item: StatusItem, dismiss: (item: StatusItem) => void, openRev
     item.detail ? h('p', { class: 'make-detail' }, item.detail) : null,
     stepsRow(item),
     item.eta || item.state === 'working' || item.state === 'waiting' ? h('p', { class: 'make-meta' }, [item.eta, `cost ${item.cost}`].filter(Boolean).join(' · ')) : h('p', { class: 'make-meta' }, `Cost ${item.cost}`),
+    item.note ? h('p', { class: 'make-note' }, item.note) : null,
     item.failure ? h('p', { class: 'make-failure', role: item.state === 'failed' ? 'alert' : undefined }, item.failure) : null,
     item.state === 'review' ? button('Open Review', 'btn btn-primary make-open', openReview) : null,
   );

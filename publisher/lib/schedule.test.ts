@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError } from './schedule.ts';
+import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError, usesTeamInstagram } from './schedule.ts';
 
 const hour = 60 * 60 * 1000;
 const NOW = Date.parse('2026-12-10T12:00:00+05:30');
@@ -105,3 +105,24 @@ test('sameCaption ignores whitespace differences', () => {
   assert.ok(sameCaption('Hello\n\nworld ', 'Hello world'));
   assert.ok(!sameCaption('Hello', 'Hello there'));
 });
+
+test('the team\'s shared Instagram is a target of a post unless the post was made from a client\'s plan', () => {
+  assert.equal(usesTeamInstagram({}), true, 'a post with no channels goes everywhere, as before');
+  assert.equal(usesTeamInstagram({ channels: ['instagram'] }), true, 'a hand-made post that names the account still uses it');
+  assert.equal(usesTeamInstagram({ channels: ['linkedin:abc'] }), false);
+  assert.equal(usesTeamInstagram({ channels: ['instagram'], fromPlan: true }), false, 'a plan that says Instagram means the client\'s own account');
+  assert.equal(usesTeamInstagram({ fromPlan: true }), false);
+  assert.equal(usesTeamInstagram({ channels: ['instagram'], fromPlan: false }), true);
+});
+
+test('a post made from a plan is never matched to the shared Instagram account\'s pictures, and is not reported unknown when that account cannot be reached', () => {
+  const plan = { ...scheduled('p1', -30, 'Same caption'), channels: ['instagram'], fromPlan: true };
+  const plain = { ...scheduled('p2', -30, 'Same caption'), channels: ['instagram'] };
+  const matched = buildStatus([plan], [media('m1', 'Same caption')], NOW, 'https://pub.example').posts[0];
+  assert.notEqual(matched?.state, 'published', 'the caption on the shared account is not this client\'s post');
+  assert.equal(matched?.permalink, null);
+  assert.equal(buildStatus([plain], [media('m1', 'Same caption')], NOW, 'https://pub.example').posts[0]?.state, 'published', 'a post that does use the shared account is matched as before');
+  assert.notEqual(buildStatus([plan], null, NOW, 'https://pub.example').posts[0]?.state, 'unknown');
+  assert.equal(buildStatus([plain], null, NOW, 'https://pub.example').posts[0]?.state, 'unknown');
+});
+

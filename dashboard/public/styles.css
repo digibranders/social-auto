@@ -618,4 +618,7 @@ select.limit-select { padding-right: 40px; background-position: right 14px cente
 .make-open { justify-self: start; }
 .make-collapsed .make-toggle { padding-bottom: 11px; }
 @media (max-width: 520px) { .make-panel { right: 8px; bottom: 8px; max-width: calc(100vw - 16px); } }
+.check-off { opacity: .55; cursor: not-allowed; }
+.check-off input { cursor: not-allowed; }
+.make-note { margin: 0; font-size: .82rem; color: var(--muted); }
 

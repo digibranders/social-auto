@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { dayLabel, planCost, planDates, planPayload, planProblem, planSentence, platformNames, tomorrowAt, type PlanInput } from './posting-plan.ts';
+import { connectedPlatforms, dayLabel, planCost, planDates, planPayload, planProblem, planSentence, platformNames, tomorrowAt, type PlanInput } from './posting-plan.ts';
 
 const NOW = new Date('2026-11-05T12:00:00Z');
 const input = (over: Partial<PlanInput> = {}): PlanInput => ({ platforms: ['instagram'], startDate: '2026-11-06', durationDays: 1, time: '10:00', utcOffset: '+05:30', ...over });
@@ -46,3 +46,12 @@ test('the sentence reads naturally and the cost is a range', () => {
   assert.deepEqual(planCost(1), { low: 0.02, high: 0.08 });
   assert.ok(planCost(13).high > planCost(13).low);
 });
+
+test('the platforms a client can be planned for are those it has an account of its own on, never the team\'s shared Instagram', () => {
+  assert.deepEqual(connectedPlatforms([]), []);
+  assert.deepEqual(connectedPlatforms([{ platform: 'instagram', id: null }]), [], 'the shared account has no channel id and does not count');
+  assert.deepEqual(connectedPlatforms([{ platform: 'linkedin', id: 'linkedin:a' }, { platform: 'instagram', id: null }]), ['linkedin']);
+  assert.deepEqual(connectedPlatforms([{ platform: 'google', id: 'google:1' }, { platform: 'instagram', id: 'instagram:9' }, { platform: 'facebook', id: 'facebook:2' }]), ['instagram', 'facebook', 'google'], 'in the order the form lists them');
+  assert.deepEqual(connectedPlatforms([{ platform: 'tiktok', id: 'tiktok:1' }]), [], 'a platform the plans do not offer is ignored');
+});
+

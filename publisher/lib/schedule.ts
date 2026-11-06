@@ -19,6 +19,8 @@ export interface ScheduledPost {
   skipped?: boolean;
   /** A planned post given a day or time of its own in the dashboard: like a hand-made post, the frequent run sends it at that time. */
   ownTime?: boolean;
+  /** Made from a client's posting plan. It goes only to that client's own connected channels, never to the team's one shared Instagram account, so a poster can never land on another client's account. */
+  fromPlan?: boolean;
 }
 
 export class ScheduleError extends Error {
@@ -115,6 +117,13 @@ export function dueManualPosts(posts: ScheduledPost[], now: number, windowMs: nu
 export const isWantedOn = (post: { channels?: string[] }, channel: string, platform?: string): boolean =>
   !post.channels || post.channels.includes(channel) || (platform !== undefined && post.channels.includes(platform));
 
+/**
+ * Whether the team's own Instagram account (the one shared account behind the channel "instagram") is a target of this post. A post made from a client's
+ * posting plan never uses it, whatever platform names it lists: that account carries the clients the team plans for itself, and a plan names a platform
+ * only to mean the client's own account on it.
+ */
+export const usesTeamInstagram = (post: { channels?: string[]; fromPlan?: boolean }): boolean => post.fromPlan !== true && isWantedOn(post, 'instagram');
+
 /** Instagram may normalise whitespace, so compare captions loosely. */
 export function sameCaption(a: string, b: string): boolean {
   const norm = (s: string): string => s.replace(/\s+/g, ' ').trim();
@@ -175,7 +184,7 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
   const ordered = [...posts].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const statusPosts = ordered.map((post): StatusPost => {
     const at = Date.parse(post.date);
-    const onInstagram = isWantedOn(post, 'instagram');
+    const onInstagram = usesTeamInstagram(post);
     const onInstagramAs = forPlatform(post, 'instagram');
     const match = onInstagram ? (media?.find((m) => !used.has(m.id) && sameCaption(m.caption, onInstagramAs.caption)) ?? null) : null;
     if (match) used.add(match.id);

@@ -59,10 +59,14 @@ export interface PlanFields {
  * `prefix` keeps the element ids apart when two forms are on the page. `existing` is what the client already has planned: when it is given, the form shows
  * which weeks still have free places on each chosen channel, and holds the choices to them. `limit` is the client's posters a week for each channel.
  */
-export function planFields(prefix: string, options: { existing?: readonly QuotaPlan[]; limit?: number } = {}): PlanFields {
+export function planFields(prefix: string, options: { existing?: readonly QuotaPlan[]; limit?: number; available?: readonly PlanPlatform[] } = {}): PlanFields {
   const limit = options.limit ?? WEEKLY_LIMIT_DEFAULT;
   const existing = options.existing ?? [];
-  const ticks = new Map<PlanPlatform, HTMLInputElement>(PLATFORMS.map((p) => [p.id, h('input', { type: 'checkbox', id: `${prefix}-${p.id}`, ...(p.id === 'instagram' ? { checked: 'checked' } : {}) })]));
+  // `available`, when given, is what the client has connected: only those can be chosen. Without it (a client being added has no channels yet) every platform is offered.
+  const available = options.available;
+  const offered = (id: PlanPlatform): boolean => available === undefined || available.includes(id);
+  const firstChoice = available === undefined ? 'instagram' : PLATFORMS.find((p) => offered(p.id))?.id;
+  const ticks = new Map<PlanPlatform, HTMLInputElement>(PLATFORMS.map((p) => [p.id, h('input', { type: 'checkbox', id: `${prefix}-${p.id}`, ...(p.id === firstChoice ? { checked: 'checked' } : {}), ...(offered(p.id) ? {} : { disabled: 'disabled' }) })]));
   const duration = h('select', { id: `${prefix}-duration`, class: 'text-input', 'aria-label': 'For how long' }, ...DURATIONS.map((d) => h('option', { value: d.id }, d.label)));
   const often = h('select', { id: `${prefix}-often`, class: 'text-input', 'aria-label': 'How often' }, ...Array.from({ length: limit }, (_, i) => i + 1).map((n) => h('option', { value: String(n), ...(n === Math.min(3, limit) ? { selected: 'selected' } : {}) }, `${n} time${n === 1 ? '' : 's'} a week`)));
   const startDate = h('input', { id: `${prefix}-start`, type: 'date', class: 'text-input', 'aria-label': 'First day to post' });
@@ -72,7 +76,8 @@ export function planFields(prefix: string, options: { existing?: readonly QuotaP
   const quota = h('div', { class: 'quota' });
   const element = h('div', { class: 'plan-fields' },
     h('p', { class: 'label' }, 'Post on'),
-    h('div', { class: 'check-grid' }, ...PLATFORMS.map((p) => h('label', { class: 'check-row', for: `${prefix}-${p.id}` }, ticks.get(p.id) as HTMLInputElement, h('span', {}, p.label)))),
+    h('div', { class: 'check-grid' }, ...PLATFORMS.map((p) => h('label', { class: `check-row${offered(p.id) ? '' : ' check-off'}`, for: `${prefix}-${p.id}` }, ticks.get(p.id) as HTMLInputElement, h('span', {}, offered(p.id) ? p.label : `${p.label} (not connected)`)))),
+    available !== undefined ? h('p', { class: 'muted' }, available.length === 0 ? 'No channel is connected for this client yet. Connect one under Channels below, then add a plan.' : 'Only the channels connected for this client can be chosen. Connect more under Channels below.') : null,
     h('label', { class: 'label', for: `${prefix}-duration` }, 'For how long'),
     duration,
     h('label', { class: 'label', for: `${prefix}-often` }, 'How often'),
@@ -86,7 +91,7 @@ export function planFields(prefix: string, options: { existing?: readonly QuotaP
     summary,
   );
   const chosen = (): string[] => [...ticks].filter(([, box]) => box.checked).map(([id]) => id);
-  const read = (on: boolean, now: Date = new Date()): ReturnType<typeof readPlan> => readPlan({ on, platforms: chosen(), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value), time: time.value }, now, { existing, limit });
+  const read = (on: boolean, now: Date = new Date()): ReturnType<typeof readPlan> => available !== undefined && available.length === 0 ? { plan: null, problem: 'Connect a channel for this client first (Channels, below), then add a plan.' } : readPlan({ on, platforms: chosen(), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value), time: time.value }, now, { existing, limit });
   const drawQuota = (): void => {
     const channels = chosen();
     if (channels.length === 0) return void quota.replaceChildren();

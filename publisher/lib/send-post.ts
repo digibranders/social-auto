@@ -14,7 +14,7 @@ import { fetchImage, memberHealth, postImage, uploadImage } from './linkedin.js'
 import { notify } from './notify.js';
 import { channelLabel, postedKey, type PostedEntry } from './channels.js';
 import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
-import { isWantedOn, sameCaption, type ScheduledPost } from './schedule.js';
+import { isWantedOn, sameCaption, usesTeamInstagram, type ScheduledPost } from './schedule.js';
 import { forPlatform } from './variants.js';
 import { loadChannels, loadClients, loadPosted, savePosted } from './store.js';
 
@@ -125,7 +125,7 @@ export interface SendOutcome {
 /** Sends the post everywhere it is wanted. Without `dryRun` it also tells the product and alerts the team about failures. */
 export async function sendPost(post: ScheduledPost, origin: string, dryRun: boolean, pauses: PauseFile = NO_PAUSES): Promise<SendOutcome> {
   const brand = post.brand ?? 'default';
-  const wantsInstagram = isWantedOn(post, 'instagram');
+  const wantsInstagram = usesTeamInstagram(post);
   // The team's own Instagram account is the channel "instagram"; like the others it is held when paused, and stays held for this post.
   const heldBefore = wantsInstagram && !dryRun ? (await loadPosted().catch(() => ({ log: {} as Record<string, PostedEntry> }))).log[postedKey(post.id, 'instagram')]?.skipped === true : false;
   const instagramHeld = wantsInstagram && (isPaused(pauses, brand, 'instagram') || heldBefore);

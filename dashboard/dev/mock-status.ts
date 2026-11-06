@@ -70,6 +70,9 @@ export function mockStatus(scenario: string, origin: string, now = Date.now()): 
       ...(down ? { error: 'InstagramApiError: Error validating access token: The session has been invalidated' } : {}),
     },
     { platform: 'instagram', account: 'currycook_demo', avatar: null, brands: ['currycook'], ok: true },
+    // The sample client added in the dashboard has its own LinkedIn and Facebook connected, and no Instagram.
+    { id: 'linkedin:demo', platform: 'linkedin', account: 'Oye Chats', avatar: null, brands: ['oye-chats'], ok: true },
+    { id: 'facebook:demo', platform: 'facebook', account: 'Oye Chats Page', avatar: null, brands: ['oye-chats'], ok: true },
   ];
   const built = buildStatus(posts, media, now, origin);
   // One client added in the dashboard, with a website and two plans of its own, so the plans card can be seen.
