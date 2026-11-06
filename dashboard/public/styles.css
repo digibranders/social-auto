@@ -602,8 +602,8 @@ select.limit-select { padding-right: 40px; background-position: right 14px cente
 .make-detail { overflow-wrap: anywhere; }
 .make-bar { height: 6px; background: var(--cell-border); border-radius: 999px; overflow: hidden; }
 .make-bar span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width .6s ease; }
-.make-review .make-bar span { background: var(--published, #3fb27f); }
-.make-failed .make-bar span, .make-stalled .make-bar span { background: var(--missed, #e5666a); }
+.make-review .make-bar span, .make-approved .make-bar span, .make-scheduled .make-bar span { background: var(--published, #3fb27f); }
+.make-failed .make-bar span, .make-stalled .make-bar span, .make-unplaced .make-bar span { background: var(--missed, #e5666a); }
 .make-steps { list-style: none; display: flex; gap: 6px; align-items: center; margin: 0; padding: 0; }
 .make-step { display: flex; align-items: center; gap: 6px; font-size: .75rem; color: var(--muted); }
 .make-step-now { color: var(--text); font-weight: 600; }
@@ -611,7 +611,7 @@ select.limit-select { padding-right: 40px; background-position: right 14px cente
 .make-dot { width: 8px; height: 8px; border-radius: 50%; border: 2px solid var(--muted); box-sizing: border-box; }
 .make-step-done .make-dot { background: var(--published, #3fb27f); border-color: var(--published, #3fb27f); }
 .make-step-now .make-dot { background: var(--accent); border-color: var(--accent); animation: make-pulse 1.4s ease-in-out infinite; }
-.make-failed .make-step-now .make-dot, .make-stalled .make-step-now .make-dot { background: var(--missed, #e5666a); border-color: var(--missed, #e5666a); animation: none; }
+.make-failed .make-step-now .make-dot, .make-stalled .make-step-now .make-dot, .make-unplaced .make-step-now .make-dot { background: var(--missed, #e5666a); border-color: var(--missed, #e5666a); animation: none; }
 @keyframes make-pulse { 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 25%, transparent); } }
 @media (prefers-reduced-motion: reduce) { .make-step-now .make-dot { animation: none; } .make-bar span { transition: none; } }
 .make-failure { color: var(--missed, #e5666a); overflow-wrap: anywhere; }

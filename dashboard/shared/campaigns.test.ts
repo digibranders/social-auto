@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { batchFraction, durationText, estimateSeconds, parseCampaigns, plainFailure, planKey, samePlan, statusItems, type Campaign, type CampaignBatch, type PlanOfClient } from './campaigns.ts';
+import { batchFraction, durationText, estimateSeconds, parseCampaigns, plainFailure, planKey, samePlan, statusItems, type CalendarPost, type Campaign, type CampaignBatch, type PlanOfClient } from './campaigns.ts';
 
 const NOW = Date.parse('2026-11-06T08:00:00Z'); // 13:30 in India on Friday 6 November
 const plan = (over: Partial<PlanOfClient> = {}): PlanOfClient => ({ platforms: ['instagram'], startDate: '2026-11-07', durationDays: 1, time: '10:00', ...over });
@@ -173,3 +173,54 @@ test('a finished plan says what approving does next, so an approved poster missi
   assert.deepEqual(parsed.map((c) => c.release), [{ state: 'on', posts: 4 }, undefined]);
 });
 
+
+const cal = (date: string, state: CalendarPost['state'] = 'scheduled', over: Partial<CalendarPost> = {}): CalendarPost => ({ brand: 'oye-chats', platform: 'instagram', date: `${date}T10:00:00+05:30`, state, ...over });
+const decided = (review: Campaign['review'], release?: Campaign['release']) => campaign({ status: 'awaiting_approval', review, ...(release ? { release } : {}) }, [batch({ status: 'done', queued: 1 })]);
+
+test('once every poster is decided, the panel says approved instead of ready for review, and tells the calendar apart from the publisher', () => {
+  const stillPending = statusItems([client()], [decided({ approved: 1, pending: 1, rejected: 0 })], NOW)[0];
+  assert.equal(stillPending?.state, 'review');
+  assert.match(stillPending?.headline ?? '', /ready for your review.*1 approved/);
+
+  const noCalendar = statusItems([client()], [decided({ approved: 1, pending: 0, rejected: 0 })], NOW)[0];
+  assert.deepEqual([noCalendar?.state, noCalendar?.headline], ['approved', '1 poster approved'], 'with no calendar to look at, nothing is claimed about it');
+
+  const onCalendar = statusItems([client()], [decided({ approved: 1, pending: 0, rejected: 0 })], NOW, () => undefined, [cal('2026-11-07')])[0];
+  assert.deepEqual([onCalendar?.state, onCalendar?.headline], ['scheduled', '1 poster approved and on the calendar']);
+  assert.equal(onCalendar?.steps.find((s) => s.state === 'now')?.label, 'On the calendar');
+
+  const otherClient = statusItems([client()], [decided({ approved: 1, pending: 0, rejected: 0 })], NOW, () => undefined, [cal('2026-11-07', 'scheduled', { brand: 'someone-else' }), cal('2026-11-07', 'scheduled', { platform: 'linkedin' })])[0];
+  assert.equal(otherClient?.state, 'approved', 'another client\'s post, or another platform, does not count');
+  assert.match(otherClient?.headline ?? '', /going onto the calendar/);
+});
+
+test('an approved poster that never reaches the calendar becomes a problem after the grace period, or at once when the release failed', () => {
+  const record = decided({ approved: 1, pending: 0, rejected: 0 });
+  const seen = (minutes: number) => (key: string) => (key.endsWith('|gap') ? NOW - minutes * 60_000 : undefined);
+  assert.equal(statusItems([client()], [record], NOW, seen(5), [])[0]?.state, 'approved');
+  const late = statusItems([client()], [record], NOW, seen(11), [])[0];
+  assert.deepEqual([late?.state, late?.headline], ['unplaced', '1 poster approved, but not on the calendar']);
+  assert.match(late?.failure ?? '', /more than 10 minutes/);
+
+  const failed = statusItems([client()], [decided({ approved: 1, pending: 0, rejected: 0 }, { state: 'failed', reason: 'the schedule file could not be written' })], NOW, () => undefined, [])[0];
+  assert.deepEqual([failed?.state, failed?.failure], ['unplaced', 'Scheduling failed: the schedule file could not be written']);
+});
+
+test('sent and missed posters are counted, and a missed one is said plainly', () => {
+  const two = campaign({ status: 'awaiting_approval', review: { approved: 2, pending: 0, rejected: 0 }, plan: { platforms: ['instagram'], startDate: '2026-11-07', durationDays: 2, time: '10:00' } }, [batch({ dates: ['2026-11-07', '2026-11-08'], status: 'done', queued: 2 })]);
+  const c = client({ plans: [plan({ durationDays: 2 })] });
+  const mixed = statusItems([c], [two], NOW, () => undefined, [cal('2026-11-07', 'published'), cal('2026-11-08', 'missed')])[0];
+  assert.equal(mixed?.headline, '2 posters approved and on the calendar, 1 sent, 1 missed');
+  assert.match(mixed?.failure ?? '', /not sent at the planned time/);
+  assert.equal(mixed?.steps.every((s) => s.state === 'done'), true);
+});
+
+test('the review counts and a failed release are read from the service, and nonsense is left out', () => {
+  const plan1 = { platforms: ['instagram'], startDate: '2026-11-07', durationDays: 1, time: '10:00' };
+  const parsed = parseCampaigns({ campaigns: [
+    { id: 'a', brand: 'b', status: 'awaiting_approval', plan: plan1, batches: [], review: { approved: 2, pending: 1, rejected: 0 }, release: { state: 'failed', reason: 'disk full' } },
+    { id: 'b', brand: 'b', status: 'awaiting_approval', plan: plan1, batches: [], review: { approved: 'many', pending: 1, rejected: 0 }, release: { state: 'failed' } },
+  ] });
+  assert.deepEqual([parsed[0]?.review, parsed[0]?.release], [{ approved: 2, pending: 1, rejected: 0 }, { state: 'failed', reason: 'disk full' }]);
+  assert.deepEqual([parsed[1]?.review, parsed[1]?.release], [undefined, undefined]);
+});

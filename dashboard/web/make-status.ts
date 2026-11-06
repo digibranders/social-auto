@@ -3,7 +3,7 @@
  * costs. It lives outside the page the app redraws, so a redraw never wipes it, and it asks the review service for the runner's records on its own: quickly
  * while something is being made, slowly otherwise. What it says comes from `shared/campaigns.ts`. It only reads; nothing here changes anything.
  */
-import { parseCampaigns, planKey, statusItems, type Campaign, type ClientForStatus, type StatusItem } from '../shared/campaigns.ts';
+import { parseCampaigns, planKey, statusItems, type CalendarPost, type Campaign, type ClientForStatus, type StatusItem } from '../shared/campaigns.ts';
 import { button, h, icon } from './ui.ts';
 
 const FAST_MS = 5_000;
@@ -13,6 +13,8 @@ const STORE = { collapsed: 'makeStatus.collapsed', dismissed: 'makeStatus.dismis
 export interface MakeStatusDeps {
   /** The clients with their plans, as the dashboard knows them now. */
   clients(): ClientForStatus[];
+  /** The posts on the calendar now, or undefined while the dashboard has not loaded them. */
+  calendar(): readonly CalendarPost[] | undefined;
   /** Goes to the Review page. */
   openReview(): void;
 }
@@ -34,7 +36,7 @@ function write(key: string, value: unknown): void {
   }
 }
 
-const active = (item: StatusItem): boolean => item.state === 'waiting' || item.state === 'working' || item.state === 'stalled';
+const active = (item: StatusItem): boolean => item.state === 'waiting' || item.state === 'working' || item.state === 'stalled' || item.state === 'unplaced';
 
 function stepsRow(item: StatusItem): HTMLElement {
   return h('ol', { class: 'make-steps', 'aria-label': 'Steps' },
@@ -80,9 +82,10 @@ export function startMakeStatus(deps: MakeStatusDeps): { refresh(): void } {
   function items(): StatusItem[] {
     if (!available) return [];
     const now = Date.now();
-    const all = statusItems(deps.clients(), campaigns, now, (key) => firstSeen[key]);
-    // Remember when a plan was first seen waiting; forget plans that are no longer waiting.
+    const all = statusItems(deps.clients(), campaigns, now, (key) => firstSeen[key], deps.calendar());
+    // Remember when a plan was first seen waiting (or approved and not yet on the calendar); forget plans that no longer are.
     const waiting = new Set(all.filter((i) => i.state === 'waiting' || i.state === 'stalled').map((i) => i.key));
+    for (const i of all) if (i.state === 'approved' || i.state === 'unplaced') waiting.add(`${i.key}|gap`);
     let changed = false;
     for (const key of waiting) if (firstSeen[key] === undefined) { firstSeen[key] = now; changed = true; }
     for (const key of Object.keys(firstSeen)) if (!waiting.has(key)) { delete firstSeen[key]; changed = true; }

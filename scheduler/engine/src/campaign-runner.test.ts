@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { ReviewStore } from './review-store.ts';
 import { acquireLease, listCampaigns, makeCampaigns, parseProgressLine, releaseCampaigns, statusOf, type PlannedClient, type RunnerDeps } from './campaign-runner.ts';
 
 const NOW = new Date('2026-11-05T12:00:00Z');
@@ -377,3 +378,32 @@ test('a client\'s posters are released together, under the client\'s own name, f
   }
 });
 
+
+test('the campaign list counts the plan\'s posters by what the owner decided, and says when releasing them failed, until a later release works', async () => {
+  const r = root();
+  try {
+    const exec: RunnerDeps['exec'] = async () => { mkdirSync(join(r.dir, 'oyechats'), { recursive: true }); writeFileSync(join(r.dir, 'oyechats', 'week-01.json'), '{}'); return { code: 0, tail: 'done' }; };
+    await makeCampaigns([client()], r.dir, deps({ exec }));
+    assert.equal((await listCampaigns(r.dir))[0]?.review, undefined, 'with no review queue yet, no counts are guessed');
+    const store = new ReviewStore(join(r.dir, 'oyechats'), 'oyechats');
+    const add = (postId: string, planFile: string) => store.addVersion({
+      postId, planFile, headline: 'A headline', caption: 'A caption', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [],
+      imagePath: (() => { const p = join(r.dir, `${postId}.jpg`); writeFileSync(p, postId); return p; })(),
+      validation: { accepted: true, readings: 1, defects: [], reportFile: 'report.json' }, attempts: 1, costUsd: 0,
+    });
+    const a = add('p1', join('brands', 'oyechats', 'week-01.json'));
+    const b = add('p2', 'week-01.json');
+    add('p3', 'week-01.json');
+    add('elsewhere', 'week-09.json');
+    store.approve(a.versionId, 'owner');
+    store.reject(b.versionId, 'owner', 'style');
+    assert.deepEqual((await listCampaigns(r.dir))[0]?.review, { approved: 1, pending: 1, rejected: 1 }, 'another plan\'s poster is not counted, and the file may be named with or without its folder');
+
+    await releaseCampaigns(r.dir, deps({ release: async () => { throw new Error('the schedule file could not be written'); } }));
+    assert.deepEqual((await listCampaigns(r.dir))[0]?.release, { state: 'failed', reason: 'the schedule file could not be written' });
+    await releaseCampaigns(r.dir, deps({ release: async () => 1 }));
+    assert.deepEqual((await listCampaigns(r.dir))[0]?.release, { state: 'on', posts: 1 }, 'a later release that works replaces the failure');
+  } finally {
+    r.done();
+  }
+});

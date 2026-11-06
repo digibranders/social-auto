@@ -5,6 +5,7 @@
  * It only reads. A plan with no record yet is "waiting": the runner looks for new plans every few minutes.
  */
 import { dayLabel, planCost, planDates, platformNames, todayAt } from './posting-plan.ts';
+import type { StatusPost } from './status.ts';
 
 /** What one run measured: about 100 seconds to read the site and write the posts, and about 110 seconds for each poster drawn and checked (a retry is common). */
 export const BASE_SECONDS = 100;
@@ -43,7 +44,9 @@ export interface Campaign {
   createdAt: string;
   updatedAt: string;
   /** What happens to approved posters; missing before the first release pass. */
-  release?: { state: 'off' } | { state: 'on'; posts: number };
+  release?: { state: 'off' } | { state: 'on'; posts: number } | { state: 'failed'; reason: string };
+  /** How many of the plan's posters the owner has approved, left waiting or turned down; missing when the queue could not be read. */
+  review?: { approved: number; pending: number; rejected: number };
   batches: CampaignBatch[];
 }
 
@@ -101,7 +104,7 @@ export function parseCampaigns(raw: unknown): Campaign[] {
       });
     }
     out.push({
-      id, brand, site: str(c['site'], 200) ?? '', status: status as Campaign['status'], ...parseRelease(c['release']), createdAt: str(c['createdAt'], 40) ?? '', updatedAt: str(c['updatedAt'], 40) ?? '', batches,
+      id, brand, site: str(c['site'], 200) ?? '', status: status as Campaign['status'], ...parseRelease(c['release']), ...parseReview(c['review']), createdAt: str(c['createdAt'], 40) ?? '', updatedAt: str(c['updatedAt'], 40) ?? '', batches,
       plan: { platforms: (plan['platforms'] as unknown[]).filter((p): p is string => typeof p === 'string'), startDate: plan['startDate'], durationDays: plan['durationDays'], ...(typeof plan['postsPerWeek'] === 'number' ? { postsPerWeek: plan['postsPerWeek'] } : {}), time: str(plan['time'], 10) ?? '10:00' },
     });
   }
@@ -113,7 +116,19 @@ function parseRelease(raw: unknown): { release?: Campaign['release'] } {
   const r = raw as { state?: unknown; posts?: unknown } | null | undefined;
   if (r?.state === 'off') return { release: { state: 'off' } };
   if (r?.state === 'on' && typeof r.posts === 'number' && Number.isFinite(r.posts) && r.posts >= 0) return { release: { state: 'on', posts: Math.floor(r.posts) } };
+  const reason = str((r as { reason?: unknown } | null | undefined)?.reason, 240);
+  if (r?.state === 'failed' && reason) return { release: { state: 'failed', reason } };
   return {};
+}
+
+/** The owner's decisions on a plan's posters, as counts; anything that is not a count is left out. */
+function parseReview(raw: unknown): { review?: Campaign['review'] } {
+  const r = raw as Record<string, unknown> | null | undefined;
+  const count = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.floor(v) : undefined);
+  const approved = count(r?.['approved']);
+  const pending = count(r?.['pending']);
+  const rejected = count(r?.['rejected']);
+  return approved === undefined || pending === undefined || rejected === undefined ? {} : { review: { approved, pending, rejected } };
 }
 
 /** The same plan, recognised by what the owner chose (the record and the client's list carry the same fields). */
@@ -136,7 +151,12 @@ export function durationText(seconds: number): string {
   return `about ${hours} h ${minutes % 60 > 0 ? `${minutes % 60} min` : ''}`.trim();
 }
 
-export type ItemState = 'waiting' | 'working' | 'review' | 'failed' | 'stalled';
+export type ItemState = 'waiting' | 'working' | 'review' | 'approved' | 'scheduled' | 'unplaced' | 'failed' | 'stalled';
+
+/** How long an approved poster may take to reach the calendar before the panel calls it a problem, in minutes (the release runs every few minutes). */
+export const CALENDAR_GRACE_MINUTES = 10;
+/** What the panel needs of a calendar post. */
+export type CalendarPost = Pick<StatusPost, 'brand' | 'platform' | 'date' | 'state'>;
 
 export interface StatusItem {
   key: string;
@@ -168,6 +188,13 @@ const STEP_LABELS = ['Waiting to start', 'Reading the website', 'Writing the pos
 /** `index` is the step a plan is on (0 waiting, 1 reading, 2 writing, 3 drawing, 4 ready); -1 marks none, for a plan that stopped before the first step. */
 function stepsFor(index: number, finished: boolean): StatusItem['steps'] {
   return STEP_LABELS.map((label, i) => ({ label, state: finished || i < index ? 'done' : i === index ? 'now' : 'todo' }));
+}
+
+const LATE_LABELS = ['Made', 'Approved', 'On the calendar', 'Sent'] as const;
+
+/** The steps after the posters are made: `index` is the one the plan is on (1 approved, 2 on the calendar, 3 sent); -1 marks a stop at the calendar. */
+function lateSteps(index: number): StatusItem['steps'] {
+  return LATE_LABELS.map((label, i) => ({ label, state: i < index ? 'done' : i === index ? 'now' : 'todo' }));
 }
 
 const money = (c: { low: number; high: number }): string => `about $${c.low.toFixed(2)} to $${c.high.toFixed(2)}`;
@@ -231,11 +258,41 @@ export function batchFraction(batch: CampaignBatch): number {
 }
 
 /**
+ * A plan whose posters the owner has all decided on, with at least one approved: where those posters are now. `calendar` is the dashboard's list of
+ * posts (undefined when it is not loaded, so nothing is claimed about it). The posters are matched to the calendar by client, day and the plan's own
+ * platforms. A gap is called a problem only after `CALENDAR_GRACE_MINUTES` of the panel seeing it, or at once when the release said it failed.
+ */
+function approvedItem(base: Pick<StatusItem, 'key' | 'title' | 'subtitle' | 'cost' | 'updatedAt'>, key: string, record: Campaign, plan: PlanOfClient, approved: number, calendar: readonly CalendarPost[] | undefined, now: number, firstSeen: (key: string) => number | undefined, brand: string): StatusItem | undefined {
+  const head = `${posters(approved)} approved`;
+  const failedRelease = record.release?.state === 'failed' ? record.release.reason : undefined;
+  const common = { ...base, percent: 100 } as const;
+  if (failedRelease) return { ...common, state: 'unplaced', steps: lateSteps(2), headline: `${head}, but not on the calendar`, failure: `Scheduling failed: ${failedRelease}`, ready: approved };
+  if (record.release?.state === 'off') return { ...common, state: 'approved', steps: lateSteps(1), headline: head, note: 'Publishing is switched off, so approving a poster does not schedule it yet.', ready: approved };
+  if (!calendar) return { ...common, state: 'approved', steps: lateSteps(1), headline: head, ready: approved };
+  const platforms = new Set<string>(plan.platforms);
+  const mine = calendar.filter((p) => p.brand === brand && platforms.has(p.platform));
+  const days = new Set(mine.map((p) => p.date.slice(0, 10)));
+  const onCalendar = Math.min(approved, days.size);
+  const sent = new Set(mine.filter((p) => p.state === 'published').map((p) => p.date.slice(0, 10))).size;
+  const missed = new Set(mine.filter((p) => p.state === 'missed').map((p) => p.date.slice(0, 10))).size;
+  if (onCalendar >= approved) {
+    const done = sent + missed >= approved;
+    const parts = [`${head} and on the calendar`, ...(sent > 0 ? [`${sent} sent`] : []), ...(missed > 0 ? [`${missed} missed`] : [])];
+    return { ...common, state: 'scheduled', steps: lateSteps(done ? 4 : sent > 0 ? 3 : 2), headline: parts.join(', '), ready: approved, ...(missed > 0 ? { failure: `${missed === 1 ? 'A poster was' : `${missed} posters were`} not sent at the planned time. Open the calendar to see why.` } : {}) };
+  }
+  const missing = approved - onCalendar;
+  const seen = firstSeen(`${key}|gap`);
+  const waited = seen === undefined ? 0 : (now - seen) / 60_000;
+  if (waited >= CALENDAR_GRACE_MINUTES) return { ...common, state: 'unplaced', steps: lateSteps(2), headline: `${head}, but ${missing === approved ? 'not on the calendar' : `${missing} not on the calendar`}`, failure: `It has been more than ${CALENDAR_GRACE_MINUTES} minutes. The scheduler may be stuck or switched off: tell whoever looks after the server.`, ready: approved };
+  return { ...common, state: 'approved', steps: lateSteps(2), headline: `${head}, going onto the calendar`, eta: `within ${CHECK_EVERY_MINUTES} minutes`, ready: approved };
+}
+
+/**
  * One item for each plan of each client that has something to say: waiting to start, being made, finished and waiting in Review, or failed. A plan whose
  * days have all passed and that was never made says nothing. `firstSeen` is when the panel first saw a plan waiting (milliseconds), used only to tell
  * "waiting a minute" from "nobody is picking this up".
  */
-export function statusItems(clients: readonly ClientForStatus[], campaigns: readonly Campaign[], now: number, firstSeen: (key: string) => number | undefined = () => undefined): StatusItem[] {
+export function statusItems(clients: readonly ClientForStatus[], campaigns: readonly Campaign[], now: number, firstSeen: (key: string) => number | undefined = () => undefined, calendar?: readonly CalendarPost[]): StatusItem[] {
   const items: StatusItem[] = [];
   for (const client of clients) {
     for (const plan of client.plans) {
@@ -296,6 +353,13 @@ export function statusItems(clients: readonly ClientForStatus[], campaigns: read
         continue;
       }
 
+      // Posters the owner has all decided on, at least one approved: where they are now matters more than when the run ended.
+      const review = record.review;
+      if (review && review.approved > 0 && review.pending === 0) {
+        const item = approvedItem(base, key, record, plan, review.approved, calendar, now, firstSeen, client.brand);
+        if (item) items.push(item);
+        continue;
+      }
       // Everything ran. The runner records how many posters really reached Review: a run can finish with none, because the automatic checks turned them all back.
       const updated = Date.parse(record.updatedAt);
       if (Number.isFinite(updated) && now - updated > 6 * 3_600_000) continue;
@@ -305,8 +369,8 @@ export function statusItems(clients: readonly ClientForStatus[], campaigns: read
         items.push({ ...base, state: 'failed', percent: 100, steps: stepsFor(3, false), headline: 'No poster passed the checks', failure: 'The posters were drawn, but the automatic checks turned every one back, so nothing is waiting in Review. Adding the plan again makes new ones.' });
         continue;
       }
-      const afterApproval = record.release?.state === 'off' ? 'Publishing is switched off, so approving a poster does not schedule it yet.' : record.release?.state === 'on' ? (record.release.posts > 0 ? `${record.release.posts} approved poster${record.release.posts === 1 ? ' is' : 's are'} with the publisher and ${record.release.posts === 1 ? 'goes' : 'go'} out at ${record.release.posts === 1 ? 'its' : 'their'} time.` : 'Approved posters are scheduled automatically, within about 5 minutes.') : undefined;
-      items.push({ ...base, ...(afterApproval ? { note: afterApproval } : {}), state: 'review', percent: 100, steps: stepsFor(4, true), headline: counted ? `${posters(ready)} ready for your review${ready < total ? `, ${total - ready} did not pass the checks` : ''}` : 'Finished: look in Review', ...(counted ? { ready } : {}) });
+      const afterApproval = record.release?.state === 'failed' ? undefined : record.release?.state === 'off' ? 'Publishing is switched off, so approving a poster does not schedule it yet.' : record.release?.state === 'on' ? (record.release.posts > 0 ? `${record.release.posts} approved poster${record.release.posts === 1 ? ' is' : 's are'} with the publisher and ${record.release.posts === 1 ? 'goes' : 'go'} out at ${record.release.posts === 1 ? 'its' : 'their'} time.` : 'Approved posters are scheduled automatically, within about 5 minutes.') : undefined;
+      items.push({ ...base, ...(afterApproval ? { note: afterApproval } : {}), ...(record.release?.state === 'failed' ? { failure: `Approved posters could not be scheduled: ${record.release.reason}` } : {}), state: 'review', percent: 100, steps: stepsFor(4, true), headline: counted ? `${posters(ready)} ready for your review${ready < total ? `, ${total - ready} did not pass the checks` : ''}${review && review.approved > 0 ? `, ${review.approved} approved` : ''}` : 'Finished: look in Review', ...(counted ? { ready } : {}) });
     }
   }
   return items;

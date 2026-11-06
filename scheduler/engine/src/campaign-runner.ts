@@ -13,11 +13,13 @@
  */
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { slugFromSite } from './analyze.ts';
 import { autopilotArgsFor, parsePostingPlan, planBatches, planId, todayAt, type PostingPlan } from './posting-plan.ts';
 import { exportToPublisher } from './export-publisher.ts';
+import { ReviewStore } from './review-store.ts';
 
 export type BatchStatus = 'pending' | 'running' | 'done' | 'failed' | 'interrupted';
 /** What a running batch is doing, as far as the autopilot's own progress lines say. */
@@ -232,6 +234,25 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
   return touched;
 }
 
+/** How many of a plan's posters the owner has approved, left waiting or turned down, read from the review queue by the plan's own week files. */
+function reviewCounts(brandDir: string, site: string, state: CampaignState): { review?: { approved: number; pending: number; rejected: number } } {
+  const weekFiles = new Set(state.batches.flatMap((b) => (b.weekFile ? [b.weekFile] : [])));
+  if (weekFiles.size === 0 || !existsSync(join(brandDir, 'reviews.jsonl'))) return {};
+  try {
+    const counts = { approved: 0, pending: 0, rejected: 0 };
+    for (const item of new ReviewStore(brandDir, site).list()) {
+      if (!weekFiles.has(basename(item.version.planFile))) continue;
+      if (item.status === 'approved') counts.approved += 1;
+      else if (item.status === 'pending') counts.pending += 1;
+      else if (item.status === 'rejected' || item.status === 'blocked') counts.rejected += 1;
+    }
+    return { review: counts };
+  } catch {
+    // A queue that cannot be read is not guessed at.
+    return {};
+  }
+}
+
 /** One campaign as the dashboard may see it: what it is, where each batch is, and a short reason when one failed. Never the raw output. */
 export interface CampaignSummary {
   id: string;
@@ -243,7 +264,9 @@ export interface CampaignSummary {
   createdAt: string;
   updatedAt: string;
   /** What happens to approved posters: `off` when publishing is switched off (nothing is scheduled), `on` with how many posters were handed to the publisher at the last pass. Missing before the first pass. */
-  release?: { state: 'off' } | { state: 'on'; posts: number };
+  release?: { state: 'off' } | { state: 'on'; posts: number } | { state: 'failed'; reason: string };
+  /** Where the owner has got to with this plan's posters: how many are approved, still waiting for a decision, or turned down. Missing when it cannot be read. */
+  review?: { approved: number; pending: number; rejected: number };
   batches: Array<{ index: number; dates: string[]; status: BatchStatus; stage?: BatchStage; stoppedAt?: BatchStage; detail?: string; drawn?: number; queued?: number; startedAt?: string; finishedAt?: string; failure?: string; note?: string }>;
 }
 
@@ -276,7 +299,8 @@ export async function listCampaigns(brandsRoot: string): Promise<CampaignSummary
         id: state.id, brand: state.brand, site: state.site,
         plan: { platforms: state.plan.platforms, startDate: state.plan.startDate, durationDays: state.plan.durationDays, ...(state.plan.postsPerWeek ? { postsPerWeek: state.plan.postsPerWeek } : {}), time: state.plan.time },
         status: state.status, createdAt: state.createdAt, updatedAt: state.updatedAt,
-        ...(state.released ? { release: { state: 'on' as const, posts: state.released.posts } } : state.releaseNote ? { release: { state: 'off' as const } } : {}),
+        ...(state.releaseNote?.startsWith('release failed') ? { release: { state: 'failed' as const, reason: state.releaseNote.replace(/^release failed:\s*/, '').slice(0, 240) } } : state.released ? { release: { state: 'on' as const, posts: state.released.posts } } : state.releaseNote ? { release: { state: 'off' as const } } : {}),
+        ...reviewCounts(join(brandsRoot, site), site, state),
         batches: state.batches.map((b) => ({
           index: b.index, dates: b.dates, status: b.status,
           ...(b.stage ? { stage: b.stage } : {}), ...(b.stoppedAt ? { stoppedAt: b.stoppedAt } : {}), ...(b.detail ? { detail: b.detail } : {}), ...(typeof b.drawn === 'number' ? { drawn: b.drawn } : {}), ...(typeof b.queued === 'number' ? { queued: b.queued } : {}),
