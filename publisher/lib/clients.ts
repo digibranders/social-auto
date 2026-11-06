@@ -328,3 +328,11 @@ export function ensureWorkspace(
   const client: AddedClient = { brand, createdAt: new Date(now).toISOString(), product, externalId, ...(shown ? { name: shown } : {}) };
   return { file: { clients: [...file.clients, client] }, client, created: true };
 }
+
+/** What the status feed says of a client the dashboard added: name, product, website, plans, the effective weekly limit and the real-logo setting. */
+export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true } {
+  return {
+    ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}),
+    ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}),
+  };
+}
