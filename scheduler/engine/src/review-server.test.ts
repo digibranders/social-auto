@@ -195,9 +195,12 @@ test('written posts are listed, kept or dropped through the service, and a batch
   try {
     const stage = new CopyStage(join(s.root, 'brands', 'acme'), 'acme');
     stage.open('week-01.json', [{ postId: 'p1', headline: 'Answers from your own docs', caption: 'Caption one.' }, { postId: 'p2', headline: 'Find it fast', caption: 'Caption two.' }]);
+    stage.open('week-02.json', [{ postId: 'q1', headline: 'Facing |B2B challenges|?', caption: 'Caption.' }]);
+    const marked = (await (await s.call('/review/copy')).json()) as { batches: Array<{ planFile: string; posts: Array<{ headline: string }> }> };
+    assert.equal(marked.batches.find((b) => b.planFile === 'week-02.json')?.posts[0]?.headline, 'Facing B2B challenges?', 'emphasis markers are not shown to the owner');
     const list = (await (await s.call('/review/copy')).json()) as { batches: Array<{ brand: string; posts: Array<{ state: string }> }> };
-    assert.equal(list.batches.length, 1);
-    assert.deepEqual(list.batches[0]?.posts.map((p) => p.state), ['pending', 'pending']);
+    assert.equal(list.batches.find((b) => b.brand === 'acme' && (b as { planFile?: string }).planFile === 'week-01.json')?.posts.length, 2);
+    assert.deepEqual(list.batches.find((b) => (b as { planFile?: string }).planFile === 'week-01.json')?.posts.map((p) => p.state), ['pending', 'pending']);
     const kept = await s.call('/review/copy/acme/week-01.json/p1/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
     assert.equal(kept.status, 200);
     assert.equal(stage.get('week-01.json').posts[0]?.state, 'kept');
@@ -206,6 +209,7 @@ test('written posts are listed, kept or dropped through the service, and a batch
     assert.equal((await s.call('/review/copy/nope/week-01.json/p1/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404);
     assert.equal((await s.call('/review/copy', { auth: false })).status, 401);
     stage.markDrawn('week-01.json');
+    stage.markDrawn('week-02.json');
     assert.equal((await s.call('/review/copy/acme/week-01.json/p2/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 409);
     assert.deepEqual(((await (await s.call('/review/copy')).json()) as { batches: unknown[] }).batches, []);
   } finally {

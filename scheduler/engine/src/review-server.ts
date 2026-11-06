@@ -112,7 +112,9 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       if (parts[0] === 'review' && parts[1] === 'copy') {
         if (parts.length === 2 && req.method === 'GET') {
           const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list()).filter((b) => !b.drawnAt);
-          return send(res, 200, { batches: batches.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+          // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
+          const plain = batches.map((b) => ({ ...b, posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
+          return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
         if (parts.length === 6 && req.method === 'POST' && (verb === 'keep' || verb === 'drop')) {
