@@ -165,3 +165,38 @@ test('a plan keeps the time of day it was given, and a time that has already pas
   assert.doesNotThrow(() => parseClientPlan(planOf({ time: '09:00', startDate: '2026-11-05' }), NOW_MS, { allowPast: true }), 'a saved plan is read back whatever the hour');
 });
 
+
+import { bindPlanChannels } from './clients.ts';
+
+const chan = (id: string, brand = 'oye-chats') => ({ id, platform: id.slice(0, id.indexOf(':')) as 'facebook' | 'linkedin' | 'google' | 'instagram', brand });
+
+test('a plan can name the exact account for each platform, one per platform, and only an account of its own platforms', () => {
+  const ok = parseClientPlan(planOf({ platforms: ['linkedin', 'facebook'], channelIds: ['facebook:77', 'linkedin:abc'] }), NOW_MS);
+  assert.deepEqual(ok.channelIds, ['facebook:77', 'linkedin:abc'], 'kept in the platform order');
+  assert.throws(() => parseClientPlan(planOf({ platforms: ['linkedin'], channelIds: ['linkedin:a', 'linkedin:b'] }), NOW_MS), /one account for linkedin/);
+  assert.throws(() => parseClientPlan(planOf({ platforms: ['linkedin'], channelIds: ['facebook:77'] }), NOW_MS), /not one of this plan's platforms/);
+  assert.throws(() => parseClientPlan(planOf({ channelIds: ['tiktok:1'] }), NOW_MS), /not a valid account id/);
+  assert.throws(() => parseClientPlan(planOf({ channelIds: [] }), NOW_MS), /short list/);
+  assert.equal(parseClientPlan(planOf(), NOW_MS).channelIds, undefined, 'a plan with no accounts named is still valid');
+});
+
+test('binding a plan uses the only account on a platform, refuses to guess between two, and refuses an account that is not the client\'s', () => {
+  const plan = parseClientPlan(planOf({ platforms: ['instagram', 'facebook', 'linkedin'] }), NOW_MS);
+  const one = bindPlanChannels(plan, [chan('facebook:77'), chan('linkedin:abc'), chan('linkedin:zzz', 'someone-else')], 'oye-chats');
+  assert.deepEqual(one.channelIds, ['facebook:77', 'linkedin:abc'], 'the only account of each platform is chosen, and nothing is chosen for a platform with none connected (instagram)');
+  assert.throws(() => bindPlanChannels(plan, [chan('facebook:77'), chan('facebook:78')], 'oye-chats'), /2 facebook accounts connected: choose which one/);
+  const named = parseClientPlan(planOf({ platforms: ['facebook'], channelIds: ['facebook:78'] }), NOW_MS);
+  assert.deepEqual(bindPlanChannels(named, [chan('facebook:77'), chan('facebook:78')], 'oye-chats').channelIds, ['facebook:78'], 'a named account settles the choice');
+  assert.throws(() => bindPlanChannels(named, [chan('facebook:78', 'someone-else')], 'oye-chats'), /not connected to this client/);
+  assert.equal(bindPlanChannels(planOf() as never, [], 'oye-chats').channelIds, undefined, 'with nothing connected the plan stays unbound');
+});
+
+test('adding a plan binds it when the connected accounts are known, and a plan with two accounts on a platform must say which', () => {
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
+  const bound = addPlan(made, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 7, postsPerWeek: 2, startDate: '2026-11-09' }), NOW_MS, [chan('linkedin:abc')]);
+  assert.deepEqual(bound.clients[0]?.plans?.[0]?.channelIds, ['linkedin:abc']);
+  assert.throws(() => addPlan(made, 'oye-chats', planOf({ platforms: ['linkedin'], startDate: '2026-11-09' }), NOW_MS, [chan('linkedin:abc'), chan('linkedin:def')]), /choose which one/);
+  const chosen = addPlan(made, 'oye-chats', planOf({ platforms: ['linkedin'], startDate: '2026-11-09', channelIds: ['linkedin:def'] }), NOW_MS, [chan('linkedin:abc'), chan('linkedin:def')]);
+  assert.deepEqual(chosen.clients[0]?.plans?.[0]?.channelIds, ['linkedin:def']);
+  assert.equal(parseClientsFile(JSON.parse(JSON.stringify(chosen))).clients[0]?.plans?.[0]?.channelIds?.[0], 'linkedin:def', 'it survives a save and a load');
+});
