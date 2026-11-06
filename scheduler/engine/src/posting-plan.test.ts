@@ -102,3 +102,11 @@ test('the summary reads like a sentence', () => {
   assert.equal(planSummary(plan()), '1 post on Instagram, 2026-11-06');
   assert.match(planSummary(plan({ platforms: ['instagram', 'facebook', 'linkedin'], durationDays: 14, postsPerWeek: 3 })), /^6 posts on Instagram, Facebook and LinkedIn, 2026-11-06 to 2026-11-18$/);
 });
+
+test('a client that requires the website\'s real logo has the autopilot told so, and one that does not is not', () => {
+  const batch = planBatches(plan())[0] as never;
+  assert.ok(autopilotArgsFor(plan(), 'https://oyechats.com', batch, { requireAuthenticLogo: true }).includes('--require-logo'));
+  assert.ok(!autopilotArgsFor(plan(), 'https://oyechats.com', batch).includes('--require-logo'));
+  assert.ok(!autopilotArgsFor(plan(), 'https://oyechats.com', batch, { requireAuthenticLogo: false }).includes('--require-logo'));
+});
+

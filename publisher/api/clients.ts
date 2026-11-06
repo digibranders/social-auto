@@ -5,12 +5,13 @@
  * POST /api/clients?action=set-website  body: {"brand": "brand-basket", "website": "brandbasket.in"}  (an empty website clears it)
  * POST /api/clients?action=add-plan     body: {"brand": "brand-basket", "plan": {...}}  (one more plan: what to post, where and for how long)
  * POST /api/clients?action=set-limit    body: {"brand": "brand-basket", "limit": 3}  (posters a week the website may make for each channel)
+ * POST /api/clients?action=set-logo-required  body: {"brand": "brand-basket", "required": true}  (every poster must carry the website's real logo)
  * POST /api/clients?action=remove-plan  body: {"brand": "brand-basket", "index": 0}  (stops making posters for that plan)
  * POST /api/clients?action=remove    body: {"brand": "brand-basket"}  (only an added client with no channels or extra posts)
  */
 import { scheduleData } from '../lib/schedule-source.js';
 import { channelsFor } from '../lib/channels.js';
-import { addClient, addPlan, isBrandSlug, removePlan, setWebsite, setWeeklyLimit } from '../lib/clients.js';
+import { addClient, addPlan, isBrandSlug, removePlan, setRequireAuthenticLogo, setWebsite, setWeeklyLimit } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
@@ -23,7 +24,7 @@ const plannedBrands = (): Set<string> => new Set(parseSchedule(scheduleData).map
 async function add(body: Record<string, unknown>): Promise<Response> {
   const { file, etag } = await loadClients();
   const planned = plannedBrands();
-  const result = addClient(file, body['name'], new Set([...planned, ...file.clients.map((c) => c.brand)]), Date.now(), body['website'], body['plan']);
+  const result = addClient(file, body['name'], new Set([...planned, ...file.clients.map((c) => c.brand)]), Date.now(), body['website'], body['plan'], body['requireAuthenticLogo']);
   await saveClients(result.file, etag);
   return json(200, { brand: result.brand });
 }
@@ -52,6 +53,14 @@ async function limit(body: Record<string, unknown>): Promise<Response> {
   return json(200, { ok: true });
 }
 
+async function logoRequired(body: Record<string, unknown>): Promise<Response> {
+  const brand = body['brand'];
+  if (!isBrandSlug(brand)) throw new EditError('unknown client');
+  const { file, etag } = await loadClients();
+  await saveClients(setRequireAuthenticLogo(file, brand, body['required']), etag);
+  return json(200, { ok: true });
+}
+
 async function remove(body: Record<string, unknown>): Promise<Response> {
   const brand = body['brand'];
   if (!isBrandSlug(brand)) throw new EditError('unknown client');
@@ -77,6 +86,7 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'add-plan') return await plan(body, 'add');
     if (action === 'remove-plan') return await plan(body, 'remove');
     if (action === 'set-limit') return await limit(body);
+    if (action === 'set-logo-required') return await logoRequired(body);
     if (action === 'remove') return await remove(body);
     return json(400, { error: 'unknown action' });
   } catch (error) {

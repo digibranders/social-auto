@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { costText, failureText, imageUrl, parseQueue, REASON_LABELS } from './review.ts';
+import { brandingView, costText, failureText, imageUrl, parseBranding, parseQueue, REASON_LABELS } from './review.ts';
 import { parseRoute, routeHash } from './route.ts';
 
 const good = { versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'w01-d1', versionNumber: 2, status: 'pending', headline: 'H', caption: 'C', createdAt: '2026-11-05T10:00:00Z', costUsd: 0.016 };
@@ -29,3 +29,37 @@ test('the review page has its own address', () => {
   assert.deepEqual(parseRoute('#/review'), { page: 'review' });
   assert.equal(routeHash({ page: 'review' }), '#/review');
 });
+
+const record = (over: Record<string, unknown> = {}) => ({ intendedMode: 'authentic_logo', appliedMode: 'text_only', status: 'awaiting_compositor', logoKind: 'wordmark', logoFile: 'branding/abc.svg', logoWidth: 400, logoHeight: 100, sourcePage: 'https://acme.test/', sourceUrl: 'https://acme.test/logo.svg', provenance: 'in the site\'s header; says logo', reason: 'A real logo was found and verified, but real logos are not placed on posters yet, so this poster uses the brand name and web address as text.', ...over });
+
+test('a version made before branding was kept, or with a record that makes no sense, shows no branding section', () => {
+  assert.equal(parseBranding(undefined), null);
+  assert.equal(parseBranding('x'), null);
+  assert.equal(parseBranding({ intendedMode: 'authentic_logo' }), null);
+  assert.equal(parseBranding(record({ status: 'amazing' })), null);
+  assert.equal(parseBranding(record())?.hasLogoFile, true);
+  assert.equal(parseBranding(record({ logoFile: undefined }))?.hasLogoFile, false);
+  assert.equal(parseBranding(record({ sourcePage: 7 }))?.sourcePage, undefined, 'a field of the wrong kind is ignored, not trusted');
+});
+
+test('a real logo is never said to be on a poster unless the record says it was applied', () => {
+  const found = brandingView(parseBranding(record()) as never);
+  assert.equal(found.headline, 'Real logo found, not applied');
+  assert.equal(found.tone, 'note');
+  assert.deepEqual(found.rows[0], ['On this poster', 'The brand name and web address, written as text']);
+  assert.ok(found.rows.some(([label, value]) => label === 'Found on' && value === 'https://acme.test/'));
+  assert.ok(found.rows.some(([label, value]) => label === 'Logo found' && value === 'Full logo, 400 × 100'));
+  const applied = brandingView(parseBranding(record({ appliedMode: 'authentic_logo', status: 'applied', reason: undefined })) as never);
+  assert.equal(applied.headline, 'Real logo applied');
+  assert.equal(applied.tone, 'done');
+  assert.equal(applied.rows[0]?.[1], 'The website\'s real logo');
+});
+
+test('with no usable logo the owner is told so, and given the real reason', () => {
+  const plain = brandingView(parseBranding({ intendedMode: 'text_only_fallback', appliedMode: 'text_only', status: 'resolved', reason: 'The website has no logo picture, only the name.' }) as never);
+  assert.equal(plain.headline, 'Text sign-off used: no usable logo');
+  assert.equal(plain.tone, 'plain');
+  assert.match(plain.explanation, /The website has no logo picture, only the name\./);
+  assert.equal(plain.rows.length, 1, 'there is no logo to describe');
+});
+

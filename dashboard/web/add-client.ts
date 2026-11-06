@@ -7,7 +7,7 @@ import { button, h } from './ui.ts';
 export interface AddClientDeps {
   /** Resolves to an explanation when the client could not be added. */
   /** `plan` is what to post, where and for how long; null when the client is only being added. */
-  submit(name: string, website: string, plan: Record<string, unknown> | null): Promise<string | null>;
+  submit(name: string, website: string, plan: Record<string, unknown> | null, requireAuthenticLogo: boolean): Promise<string | null>;
   close(): void;
 }
 
@@ -120,9 +120,12 @@ export function addClientForm(deps: AddClientDeps): HTMLElement {
   // What to post, where and for how long. Offered once a website is written, because the posts are made from it.
   const planOn = h('input', { id: 'plan-on', type: 'checkbox', checked: 'checked' });
   const fields = planFields('plan');
+  // A real logo on every poster, or the brand name as text when the website has no usable logo.
+  const logoRequired = h('input', { id: 'plan-logo-required', type: 'checkbox' });
   const planBox = h('div', { class: 'plan-box' },
     h('label', { class: 'check-row', for: 'plan-on' }, planOn, h('span', {}, 'Make posts from this website')),
     fields.element,
+    h('label', { class: 'check-row', for: 'plan-logo-required' }, logoRequired, h('span', {}, 'Require the website\'s real logo on every poster (otherwise the brand name is written as text when no usable logo is found)')),
   );
   const currentPlan = (): ReturnType<typeof readPlan> => fields.read(planOn.checked && site.value.trim() !== '');
   const refresh = (): void => {
@@ -150,7 +153,7 @@ export function addClientForm(deps: AddClientDeps): HTMLElement {
       save.disabled = false;
       return;
     }
-    void deps.submit(input.value, site.value.trim(), chosen.plan ? planPayload(chosen.plan) : null).then((problem) => {
+    void deps.submit(input.value, site.value.trim(), chosen.plan ? planPayload(chosen.plan) : null, Boolean(chosen.plan) && logoRequired.checked).then((problem) => {
       if (!problem) return;
       message.textContent = problem;
       message.classList.add('is-error');

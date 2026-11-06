@@ -29,6 +29,8 @@ export interface ClientSummary {
   plans: ClientPlanData[];
   /** The most posters a week the website may make for each channel. */
   weeklyLimit: number;
+  /** Every poster made from the website must carry its real logo. */
+  requireAuthenticLogo: boolean;
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
@@ -91,6 +93,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       paused: data.pauses.all || data.pauses.brands.includes(brand),
       plans: entry?.plans ?? [],
       weeklyLimit: entry?.weeklyLimit ?? WEEKLY_LIMIT_DEFAULT,
+      requireAuthenticLogo: entry?.requireAuthenticLogo === true,
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };

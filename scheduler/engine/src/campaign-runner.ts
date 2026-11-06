@@ -57,6 +57,8 @@ export interface PlannedClient {
   website: string;
   /** One entry per plan; each has its own platforms, days and rhythm, and is made and released on its own. */
   plans: unknown[];
+  /** The client's setting: every poster must carry the website's real logo. */
+  requireAuthenticLogo?: boolean;
 }
 
 export interface RunnerDeps {
@@ -148,7 +150,7 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       let outcome: { code: number; tail: string };
       const before = await weekFiles(join(brandsRoot, siteBrand));
       try {
-        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }));
+        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true }));
       } catch (error) {
         outcome = { code: 1, tail: error instanceof Error ? error.message : String(error) };
       }
@@ -164,7 +166,7 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       state.updatedAt = stamp(deps);
       await writeState(file, state);
       // A refusal to spend, or a site that cannot be read, would repeat for every later batch: stop this campaign here.
-      if (outcome.code !== 0 && /BUDGET_EXHAUSTED|SITE_ACCESS_BLOCKED|URL_REFUSED|UNSUPPORTED_LANGUAGE|INSUFFICIENT_EVIDENCE|SITE_UNREACHABLE/.test(outcome.tail)) {
+      if (outcome.code !== 0 && /BUDGET_EXHAUSTED|LOGO_REQUIRED|SITE_ACCESS_BLOCKED|URL_REFUSED|UNSUPPORTED_LANGUAGE|INSUFFICIENT_EVIDENCE|SITE_UNREACHABLE/.test(outcome.tail)) {
         for (const later of state.batches) if (later.status === 'pending') { later.status = 'failed'; later.note = 'not tried: the earlier run stopped for a reason that would repeat'; }
         state.status = statusOf(state.batches);
         await writeState(file, state);
@@ -266,7 +268,7 @@ async function main(): Promise<void> {
   let clients: PlannedClient[] = [];
   try {
     const raw = JSON.parse(await readFile(resolve(values.clients), 'utf8')) as { clients?: Array<Record<string, unknown>> };
-    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']] }] : []));
+    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']], ...(c['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true } : {}) }] : []));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }

@@ -3,6 +3,7 @@
  * it has no picture that passed. Registering the same result twice makes nothing new (see ReviewStore.addVersion).
  */
 import { basename } from 'node:path';
+import type { BrandingDecision } from './branding.ts';
 import type { CreativeReport } from './ai-creative-pipeline.ts';
 import { composeCaption, type Brand, type PlannedPost } from './content.ts';
 import type { EvidenceFact } from './evidence.ts';
@@ -18,6 +19,8 @@ export function registerForReview(input: {
   facts: readonly EvidenceFact[];
   /** The report file as saved, for the version's record. */
   reportFile: string;
+  /** How the posters were branded (frozen before anything was bought), recorded with each version. */
+  branding?: BrandingDecision;
 }): PostVersion[] {
   const store = new ReviewStore(input.brandDir, input.brandSlug);
   const versions: PostVersion[] = [];
@@ -42,6 +45,7 @@ export function registerForReview(input: {
       validation: { accepted: true, readings: last?.readings.length ?? 0, defects: [], reportFile: basename(input.reportFile) },
       attempts: result.attempts.length,
       costUsd: result.costUsd,
+      ...(input.branding ? { branding: input.branding } : {}),
     }));
   }
   return versions;

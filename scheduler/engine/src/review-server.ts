@@ -128,6 +128,14 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
         return void res.end(bytes);
       }
+      if (parts.length === 4 && action === 'logo' && req.method === 'GET') {
+        const { path, ext } = store.logoPath(versionId);
+        const bytes = readFileSync(path);
+        const type = ({ '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' } as Record<string, string>)[ext] ?? 'application/octet-stream';
+        // The logo is a file from a website: it is shown only as a picture, and nothing in it may run.
+        res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox" });
+        return void res.end(bytes);
+      }
       if (parts.length === 4 && action === 'download' && req.method === 'GET') {
         const { path, version } = store.approvedFile(versionId);
         const bytes = readFileSync(path);

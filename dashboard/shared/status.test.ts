@@ -103,3 +103,8 @@ test('a client keeps every plan it has, each with its own platforms, and an entr
   assert.equal(parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0 }] }).runway[0]?.plans, undefined);
 });
 
+test('a client that requires the real logo says so, and one that does not says nothing', () => {
+  const parsed = parseStatus({ ...valid, runway: [{ brand: 'a', postsLeft: 0, added: true, requireAuthenticLogo: true }, { brand: 'b', postsLeft: 0, added: true, requireAuthenticLogo: 'yes' }, { brand: 'c', postsLeft: 0, added: true }] });
+  assert.deepEqual(parsed.runway.map((r) => r.requireAuthenticLogo), [true, undefined, undefined]);
+});
+

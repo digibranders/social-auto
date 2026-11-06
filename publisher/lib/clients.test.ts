@@ -60,7 +60,7 @@ test('a client can be added with a website, and its website can be changed and c
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', website: 5 }] }), /website/);
 });
 
-import { MAX_PLANS_PER_CLIENT, addPlan, parseClientPlan, removePlan, setWeeklyLimit } from './clients.ts';
+import { MAX_PLANS_PER_CLIENT, addPlan, parseClientPlan, removePlan, setRequireAuthenticLogo, setWeeklyLimit } from './clients.ts';
 
 const NOW_MS = Date.parse('2026-11-05T12:00:00Z');
 const planOf = (over: Record<string, unknown> = {}) => ({ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1, ...over });
@@ -139,5 +139,20 @@ test('a client\'s weekly limit can be changed, only governs plans added afterwar
   assert.throws(() => setWeeklyLimit(made, 'oye-chats', 2.5), /whole number from 1 to 7/);
   assert.throws(() => setWeeklyLimit(made, 'nobody', 2), /only a client added in the dashboard/);
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', weeklyLimit: 9 }] }), /weeklyLimit/);
+});
+
+test('the real-logo requirement defaults to off, is stored only when on, and can be changed later', () => {
+  const plain = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
+  assert.equal('requireAuthenticLogo' in (plain.clients[0] as object), false);
+  const strict = addClient({ clients: [] }, 'Strict Co', new Set(), NOW_MS, 'strict.com', undefined, true).file;
+  assert.equal(strict.clients[0]?.requireAuthenticLogo, true);
+  assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(strict))), strict, 'it survives a save and a load');
+  const on = setRequireAuthenticLogo(plain, 'oye-chats', true);
+  assert.equal(on.clients[0]?.requireAuthenticLogo, true);
+  assert.equal('requireAuthenticLogo' in (setRequireAuthenticLogo(on, 'oye-chats', false).clients[0] as object), false, 'off is not stored');
+  assert.throws(() => setRequireAuthenticLogo(plain, 'oye-chats', 'yes'), /true or false/);
+  assert.throws(() => setRequireAuthenticLogo(plain, 'nobody', true), /only a client added in the dashboard/);
+  assert.throws(() => addClient({ clients: [] }, 'Bad', new Set(), NOW_MS, 'bad.com', undefined, 'yes'), /true or false/);
+  assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', requireAuthenticLogo: 'yes' }] }), /requireAuthenticLogo/);
 });
 
