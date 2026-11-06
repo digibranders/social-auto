@@ -28,7 +28,7 @@ content job writes into the same checkout the publisher reads (`SCHEDULE_FILE`),
 Merging into `main` deploys by itself (`.github/workflows/deploy.yml`):
 1. GitHub runs the tests for the publisher, the dashboard and the engine. Every pull request gets the same tests.
 2. If they pass, and the change touched the apps (`publisher/`, `dashboard/`, `deploy/`; not docs, not the weekly job's posts), GitHub connects to the server and runs `deploy/scripts/deploy.sh`.
-3. The script waits while a scheduled job is running, pulls `main`, installs, builds and restarts the two services, then checks both answer.
+3. The script waits while a scheduled job is running, pulls `main`, installs, builds and restarts the two services, then checks both answer. When the content engine's code (`scheduler/engine/src`) changed it also restarts `social-review`, if that service exists. The engine has no packages of its own to install, and the poster runs' new files in `brands/` and `out/` do not count as uncommitted changes. After adding the `social-review` line to `deploy/sudoers-social-auto`, copy that file to `/etc/sudoers.d/social-auto` on the server (mode 440, check with `visudo -c`); until then that restart is skipped with a message and the deploy still succeeds.
 4. If they do not, it goes back to the previous version and sends an alert. Fix forward by merging a fix or a revert.
 
 By hand (as the `social` user on the server): `deploy/scripts/deploy.sh`. Or from GitHub: Actions, "Test and deploy", Run workflow.
