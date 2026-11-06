@@ -236,3 +236,50 @@ test('how a poster was branded is kept with its version, does not change the ver
   }
 });
 
+
+test('one post made for two networks is two lines of versions: a newer version for one network leaves the other network\'s approval alone', () => {
+  const { store, pictures, done } = (() => {
+    const dir = mkdtempSync(join(tmpdir(), 'review-net-'));
+    const store = new ReviewStore(dir, 'acme');
+    return { store, pictures: (name: string, text: string) => { const p = join(dir, name); writeFileSync(p, text); return p; }, done: () => rmSync(dir, { recursive: true, force: true }) };
+  })();
+  try {
+    const base = { postId: 'w01-d1', planFile: 'week-01.json', headline: 'Answers from your own docs', caption: 'Same words.', ctaUrl: 'https://acme.example', factIds: ['f1'], evidence: [], validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.017 };
+    const ig = store.addVersion({ ...base, network: 'instagram', imagePath: pictures('ig.jpg', 'square picture') });
+    const li = store.addVersion({ ...base, network: 'linkedin', width: 1536, height: 1024, imagePath: pictures('li.jpg', 'wide picture') });
+    assert.notEqual(ig.versionId, li.versionId, 'the same words on two networks are two versions');
+    assert.equal(li.width, 1536);
+    store.approve(ig.versionId, 'owner');
+    store.approve(li.versionId, 'owner');
+    // A changed Instagram caption is a new Instagram version; LinkedIn stays approved.
+    const ig2 = store.addVersion({ ...base, caption: 'Different words.', network: 'instagram', imagePath: pictures('ig.jpg', 'square picture') });
+    assert.equal(ig2.versionNumber, 2);
+    assert.equal(store.get(ig.versionId).status, 'superseded');
+    assert.equal(store.get(ig2.versionId).status, 'pending');
+    assert.equal(store.get(li.versionId).status, 'approved', 'the other network is untouched');
+    assert.deepEqual(store.history('w01-d1', 'linkedin').map((i) => i.version.versionId), [li.versionId]);
+    assert.equal(store.history('w01-d1').length, 3);
+    // A poster made for a network is not released through the post's name alone.
+    assert.equal(store.approvedFor('w01-d1'), undefined);
+    assert.deepEqual(store.approvedForNetworks('w01-d1').map((a) => a.version.network), ['linkedin']);
+  } finally {
+    done();
+  }
+});
+
+test('a version made without a network behaves exactly as before, and a bad network name is refused', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-legacy-'));
+  try {
+    const store = new ReviewStore(dir, 'acme');
+    writeFileSync(join(dir, 'a.jpg'), 'picture');
+    const input = { postId: 'p1', planFile: 'week-01.json', headline: 'H', caption: 'C', ctaUrl: 'https://acme.example', factIds: [], evidence: [], imagePath: join(dir, 'a.jpg'), validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.01 };
+    const v = store.addVersion(input);
+    assert.equal(v.network, undefined);
+    assert.equal(store.addVersion(input).versionId, v.versionId, 'the same thing registered twice is one version');
+    store.approve(v.versionId, 'owner');
+    assert.equal(store.approvedFor('p1')?.version.versionId, v.versionId);
+    assert.throws(() => store.addVersion({ ...input, network: 'Insta gram!' }), /short lower-case/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

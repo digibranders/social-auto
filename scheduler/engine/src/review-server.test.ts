@@ -273,3 +273,28 @@ test('the facts routes answer plainly for a brand with no facts yet, an unknown 
     await s.done();
   }
 });
+
+test('a topic made for two networks shows each network with its shape, and one step approves every waiting picture of it, each as its own decision', async () => {
+  const s = await start();
+  try {
+    const base = version(s.pictures('ig.jpg', 'square picture'));
+    const ig = s.stores.acme.addVersion({ ...base, network: 'instagram', width: 1024, height: 1024 });
+    const li = s.stores.acme.addVersion({ ...base, network: 'linkedin', width: 1536, height: 1024, imagePath: s.pictures('li.jpg', 'wide picture') });
+    const list = (await (await s.call('/review/posts?status=pending')).json()) as { posts: Array<{ versionId: string; network?: string; shape?: string; width?: number }> };
+    const byNetwork = Object.fromEntries(list.posts.map((p) => [p.network, p]));
+    assert.equal(byNetwork['instagram']?.shape, 'square');
+    assert.equal(byNetwork['linkedin']?.shape, 'wide');
+    assert.equal(byNetwork['linkedin']?.width, 1536);
+    const detail = (await (await s.call(`/review/posts/${li.versionId}`)).json()) as { history: Array<{ versionId: string }> };
+    assert.deepEqual(detail.history.map((h) => h.versionId), [li.versionId], 'history is of this network only');
+    const done = await s.call('/review/topics/acme/week-01.json/w01-d1/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal(done.status, 200);
+    const decisions = ((await done.json()) as { decisions: Array<{ network: string; status: string }> }).decisions;
+    assert.deepEqual(decisions.map((d) => d.status), ['approved', 'approved']);
+    assert.equal(s.stores.acme.get(ig.versionId).status, 'approved');
+    assert.equal(s.stores.acme.get(li.versionId).status, 'approved');
+    assert.equal((await s.call('/review/topics/acme/week-01.json/w01-d1/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404, 'nothing is left waiting');
+  } finally {
+    await s.done();
+  }
+});

@@ -9,6 +9,7 @@
  *   GET  /review/posts/<versionId>/download                                        the picture, approved versions only
  *   POST /review/posts/<versionId>/approve   {"by":"..."}
  *   POST /review/posts/<versionId>/reject    {"by":"...","reason":"...","comment":"..."}
+ *   POST /review/topics/<brand>/<week-NN.json>/<postId>/approve {"by":"..."}   approve every network's waiting picture of one topic
  *   GET  /review/brands/<brand>/facts      the facts found on the site; POST .../facts/<factId>/confirm|remove|restore {"by":"..."}
  *   GET  /review/copy                                                              the written posts waiting to be kept or dropped, before any picture is bought
  *   POST /review/copy/<brand>/<week-NN.json>/<postId>/keep|drop   {"by":"..."}
@@ -109,6 +110,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   const summary = (item: ReviewItem) => ({
     versionId: item.version.versionId, brand: item.version.brand, postId: item.version.postId, planFile: item.version.planFile, versionNumber: item.version.versionNumber, status: item.status,
     headline: item.version.headline, caption: item.version.caption, createdAt: item.version.createdAt, costUsd: item.version.costUsd,
+    ...(item.version.network ? { network: item.version.network } : {}),
+    ...(item.version.width && item.version.height ? { width: item.version.width, height: item.version.height, shape: item.version.width / item.version.height >= 1.2 ? 'wide' : item.version.width / item.version.height <= 0.83 ? 'tall' : 'square' } : {}),
     ...(item.decision ? { decidedBy: item.decision.by, decidedAt: item.decision.at, reason: item.decision.reason } : {}),
   });
 
@@ -168,6 +171,17 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
         return send(res, 200, { campaigns: await listCampaigns(options.brandsRoot) });
       }
+      // Approve a whole topic in one step: every network's picture of it that is waiting. Each is still its own decision, on its own exact version.
+      if (parts[0] === 'review' && parts[1] === 'topics' && parts.length === 6 && parts[5] === 'approve' && req.method === 'POST') {
+        const [, , topicBrand = '', topicPlan = '', topicPost = ''] = parts.map(decodeURIComponent);
+        if (!BRAND.test(topicBrand) || !brands().includes(topicBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+        const by = text((await readJson(req))['by'], 80);
+        const topicStore = storeFor(topicBrand);
+        const waiting = topicStore.list().filter((i) => i.status === 'pending' && i.version.postId === topicPost && i.version.planFile === topicPlan);
+        if (waiting.length === 0) throw new ReviewError('NOT_FOUND', 'nothing is waiting for approval for that topic');
+        const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
+        return send(res, 200, { decisions });
+      }
       if (parts[0] !== 'review' || parts[1] !== 'posts') return send(res, 404, { error: 'Not found' });
 
       if (parts.length === 2) {
@@ -196,7 +210,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       const store = storeOf(versionId);
       if (parts.length === 3 && req.method === 'GET') {
         const item = store.get(versionId);
-        return send(res, 200, { ...item, history: store.history(item.version.postId).map(summary) });
+        return send(res, 200, { ...item, history: store.history(item.version.postId, item.version.network ?? '').map(summary) });
       }
       if (parts.length === 4 && action === 'image' && req.method === 'GET') {
         const bytes = store.previewBytes(versionId);

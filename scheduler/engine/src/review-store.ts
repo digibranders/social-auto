@@ -33,6 +33,11 @@ export interface PostVersion {
   postId: string;
   planFile: string;
   versionNumber: number;
+  /** The network this version was made for (instagram, facebook, linkedin, google). Versions made before networks existed have none. */
+  network?: string;
+  /** The picture's size in pixels, for the screen that shows it. */
+  width?: number;
+  height?: number;
   headline: string;
   caption: string;
   ctaUrl: string;
@@ -96,11 +101,20 @@ export class ReviewError extends Error {
 const sha256 = (data: string | Buffer): string => createHash('sha256').update(data).digest('hex');
 
 /** The hash of what a person reads and approves: the headline, the caption, the link and the facts it rests on. */
-export const contentHashOf = (v: Pick<PostVersion, 'headline' | 'caption' | 'ctaUrl' | 'factIds'>): string => sha256(JSON.stringify({ headline: v.headline, caption: v.caption, ctaUrl: v.ctaUrl, factIds: v.factIds }));
+export const contentHashOf = (v: Pick<PostVersion, 'headline' | 'caption' | 'ctaUrl' | 'factIds' | 'network'>): string =>
+  // The network is part of what is approved, so the same words on two networks are two versions; a version with no network hashes as it always did.
+  sha256(JSON.stringify({ headline: v.headline, caption: v.caption, ctaUrl: v.ctaUrl, factIds: v.factIds, ...(v.network ? { network: v.network } : {}) }));
+
+export const NETWORK = /^[a-z]{2,20}$/;
+/** The key a post's versions are replaced by: a new version of a post replaces the older ones of the same network only. */
+const lineOf = (v: Pick<PostVersion, 'postId' | 'network'>): string => `${v.postId}|${v.network ?? ''}`;
 
 export interface NewVersion {
   postId: string;
   planFile: string;
+  network?: string;
+  width?: number;
+  height?: number;
   headline: string;
   caption: string;
   ctaUrl: string;
@@ -207,16 +221,16 @@ export class ReviewStore {
       }
     }
     const latest = new Map<string, number>();
-    for (const v of versions.values()) latest.set(v.postId, Math.max(latest.get(v.postId) ?? 0, v.versionNumber));
+    for (const v of versions.values()) latest.set(lineOf(v), Math.max(latest.get(lineOf(v)) ?? 0, v.versionNumber));
     return [...versions.values()].map((version): ReviewItem => {
       const decision = decisions.get(version.versionId);
       const status: ReviewStatus = !version.validation.accepted ? 'blocked'
         : decision?.decision === 'approve' ? (held.has(version.versionId) ? 'held' : 'approved')
         : decision?.decision === 'reject' ? 'rejected'
-        : version.versionNumber < (latest.get(version.postId) ?? 0) ? 'superseded'
+        : version.versionNumber < (latest.get(lineOf(version)) ?? 0) ? 'superseded'
         : 'pending';
       // A later version supersedes an approval too: the earlier one stays on record as approved history but is no longer what goes out.
-      const final: ReviewStatus = (status === 'approved' || status === 'held') && version.versionNumber < (latest.get(version.postId) ?? 0) ? 'superseded' : status;
+      const final: ReviewStatus = (status === 'approved' || status === 'held') && version.versionNumber < (latest.get(lineOf(version)) ?? 0) ? 'superseded' : status;
       return { version, status: final, ...(decision ? { decision } : {}) };
     });
   }
@@ -233,9 +247,9 @@ export class ReviewStore {
     return found;
   }
 
-  /** The versions of one post, newest first. */
-  history(postId: string): ReviewItem[] {
-    return this.fold().filter((i) => i.version.postId === postId).sort((a, b) => b.version.versionNumber - a.version.versionNumber);
+  /** The versions of one post, newest first. With a network ("" for a version made without one) only that network's versions; without, every network's. */
+  history(postId: string, network?: string): ReviewItem[] {
+    return this.fold().filter((i) => i.version.postId === postId && (network === undefined || (i.version.network ?? '') === network)).sort((a, b) => b.version.versionNumber - a.version.versionNumber);
   }
 
   /**
@@ -246,17 +260,20 @@ export class ReviewStore {
     const bytes = readFileSync(input.imagePath);
     const imageSha256 = sha256(bytes);
     const imageFile = join('versions', `${imageSha256}.jpg`);
+    if (input.network !== undefined && !NETWORK.test(input.network)) throw new ReviewError('INVALID', 'the network must be a short lower-case name');
     const contentSha256 = contentHashOf(input);
     return this.locked((owns) => {
-      const items = this.fold().filter((i) => i.version.postId === input.postId);
+      const items = this.fold().filter((i) => lineOf(i.version) === lineOf(input));
       const same = items.find((i) => i.version.imageSha256 === imageSha256 && i.version.contentSha256 === contentSha256);
       if (same) return same.version;
       const target = join(this.brandDir, imageFile);
       if (!existsSync(target)) copyDurable(input.imagePath, target);
       const versionNumber = items.reduce((max, i) => Math.max(max, i.version.versionNumber), 0) + 1;
       const version: PostVersion = {
-        versionId: `${this.brand}.${sha256(`${input.postId}|${versionNumber}|${imageSha256}|${contentSha256}`).slice(0, 16)}`,
+        versionId: `${this.brand}.${sha256(`${input.postId}|${versionNumber}|${imageSha256}|${contentSha256}${input.network ? `|${input.network}` : ''}`).slice(0, 16)}`,
         brand: this.brand, postId: input.postId, planFile: input.planFile, versionNumber,
+        ...(input.network ? { network: input.network } : {}),
+        ...(input.width && input.height ? { width: input.width, height: input.height } : {}),
         headline: input.headline, caption: input.caption, ctaUrl: input.ctaUrl, factIds: input.factIds, evidence: input.evidence,
         imageFile, imageSha256, contentSha256, validation: input.validation, attempts: input.attempts, costUsd: input.costUsd,
         ...(input.branding ? { branding: input.branding } : {}),
@@ -364,9 +381,15 @@ export class ReviewStore {
     return { version: item.version, path: join(this.brandDir, item.version.imageFile), bytes };
   }
 
+  /** The latest approved version of each network a post was made for, ready to be released through that network. */
+  approvedForNetworks(postId: string): Array<{ version: PostVersion; path: string; bytes: Buffer }> {
+    return this.history(postId).filter((i) => i.status === 'approved' && i.version.network !== undefined).map((i) => this.approvedFile(i.version.versionId));
+  }
+
   /** The approved version of a post that may go out now, if there is one. */
   approvedFor(postId: string): { version: PostVersion; path: string; bytes: Buffer } | undefined {
-    const item = this.history(postId).find((i) => i.status === 'approved');
+    // Only a version made without a network: a poster made for one network is released through that network's own version, never by the post's name alone.
+    const item = this.history(postId, '').find((i) => i.status === 'approved');
     return item ? this.approvedFile(item.version.versionId) : undefined;
   }
 
