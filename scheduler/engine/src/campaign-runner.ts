@@ -20,6 +20,8 @@ import { autopilotArgsFor, parsePostingPlan, planBatches, planId, todayAt, type 
 import { exportToPublisher } from './export-publisher.ts';
 
 export type BatchStatus = 'pending' | 'running' | 'done' | 'failed' | 'interrupted';
+/** What a running batch is doing, as far as the autopilot's own progress lines say. */
+export type BatchStage = 'reading' | 'writing' | 'drawing' | 'finishing';
 export type CampaignStatus = 'queued' | 'running' | 'awaiting_approval' | 'partial' | 'failed' | 'interrupted';
 
 export interface BatchState {
@@ -32,6 +34,12 @@ export interface BatchState {
   tail?: string;
   /** The plan file this batch wrote (week-NN.json), so the export knows which platforms its posters are for. */
   weekFile?: string;
+  /** While it runs: the step it is on, the latest thing it said, and how many posters it has finished. Cleared when it ends. */
+  stage?: BatchStage;
+  detail?: string;
+  drawn?: number;
+  /** How many posters of this batch really reached the review queue (the autopilot says so when it ends). Missing in older records. */
+  queued?: number;
   note?: string;
 }
 
@@ -63,7 +71,7 @@ export interface PlannedClient {
 
 export interface RunnerDeps {
   /** Runs the autopilot with these arguments and resolves with its exit code and the end of its output. */
-  exec: (args: string[]) => Promise<{ code: number; tail: string }>;
+  exec: (args: string[], onLine?: (line: string) => void) => Promise<{ code: number; tail: string }>;
   /** Hands the brand's approved posters to the publisher. */
   release: (brandDir: string) => Promise<number>;
   now?: () => Date;
@@ -79,6 +87,27 @@ async function weekFiles(dir: string): Promise<string[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * What one line of the autopilot's output says about progress: the step it is on ("1/4 Reading ...", "3/4 Drawing ..."), the latest thing it said
+ * (the poster it is drawing, or the site page it is reading) and a poster finished ("w01-d1: accepted after 1 attempt"). Lines that say nothing about
+ * progress give null. Nothing here is trusted beyond its length: it is shown to the owner as plain text.
+ */
+export function parseProgressLine(line: string): { stage?: BatchStage; detail?: string; drawn?: true; queued?: number } | null {
+  const text = line.replace(/\u001b\[[0-9;]*m/g, '').trim();
+  if (text === '') return null;
+  const step = /^([1-4])\/4\s+(.*)$/.exec(text);
+  if (step) {
+    const stage: BatchStage = step[1] === '1' ? 'reading' : step[1] === '2' ? 'writing' : step[1] === '3' ? 'drawing' : 'finishing';
+    return { stage, detail: (step[2] as string).slice(0, 160) };
+  }
+  const added = /^(\d+) posters? added to the owner's review queue/.exec(text);
+  if (added) return { queued: Number(added[1]) };
+  if (/^\S+: accepted after \d+ attempt/.test(text)) return { detail: text.slice(0, 160), drawn: true };
+  // The pipeline's own lines are indented in the autopilot's output; they say which poster is being drawn or why one was turned back.
+  if (/^[\w.-]+: (attempt \d+|dropped|rejected)/.test(text)) return { detail: text.slice(0, 160) };
+  return null;
 }
 
 const stamp = (deps: RunnerDeps): string => (deps.now?.() ?? new Date()).toISOString();
@@ -149,9 +178,29 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       log(`${client.brand}: making ${batch.dates.length} poster${batch.dates.length === 1 ? '' : 's'} for ${batch.dates[0]}${batch.dates.length > 1 ? ` to ${batch.dates.at(-1)}` : ''}`);
       let outcome: { code: number; tail: string };
       const before = await weekFiles(join(brandsRoot, siteBrand));
+      // What the run says as it goes is written to the record, so the dashboard can show what is being made. Writes are spaced out (and a change of step
+      // is written at once), never one per line.
+      let lastWrite = 0;
+      let writing: Promise<void> = Promise.resolve();
+      const onLine = (line: string): void => {
+        const seen = parseProgressLine(line);
+        if (!seen) return;
+        const changed = seen.stage !== undefined && seen.stage !== batch.stage;
+        if (seen.stage) batch.stage = seen.stage;
+        if (seen.detail) batch.detail = seen.detail;
+        if (seen.drawn) batch.drawn = (batch.drawn ?? 0) + 1;
+        if (seen.queued !== undefined) batch.queued = seen.queued;
+        const now = (deps.now?.() ?? new Date()).getTime();
+        if (!changed && !seen.drawn && seen.queued === undefined && now - lastWrite < 1500) return;
+        lastWrite = now;
+        state.updatedAt = stamp(deps);
+        writing = writing.then(() => writeState(file, state)).catch(() => undefined);
+      };
       try {
-        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true }));
+        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true }), onLine);
+        await writing;
       } catch (error) {
+        await writing;
         outcome = { code: 1, tail: error instanceof Error ? error.message : String(error) };
       }
       // The run writes the next week-NN.json; remember which one is this plan's, so its posters keep this plan's platforms.
@@ -160,6 +209,8 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       else if (outcome.code === 0) { batch.note = 'could not tell which plan file this run wrote, so its posters are not tied to this plan\'s platforms'; log(`${client.brand}: ${batch.note}`); }
       batch.status = outcome.code === 0 ? 'done' : 'failed';
       batch.finishedAt = stamp(deps);
+      delete batch.stage;
+      delete batch.detail;
       batch.tail = outcome.tail.slice(-1500);
       log(outcome.code === 0 ? `${client.brand}: batch ${batch.index + 1} finished` : `${client.brand}: batch ${batch.index + 1} failed: ${outcome.tail.trim().split('\n').at(-1)?.slice(0, 300) ?? 'no output'}`);
       state.status = statusOf(state.batches);
@@ -176,6 +227,61 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
     touched.push(state);
   }
   return touched;
+}
+
+/** One campaign as the dashboard may see it: what it is, where each batch is, and a short reason when one failed. Never the raw output. */
+export interface CampaignSummary {
+  id: string;
+  /** The client the plan belongs to (the dashboard's name for it). */
+  brand: string;
+  site: string;
+  plan: { platforms: string[]; startDate: string; durationDays: number; postsPerWeek?: number; time: string };
+  status: CampaignStatus;
+  createdAt: string;
+  updatedAt: string;
+  batches: Array<{ index: number; dates: string[]; status: BatchStatus; stage?: BatchStage; detail?: string; drawn?: number; queued?: number; startedAt?: string; finishedAt?: string; failure?: string; note?: string }>;
+}
+
+/** The last line of a failed run's output, cut short: enough to say why, with no room for anything long. */
+const failureOf = (tail: string | undefined): string | undefined => {
+  const line = (tail ?? '').trim().split('\n').filter((l) => l.trim() !== '').at(-1);
+  return line ? line.replace(/\u001b\[[0-9;]*m/g, '').trim().slice(0, 240) : undefined;
+};
+
+/** Every campaign in every site folder under `brandsRoot`, the most recently changed first. An unreadable record is left out. */
+export async function listCampaigns(brandsRoot: string): Promise<CampaignSummary[]> {
+  let sites: string[];
+  try {
+    sites = (await readdir(brandsRoot, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return [];
+  }
+  const out: CampaignSummary[] = [];
+  for (const site of sites) {
+    let files: string[];
+    try {
+      files = (await readdir(join(brandsRoot, site, 'campaigns'))).filter((f) => f.endsWith('.json'));
+    } catch {
+      continue;
+    }
+    for (const f of files) {
+      const state = await readState(join(brandsRoot, site, 'campaigns', f)).catch(() => undefined);
+      if (!state || !Array.isArray(state.batches) || typeof state.plan !== 'object' || state.plan === null) continue;
+      out.push({
+        id: state.id, brand: state.brand, site: state.site,
+        plan: { platforms: state.plan.platforms, startDate: state.plan.startDate, durationDays: state.plan.durationDays, ...(state.plan.postsPerWeek ? { postsPerWeek: state.plan.postsPerWeek } : {}), time: state.plan.time },
+        status: state.status, createdAt: state.createdAt, updatedAt: state.updatedAt,
+        batches: state.batches.map((b) => ({
+          index: b.index, dates: b.dates, status: b.status,
+          ...(b.stage ? { stage: b.stage } : {}), ...(b.detail ? { detail: b.detail } : {}), ...(typeof b.drawn === 'number' ? { drawn: b.drawn } : {}), ...(typeof b.queued === 'number' ? { queued: b.queued } : {}),
+          ...(b.startedAt ? { startedAt: b.startedAt } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}),
+          ...(b.status === 'failed' || b.status === 'interrupted' ? { failure: failureOf(b.tail) ?? b.note } : {}),
+          ...(b.note ? { note: b.note.slice(0, 240) } : {}),
+        })),
+      });
+    }
+  }
+  return out.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 /** Hands approved posters to the publisher for every campaign that has made some. Returns the campaigns that were released. */
@@ -273,11 +379,21 @@ async function main(): Promise<void> {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const deps: RunnerDeps = {
-    exec: (args) => new Promise((done) => {
+    exec: (args, onLine) => new Promise((done) => {
       let out = '';
+      let partial = '';
+      // Whole lines only are passed on, as they arrive, so the record can follow the run.
+      const feed = (chunk: string): void => {
+        out += chunk;
+        if (!onLine) return;
+        partial += chunk;
+        const lines = partial.split('\n');
+        partial = lines.pop() ?? '';
+        for (const line of lines) onLine(line);
+      };
       const child = execFile(process.execPath, args, { cwd: resolve('.'), timeout: 60 * 60 * 1000, maxBuffer: 16 << 20, env: process.env }, () => undefined);
-      child.stdout?.on('data', (d: Buffer) => (out += d.toString()));
-      child.stderr?.on('data', (d: Buffer) => (out += d.toString()));
+      child.stdout?.on('data', (d: Buffer) => feed(d.toString()));
+      child.stderr?.on('data', (d: Buffer) => feed(d.toString()));
       child.on('close', (code) => done({ code: code ?? 1, tail: out.slice(-4000) }));
       child.on('error', (error) => done({ code: 1, tail: error.message }));
     }),

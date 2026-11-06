@@ -10,7 +10,7 @@ content job writes into the same checkout the publisher reads (`SCHEDULE_FILE`),
 | AI cost log (the dashboard's Cost tab) | `/var/lib/social-auto/usage.jsonl`: written by the weekly job (`USAGE_LOG_FILE` in its keys file), read by the publisher |
 | Settings | `/etc/social-auto/publisher.env`, `/etc/social-auto/dashboard.env` (root:social, 640); names in `deploy/env/` |
 | Services | `social-publisher`, `social-dashboard` |
-| Timers | `social-cron` (daily 10:01 IST), `social-refresh` (Mondays 10:30 IST), `social-auto-weekly` (Mondays 10:00 IST), `social-campaigns` (every 30 minutes; makes posters for clients with a posting plan; needs `/etc/social-auto/engine.env`, see `env/engine.env.example`; leave the timer off until the test) |
+| Timers | `social-cron` (daily 10:01 IST), `social-refresh` (Mondays 10:30 IST), `social-auto-weekly` (Mondays 10:00 IST), `social-campaigns` (every 5 minutes; makes posters for clients with a posting plan; needs `/etc/social-auto/engine.env`, see `env/engine.env.example`; leave the timer off until the test) |
 | Web | `deploy/nginx/social-auto.conf`; dashboard at `/`, publisher at `/publisher/` |
 
 ## Install (first time)
