@@ -1002,9 +1002,9 @@ function openNewPost(brand: string | null, channel: string | null): void {
 }
 
 /** Adds a client, then opens its page so the channels can be connected. */
-async function submitNewClient(name: string, website: string, plan: Record<string, unknown> | null): Promise<string | null> {
+async function submitNewClient(name: string, website: string, plan: Record<string, unknown> | null, requireAuthenticLogo: boolean): Promise<string | null> {
   try {
-    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}), ...(website && plan ? { plan } : {}) }) });
+    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}), ...(website && plan ? { plan } : {}), ...(website && plan && requireAuthenticLogo ? { requireAuthenticLogo: true } : {}) }) });
     if (response.status === 401) {
       location.replace('/login');
       return 'You were signed out.';
@@ -1045,7 +1045,7 @@ async function saveWebsite(client: ClientSummary, website: string): Promise<stri
 }
 
 /** Sends one plan change for a client added in the dashboard; resolves to an explanation when it did not work. */
-async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit', body: Record<string, unknown>, done: string): Promise<string | null> {
+async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required', body: Record<string, unknown>, done: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/clients?action=${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (response.status === 401) {
@@ -1067,6 +1067,9 @@ const addPlan = (client: ClientSummary, plan: Record<string, unknown>): Promise<
 
 const setLimit = (client: ClientSummary, limit: number): Promise<string | null> =>
   changePlans('set-limit', { brand: client.brand, limit }, `Limit saved: ${limit} poster${limit === 1 ? '' : 's'} a week for each channel. Plans already there stay as they are.`);
+
+const setLogoRequired = (client: ClientSummary, required: boolean): Promise<string | null> =>
+  changePlans('set-logo-required', { brand: client.brand, required }, required ? 'Saved: every poster for this client must carry the website\'s real logo.' : 'Saved: when the website has no usable logo, posters use the brand name as text.');
 
 const removePlan = (client: ClientSummary, index: number): Promise<string | null> =>
   changePlans('remove-plan', { brand: client.brand, index }, 'Plan removed. Posters already made stay in Review; no more are made for it.');
@@ -1118,6 +1121,7 @@ const clientsContext: ClientsContext = {
   addPlan,
   removePlan,
   setLimit,
+  setLogoRequired,
   wantsPlanForm: (brand) => (planFormFor === brand ? ((planFormFor = null), true) : false),
   disconnect: (channel) => void disconnect(channel),
   allPaused: () => state.data?.pauses.all === true,

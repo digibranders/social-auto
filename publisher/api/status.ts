@@ -156,7 +156,7 @@ export async function GET(request: Request): Promise<Response> {
         })),
       ],
       ...summary,
-      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}), ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), ...(c.weeklyLimit ? { weeklyLimit: c.weeklyLimit } : {}) }))],
+      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}), ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), ...(c.weeklyLimit ? { weeklyLimit: c.weeklyLimit } : {}), ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}) }))],
       posts: summary.posts.map((p) => withPauses(withCrossposts(p, channels, posted, now, pauses), pauses)),
       // The cost view is a nicety: if its log is unreadable the rest of the status must still load.
       costs: await loadCosts(process.env['USAGE_LOG_FILE']).catch((error: unknown) => {

@@ -32,6 +32,7 @@ import { appendUsageLog } from './usage.ts';
 import { CrawlError } from './crawl.ts';
 import { makeCreatives } from './ai-creative-pipeline.ts';
 import { modelReviewDeps, ordinaryChecks } from './copy-review.ts';
+import { COMPOSITOR_READY, assertMayDraw, freezeLogo, logoPathFor, resolveBranding, type BrandingDecision } from './branding.ts';
 import { registerForReview } from './review-register.ts';
 import { displayFact } from './evidence.ts';
 import { checkBrandIdentity, checkEvidence, checkLanguage, PreflightError } from './site-preflight.ts';
@@ -141,6 +142,7 @@ async function main(): Promise<void> {
       'plan-only': { type: 'boolean', default: false },
       'review-budget': { type: 'string', default: '0.015' },
       'allow-paid-ai': { type: 'boolean', default: false },
+      'require-logo': { type: 'boolean', default: false },
       target: { type: 'string', default: 'scheduler' },
       publisher: { type: 'string', default: '../../publisher' },
     },
@@ -188,6 +190,15 @@ async function main(): Promise<void> {
   // A website link is all a run needs: the facts the site states and its icon are gathered here when the brand lacks them (one crawl, no picture is bought).
   await ensureSiteAssets({ brandDir, site: values.site, ai, log: (m) => console.log(`    ${m}`) });
   const brand = parseBrand(await readJson(join(brandDir, 'brand.json')), 'brand.json');
+  // How the posters will be branded is settled here, before anything is bought: a client that requires the website's real logo is stopped when it cannot be had.
+  let branding: BrandingDecision | undefined;
+  if (route === 'ai' && !values['plan-only']) {
+    const brandingInput = { brand, brandDir, requireAuthenticLogo: values['require-logo'], compositorReady: COMPOSITOR_READY };
+    const decided = resolveBranding(brandingInput);
+    assertMayDraw(decided);
+    branding = freezeLogo(brandDir, decided, logoPathFor(brandingInput, decided));
+    console.log(`    Branding: ${branding.intendedMode} intended, ${branding.appliedMode} applied${branding.reason ? ` (${branding.reason})` : ''}`);
+  }
   const releaseLock = artSettings ? await acquireTenantLock(brandDir) : undefined;
   try {
 
@@ -298,7 +309,7 @@ async function main(): Promise<void> {
       console.log(ai.usage.format());
       const log = process.env['USAGE_LOG_FILE'];
       if (log) await appendUsageLog(log, ai.usage.records(slug, finalPlan.posts.map((p) => `${slug}-${p.id}`)));
-      const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts: finalPlan.posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json') });
+      const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts: finalPlan.posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(branding ? { branding } : {}) });
       console.log(`    ${queued.length} poster${queued.length === 1 ? '' : 's'} added to the owner's review queue.`);
       console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
       return;

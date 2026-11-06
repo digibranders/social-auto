@@ -49,7 +49,7 @@ export async function GET(request: Request): Promise<Response> {
     const status = query.get('status') ?? 'pending';
     if (!STATUS.test(status)) return json(400, { error: 'Invalid request' });
     path = `/review/posts?status=${status}`;
-  } else if (view === 'detail' || view === 'image' || view === 'download') {
+  } else if (view === 'detail' || view === 'image' || view === 'download' || view === 'logo') {
     if (!VERSION_ID.test(id)) return json(400, { error: 'Invalid request' });
     path = `/review/posts/${id}${view === 'detail' ? '' : `/${view}`}`;
   } else {

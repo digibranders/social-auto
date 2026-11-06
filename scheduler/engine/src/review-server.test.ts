@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -136,3 +137,34 @@ test('oversized or malformed bodies are refused', async () => {
     await s.done();
   }
 });
+
+test('the kept logo is shown beside the poster, as a locked-down picture, only when it is still the file that was recorded', async () => {
+  const s = await start();
+  try {
+    const brandDir = join(s.root, 'brands', 'acme');
+    mkdirSync(join(brandDir, 'branding'), { recursive: true });
+    const logo = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 100"><rect width="400" height="100"/></svg>';
+    const sha = createHash('sha256').update(logo).digest('hex');
+    writeFileSync(join(brandDir, 'branding', `${sha}.svg`), logo);
+    const branded = s.stores.acme.addVersion(version(s.pictures('a.jpg', 'acme picture'), { branding: { intendedMode: 'authentic_logo', appliedMode: 'text_only', status: 'awaiting_compositor', logoKind: 'wordmark', logoAssetSha256: sha, logoFile: `branding/${sha}.svg` } }));
+    const shown = await s.call(`/review/posts/${branded.versionId}/logo`);
+    assert.equal(shown.status, 200);
+    assert.equal(shown.headers.get('content-type'), 'image/svg+xml');
+    assert.match(shown.headers.get('content-security-policy') ?? '', /sandbox/);
+    assert.equal(shown.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(await shown.text(), logo);
+    // A poster with no kept logo has none to show.
+    const plain = s.stores.acme.addVersion(version(s.pictures('b.jpg', 'other picture'), { postId: 'w01-d2' }));
+    assert.equal((await s.call(`/review/posts/${plain.versionId}/logo`)).status, 404);
+    // A kept file that no longer matches its recorded hash is not served.
+    writeFileSync(join(brandDir, 'branding', `${sha}.svg`), '<svg onload="x()"/>');
+    assert.equal((await s.call(`/review/posts/${branded.versionId}/logo`)).status, 500);
+    // A record that points outside the brand's folder is not followed.
+    const escaped = s.stores.acme.addVersion(version(s.pictures('c.jpg', 'third picture'), { postId: 'w01-d3', branding: { intendedMode: 'authentic_logo', appliedMode: 'text_only', status: 'awaiting_compositor', logoAssetSha256: sha, logoFile: '../../outside.svg' } }));
+    assert.equal((await s.call(`/review/posts/${escaped.versionId}/logo`)).status, 404);
+    assert.equal((await s.call(`/review/posts/${branded.versionId}/logo`, { auth: false })).status, 401);
+  } finally {
+    await s.done();
+  }
+});
+

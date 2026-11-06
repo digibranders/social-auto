@@ -1,9 +1,9 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
-import { costText, failureText, imageUrl, parseQueue, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { brandingView, costText, failureText, imageUrl, parseBranding, parseQueue, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
-  version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] } };
+  version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
   status: ReviewSummary['status'];
   decision?: { by: string; at: string; reason?: string; comment?: string };
   history: ReviewSummary[];
@@ -84,6 +84,22 @@ function card(post: ReviewSummary, redraw: () => void): HTMLElement {
   return element;
 }
 
+/** Which logo this poster was branded with, or why none was used: the owner is never left to guess whether a real logo is on it. */
+function brandingBlock(versionId: string, raw: unknown): HTMLElement | null {
+  const record = parseBranding(raw);
+  if (!record) return null;
+  const view = brandingView(record);
+  return h(
+    'div',
+    { class: `rv-branding rv-branding-${view.tone}` },
+    h('h3', {}, 'Branding'),
+    h('p', { class: 'rv-branding-head' }, view.headline),
+    h('p', { class: 'muted' }, view.explanation),
+    record.hasLogoFile ? h('img', { class: 'rv-logo', src: imageUrl(versionId, 'logo'), alt: 'The logo that was found on the website' }) : null,
+    h('dl', { class: 'rv-branding-rows' }, ...view.rows.flatMap(([label, value]) => [h('dt', {}, label), h('dd', {}, value)])),
+  );
+}
+
 function detailView(detail: Detail, redraw: () => void): HTMLElement {
   const v = detail.version;
   const decided = detail.status === 'approved' || detail.status === 'rejected';
@@ -121,6 +137,7 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
       h('h3', {}, 'Caption'),
       h('p', { class: 'rv-caption' }, v.caption),
       h('p', { class: 'muted' }, `Link: ${v.ctaUrl}`),
+      brandingBlock(v.versionId, v.branding),
       h('h3', {}, 'What it is based on'),
       ...(v.evidence.length > 0
         ? v.evidence.map((e) => h('blockquote', { class: 'rv-quote' }, `“${e.quote}”`, h('small', {}, e.context ? `${e.context} · ${e.url}` : e.url)))

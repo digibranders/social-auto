@@ -31,6 +31,8 @@ export interface ClientsContext {
   removePlan(client: ClientSummary, index: number): Promise<string | null>;
   /** Changes how many posters a week the website may make for each channel of the client. */
   setLimit(client: ClientSummary, limit: number): Promise<string | null>;
+  /** Sets whether every poster made from the website must carry its real logo. */
+  setLogoRequired(client: ClientSummary, required: boolean): Promise<string | null>;
   /** True once when the New post window sent the owner here to make posters from the website: the plan form then opens by itself. */
   wantsPlanForm(brand: string): boolean;
   disconnect(channel: ChannelHealth): void;
@@ -248,6 +250,18 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
       if (problem) say(problem, true);
     });
   });
+  const logoBox = h('input', { id: `logo-${client.brand}`, type: 'checkbox', ...(client.requireAuthenticLogo ? { checked: 'checked' } : {}) });
+  logoBox.addEventListener('change', () => {
+    logoBox.disabled = true;
+    say('Saving…', false);
+    void ctx.setLogoRequired(client, logoBox.checked).then((problem) => {
+      logoBox.disabled = false;
+      if (problem) {
+        logoBox.checked = !logoBox.checked;
+        say(problem, true);
+      }
+    });
+  });
   const open = button('Add a plan', 'btn', () => {
     form.hidden = false;
     fields.refresh(true);
@@ -264,6 +278,7 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
       h('label', { class: 'label', for: `limit-${client.brand}` }, 'Posters a week for each channel'),
       limitSelect,
     ),
+    h('label', { class: 'check-row', for: `logo-${client.brand}` }, logoBox, h('span', {}, 'Require the website\'s real logo on every poster. When off, a poster uses the brand name as text if no usable logo is found.')),
     h('p', { class: 'muted' }, 'Each plan has its own platforms, days and rhythm. The posters are made from the website and wait in Review until you approve them. Nothing is posted before that.'),
     client.plans.length === 0
       ? h('p', { class: 'muted' }, 'No plan yet. Add one to have posters made.')

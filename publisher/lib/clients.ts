@@ -19,6 +19,8 @@ export interface AddedClient {
   plans?: ClientPlan[];
   /** The most posters a week the website may make for each channel; missing means the default (3). */
   weeklyLimit?: number;
+  /** True when every poster made from the website must carry the website's real logo; otherwise a poster may use the brand name as text when no usable logo exists. Missing means false. */
+  requireAuthenticLogo?: boolean;
 }
 
 export const PLAN_PLATFORMS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
@@ -101,6 +103,7 @@ export function parseClientsFile(raw: unknown): ClientsFile {
         if (c[key] !== undefined && typeof c[key] !== 'string') throw new Error(`clients[${i}].${key} must be a string`);
       }
       if (c['weeklyLimit'] !== undefined && (typeof c['weeklyLimit'] !== 'number' || !Number.isInteger(c['weeklyLimit']) || c['weeklyLimit'] < 1 || c['weeklyLimit'] > MAX_WEEKLY_LIMIT)) throw new Error(`clients[${i}].weeklyLimit must be a whole number from 1 to ${MAX_WEEKLY_LIMIT}`);
+      if (c['requireAuthenticLogo'] !== undefined && typeof c['requireAuthenticLogo'] !== 'boolean') throw new Error(`clients[${i}].requireAuthenticLogo must be true or false`);
       // A client saved by the first version has one `plan`; it is read as a list of one.
       const { plan: single, ...rest } = c as Record<string, unknown>;
       const listed = rest['plans'] !== undefined ? rest['plans'] : single !== undefined ? [single] : undefined;
@@ -169,15 +172,16 @@ export function normalizeWebsite(input: unknown): string {
 }
 
 /** Adds a client, refusing a name that is already a client (planned or added). */
-export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySet<string>, now: number, website?: unknown, plan?: unknown): { file: ClientsFile; brand: string } {
+export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySet<string>, now: number, website?: unknown, plan?: unknown, requireAuthenticLogo?: unknown): { file: ClientsFile; brand: string } {
   const brand = slugFor(name);
   const site = website === undefined || website === null || (typeof website === 'string' && website.trim() === '') ? undefined : normalizeWebsite(website);
   const posting = plan === undefined || plan === null ? undefined : parseClientPlan(plan, now);
   if (posting && !site) throw new EditError('a posting plan needs the client\'s website to make the posts from');
   if (posting) assertWithinLimit([], posting, DEFAULT_WEEKLY_LIMIT, now);
+  if (requireAuthenticLogo !== undefined && typeof requireAuthenticLogo !== 'boolean') throw new EditError('the real-logo setting must be true or false');
   if (existing.has(brand) || file.clients.some((c) => c.brand === brand)) throw new EditError('there is already a client with that name', 409);
   if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many added clients; remove one first');
-  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}), ...(posting ? { plans: [posting] } : {}) }] }, brand };
+  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}), ...(posting ? { plans: [posting] } : {}), ...(requireAuthenticLogo === true ? { requireAuthenticLogo: true } : {}) }] }, brand };
 }
 
 /** Sets or clears (empty) the website of a client added in the dashboard. */
@@ -211,6 +215,15 @@ export function setWeeklyLimit(file: ClientsFile, brand: string, limit: unknown)
   if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > MAX_WEEKLY_LIMIT) throw new EditError(`the limit must be a whole number from 1 to ${MAX_WEEKLY_LIMIT} posts a week`);
   const { weeklyLimit: _old, ...rest } = file.clients[index] as AddedClient;
   return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(limit !== DEFAULT_WEEKLY_LIMIT ? { weeklyLimit: limit } : {}) } : c)) };
+}
+
+/** Sets whether every poster made from the client's website must carry its real logo. False is the default and is not stored. */
+export function setRequireAuthenticLogo(file: ClientsFile, brand: string, required: unknown): ClientsFile {
+  const index = file.clients.findIndex((c) => c.brand === brand);
+  if (index === -1) throw new EditError('only a client added in the dashboard has a logo setting here', 404);
+  if (typeof required !== 'boolean') throw new EditError('the real-logo setting must be true or false');
+  const { requireAuthenticLogo: _old, ...rest } = file.clients[index] as AddedClient;
+  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(required ? { requireAuthenticLogo: true } : {}) } : c)) };
 }
 
 /** Takes one plan off a client (by its place in the list). Posters already made for it stay in the review queue; no more are made. */

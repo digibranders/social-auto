@@ -235,3 +235,21 @@ test('several plans for one client are made one after the other, each remembers 
     r.done();
   }
 });
+
+test('a client that requires a real logo has every batch asked for it, and one stopped for want of a logo does not start the later batches', async () => {
+  const r = root();
+  try {
+    const calls: string[][] = [];
+    const [made] = await makeCampaigns([client({ requireAuthenticLogo: true, plan: { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 31 } })], r.dir, deps({ calls, exec: async (a) => { calls.push(a); return { code: 1, tail: 'Error: LOGO_REQUIRED: The website has no logo picture, only the name.\n' }; } }));
+    assert.ok(calls[0]?.includes('--require-logo'));
+    assert.equal(calls.length, 1, 'the later batches would be stopped the same way');
+    assert.equal(made?.status, 'failed');
+    assert.match(made?.batches[0]?.tail ?? '', /LOGO_REQUIRED/);
+    const others: string[][] = [];
+    await makeCampaigns([client({ brand: 'plain', website: 'https://plain.example.org' })], r.dir, deps({ calls: others }));
+    assert.ok(!others[0]?.includes('--require-logo'));
+  } finally {
+    r.done();
+  }
+});
+
