@@ -243,8 +243,33 @@ export function judgeCreative(manifest: TextManifest, review: CreativeReview, pl
   // The longest texts go first: the address and the headline can contain the brand's name.
   take('the headline', manifest.headline, true, false);
   if (manifest.subline) take('the supporting line', manifest.subline, true, false);
-  take('the web address', manifest.domain, true, false);
-  take('the brand name', manifest.brandName, !brandInHeadline, brandInHeadline);
+  const addressWords = tokens(manifest.domain);
+  const nameWords = tokens(manifest.brandName);
+  if (addressWords.length > 0 && addressWords.length === nameWords.length && addressWords.every((w, i) => w === nameWords[i])) {
+    // A business named after its own address ("Fynix Digital" and "fynix.digital") has two pieces of text that read as the same words. They are told
+    // apart by shape: an address has a dot between letters, a name does not. Each is then required once (the name may be left to the headline).
+    const found = runsOf(rest, addressWords);
+    const whole = review.regions.filter((r) => { const w = tokens(r.text); return w.length === addressWords.length && w.every((x, i) => x === addressWords[i]); });
+    const addressLike = (text: string): boolean => /[\p{L}\p{N}]\.[\p{L}\p{N}]/u.test(text);
+    const addresses = whole.filter((r) => addressLike(r.text)).length;
+    const names = whole.length - addresses;
+    if (whole.length === found.length) {
+      if (addresses === 0) defects.push({ kind: 'missing_text', text: 'the web address' });
+      if (addresses > 1) defects.push({ kind: 'repeated_text', text: 'the web address' });
+      if (names === 0 && !brandInHeadline) defects.push({ kind: 'missing_text', text: 'the brand name' });
+      if (names > 1) defects.push({ kind: 'repeated_text', text: 'the brand name' });
+    } else {
+      // The reader joined them into one region, so only the total can be counted: both once (or the address alone when the headline names the business).
+      const least = brandInHeadline ? 1 : 2;
+      const label = brandInHeadline ? 'the web address' : 'the brand name and the web address, each shown once';
+      if (found.length < least) defects.push({ kind: 'missing_text', text: label });
+      else if (found.length > 2) defects.push({ kind: 'repeated_text', text: label });
+    }
+    for (const start of [...found].reverse()) rest = [...rest.slice(0, start), ...rest.slice(start + addressWords.length)];
+  } else {
+    take('the web address', manifest.domain, true, false);
+    take('the brand name', manifest.brandName, !brandInHeadline, brandInHeadline);
+  }
 
   if (rest.length > 0) defects.push({ kind: 'extra_text', text: rest.join(' ') });
   for (const key of MARK_KEYS) if (review.marks[key]) defects.push({ kind: 'forbidden_mark', mark: key, reason: MARK_REASON[key] });
