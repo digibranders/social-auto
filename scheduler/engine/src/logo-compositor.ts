@@ -229,16 +229,18 @@ const load = (src) => new Promise((resolve, reject) => { const i = new Image(); 
           const D = Number.isFinite(g) ? clamp01(g / 160) : 1;
           // A plate is a last resort: a spot where the logo shows up on its own is preferred to one that needs a plate behind it.
           const C = clamp01(ratio / 7) * (plate ? 0.6 : halo ? 0.85 : 1);
-          // A logo beside the picture's edge sits like a signature; one floating in the middle of the artwork does not. This is a preference, not a rule.
-          const nearest = Math.min(x, y, W - (x + pw), H - (y + ph));
-          const B = 1 - clamp01(nearest / (0.28 * Math.min(W, H)));
+          // A logo in the very corner sits like a signature; one just below the headline or floating in the artwork does not. This is a strong preference, not a rule.
+          // How far the logo is from the very corner (the nearer of its two vertical edges and of its two side edges, from the margin), against the size of the corner zone.
+          const vertical = top ? y - margin : H - margin - (y + ph);
+          const side = Math.min(x - margin, W - margin - (x + pw));
+          const B = 1 - clamp01(Math.hypot(vertical, side) / Math.hypot(P.rules.cornerHeightShare * H, P.rules.cornerWidthShare * W));
           // And it should not sit hard against clutter: the ring just outside it is looked at too.
           const rx = Math.max(0, x - 40), ry = Math.max(0, y - 40), rw = Math.min(W, x + pw + 40) - rx, rh = Math.min(H, y + ph + 40) - ry;
           const ringEdges = (area(sumE, rx, ry, rw, rh) - area(sumE, x, y, pw, ph)) / Math.max(1, rw * rh - pw * ph);
           const R = 1 - clamp01(ringEdges / 0.15);
           // The logo should be easy to see but never louder than the headline: a size near the ideal is preferred, not the smallest or the largest.
           const S = clamp01(1 - Math.abs(share - ideal) / (wordmark ? 0.12 : 0.04));
-          const score = 0.24 * F + 0.24 * E + 0.12 * D + 0.14 * C + 0.12 * B + 0.06 * R + 0.08 * S;
+          const score = 0.2 * F + 0.2 * E + 0.08 * D + 0.14 * C + 0.22 * B + 0.06 * R + 0.1 * S;
           found.push({ x, y, pw, ph, lw, lh, plate, halo, ratio, score, top });
         }
       }

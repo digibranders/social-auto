@@ -81,6 +81,8 @@ export function startMakeStatus(deps: MakeStatusDeps): { refresh(): void } {
   const firstSeen = read<Record<string, number>>(STORE.firstSeen, {});
   let timer: number | undefined;
   let calendarAskedAt = 0;
+  /** What the panel last drew: when nothing changed it is left alone, so a click on it is never lost to a redraw underneath. */
+  let drawn = '';
 
   const dismissKey = (item: StatusItem): string => `${item.key}|${item.updatedAt}`;
 
@@ -104,6 +106,9 @@ export function startMakeStatus(deps: MakeStatusDeps): { refresh(): void } {
       calendarAskedAt = Date.now();
       deps.reloadCalendar();
     }
+    const signature = JSON.stringify([collapsed, shown]);
+    if (signature === drawn) return;
+    drawn = signature;
     panel.hidden = shown.length === 0;
     if (shown.length === 0) return;
     const busy = shown.filter(active).length;

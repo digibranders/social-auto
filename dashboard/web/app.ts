@@ -1267,7 +1267,8 @@ window.addEventListener('hashchange', () => {
 const makeStatus = startMakeStatus({
   clients: () => summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now()).filter((c) => c.plans.length > 0).map((c) => ({ brand: c.brand, label: c.label, plans: c.plans })),
   calendar: () => state.data?.posts,
-  reloadCalendar: () => void load(),
+  // Not while the owner is on the Review page: loading resets what is open there.
+  reloadCalendar: () => { if (state.route.page !== 'review') void load(); },
   openReview: () => go({ page: 'review' }),
 });
 
