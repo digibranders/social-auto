@@ -14,6 +14,8 @@
  * --art adds art direction (a separate model call per plan, measured rendering, review before scheduling). It only runs
  * when the brand's art.json enables it, is switched off by ART_DIRECTION_DISABLED=1, and needs --allow-paid-ai with --dry-run.
  * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
+ * --copy-first (AI route) stops after the posts are written and lists them for the owner to keep or drop; nothing is drawn or paid for.
+ * --draw-kept week-NN.json then draws only the posts the owner kept in that batch, and queues the results for poster review.
  * --plan-only stops after the posts are written (no art direction, pictures or rendering), for a renderer that works from the plan on its own.
  * --review (needs --art) has a vision model look at each finished poster, repairs what can be repaired without a new picture, and rejects the rest
  * (see review-loop.ts). It never approves anything. --review-budget caps what review and repair may spend per batch, in dollars.
@@ -38,7 +40,8 @@ import { checkBrandIdentity, checkEvidence, checkLanguage, PreflightError } from
 import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
-import { parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
+import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
+import { CopyStage } from './copy-stage.ts';
 import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
 import { recordRenderedArt } from './art-review.ts';
 import { reviewAndRepair } from './review-loop.ts';
@@ -139,6 +142,8 @@ async function main(): Promise<void> {
       'semantic-check': { type: 'boolean', default: false },
       review: { type: 'boolean', default: false },
       'plan-only': { type: 'boolean', default: false },
+      'copy-first': { type: 'boolean', default: false },
+      'draw-kept': { type: 'string' },
       'review-budget': { type: 'string', default: '0.015' },
       'allow-paid-ai': { type: 'boolean', default: false },
       target: { type: 'string', default: 'scheduler' },
@@ -201,7 +206,7 @@ async function main(): Promise<void> {
       values.start ?? chooseStartDate(await lastPlannedDate(brandDir), tomorrowAt(values['utc-offset']));
     const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
     ai.usage.purpose = 'writing';
-    console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
+    if (!values['draw-kept']) console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
     const loaded = await loadFacts(brandDir);
     const reviewed = loaded ? applyReview(loaded.facts.filter((f) => f.status === 'usable'), await loadReview(brandDir)) : undefined;
     if (loaded && reviewed) console.log(`    Evidence facts: ${loaded.facts.filter((f) => f.status === 'usable').length} usable of ${loaded.facts.length} (built ${loaded.file.builtAt.slice(0, 10)}); ${reviewed.mode === 'approved_only' ? `${reviewed.approved} approved by the owner are used` : 'none approved yet, all usable are eligible'}.`);
@@ -220,6 +225,44 @@ async function main(): Promise<void> {
       for (const warning of findings) console.log(`    WARNING ${warning.code}: ${warning.reason}`);
       // A business that could not be confirmed gets no purchased picture; the poster still renders with the verified name and its own text.
       if (findings.some((f) => f.code === 'BRAND_UNVERIFIED')) ai.ledger?.disablePictures();
+    }
+    // Draws the given posts with the picture model and queues what is accepted for the owner's poster review. Nothing is scheduled or published.
+    const drawPosters = async (finalPlan: WeekPlan, planFile: string): Promise<void> => {
+      if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
+      // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
+      const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
+      console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
+      const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai`);
+      const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+      ai.usage.purpose = 'writing';
+      const made = await makeCreatives({
+        ai, brand, brandSlug: slug, brandDir, posts: finalPlan.posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled,
+        factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
+      });
+      const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
+      console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${finalPlan.posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
+      if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
+      console.log(ai.usage.format());
+      const log = process.env['USAGE_LOG_FILE'];
+      if (log) await appendUsageLog(log, ai.usage.records(slug, finalPlan.posts.map((p) => `${slug}-${p.id}`)));
+      const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts: finalPlan.posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json') });
+      console.log(`    ${queued.length} poster${queued.length === 1 ? '' : 's'} added to the owner's review queue.`);
+      console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
+    };
+    if (values['draw-kept']) {
+      const keptFile = values['draw-kept'];
+      if (route !== 'ai') throw new Error('--draw-kept belongs to the fully AI route');
+      if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
+      const copy = new CopyStage(brandDir, slug);
+      const stored = parseWeekPlan(await readJson(join(brandDir, keptFile)), keptFile);
+      const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p) })));
+      for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
+      if (postIds.length === 0) throw new Error(`${keptFile} has no kept posts to draw: keep at least one in the dashboard first`);
+      // The batch is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
+      copy.markDrawn(keptFile);
+      console.log(`3/4 Drawing ${postIds.length} kept post${postIds.length === 1 ? '' : 's'} of ${keptFile}…`);
+      await drawPosters({ ...stored, renderMode: 'ai_v1', posts: stored.posts.filter((p) => postIds.includes(p.id)) }, keptFile);
+      return;
     }
     if (values['semantic-check'] && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--semantic-check makes one model request per batch of posts: with --dry-run it needs --allow-paid-ai');
     const verdicts = values['semantic-check'] ? await fileCache(join(brandDir, 'semantic-verdicts.json')) : undefined;
@@ -277,27 +320,13 @@ async function main(): Promise<void> {
     history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(plan.posts.some((p) => p.factIds) ? { factIds: plan.posts.flatMap((p) => p.factIds ?? []) } : {}) });
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
+    if (route === 'ai' && values['copy-first'] && !values['plan-only']) {
+      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p) })));
+      console.log(`3/4 Copy first: ${finalPlan.posts.length} posts are waiting for the owner to keep or drop them. No picture was bought. Then: --draw-kept ${planFile}`);
+      return;
+    }
     if (route === 'ai' && !values['plan-only']) {
-      if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
-      // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
-      const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
-      console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
-      const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai`);
-      const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
-      ai.usage.purpose = 'writing';
-      const made = await makeCreatives({
-        ai, brand, brandSlug: slug, brandDir, posts: finalPlan.posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled,
-        factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
-      });
-      const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
-      console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${finalPlan.posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
-      if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
-      console.log(ai.usage.format());
-      const log = process.env['USAGE_LOG_FILE'];
-      if (log) await appendUsageLog(log, ai.usage.records(slug, finalPlan.posts.map((p) => `${slug}-${p.id}`)));
-      const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts: finalPlan.posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json') });
-      console.log(`    ${queued.length} poster${queued.length === 1 ? '' : 's'} added to the owner's review queue.`);
-      console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
+      await drawPosters(finalPlan, planFile);
       return;
     }
     if (values['plan-only']) {

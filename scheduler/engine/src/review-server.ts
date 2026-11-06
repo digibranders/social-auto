@@ -9,6 +9,8 @@
  *   GET  /review/posts/<versionId>/download                                        the picture, approved versions only
  *   POST /review/posts/<versionId>/approve   {"by":"..."}
  *   POST /review/posts/<versionId>/reject    {"by":"...","reason":"...","comment":"..."}
+ *   GET  /review/copy                                                              the written posts waiting to be kept or dropped, before any picture is bought
+ *   POST /review/copy/<brand>/<week-NN.json>/<postId>/keep|drop   {"by":"..."}
  *
  * Everything is decided here, on the server, by the review store: the browser never says what is approvable. A version id names its brand
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
@@ -19,6 +21,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
+import { CopyStage, CopyStageError } from './copy-stage.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
@@ -40,6 +43,7 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
 const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503 };
 
 function fail(res: ServerResponse, error: unknown): void {
+  if (error instanceof CopyStageError) return send(res, COPY_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof ReviewError) {
     // An integrity failure is reported without its details: the file names are for the operator's log, not the browser.
     if (error.code === 'TAMPERED') console.error(`review integrity: ${error.message}`);
@@ -48,6 +52,8 @@ function fail(res: ServerResponse, error: unknown): void {
   console.error(error instanceof Error ? `${error.name}: ${error.message}` : String(error));
   send(res, 500, { error: 'Internal error' });
 }
+
+const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, LOCKED: 503 };
 
 const authorised = (req: IncomingMessage, secret: string): boolean => {
   const given = Buffer.from(String(req.headers['authorization'] ?? '').replace(/^Bearer\s+/i, ''));
@@ -102,6 +108,20 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       if (!authorised(req, options.secret)) return send(res, 401, { error: 'Not allowed' });
       const url = new URL(req.url ?? '/', 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
+      if (parts[0] === 'review' && parts[1] === 'copy') {
+        if (parts.length === 2 && req.method === 'GET') {
+          const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list()).filter((b) => !b.drawnAt);
+          return send(res, 200, { batches: batches.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+        }
+        const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
+        if (parts.length === 6 && req.method === 'POST' && (verb === 'keep' || verb === 'drop')) {
+          if (!BRAND.test(brand) || !brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const by = text((await readJson(req))['by'], 80);
+          const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
+          return send(res, 200, { batch });
+        }
+        return send(res, 404, { error: 'Not found' });
+      }
       if (parts[0] !== 'review' || parts[1] !== 'posts') return send(res, 404, { error: 'Not found' });
 
       if (parts.length === 2) {

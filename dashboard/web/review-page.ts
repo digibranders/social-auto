@@ -9,7 +9,11 @@ interface Detail {
   history: ReviewSummary[];
 }
 
+interface CopyBatch { brand: string; planFile: string; posts: Array<{ postId: string; headline: string; caption: string; state: 'pending' | 'kept' | 'dropped' }> }
+
 interface State {
+  /** Written posts waiting to be kept or dropped, before any picture is bought. */
+  copy: CopyBatch[];
   filter: ReviewFilter;
   /** "cards": one poster at a time. "compare": the whole batch side by side. */
   view: 'cards' | 'compare';
@@ -24,7 +28,7 @@ interface State {
   rejecting: boolean;
 }
 
-const state: State = { filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
+const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
 
 async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: unknown }> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
@@ -36,8 +40,53 @@ async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; sta
   return { ok: response.ok, status: response.status, body };
 }
 
+async function loadCopy(redraw: () => void): Promise<void> {
+  const result = await call('/api/review?view=copy').catch(() => null);
+  const batches = (result?.body as { batches?: unknown } | null)?.batches;
+  if (result?.ok && Array.isArray(batches)) state.copy = batches as CopyBatch[];
+  redraw();
+}
+
+async function chooseCopy(batch: CopyBatch, postId: string, action: 'keep' | 'drop', redraw: () => void): Promise<void> {
+  state.busy = true;
+  state.error = null;
+  redraw();
+  const result = await call('/api/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ copy: { brand: batch.brand, planFile: batch.planFile, postId, action } }) }).catch(() => null);
+  state.busy = false;
+  if (!result?.ok) state.error = result ? failureText(result.body, result.status) : 'Your choice could not be saved. Nothing changed.';
+  await loadCopy(redraw);
+}
+
+function copyView(redraw: () => void): HTMLElement | null {
+  const open = state.copy.filter((b) => b.posts.length > 0);
+  if (open.length === 0) return null;
+  return h(
+    'section',
+    { class: 'rv-copy', 'aria-label': 'Written posts waiting for your choice' },
+    h('h3', {}, 'Written posts: keep the ones you want drawn'),
+    h('p', { class: 'rv-hint' }, 'No picture has been bought yet. Only the posts you keep will be drawn.'),
+    ...open.map((batch) => h(
+      'div',
+      { class: 'rv-copy-batch' },
+      h('b', {}, `${batch.brand} · ${batch.planFile}`),
+      ...batch.posts.map((post) => h(
+        'div',
+        { class: `rv-copy-post rv-copy-${post.state}` },
+        h('p', {}, h('b', {}, post.headline)),
+        h('p', {}, post.caption),
+        h('div', { class: 'rv-actions' },
+          h('span', {}, post.state === 'kept' ? 'Kept' : post.state === 'dropped' ? 'Dropped' : 'Waiting for you'),
+          button('Keep', `btn${post.state === 'kept' ? ' btn-primary' : ''}`, () => void chooseCopy(batch, post.postId, 'keep', redraw), `Keep: ${post.headline}`),
+          button('Drop', 'btn', () => void chooseCopy(batch, post.postId, 'drop', redraw), `Drop: ${post.headline}`),
+        ),
+      )),
+    )),
+  );
+}
+
 async function loadQueue(redraw: () => void): Promise<void> {
   state.error = null;
+  void loadCopy(redraw);
   const result = await call(`/api/review?view=list&status=${queryStatus(state.filter)}`).catch(() => null);
   if (!result?.ok) state.error = result ? failureText(result.body, result.status) : 'The review queue could not be reached.';
   else {
@@ -183,6 +232,7 @@ export function reviewPage(redraw: () => void): HTMLElement {
     state.notice ? h('p', { class: 'rv-notice', role: 'status' }, state.notice) : null,
     state.error ? h('p', { class: 'rv-error', role: 'alert' }, state.error) : null,
     ...state.problems.map((p) => h('p', { class: 'rv-error', role: 'alert' }, p)),
+    copyView(redraw),
     tabs,
     state.queue === null && !state.error ? h('p', { class: 'empty' }, 'Loading…') : null,
     views,

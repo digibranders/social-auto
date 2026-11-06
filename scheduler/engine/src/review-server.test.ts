@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createReviewServer } from './review-server.ts';
 import { ReviewStore, type NewVersion } from './review-store.ts';
+import { CopyStage } from './copy-stage.ts';
 
 const SECRET = 'test-secret-0123456789';
 
@@ -154,6 +155,29 @@ test('only one review service may run on a brands folder: the second refuses to 
   } finally {
     first.kill('SIGTERM');
     await new Promise((resolve) => first.on('close', resolve));
+    await s.done();
+  }
+});
+
+test('written posts are listed, kept or dropped through the service, and a batch that was drawn disappears from the list', async () => {
+  const s = await start();
+  try {
+    const stage = new CopyStage(join(s.root, 'brands', 'acme'), 'acme');
+    stage.open('week-01.json', [{ postId: 'p1', headline: 'Answers from your own docs', caption: 'Caption one.' }, { postId: 'p2', headline: 'Find it fast', caption: 'Caption two.' }]);
+    const list = (await (await s.call('/review/copy')).json()) as { batches: Array<{ brand: string; posts: Array<{ state: string }> }> };
+    assert.equal(list.batches.length, 1);
+    assert.deepEqual(list.batches[0]?.posts.map((p) => p.state), ['pending', 'pending']);
+    const kept = await s.call('/review/copy/acme/week-01.json/p1/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal(kept.status, 200);
+    assert.equal(stage.get('week-01.json').posts[0]?.state, 'kept');
+    assert.equal((await s.call('/review/copy/acme/week-01.json/p2/drop', { method: 'POST', body: JSON.stringify({}) })).status, 400, 'who decided must be given');
+    assert.equal((await s.call('/review/copy/acme/week-01.json/zz/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404);
+    assert.equal((await s.call('/review/copy/nope/week-01.json/p1/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404);
+    assert.equal((await s.call('/review/copy', { auth: false })).status, 401);
+    stage.markDrawn('week-01.json');
+    assert.equal((await s.call('/review/copy/acme/week-01.json/p2/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 409);
+    assert.deepEqual(((await (await s.call('/review/copy')).json()) as { batches: unknown[] }).batches, []);
+  } finally {
     await s.done();
   }
 });
