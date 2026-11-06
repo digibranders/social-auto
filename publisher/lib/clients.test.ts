@@ -167,7 +167,7 @@ test('a plan keeps the time of day it was given, and a time that has already pas
 });
 
 
-import { bindPlanChannels } from './clients.ts';
+import { bindPlanChannels, clientFeedDetails } from './clients.ts';
 
 const chan = (id: string, brand = 'oye-chats') => ({ id, platform: id.slice(0, id.indexOf(':')) as 'facebook' | 'linkedin' | 'google' | 'instagram', brand });
 
@@ -200,4 +200,13 @@ test('adding a plan binds it when the connected accounts are known, and a plan w
   const chosen = addPlan(made, 'oye-chats', planOf({ platforms: ['linkedin'], startDate: '2026-11-09', channelIds: ['linkedin:def'] }), NOW_MS, [chan('linkedin:abc'), chan('linkedin:def')]);
   assert.deepEqual(chosen.clients[0]?.plans?.[0]?.channelIds, ['linkedin:def']);
   assert.equal(parseClientsFile(JSON.parse(JSON.stringify(chosen))).clients[0]?.plans?.[0]?.channelIds?.[0], 'linkedin:def', 'it survives a save and a load');
+});
+
+test('the feed describes an added client with its effective weekly limit, its plans and its settings, only the parts it has', () => {
+  const bare = { brand: 'a', createdAt: 'x' };
+  assert.deepEqual(clientFeedDetails(bare), { weeklyLimit: 2 }, 'a client with nothing set still gets the default limit');
+  const full = { brand: 'oye-chats', createdAt: 'x', name: 'Oye Chats', product: 'brandbasket', website: 'https://oyechats.com', weeklyLimit: 4, requireAuthenticLogo: true, plans: [parseClientPlan(planOf(), NOW_MS)] };
+  assert.deepEqual(Object.keys(clientFeedDetails(full)).sort(), ['name', 'plans', 'product', 'requireAuthenticLogo', 'website', 'weeklyLimit']);
+  assert.equal(clientFeedDetails(full).weeklyLimit, 4);
+  assert.equal(clientFeedDetails({ ...full, plans: [] }).plans, undefined, 'no plans are listed when there are none');
 });

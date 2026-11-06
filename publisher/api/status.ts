@@ -19,7 +19,7 @@ import { toScheduled } from '../lib/manual.js';
 import { brandIsPaused, isPaused, type PauseFile } from '../lib/pauses.js';
 import { buildStatus, isWantedOn, parseSchedule, type StatusPost } from '../lib/schedule.js';
 import { loadCosts } from '../lib/usage.js';
-import { DEFAULT_WEEKLY_LIMIT } from '../lib/quota.js';
+import { clientFeedDetails } from '../lib/clients.js';
 import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted } from '../lib/store.js';
 
 /** Instagram is asked at most once a minute per warm function instance, however many people look. */
@@ -157,7 +157,11 @@ export async function GET(request: Request): Promise<Response> {
         })),
       ],
       ...summary,
-      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}), ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}) }))],
+      runway: [
+        // A client added in the dashboard that already has posts on the calendar keeps its plans, limit and settings: they are not lost because posts exist.
+        ...summary.runway.map((r) => { const c = added.clients.find((a) => a.brand === r.brand); return c ? { ...r, ...clientFeedDetails(c) } : r; }),
+        ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...clientFeedDetails(c) })),
+      ],
       posts: summary.posts.map((p) => withPauses(withCrossposts(p, channels, posted, now, pauses), pauses)),
       // The cost view is a nicety: if its log is unreadable the rest of the status must still load.
       costs: await loadCosts(process.env['USAGE_LOG_FILE']).catch((error: unknown) => {
