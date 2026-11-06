@@ -2,7 +2,7 @@ import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
 import { channelLabel, channelsFor, channelToken, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
 import { isWantedOn } from './schedule.js';
 import type { LinkedInPost, Visibility } from './linkedin.js';
-import { DUE_WINDOW_MS } from './schedule.js';
+import { dueWindowFor } from './schedule.js';
 import { googleSummary, type GooglePost } from './google.js';
 
 /** What the posting code needs from Facebook; the real one is lib/facebook.ts, tests use stubs. */
@@ -279,7 +279,7 @@ export interface CrosspostStatus {
 
 /** Where a post stands on every connected channel of its client, for the dashboard. */
 export function crosspostStatusFor(
-  post: { id: string; brand?: string; date: string; channels?: string[]; skipped?: boolean },
+  post: { id: string; brand?: string; date: string; channels?: string[]; skipped?: boolean; manual?: boolean; ownTime?: boolean },
   channels: ChannelFile,
   log: PostedLog,
   now: number,
@@ -296,9 +296,9 @@ export function crosspostStatusFor(
       if (done?.skipped) state = 'skipped';
       else if (done) state = 'published';
       else if (post.skipped) state = 'skipped';
-      else if (held && (at > now || now - at < DUE_WINDOW_MS)) state = 'paused';
+      else if (held && (at > now || now - at < dueWindowFor(post))) state = 'paused';
       else if (at > now) state = 'scheduled';
-      else if (now - at < DUE_WINDOW_MS) state = 'due';
+      else if (now - at < dueWindowFor(post)) state = 'due';
       else state = 'missed';
       return { id: channel.id, platform: channel.platform, account: channelLabel(channel), state, permalink: done?.skipped ? null : (done?.permalink ?? null) };
     });
