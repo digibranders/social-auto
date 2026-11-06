@@ -2,6 +2,7 @@
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import { planPayload, planSentence } from '../shared/posting-plan.ts';
 import { planFields } from './add-client.ts';
+import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
 import { websiteHost, type ClientSummary } from './clients.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
@@ -28,6 +29,10 @@ export interface ClientsContext {
   addPlan(client: ClientSummary, plan: Record<string, unknown>): Promise<string | null>;
   /** Takes the plan at this place off the client; resolves to an explanation when it could not be. */
   removePlan(client: ClientSummary, index: number): Promise<string | null>;
+  /** Changes how many posters a week the website may make for each channel of the client. */
+  setLimit(client: ClientSummary, limit: number): Promise<string | null>;
+  /** True once when the New post window sent the owner here to make posters from the website: the plan form then opens by itself. */
+  wantsPlanForm(brand: string): boolean;
   disconnect(channel: ChannelHealth): void;
   /** Whether everything is paused. */
   allPaused(): boolean;
@@ -217,7 +222,7 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
     message.textContent = text;
     message.classList.toggle('is-error', error);
   };
-  const fields = planFields(`newplan-${client.brand}`);
+  const fields = planFields(`newplan-${client.brand}`, { existing: client.plans, limit: client.weeklyLimit });
   const save = button('Add this plan', 'btn btn-primary', () => {
     const chosen = fields.read(true);
     if (!chosen.plan) return say(chosen.problem ?? 'Choose what to post.', true);
@@ -234,14 +239,31 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
     control.addEventListener('input', () => fields.refresh(true));
     control.addEventListener('change', () => fields.refresh(true));
   }
+  const limitSelect = h('select', { id: `limit-${client.brand}`, class: 'text-input limit-select', 'aria-label': 'Posters a week for each channel' }, ...Array.from({ length: MAX_WEEKLY_LIMIT }, (_, i) => i + 1).map((n) => h('option', { value: String(n), ...(n === client.weeklyLimit ? { selected: 'selected' } : {}) }, String(n))));
+  limitSelect.addEventListener('change', () => {
+    limitSelect.disabled = true;
+    say('Saving…', false);
+    void ctx.setLimit(client, Number(limitSelect.value)).then((problem) => {
+      limitSelect.disabled = false;
+      if (problem) say(problem, true);
+    });
+  });
   const open = button('Add a plan', 'btn', () => {
     form.hidden = false;
     fields.refresh(true);
   });
+  if (ctx.wantsPlanForm(client.brand)) {
+    form.hidden = false;
+    fields.refresh(true);
+  }
   return h(
     'div',
     { class: 'panel-card plans-card' },
     h('div', { class: 'card-head' }, h('h2', {}, 'Posting plans'), open),
+    h('div', { class: 'limit-row' },
+      h('label', { class: 'label', for: `limit-${client.brand}` }, 'Posters a week for each channel'),
+      limitSelect,
+    ),
     h('p', { class: 'muted' }, 'Each plan has its own platforms, days and rhythm. The posters are made from the website and wait in Review until you approve them. Nothing is posted before that.'),
     client.plans.length === 0
       ? h('p', { class: 'muted' }, 'No plan yet. Add one to have posters made.')

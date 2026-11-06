@@ -381,3 +381,30 @@ test('people in the pipeline: more prominent people than the batch may have reje
     ctx.done();
   }
 });
+
+test('a business named after its own address: the name and the address together are accepted, one alone or three are not, and it is the same for any such business', () => {
+  const same: TextManifest = { headline: 'How can B2B companies earn trust?', brandName: 'Fynix Digital', domain: 'fynix.digital' };
+  assert.equal(judgeCreative(same, review(['How can', 'B2B companies earn trust?', 'Fynix Digital', 'fynix.digital'])).accepted, true);
+  const onlyOne = judgeCreative(same, review(['How can B2B companies earn trust?', 'fynix.digital']));
+  assert.deepEqual(onlyOne.defects.map((d) => d.kind), ['missing_text']);
+  const three = judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital', 'fynix.digital', 'Fynix Digital']));
+  assert.deepEqual(three.defects.map((d) => d.kind), ['repeated_text']);
+  assert.ok(!judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital', 'fynix.digital', 'Free quote'])).accepted, 'other text is still extra');
+  // When the headline already names the business, the address alone is enough, and the name may also be shown.
+  const named: TextManifest = { headline: 'Why Fynix Digital earns trust', brandName: 'Fynix Digital', domain: 'fynix.digital' };
+  assert.equal(judgeCreative(named, review(['Why Fynix Digital earns trust', 'fynix.digital'])).accepted, true);
+  assert.equal(judgeCreative(named, review(['Why Fynix Digital earns trust', 'Fynix Digital', 'fynix.digital'])).accepted, true);
+  assert.deepEqual(judgeCreative(named, review(['Why Fynix Digital earns trust'])).defects.map((d) => d.kind), ['missing_text']);
+});
+
+test('a business named after its own address: the name shown twice with no address is rejected, and the address twice with no name is too', () => {
+  const same: TextManifest = { headline: 'How can B2B companies earn trust?', brandName: 'Fynix Digital', domain: 'fynix.digital' };
+  const nameTwice = judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital', 'Fynix Digital']));
+  assert.deepEqual(nameTwice.defects.map((d) => [d.kind, (d as { text?: string }).text]), [['missing_text', 'the web address'], ['repeated_text', 'the brand name']]);
+  const addressTwice = judgeCreative(same, review(['How can B2B companies earn trust?', 'fynix.digital', 'fynix.digital']));
+  assert.deepEqual(addressTwice.defects.map((d) => [d.kind, (d as { text?: string }).text]), [['repeated_text', 'the web address'], ['missing_text', 'the brand name']]);
+  // A sign-off the reader returns as one line shows both; only the total can be counted then.
+  assert.equal(judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital fynix.digital'])).accepted, true);
+  assert.equal(judgeCreative(same, review(['How can B2B companies earn trust?', 'fynix.digital'])).accepted, false, 'one piece of text cannot be both');
+});
+
