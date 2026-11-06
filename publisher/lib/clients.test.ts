@@ -60,14 +60,14 @@ test('a client can be added with a website, and its website can be changed and c
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', website: 5 }] }), /website/);
 });
 
-import { parseClientPlan, setPlan } from './clients.ts';
+import { MAX_PLANS_PER_CLIENT, addPlan, parseClientPlan, removePlan } from './clients.ts';
 
 const NOW_MS = Date.parse('2026-11-05T12:00:00Z');
 const planOf = (over: Record<string, unknown> = {}) => ({ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1, ...over });
 
 test('a client can be added with a posting plan, which is checked and saved with it', () => {
   const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com', planOf({ durationDays: 31, postsPerWeek: 3, platforms: ['facebook', 'instagram'] }));
-  assert.deepEqual(made.file.clients[0]?.plan, { platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 31, time: '10:00', utcOffset: '+05:30', postsPerWeek: 3 });
+  assert.deepEqual(made.file.clients[0]?.plans, [{ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 31, time: '10:00', utcOffset: '+05:30', postsPerWeek: 3 }]);
   assert.equal(made.file.clients[0]?.website, 'https://oyechats.com');
   assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(made.file))), made.file, 'it survives a save and a load');
 });
@@ -83,7 +83,7 @@ test('a posting plan needs the website, and a plan that is not sensible is refus
   assert.throws(add('oyechats.com', planOf({ postsPerWeek: 9, durationDays: 7 })), /1 to 7/);
   assert.throws(add('oyechats.com', planOf({ weekdays: ['funday'], durationDays: 7 })), /weekdays/);
   assert.throws(add('oyechats.com', planOf({ time: '99:00' })), /time must look like/);
-  assert.equal(addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file.clients[0]?.plan, undefined, 'a plan is optional');
+  assert.equal(addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file.clients[0]?.plans, undefined, 'a plan is optional');
 });
 
 test('exact weekdays are kept in week order and win over posts per week', () => {
@@ -96,15 +96,30 @@ test('a saved plan may have a start date that has passed, but is not accepted as
   const old = planOf({ startDate: '2026-10-01' });
   assert.doesNotThrow(() => parseClientPlan(old, NOW_MS, { allowPast: true }));
   assert.throws(() => parseClientPlan(old, NOW_MS), /in the past/);
-  assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', website: 'https://a.example', plan: { platforms: [] } }] }), /plan is not valid/);
+  assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', website: 'https://a.example', plans: [{ platforms: [] }] }] }), /plans\[0\] is not valid/);
 });
 
-test('a plan can be set or cleared later, for an added client with a website only', () => {
+test('plans can be added and removed later, for an added client with a website only, and each keeps its own platforms', () => {
   const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
-  const withPlan = setPlan(made, 'oye-chats', planOf(), NOW_MS);
-  assert.equal(withPlan.clients[0]?.plan?.platforms.length, 2);
-  assert.equal(setPlan(withPlan, 'oye-chats', null, NOW_MS).clients[0]?.plan, undefined);
-  assert.throws(() => setPlan(made, 'nobody', planOf(), NOW_MS), /only a client added in the dashboard/);
+  const one = addPlan(made, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 31, postsPerWeek: 3 }), NOW_MS);
+  const two = addPlan(one, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 31, postsPerWeek: 1 }), NOW_MS);
+  assert.deepEqual(two.clients[0]?.plans?.map((p) => [p.platforms, p.postsPerWeek]), [[['instagram'], 3], [['linkedin'], 1]]);
+  assert.throws(() => addPlan(two, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 31, postsPerWeek: 1 }), NOW_MS), /already there/);
+  const left = removePlan(two, 'oye-chats', 0);
+  assert.deepEqual(left.clients[0]?.plans?.map((p) => p.platforms), [['linkedin']]);
+  assert.equal(removePlan(left, 'oye-chats', 0).clients[0]?.plans, undefined, 'the last plan removed leaves no plans');
+  assert.throws(() => removePlan(left, 'oye-chats', 5), /not found/);
+  assert.throws(() => removePlan(left, 'oye-chats', 'first'), /not found/);
+  assert.throws(() => addPlan(made, 'nobody', planOf(), NOW_MS), /only a client added in the dashboard/);
   const noSite = addClient({ clients: [] }, 'No Site', new Set(), NOW_MS).file;
-  assert.throws(() => setPlan(noSite, 'no-site', planOf(), NOW_MS), /add the client's website first/);
+  assert.throws(() => addPlan(noSite, 'no-site', planOf(), NOW_MS), /add the client's website first/);
+});
+
+test('a client saved with the first version\'s single plan reads as a list of one, and the number of plans is limited', () => {
+  const legacy = parseClientsFile({ clients: [{ brand: 'old', createdAt: 'x', website: 'https://old.example', plan: planOf() }] });
+  assert.equal(legacy.clients[0]?.plans?.length, 1);
+  assert.ok(!('plan' in (legacy.clients[0] as object)));
+  let file = addClient({ clients: [] }, 'Busy', new Set(), NOW_MS, 'busy.com').file;
+  for (let n = 0; n < MAX_PLANS_PER_CLIENT; n += 1) file = addPlan(file, 'busy', planOf({ startDate: `2026-11-${String(10 + n).padStart(2, '0')}` }), NOW_MS);
+  assert.throws(() => addPlan(file, 'busy', planOf({ startDate: '2026-12-01' }), NOW_MS), /at most/);
 });

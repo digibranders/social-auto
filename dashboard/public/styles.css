@@ -554,3 +554,7 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .plan-summary p { margin: .15rem 0; }
 .plan-summary.is-error { background: rgba(255, 90, 90, .12); }
 .plan-line { margin-top: .6rem; }
+.plan-list { list-style: none; margin: .5rem 0; padding: 0; display: grid; gap: .4rem; }
+.plan-item { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .5rem .75rem; border: 1px solid var(--cell-border); border-radius: var(--radius); }
+.plans-card .plan-box[hidden] { display: none; }
+

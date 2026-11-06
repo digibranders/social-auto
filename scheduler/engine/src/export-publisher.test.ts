@@ -38,7 +38,11 @@ function aiBrand(platforms?: string[]): { root: string; brandDir: string; publis
   mkdirSync(brandDir, { recursive: true });
   const post = (id: string, date: string) => ({ id, date, painPoint: 'p', mode: 'ai', headline: 'Answers from your own docs', subline: '', caption: 'Hook.\n\nFacts.', hashtags: ['#a'], imagePrompt: 'a picture' });
   writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify({ brand: 'oyechats', timezone: '+05:30', renderMode: 'ai_v1', posts: [post('w01-d1', '2099-11-10T10:00:00+05:30'), post('w01-d2', '2099-11-12T10:00:00+05:30')] }));
-  if (platforms) writeFileSync(join(brandDir, 'campaign.json'), JSON.stringify({ campaign: 'abc', platforms }));
+  // The campaign runner's record of which plan (and so which platforms) wrote week-01.json.
+  if (platforms) {
+    mkdirSync(join(brandDir, 'campaigns'), { recursive: true });
+    writeFileSync(join(brandDir, 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', plan: { platforms }, batches: [{ index: 0, dates: ['2099-11-10'], status: 'done', weekFile: 'week-01.json' }] }));
+  }
   const picture = join(root, 'p.jpg');
   writeFileSync(picture, 'approved picture');
   const store = new ReviewStore(brandDir, 'oyechats');
@@ -67,6 +71,23 @@ test('with no campaign the export has no channel list, so the post goes to every
   try {
     const posts = await exportToPublisher(b.brandDir, b.publisher);
     assert.equal(posts[0]?.channels, undefined);
+  } finally {
+    b.done();
+  }
+});
+
+test('two plans of one client keep their own platforms: each week file goes where its own plan says', async () => {
+  const b = aiBrand(['instagram']);
+  try {
+    // A second plan (LinkedIn only) wrote week-02.json, with its own approved poster.
+    const post = { id: 'w02-d1', date: '2099-11-11T10:00:00+05:30', painPoint: 'p', mode: 'ai', headline: 'Answers from your own docs', subline: '', caption: 'Hook.\n\nFacts.', hashtags: ['#a'], imagePrompt: 'a picture' };
+    writeFileSync(join(b.brandDir, 'week-02.json'), JSON.stringify({ brand: 'oyechats', timezone: '+05:30', renderMode: 'ai_v1', posts: [post] }));
+    writeFileSync(join(b.brandDir, 'campaigns', 'def.json'), JSON.stringify({ id: 'def', plan: { platforms: ['linkedin'] }, batches: [{ index: 0, dates: ['2099-11-11'], status: 'done', weekFile: 'week-02.json' }] }));
+    const store = new ReviewStore(b.brandDir, 'oyechats');
+    const v = store.addVersion({ postId: 'w02-d1', planFile: 'week-02.json', headline: 'Answers from your own docs', caption: 'Approved caption of w02-d1', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], imagePath: join(b.root, 'p.jpg'), validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.02 });
+    store.approve(v.versionId, 'owner');
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.deepEqual(posts.map((p) => [p.id, p.channels]), [['oyechats-w01-d1', ['instagram']], ['oyechats-w02-d1', ['linkedin']]]);
   } finally {
     b.done();
   }

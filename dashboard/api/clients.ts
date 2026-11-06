@@ -1,6 +1,7 @@
 /**
  * POST /api/clients?action=add       body: {"name": "...", "website": "...", "plan": {...}}   (website and plan are optional; a plan needs the website)
- * POST /api/clients?action=set-plan  body: {"brand": "...", "plan": {...} or null}
+ * POST /api/clients?action=add-plan     body: {"brand": "...", "plan": {...}}   (one more plan)
+ * POST /api/clients?action=remove-plan  body: {"brand": "...", "index": 0}
  * POST /api/clients?action=set-website  body: {"brand": "...", "website": "..."}  (empty clears it)
  * POST /api/clients?action=remove    body: {"brand": "..."}
  * Adds or removes a client in the dashboard. Signed-in people only, from this site's own pages only; the
@@ -9,7 +10,7 @@
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
-const ACTIONS = ['add', 'set-website', 'set-plan', 'remove'] as const;
+const ACTIONS = ['add', 'set-website', 'add-plan', 'remove-plan', 'remove'] as const;
 const MAX_BODY_BYTES = 4 * 1024;
 const TIMEOUT_MS = 25_000;
 

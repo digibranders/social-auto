@@ -1031,6 +1031,30 @@ async function saveWebsite(client: ClientSummary, website: string): Promise<stri
   }
 }
 
+/** Sends one plan change for a client added in the dashboard; resolves to an explanation when it did not work. */
+async function changePlans(action: 'add-plan' | 'remove-plan', body: Record<string, unknown>, done: string): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/clients?action=${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (response.status === 401) {
+      location.replace('/login');
+      return 'You were signed out.';
+    }
+    const reply: unknown = await response.json().catch(() => null);
+    if (!response.ok) return messageOf(reply) ?? `The server answered ${response.status}`;
+    state.notice = { kind: 'ok', text: done };
+    await load();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+const addPlan = (client: ClientSummary, plan: Record<string, unknown>): Promise<string | null> =>
+  changePlans('add-plan', { brand: client.brand, plan }, 'Plan added. The posters will be made from the website and appear in Review for you to approve.');
+
+const removePlan = (client: ClientSummary, index: number): Promise<string | null> =>
+  changePlans('remove-plan', { brand: client.brand, index }, 'Plan removed. Posters already made stay in Review; no more are made for it.');
+
 /** Removes a client that was added in the dashboard, after asking. The server refuses while it still has channels. */
 async function removeClient(client: ClientSummary): Promise<void> {
   if (!confirm(`Remove ${client.label}? This only removes the folder; nothing has been posted for it.`)) return;
@@ -1075,6 +1099,8 @@ const clientsContext: ClientsContext = {
   addClient: openAddClient,
   removeClient: (client) => void removeClient(client),
   saveWebsite,
+  addPlan,
+  removePlan,
   disconnect: (channel) => void disconnect(channel),
   allPaused: () => state.data?.pauses.all === true,
   setPause: (scope, id, paused) => void setPause(scope, id, paused),

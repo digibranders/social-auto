@@ -9,7 +9,7 @@
  *            publishing is switched on (SOCIAL_PUBLISHING_ENABLED=true), and only exact approved versions (see export-publisher.ts). Posters whose day has
  *            already passed are left out by the export's own rules.
  *
- * State lives in brands/<site>/campaigns/<id>.json and the platforms in brands/<site>/campaign.json, so a restart never loses where it was.
+ * State lives in brands/<site>/campaigns/<id>.json and which week file each batch wrote, so the export can give every poster the platforms of the plan it came from.
  */
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
@@ -30,6 +30,8 @@ export interface BatchState {
   finishedAt?: string;
   /** The end of the run's output, for a person to read when it failed. */
   tail?: string;
+  /** The plan file this batch wrote (week-NN.json), so the export knows which platforms its posters are for. */
+  weekFile?: string;
   note?: string;
 }
 
@@ -53,7 +55,8 @@ export interface CampaignState {
 export interface PlannedClient {
   brand: string;
   website: string;
-  plan: unknown;
+  /** One entry per plan; each has its own platforms, days and rhythm, and is made and released on its own. */
+  plans: unknown[];
 }
 
 export interface RunnerDeps {
@@ -65,6 +68,15 @@ export interface RunnerDeps {
   /** Whether publishing is switched on; release is skipped, and says so, when it is not. */
   publishingEnabled: () => boolean;
   log?: (message: string) => void;
+}
+
+/** The week plan files in a site's folder, which the autopilot adds one of per run. */
+async function weekFiles(dir: string): Promise<string[]> {
+  try {
+    return (await readdir(dir)).filter((f) => /^week-\d+\.json$/.test(f));
+  } catch {
+    return [];
+  }
 }
 
 const stamp = (deps: RunnerDeps): string => (deps.now?.() ?? new Date()).toISOString();
@@ -100,11 +112,11 @@ export function statusOf(batches: readonly BatchState[]): CampaignStatus {
 export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoot: string, deps: RunnerDeps): Promise<CampaignState[]> {
   const log = deps.log ?? (() => undefined);
   const touched: CampaignState[] = [];
-  for (const client of clients) {
+  for (const client of clients) for (const rawPlan of client.plans) {
     let plan: PostingPlan;
     try {
       // A plan whose first day has passed while it waited is still a plan: its past days are simply not made.
-      plan = parsePostingPlan(client.plan, { now: new Date(0) });
+      plan = parsePostingPlan(rawPlan, { now: new Date(0) });
     } catch (error) {
       log(`${client.brand}: the posting plan is not valid (${error instanceof Error ? error.message : String(error)}); skipped`);
       continue;
@@ -120,9 +132,6 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       if (batches.length === 0) { log(`${client.brand}: every day of the plan has already passed; nothing to make`); continue; }
       state = { id, brand: client.brand, siteBrand, site, plan, status: 'queued', batches: batches.map((b) => ({ index: b.index, dates: b.dates, status: 'pending' as const })), createdAt: stamp(deps), updatedAt: stamp(deps) };
       await writeState(file, state);
-      // The platforms the owner chose, where the export looks for them.
-      await mkdir(join(brandsRoot, siteBrand), { recursive: true });
-      await writeFile(join(brandsRoot, siteBrand, 'campaign.json'), `${JSON.stringify({ campaign: id, platforms: plan.platforms, site }, null, 2)}\n`);
     }
     // A batch left running by a process that is gone may have spent money: it is not repeated by itself.
     for (const b of state.batches) if (b.status === 'running') { b.status = 'interrupted'; b.finishedAt = stamp(deps); b.note = 'the runner stopped while this was running; check the paid-call ledger before running it again'; }
@@ -137,11 +146,16 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       await writeState(file, state);
       log(`${client.brand}: making ${batch.dates.length} poster${batch.dates.length === 1 ? '' : 's'} for ${batch.dates[0]}${batch.dates.length > 1 ? ` to ${batch.dates.at(-1)}` : ''}`);
       let outcome: { code: number; tail: string };
+      const before = await weekFiles(join(brandsRoot, siteBrand));
       try {
         outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }));
       } catch (error) {
         outcome = { code: 1, tail: error instanceof Error ? error.message : String(error) };
       }
+      // The run writes the next week-NN.json; remember which one is this plan's, so its posters keep this plan's platforms.
+      const written = (await weekFiles(join(brandsRoot, siteBrand))).filter((f) => !before.includes(f));
+      if (written.length === 1) batch.weekFile = written[0] as string;
+      else if (outcome.code === 0) { batch.note = 'could not tell which plan file this run wrote, so its posters are not tied to this plan\'s platforms'; log(`${client.brand}: ${batch.note}`); }
       batch.status = outcome.code === 0 ? 'done' : 'failed';
       batch.finishedAt = stamp(deps);
       batch.tail = outcome.tail.slice(-1500);
@@ -252,7 +266,7 @@ async function main(): Promise<void> {
   let clients: PlannedClient[] = [];
   try {
     const raw = JSON.parse(await readFile(resolve(values.clients), 'utf8')) as { clients?: Array<Record<string, unknown>> };
-    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && c['plan'] !== undefined ? [{ brand: c['brand'], website: c['website'], plan: c['plan'] }] : []));
+    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']] }] : []));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }

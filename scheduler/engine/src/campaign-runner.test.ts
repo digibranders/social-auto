@@ -7,7 +7,11 @@ import { acquireLease, makeCampaigns, releaseCampaigns, statusOf, type PlannedCl
 
 const NOW = new Date('2026-11-05T12:00:00Z');
 const root = (): { dir: string; done: () => void } => { const dir = mkdtempSync(join(tmpdir(), 'campaign-')); return { dir, done: () => rmSync(dir, { recursive: true, force: true }) }; };
-const client = (over: Partial<PlannedClient> = {}): PlannedClient => ({ brand: 'oyechats', website: 'https://oyechats.com', plan: { platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1 }, ...over });
+/** `plan` is a shorthand for a client with that one plan. */
+const client = (over: Partial<Omit<PlannedClient, 'plans'>> & { plan?: unknown; plans?: unknown[] } = {}): PlannedClient => {
+  const { plan, plans, ...rest } = over;
+  return { brand: 'oyechats', website: 'https://oyechats.com', ...rest, plans: plans ?? [plan ?? { platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1 }] };
+};
 const deps = (over: Partial<RunnerDeps> & { calls?: string[][] } = {}): RunnerDeps => ({
   exec: async (args) => { over.calls?.push(args); return { code: 0, tail: 'done' }; },
   release: async () => 0,
@@ -28,7 +32,7 @@ test('a single-day plan makes one run of the AI route for exactly that day, and 
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0]?.slice(0, 9), ['src/autopilot.ts', '--site', 'https://oyechats.com', '--route', 'ai', '--days', '1', '--start', '2026-11-06']);
     assert.equal(made?.status, 'awaiting_approval');
-    assert.deepEqual(JSON.parse(readFileSync(join(r.dir, 'oyechats', 'campaign.json'), 'utf8')).platforms, ['instagram', 'facebook']);
+    assert.deepEqual((state(r.dir)[0]?.['plan'] as { platforms: string[] }).platforms, ['instagram', 'facebook'], 'the plan, with its platforms, is in the record the export reads');
   } finally {
     r.done();
   }
@@ -201,6 +205,32 @@ test('the runner lease: held by a live process it is refused, left by a dead one
     const taken = await acquireLease(path);
     assert.ok(taken, 'a lease left by a process that is gone is taken over');
     await taken?.();
+  } finally {
+    r.done();
+  }
+});
+
+test('several plans for one client are made one after the other, each remembers the week file it wrote, and a plan taken off the client is not made again', async () => {
+  const r = root();
+  try {
+    let week = 0;
+    const exec: RunnerDeps['exec'] = async () => {
+      week += 1;
+      mkdirSync(join(r.dir, 'oyechats'), { recursive: true });
+      writeFileSync(join(r.dir, 'oyechats', `week-0${week}.json`), '{}');
+      return { code: 0, tail: 'done' };
+    };
+    const instagram = { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 31, postsPerWeek: 3 };
+    const linkedin = { platforms: ['linkedin'], startDate: '2026-11-06', durationDays: 31, postsPerWeek: 1 };
+    await makeCampaigns([client({ plans: [instagram, linkedin] })], r.dir, deps({ exec }));
+    const records = state(r.dir) as Array<{ plan: { platforms: string[] }; batches: Array<{ weekFile?: string }> }>;
+    assert.equal(records.length, 2, 'one record per plan');
+    const files = Object.fromEntries(records.map((x) => [x.plan.platforms[0], x.batches.map((b) => b.weekFile)]));
+    assert.deepEqual(files['instagram'], ['week-01.json', 'week-02.json']);
+    assert.deepEqual(files['linkedin'], ['week-03.json']);
+    const calls: string[][] = [];
+    await makeCampaigns([client({ plans: [linkedin] })], r.dir, deps({ calls }));
+    assert.equal(calls.length, 0, 'finished plans are not made again, and the removed one is not either');
   } finally {
     r.done();
   }
