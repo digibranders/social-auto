@@ -43,6 +43,11 @@ test('while publishing is off, a post\'s caption and picture cannot be changed',
   assert.equal(calls, 0);
 });
 
+test('while publishing is off, skipping a post is still allowed, and putting it back is not', async () => {
+  assert.equal((await edit(request('/api/edit?post=manual-0123456789ab&action=skip'))).status, 200);
+  assert.equal((await edit(request('/api/edit?post=manual-0123456789ab&action=unskip'))).status, 503);
+});
+
 test('taking a hand-made post away is still allowed', async () => {
   assert.equal((await manual(request('/api/manual?action=delete&post=manual-0123456789ab'))).status, 200);
   assert.equal(calls, 1);

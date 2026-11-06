@@ -1,8 +1,9 @@
 name: Test and deploy
 
 # Every pull request is tested. A change to the apps that is merged into main is tested again and, if everything passes,
-# deployed to the server by running deploy/scripts/deploy.sh there. Docs, the weekly content job's output and other
-# files that do not need a restart do not start a deploy.
+# deployed to the server by running deploy/scripts/deploy.sh there. The content engine's code counts too (it runs on the
+# server from the same checkout). Docs, the weekly content job's output (brands/, out/) and other files that do not need a
+# restart do not start a deploy.
 on:
   pull_request:
   push:
@@ -13,6 +14,7 @@ on:
       - '!publisher/public/**'
       - 'dashboard/**'
       - 'deploy/**'
+      - 'scheduler/engine/src/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 

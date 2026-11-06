@@ -175,7 +175,7 @@ function budgeted(
   max: number,
   cost: { spent: () => number; cap: number | undefined; model: string; outputTokens: number },
 ): typeof fetch {
-  return (async (input: URL | RequestInfo, init?: RequestInit) => {
+  return (async (input: string | URL | Request, init?: RequestInit) => {
     if (state.used >= max) throw new LlmError(`the art direction request budget of ${max} is used up`);
     if (cost.cap !== undefined) {
       const rate = RATES[cost.model];

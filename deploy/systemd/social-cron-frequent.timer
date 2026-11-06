@@ -1,0 +1,13 @@
+[Unit]
+Description=Send hand-made posts that were given their own time (every 5 minutes)
+
+[Timer]
+# Minutes 2, 7, 12 and so on, so it never starts at the same moment as the daily 10:01 run. No catch-up after downtime:
+# the frequent run only looks at the last 15 minutes anyway.
+OnCalendar=*:02/5
+AccuracySec=10s
+Persistent=false
+Unit=social-cron-frequent.service
+
+[Install]
+WantedBy=timers.target

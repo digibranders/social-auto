@@ -1,4 +1,5 @@
 import type { Channel } from './channels.js';
+import { forPlatform, PLATFORMS, type Variants } from './variants.js';
 export interface ScheduledPost {
   /** Client the post belongs to; posts without one count as a single "default" client. */
   brand?: string;
@@ -12,6 +13,14 @@ export interface ScheduledPost {
   manual?: boolean;
   /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc" or "google:123". Missing means every connected channel. */
   channels?: string[];
+  /** Own caption and/or picture for a platform; a platform without one uses the main caption and picture. */
+  variants?: Variants;
+  /** Skipped in the dashboard: it stays on the calendar but is never sent. */
+  skipped?: boolean;
+  /** A planned post given a day or time of its own in the dashboard: like a hand-made post, the frequent run sends it at that time. */
+  ownTime?: boolean;
+  /** Made from a client's posting plan. It goes only to that client's own connected channels, never to the team's one shared Instagram account, so a poster can never land on another client's account. */
+  fromPlan?: boolean;
 }
 
 export class ScheduleError extends Error {
@@ -23,6 +32,15 @@ export class ScheduleError extends Error {
 
 /** A post is due from its scheduled time until this long after it (covers Vercel Hobby's hourly cron window). */
 export const DUE_WINDOW_MS = 20 * 60 * 60 * 1000;
+
+/**
+ * A post with a time of its own (made by hand, or from a posting plan) is meant for that time: it is sent within this long after it, and a day later is too late
+ * for it, so it is missed rather than posted the next morning. It is twice the frequent run's look-back, so one late tick does not lose it.
+ */
+export const OWN_TIME_WINDOW_MS = 30 * 60 * 1000;
+
+/** How long after its time a post may still be sent: the day's run covers a plain planned post, a post with its own time has a short window. */
+export const dueWindowFor = (post: { manual?: boolean; ownTime?: boolean }): number => (post.manual === true || post.ownTime === true ? OWN_TIME_WINDOW_MS : DUE_WINDOW_MS);
 
 export function parseSchedule(raw: unknown): ScheduledPost[] {
   const posts = (raw as { posts?: unknown }).posts;
@@ -76,21 +94,44 @@ export function duePost(posts: ScheduledPost[], now: number): ScheduledPost | nu
   const due = posts
     .filter((p) => {
       const at = Date.parse(p.date);
-      return p.image !== null && at <= now && now - at < DUE_WINDOW_MS;
+      return p.image !== null && at <= now && now - at < dueWindowFor(p);
     })
     .sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
   return due[0] ?? null;
 }
 
-/** Hand-made posts whose time has passed within the due window. Unlike planned posts, several can go out on one day. */
-export function dueManualPosts(posts: ScheduledPost[], now: number): ScheduledPost[] {
+/**
+ * The planned post to send now: the latest one whose time has passed, unless it was skipped. A skipped post is chosen first and then
+ * dropped, so that skipping today's post does not bring yesterday's back.
+ */
+export function duePlannedPost(posts: ScheduledPost[], now: number): ScheduledPost | null {
+  const due = duePost(posts, now);
+  return due !== null && due.skipped === true ? null : due;
+}
+
+/**
+ * Posts with a time of their own whose time has passed within the due window: those made by hand, and planned posts that were moved or
+ * given a time in the dashboard. Unlike the plain planned posts (one a day, at the daily run), several can go out on one day.
+ */
+export function dueManualPosts(posts: ScheduledPost[], now: number, windowMs: number = OWN_TIME_WINDOW_MS): ScheduledPost[] {
   return posts
-    .filter((p) => p.manual === true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < DUE_WINDOW_MS)
+    .filter((p) => (p.manual === true || p.ownTime === true) && p.skipped !== true && p.image !== null && Date.parse(p.date) <= now && now - Date.parse(p.date) < windowMs)
     .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
 }
 
-/** Whether a post is meant for this channel ("instagram" or a channel id). */
-export const isWantedOn = (post: { channels?: string[] }, channel: string): boolean => !post.channels || post.channels.includes(channel);
+/**
+ * Whether a post is meant for this channel. A post's `channels` may name channels by id or whole platforms ("instagram", "facebook", "linkedin", "google"),
+ * which is how a campaign says "post on Instagram and Facebook" without knowing the ids; missing means every connected channel.
+ */
+export const isWantedOn = (post: { channels?: string[] }, channel: string, platform?: string): boolean =>
+  !post.channels || post.channels.includes(channel) || (platform !== undefined && post.channels.includes(platform));
+
+/**
+ * Whether the team's own Instagram account (the one shared account behind the channel "instagram") is a target of this post. A post made from a client's
+ * posting plan never uses it, whatever platform names it lists: that account carries the clients the team plans for itself, and a plan names a platform
+ * only to mean the client's own account on it.
+ */
+export const usesTeamInstagram = (post: { channels?: string[]; fromPlan?: boolean }): boolean => post.fromPlan !== true && isWantedOn(post, 'instagram');
 
 /** Instagram may normalise whitespace, so compare captions loosely. */
 export function sameCaption(a: string, b: string): boolean {
@@ -107,7 +148,7 @@ export interface MediaItem {
   mediaUrl: string | null;
 }
 
-export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown';
+export type PostState = 'published' | 'scheduled' | 'due' | 'missed' | 'unknown' | 'skipped' | 'paused';
 
 export interface StatusPost {
   id: string;
@@ -132,7 +173,9 @@ export interface StatusPost {
   manual: boolean;
   /** Where a hand-made post goes ('instagram' and channel ids); null for planned posts, which go everywhere. */
   channels: string[] | null;
-  crossposts: Array<{ platform: Channel['platform']; account: string; state: 'published' | 'scheduled' | 'due' | 'missed'; permalink: string | null }>;
+  /** The platforms that have a caption and/or picture of their own (picture as an absolute URL); the main caption and picture stand for the rest. */
+  variants?: Partial<Record<Channel['platform'], { caption?: string; image?: string }>>;
+  crossposts: Array<{ platform: Channel['platform']; account: string; state: 'published' | 'scheduled' | 'due' | 'missed' | 'skipped' | 'paused'; permalink: string | null }>;
 }
 
 export interface StatusSummary {
@@ -150,15 +193,17 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
   const ordered = [...posts].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   const statusPosts = ordered.map((post): StatusPost => {
     const at = Date.parse(post.date);
-    const onInstagram = isWantedOn(post, 'instagram');
-    const match = onInstagram ? (media?.find((m) => !used.has(m.id) && sameCaption(m.caption, post.caption)) ?? null) : null;
+    const onInstagram = usesTeamInstagram(post);
+    const onInstagramAs = forPlatform(post, 'instagram');
+    const match = onInstagram ? (media?.find((m) => !used.has(m.id) && sameCaption(m.caption, onInstagramAs.caption)) ?? null) : null;
     if (match) used.add(match.id);
 
     let state: PostState;
     if (match) state = 'published';
+    else if (post.skipped) state = 'skipped';
     else if (at > now) state = 'scheduled';
     else if (onInstagram && media === null) state = 'unknown';
-    else if (now - at < DUE_WINDOW_MS) state = 'due';
+    else if (now - at < dueWindowFor(post)) state = 'due';
     else state = 'missed';
 
     return {
@@ -168,12 +213,13 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
       date: post.date,
       caption: post.caption,
       image: post.image ? `${origin}${post.image}` : null,
+      ...(post.variants ? { variants: Object.fromEntries(PLATFORMS.flatMap((p) => { const v = post.variants?.[p]; return v ? [[p, { ...(v.caption !== undefined ? { caption: v.caption } : {}), ...(v.image ? { image: `${origin}${v.image}` } : {}) }]] : []; })) } : {}),
       state,
       permalink: match?.permalink ?? null,
       publishedAt: match?.timestamp ?? null,
       mediaUrl: match?.mediaUrl ?? null,
       edited: post.edited === true,
-      editable: state === 'scheduled',
+      editable: at > now && (state === 'scheduled' || state === 'skipped'),
       manual: post.manual === true,
       channels: post.channels ?? null,
       crossposts: [],

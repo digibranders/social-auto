@@ -1,4 +1,5 @@
 import type { ScheduledPost } from './schedule.js';
+import { mergeViews, parseStoredVariants, toVariants, type StoredVariants } from './variants.js';
 
 /** Instagram's own limits, plus a smaller image cap: Vercel functions accept request bodies up to 4.5 MB. */
 export const MAX_CAPTION_LENGTH = 2200;
@@ -10,6 +11,12 @@ export interface PostOverride {
   caption?: string;
   /** Random key of the replacement picture; the picture is served from /api/edited-image?k=<key>. */
   imageKey?: string;
+  /** The post is skipped: it stays on the calendar but is never sent. Undone by unskipping, while its time is still ahead. */
+  skipped?: boolean;
+  /** Own caption and/or picture for single platforms (see variants.ts). */
+  variants?: StoredVariants;
+  /** A planned post moved to another day or given another time: ISO 8601 with offset. Hand-made posts are moved in their own file instead. */
+  date?: string;
   updatedAt: string;
 }
 
@@ -94,22 +101,35 @@ export function parseOverrides(raw: unknown): OverrideMap {
     }
     if (o['caption'] !== undefined && typeof o['caption'] !== 'string') throw new Error(`overrides["${id}"].caption is malformed`);
     if (o['imageKey'] !== undefined && !isImageKey(o['imageKey'])) throw new Error(`overrides["${id}"].imageKey is malformed`);
-    result[id] = o as unknown as PostOverride;
+    if (o['date'] !== undefined && (typeof o['date'] !== 'string' || Number.isNaN(Date.parse(o['date'])))) throw new Error(`overrides["${id}"].date is malformed`);
+    if (o['skipped'] !== undefined && typeof o['skipped'] !== 'boolean') throw new Error(`overrides["${id}"].skipped is malformed`);
+    const variants = parseStoredVariants(o['variants']);
+    const parsed = { ...(o as unknown as PostOverride) };
+    if (variants) parsed.variants = variants;
+    else delete parsed.variants;
+    result[id] = parsed;
   }
   return result;
 }
 
 export type EditedPost = ScheduledPost & { edited: boolean };
 
-/** The posts as they will actually be sent: planned posts with the dashboard edits applied on top. */
+/** The posts as they will actually be sent: planned posts with the dashboard edits applied on top, and the ones skipped marked. */
 export function applyOverrides(posts: ScheduledPost[], overrides: OverrideMap): EditedPost[] {
   return posts.map((post) => {
     const o = overrides[post.id];
-    if (!o || (o.caption === undefined && o.imageKey === undefined)) return { ...post, edited: false };
+    if (!o) return { ...post, edited: false };
+    const moved = o.date === undefined ? {} : { date: o.date, ownTime: true };
+    const skipped = o.skipped === true ? { skipped: true } : {};
+    if (o.caption === undefined && o.imageKey === undefined && o.variants === undefined) return { ...post, ...moved, ...skipped, edited: false };
+    const variants = mergeViews(post.variants, toVariants(o.variants));
     return {
       ...post,
+      ...moved,
+      ...skipped,
       caption: o.caption ?? post.caption,
       image: o.imageKey ? imagePathFor(o.imageKey) : post.image,
+      ...(variants ? { variants } : {}),
       edited: true,
     };
   });

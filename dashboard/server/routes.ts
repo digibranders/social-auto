@@ -18,9 +18,11 @@ export const routes: Record<string, { method: string | string[]; load: () => Pro
   '/api/google/start': { method: 'GET', load: () => import('../api/google/[step].js').then((m) => m.GET) },
   '/api/google/callback': { method: 'GET', load: () => import('../api/google/[step].js').then((m) => m.GET) },
   '/api/google/pick': { method: ['GET', 'POST'], load: () => import('../api/google/[step].js').then((m) => (request: Request) => (request.method === 'POST' ? m.POST(request) : m.GET(request))) },
+  '/api/google/choose': { method: ['GET', 'POST'], load: () => import('../api/google/[step].js').then((m) => (request: Request) => (request.method === 'POST' ? m.POST(request) : m.GET(request))) },
   '/api/disconnect': { method: 'POST', load: () => import('../api/disconnect.js').then((m) => m.POST) },
   '/api/clients': { method: 'POST', load: () => import('../api/clients.js').then((m) => m.POST) },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.js').then((m) => m.POST) },
+  '/api/pause': { method: 'POST', load: () => import('../api/pause.js').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.js').then((m) => m.POST) },
   '/api/review': { method: ['GET', 'POST'], load: () => import('../api/review.js').then((m) => (request: Request) => (request.method === 'POST' ? m.POST(request) : m.GET(request))) },
 };

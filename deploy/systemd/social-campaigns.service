@@ -1,0 +1,18 @@
+[Unit]
+Description=Social Auto campaign runner (makes posters for each client's posting plan, one batch at a time)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=social
+Group=social
+WorkingDirectory=/home/social/social-auto/scheduler/engine
+EnvironmentFile=/etc/social-auto/engine.env
+Environment=LOCAL_STORE_DIR=/var/lib/social-auto
+ExecStart=/home/social/.local/node/bin/node src/campaign-runner.ts --clients /var/lib/social-auto/clients.json --brands brands --publisher /home/social/social-auto/publisher
+# One batch is up to 8 posters; the runner itself gives up a single batch after an hour.
+TimeoutStartSec=90min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/social-auto /home/social/social-auto/scheduler/engine /home/social/social-auto/publisher/data

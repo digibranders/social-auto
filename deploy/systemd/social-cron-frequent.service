@@ -1,0 +1,12 @@
+[Unit]
+Description=Social Auto frequent run: hand-made posts with their own time
+After=social-publisher.service
+
+[Service]
+Type=oneshot
+User=social
+Group=social
+EnvironmentFile=/etc/social-auto/publisher.env
+# One run at a time: shares its lock with the daily run, so a post is never sent twice by two runs at once.
+ExecStart=/usr/bin/flock -w 600 /var/lib/social-auto/cron.lock /home/social/social-auto/deploy/scripts/call-publisher.sh /api/cron?only=manual
+TimeoutStartSec=10min

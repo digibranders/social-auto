@@ -1,5 +1,8 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
+import { connectedPlatforms, planPayload, planSentence } from '../shared/posting-plan.ts';
+import { planFields } from './add-client.ts';
+import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
 import { websiteHost, type ClientSummary } from './clients.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
@@ -22,8 +25,25 @@ export interface ClientsContext {
   removeClient(client: ClientSummary): void;
   /** Saves (or, when empty, clears) the website; resolves to an explanation when it could not be saved. */
   saveWebsite(client: ClientSummary, website: string): Promise<string | null>;
+  /** Adds one more posting plan to the client; resolves to an explanation when it could not be added. */
+  addPlan(client: ClientSummary, plan: Record<string, unknown>): Promise<string | null>;
+  /** Takes the plan at this place off the client; resolves to an explanation when it could not be. */
+  removePlan(client: ClientSummary, index: number): Promise<string | null>;
+  /** Changes how many posters a week the website may make for each channel of the client. */
+  setLimit(client: ClientSummary, limit: number): Promise<string | null>;
+  /** Sets whether every poster made from the website must carry its real logo. */
+  setLogoRequired(client: ClientSummary, required: boolean): Promise<string | null>;
+  /** True once when the New post window sent the owner here to make posters from the website: the plan form then opens by itself. */
+  wantsPlanForm(brand: string): boolean;
   disconnect(channel: ChannelHealth): void;
+  /** Whether everything is paused. */
+  allPaused(): boolean;
+  /** Pauses or resumes everything, one client or one channel (its id; "instagram" for the team's own account). */
+  setPause(scope: 'all' | 'brand' | 'channel', id: string | null, paused: boolean): void;
 }
+
+/** The id a channel is paused by: its own, or "instagram" for the team's own Instagram account. */
+export const pauseIdOf = (channel: ChannelHealth): string | null => channel.id ?? (channel.platform === 'instagram' ? 'instagram' : null);
 
 const KINDS: readonly ChannelKind[] = ['facebook', 'instagram', 'google', 'linkedin'];
 const GUIDE_FOR: Record<ChannelKind, GuideKey> = { facebook: 'facebook', instagram: 'instagram', google: 'google', linkedin: 'linkedin' };
@@ -31,7 +51,13 @@ const UPCOMING_SHOWN = 14;
 const TAB_LABELS: Record<ClientTab, string> = { channels: 'Channels', posts: 'Next posts', cost: 'Cost' };
 
 export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTMLElement {
-  const add = h('div', { class: 'page-actions' }, button([icon('plus'), 'Add client'], 'btn btn-primary', () => ctx.addClient()));
+  const paused = ctx.allPaused();
+  const add = h(
+    'div',
+    { class: 'page-actions' },
+    button([icon('plus'), 'Add client'], 'btn btn-primary', () => ctx.addClient()),
+    button(paused ? 'Resume everything' : 'Pause everything', paused ? 'btn' : 'btn btn-quiet btn-danger', () => ctx.setPause('all', null, !paused)),
+  );
   if (clients.length === 0) return h('div', {}, add, h('p', { class: 'empty' }, 'No clients yet.'));
   return h('div', {}, add, h(
     'div',
@@ -41,7 +67,7 @@ export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTML
         'button',
         { type: 'button', class: 'folder', 'aria-label': `Open ${client.label}` },
         h('span', { class: 'folder-tab', 'aria-hidden': 'true' }),
-        h('div', { class: 'folder-head' }, h('h3', {}, client.label)),
+        h('div', { class: 'folder-head' }, h('h3', {}, client.label), client.paused ? h('span', { class: 'tag-paused' }, 'Paused') : null),
         h('div', { class: 'folder-marks' }, ...client.channels.map((c) => h('span', { class: 'mark', title: channelName(c.platform) }, brandMark(c.platform)))),
         h('div', { class: 'folder-stats muted' }, h('span', {}, client.pattern ?? 'Nothing booked'), h('span', {}, `${client.postsLeft} days booked`)),
       );
@@ -63,11 +89,11 @@ export function expiryNote(expiresAt: string | undefined, now: number): string |
 }
 
 /**
- * Makes a link to connect LinkedIn, Instagram or Facebook: a client opens it and presses Allow on their own account, or you
+ * Makes a link to connect LinkedIn, Instagram, Facebook or a Google Business listing: a client opens it and presses Allow on their own account, or you
  * open it in the browser where the right account is signed in.
  * Asking is one click; copying is a second, so the browser allows it.
  */
-export function inviteLinkBox(brand: string, label: string, platform: 'linkedin' | 'instagram' | 'facebook' = 'linkedin'): HTMLElement {
+export function inviteLinkBox(brand: string, label: string, platform: 'linkedin' | 'instagram' | 'facebook' | 'google' = 'linkedin'): HTMLElement {
   const box = h('div', { class: 'link-box' });
   const result = h('div', { class: 'link-result', hidden: '' });
   const message = h('p', { class: 'muted', hidden: '' });
@@ -88,7 +114,7 @@ export function inviteLinkBox(brand: string, label: string, platform: 'linkedin'
             () => { copy.textContent = 'Press Ctrl+C to copy'; },
           );
         });
-        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their ${{ linkedin: 'LinkedIn', instagram: 'Instagram', facebook: 'Facebook' }[platform]} for this client.`));
+        result.replaceChildren(field, copy, h('p', { class: 'muted' }, `Send this to the client. It works for ${String(body.expiresInDays ?? 7)} days and only lets them connect their ${{ linkedin: 'LinkedIn', instagram: 'Instagram', facebook: 'Facebook', google: 'Google Business listing' }[platform]} for this client.`));
         result.hidden = false;
       } catch (error) {
         message.textContent = error instanceof Error ? error.message : String(error);
@@ -122,15 +148,21 @@ function channelRow(client: ClientSummary, channel: ChannelHealth, ctx: ClientsC
         statusMark(channel.ok),
         channel.ok ? 'Connected' : `Connection problem: ${(channel.error ?? 'unknown').slice(0, 140)}`,
       ),
+      channel.paused ? h('span', { class: 'tag-paused', role: 'status' }, client.paused ? 'Paused with the client' : 'Paused. Posts are not sent here until you resume it.') : null,
       expiry ? h('span', { class: 'muted' }, expiry) : null,
       channel.platform === 'linkedin' ? inviteLinkBox(client.brand, 'Get a new link for the client') : null,
       channel.platform === 'instagram' && channel.id !== null ? inviteLinkBox(client.brand, 'Get a new link for the client', 'instagram') : null,
       channel.platform === 'facebook' ? inviteLinkBox(client.brand, 'Get a link to connect another Page', 'facebook') : null,
+      channel.platform === 'google' ? inviteLinkBox(client.brand, 'Get a link to connect another listing', 'google') : null,
     ),
     h(
       'div',
       { class: 'channel-actions' },
       channel.ok && postChannelId(channel) ? button('Post here', 'btn', () => ctx.newPost(client.brand, postChannelId(channel))) : null,
+      // A channel held by its client (or by everything) is resumed there; its own pause is only for the channel itself.
+      pauseIdOf(channel) !== null && !client.paused
+        ? button(channel.paused ? 'Resume channel' : 'Pause channel', channel.paused ? 'btn' : 'btn btn-quiet', () => ctx.setPause('channel', pauseIdOf(channel), !channel.paused))
+        : null,
       button('How to reconnect', 'btn btn-quiet', () => ctx.go({ page: 'help', channel: GUIDE_FOR[channel.platform] })),
       canDisconnect ? button('Disconnect', 'btn btn-quiet btn-danger', () => ctx.disconnect(channel)) : null,
     ),
@@ -145,11 +177,12 @@ function notConnectedRow(brand: string, kind: ChannelKind, ctx: ClientsContext):
     h('div', { class: 'channel-meta' }, h('b', {}, channelName(kind)), h('span', { class: 'muted' }, 'Not connected'),
       kind === 'linkedin' ? inviteLinkBox(brand, 'Get a link for the client') : null,
       kind === 'facebook' ? inviteLinkBox(brand, 'Get a link for the client', 'facebook') : null,
+      kind === 'google' ? inviteLinkBox(brand, 'Get a link for the client', 'google') : null,
     ),
     h(
       'div',
       { class: 'channel-actions' },
-      kind === 'google' ? button('Connect', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(brand)}`)) : null,
+      kind === 'google' ? button('Connect my own', 'btn', () => location.assign(`/api/google/start?brand=${encodeURIComponent(brand)}`)) : null,
       button('How to connect', 'btn', () => ctx.go({ page: 'help', channel: GUIDE_FOR[kind] })),
     ),
   );
@@ -179,6 +212,81 @@ function websiteCard(client: ClientSummary, ctx: ClientsContext): HTMLElement {
     h('div', { class: 'card-head' }, h('h2', {}, 'Website')),
     h('p', { class: 'muted' }, client.website ? `Posts for ${client.label} are planned from ${websiteHost(client.website)}.` : `Add ${client.label}’s website. Posts are planned from it.`),
     h('div', { class: 'website-row' }, input, save),
+    message,
+  );
+}
+
+/** The posting plans of a client added in the dashboard: each listed with a way to take it off, and a form to add another. Needs the website, because posters are made from it. */
+function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | null {
+  if (!client.website) return null;
+  const message = h('p', { class: 'form-message', role: 'status' });
+  const say = (text: string, error: boolean): void => {
+    message.textContent = text;
+    message.classList.toggle('is-error', error);
+  };
+  const fields = planFields(`newplan-${client.brand}`, { existing: client.plans, limit: client.weeklyLimit, available: connectedPlatforms(client.channels) });
+  const save = button('Add this plan', 'btn btn-primary', () => {
+    const chosen = fields.read(true);
+    if (!chosen.plan) return say(chosen.problem ?? 'Choose what to post.', true);
+    save.disabled = true;
+    say('Saving…', false);
+    void ctx.addPlan(client, planPayload(chosen.plan)).then((problem) => {
+      if (!problem) return;
+      say(problem, true);
+      save.disabled = false;
+    });
+  });
+  const form = h('div', { class: 'plan-box', hidden: 'hidden' }, fields.element, h('div', { class: 'actions' }, save, button('Cancel', 'btn btn-quiet', () => { form.hidden = true; say('', false); })));
+  for (const control of fields.controls) {
+    control.addEventListener('input', () => fields.refresh(true));
+    control.addEventListener('change', () => fields.refresh(true));
+  }
+  const limitSelect = h('select', { id: `limit-${client.brand}`, class: 'text-input limit-select', 'aria-label': 'Posters a week for each channel' }, ...Array.from({ length: MAX_WEEKLY_LIMIT }, (_, i) => i + 1).map((n) => h('option', { value: String(n), ...(n === client.weeklyLimit ? { selected: 'selected' } : {}) }, String(n))));
+  limitSelect.addEventListener('change', () => {
+    limitSelect.disabled = true;
+    say('Saving…', false);
+    void ctx.setLimit(client, Number(limitSelect.value)).then((problem) => {
+      limitSelect.disabled = false;
+      if (problem) say(problem, true);
+    });
+  });
+  const logoBox = h('input', { id: `logo-${client.brand}`, type: 'checkbox', ...(client.requireAuthenticLogo ? { checked: 'checked' } : {}) });
+  logoBox.addEventListener('change', () => {
+    logoBox.disabled = true;
+    say('Saving…', false);
+    void ctx.setLogoRequired(client, logoBox.checked).then((problem) => {
+      logoBox.disabled = false;
+      if (problem) {
+        logoBox.checked = !logoBox.checked;
+        say(problem, true);
+      }
+    });
+  });
+  const open = button('Add a plan', 'btn', () => {
+    form.hidden = false;
+    fields.refresh(true);
+  });
+  if (ctx.wantsPlanForm(client.brand)) {
+    form.hidden = false;
+    fields.refresh(true);
+  }
+  return h(
+    'div',
+    { class: 'panel-card plans-card' },
+    h('div', { class: 'card-head' }, h('h2', {}, 'Posting plans'), open),
+    h('div', { class: 'limit-row' },
+      h('label', { class: 'label', for: `limit-${client.brand}` }, 'Posters a week for each channel'),
+      limitSelect,
+    ),
+    h('label', { class: 'check-row', for: `logo-${client.brand}` }, logoBox, h('span', {}, 'Require the website\'s real logo on every poster. When off, a poster uses the brand name as text if no usable logo is found.')),
+    h('p', { class: 'muted' }, 'Each plan has its own platforms, days and rhythm. The posters are made from the website and wait in Review until you approve them. Nothing is posted before that.'),
+    client.plans.length === 0
+      ? h('p', { class: 'muted' }, 'No plan yet. Add one to have posters made.')
+      : h('ul', { class: 'plan-list' }, ...client.plans.map((plan, index) => h('li', { class: 'plan-item' }, h('span', {}, planSentence(plan)), button('Remove', 'btn btn-quiet', () => {
+        if (!confirm('Stop making posters for this plan? Posters already made stay in Review.')) return;
+        void ctx.removePlan(client, index).then((problem) => { if (problem) say(problem, true); });
+      })))),
+    form,
     message,
   );
 }
@@ -221,8 +329,10 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
       button('Clients', 'link-button', () => ctx.go({ page: 'clients' })),
       ` / ${client.label}`,
     ),
-    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
+    h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), ctx.allPaused() ? null : button(client.paused ? 'Resume client' : 'Pause client', client.paused ? 'btn' : 'btn btn-quiet', () => ctx.setPause('brand', client.brand, !client.paused)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
     client.added ? websiteCard(client, ctx) : null,
+    client.added ? plansCard(client, ctx) : null,
+    client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
     tab === 'channels' ? channels : tab === 'posts' ? posts : costPage(client, ctx),
   );
@@ -259,8 +369,9 @@ export function channelPicker(
     }
     if (kind === 'google') {
       note.replaceChildren(
-        'Sign in with the Google account that manages the client’s business listing (the client adds you as a manager first). If it manages several locations, you choose one next.',
-        button('Connect Google', 'btn btn-primary', () => location.assign(`/api/google/start?brand=${encodeURIComponent(who.value)}`)),
+        'The client approves their own business listing: make a link and send it to them. They sign in with the Google account that manages the listing and press Allow. Or connect a listing your own account manages.',
+        inviteLinkBox(who.value, 'Get a link for the client', 'google'),
+        button('Connect my own', 'btn', () => location.assign(`/api/google/start?brand=${encodeURIComponent(who.value)}`)),
       );
       return;
     }

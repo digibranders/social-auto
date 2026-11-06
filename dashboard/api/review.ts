@@ -4,7 +4,8 @@
  * site's own pages for anything that changes something.
  *
  *   GET  /api/review?view=list&status=open|pending|held|approved|rejected|blocked|superseded|all
- *   GET  /api/review?view=detail|image|download&id=<versionId>
+ *   GET  /api/review?view=detail|image|download|logo&id=<versionId>
+ *   GET  /api/review?view=campaigns      what is being made for each client's plans (read only)
  *   POST /api/review   { "id": "<versionId>", "action": "approve" }  or  { "id": "...", "action": "reject", "reason": "...", "comment": "..." }
  *   GET  /api/review?view=copy                                  the written posts waiting to be kept or dropped (before any picture is bought)
  *   POST /api/review   { "copy": { "brand": "...", "planFile": "week-01.json", "postId": "...", "action": "keep" | "drop" } }
@@ -56,7 +57,10 @@ export async function GET(request: Request): Promise<Response> {
     const status = query.get('status') ?? 'pending';
     if (!STATUS.test(status)) return json(400, { error: 'Invalid request' });
     path = `/review/posts?status=${status}`;
-  } else if (view === 'detail' || view === 'image' || view === 'download') {
+  } else if (view === 'campaigns') {
+    // What is being made for each client's plans (read only), for the status panel.
+    path = '/review/campaigns';
+  } else if (view === 'detail' || view === 'image' || view === 'download' || view === 'logo') {
     if (!VERSION_ID.test(id)) return json(400, { error: 'Invalid request' });
     path = `/review/posts/${id}${view === 'detail' ? '' : `/${view}`}`;
   } else {

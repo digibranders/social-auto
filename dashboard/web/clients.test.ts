@@ -26,9 +26,10 @@ test('schedulePattern reads the next two weeks and ignores the past and the far 
 test('summarizeClients groups by client with channels, runway, problems and what is next', () => {
   const data: StatusResponse = {
     generatedAt: '2026-11-02T00:00:00Z',
+    pauses: { all: false, brands: ['b'], channels: [] },
     channels: [
-      { id: null, platform: 'instagram', account: 'ig', avatar: null, brands: ['a'], ok: true },
-      { id: 'facebook:12345', platform: 'facebook', account: 'Page', avatar: null, brands: ['a', 'b'], ok: false, error: 'x' },
+      { id: null, platform: 'instagram', account: 'ig', avatar: null, brands: ['a'], paused: false, ok: true },
+      { id: 'facebook:12345', platform: 'facebook', account: 'Page', avatar: null, brands: ['a', 'b'], paused: false, ok: false, error: 'x' },
     ],
     posts: [...weekdays.map((d) => post('a', d)), post('a', '2026-10-30T10:00:00+05:30', 'missed'), post('b', weekdays[0] as string)],
     runway: [{ brand: 'a', postsLeft: 40 }, { brand: 'b', postsLeft: 3 }],
@@ -51,14 +52,14 @@ test('summarizeClients groups by client with channels, runway, problems and what
 test('hand-made extra posts do not change the described schedule pattern', () => {
   const planned = weekdays.map((d) => post('acme', d));
   const extra = { ...post('acme', '2026-11-07T18:00:00+05:30'), id: 'manual-0123456789ab', manual: true };
-  const data: StatusResponse = { generatedAt: '', channels: [], costs: [], runway: [{ brand: 'acme', postsLeft: 5 }], posts: [...planned, extra] };
+  const data: StatusResponse = { generatedAt: '', pauses: { all: false, brands: [], channels: [] }, channels: [], costs: [], runway: [{ brand: 'acme', postsLeft: 5 }], posts: [...planned, extra] };
   const [client] = summarizeClients(data, NOW);
   assert.equal(client?.pattern, schedulePattern(planned, NOW));
   assert.equal(client?.upcoming.length, 6);
 });
 
 test('a client added in the dashboard shows with no posts, is removable, and is not flagged as running low', () => {
-  const data: StatusResponse = { generatedAt: '', channels: [], costs: [], posts: [], runway: [{ brand: 'new-client', postsLeft: 0, added: true }, { brand: 'acme', postsLeft: 2 }] };
+  const data: StatusResponse = { generatedAt: '', pauses: { all: false, brands: [], channels: [] }, channels: [], costs: [], posts: [], runway: [{ brand: 'new-client', postsLeft: 0, added: true }, { brand: 'acme', postsLeft: 2 }] };
   const clients = summarizeClients(data, NOW);
   const added = clients.find((c) => c.brand === 'new-client');
   assert.equal(added?.label, 'New Client');
@@ -71,6 +72,7 @@ test('a client added in the dashboard shows with no posts, is removable, and is 
 test('an added client shows its website, and a client without one has none', () => {
   const data: StatusResponse = {
     generatedAt: '2026-11-02T00:00:00Z',
+    pauses: { all: false, brands: ['b'], channels: [] },
     channels: [],
     posts: [],
     costs: [],

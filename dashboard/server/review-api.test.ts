@@ -120,3 +120,15 @@ test('the written posts are listed and kept or dropped through the service, with
   assert.equal((await POST(post({ copy }, { origin: 'https://evil.example' }))).status, 403);
   assert.equal(calls.length, 0);
 });
+test('the list of what is being made is passed on read only, with the secret added on the server and never shown', async () => {
+  upstream(200, { campaigns: [{ id: 'c1' }] });
+  const before = calls.length;
+  const answer = await GET(get('view=campaigns'));
+  assert.equal(answer.status, 200);
+  assert.equal(calls.length, before + 1);
+  assert.equal(calls.at(-1)?.url, 'http://127.0.0.1:4012/review/campaigns');
+  assert.equal(calls.at(-1)?.init.method, 'GET');
+  assert.equal((calls.at(-1)?.init.headers as Record<string, string>)['Authorization'], 'Bearer review-secret-0123456789');
+  assert.doesNotMatch(await answer.text(), /review-secret/);
+});
+

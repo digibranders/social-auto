@@ -7,3 +7,63 @@ test('the label shown matches the one the server will make from the name', () =>
   assert.equal(previewLabel('  Café & Co.!! '), 'Cafe Co');
   assert.equal(previewLabel('***'), '');
 });
+
+import { describePlan, readPlan } from './add-client.ts';
+
+const NOW = new Date('2026-11-05T12:00:00Z');
+const form = (over: Record<string, unknown> = {}) => ({ on: true, platforms: ['instagram'], startDate: '2026-11-06', durationId: 'day', postsPerWeek: 3, ...over }) as Parameters<typeof readPlan>[0];
+
+test('with the plan off, or no website, the client is only added', () => {
+  assert.deepEqual(readPlan(form({ on: false }), NOW), { plan: null, problem: null });
+});
+
+test('just one day is tomorrow only, whatever frequency was left in the form', () => {
+  const { plan, problem } = readPlan(form(), NOW);
+  assert.equal(problem, null);
+  assert.deepEqual(plan, { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 1, time: '10:00', utcOffset: '+05:30' });
+});
+
+test('three times a week for a month keeps the pattern, and a platform is needed', () => {
+  const month = readPlan(form({ durationId: 'month', postsPerWeek: 3, platforms: ['facebook', 'instagram'] }), NOW);
+  assert.deepEqual([month.plan?.durationDays, month.plan?.postsPerWeek, month.plan?.platforms], [31, 3, ['instagram', 'facebook']]);
+  assert.equal(readPlan(form({ platforms: [] }), NOW).problem, 'Choose at least one platform.');
+  assert.equal(readPlan(form({ startDate: '2026-11-04' }), NOW).problem, 'The start day has already passed.');
+  assert.equal(readPlan(form({ durationId: 'month', postsPerWeek: 0 }), NOW).plan?.postsPerWeek, undefined, 'every day has no pattern');
+});
+
+test('what the owner is told: the count, the days, the cost, and that nothing posts before approval', () => {
+  const lines = describePlan(readPlan(form({ durationId: 'week', postsPerWeek: 3 }), NOW).plan as never);
+  assert.equal(lines[0], '3 posts on Instagram, at 10:00 India time.');
+  assert.equal(lines[1], 'Fri 6 Nov · Mon 9 Nov · Wed 11 Nov');
+  assert.match(lines[2] ?? '', /about \$0\.06 to \$0\.20 to make\. Nothing is posted until you have looked at each poster and approved it\./);
+  const month = describePlan(readPlan(form({ durationId: 'month', postsPerWeek: 3 }), NOW).plan as never);
+  assert.equal(month[0], '13 posts on Instagram, at 10:00 India time.');
+  assert.equal(month[1]?.split(' · ').length, 13, 'every day is shown when there are not many, so nothing is hidden before the owner confirms');
+  const daily = describePlan(readPlan(form({ durationId: 'month', postsPerWeek: 0 }), NOW).plan as never);
+  assert.equal(daily[1], 'Fri 6 Nov to Sun 6 Dec', 'with more than 14 days it shows the range');
+});
+
+test('a plan is held to the client\'s weekly limit when the client already has plans', () => {
+  const existing = [{ platforms: ['instagram'], startDate: '2026-11-09', durationDays: 21, postsPerWeek: 2 }];
+  const choose = (over: Partial<Parameters<typeof readPlan>[0]> = {}) => readPlan({ ...form({ durationId: 'week', postsPerWeek: 3 }), startDate: '2026-11-09', ...over }, NOW, { existing, limit: 3 });
+  assert.equal(choose().plan, null);
+  assert.match(choose().problem ?? '', /only 1 more fits that week/);
+  assert.ok(choose({ postsPerWeek: 1 }).plan, '1 a week fits next to 2 a week');
+  assert.ok(choose({ platforms: ['facebook'] }).plan, 'another channel has its own places');
+});
+
+test('the time of day the owner chooses is the time of the plan, and is told back in the summary', () => {
+  const chosen = readPlan(form({ time: '15:30', startDate: '2026-11-07' }), NOW);
+  assert.equal(chosen.plan?.time, '15:30');
+  assert.equal(describePlan(chosen.plan as never)[0], '1 post on Instagram, at 15:30 India time.');
+  assert.equal(readPlan(form({ startDate: '2026-11-07' }), NOW).plan?.time, '10:00', 'ten o\'clock unless another time is chosen');
+});
+
+test('a time that is not a time, or that has already passed today, is refused in plain words', () => {
+  // NOW is 17:30 in India on 5 November.
+  assert.match(readPlan(form({ time: '', startDate: '2026-11-07' }), NOW).problem ?? '', /time of day/);
+  assert.match(readPlan(form({ time: '09:00', startDate: '2026-11-05' }), NOW).problem ?? '', /already passed today/);
+  assert.equal(readPlan(form({ time: '18:00', startDate: '2026-11-05' }), NOW).problem, null, 'later today is fine');
+  assert.equal(readPlan(form({ time: '09:00', startDate: '2026-11-06' }), NOW).problem, null, 'tomorrow is fine at any hour');
+});
+

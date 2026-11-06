@@ -3,24 +3,28 @@
  *
  * POST /api/clients?action=add       body: {"name": "Brand Basket", "website": "brandbasket.in"}   answers {"brand": "brand-basket"}  (website is optional)
  * POST /api/clients?action=set-website  body: {"brand": "brand-basket", "website": "brandbasket.in"}  (an empty website clears it)
+ * POST /api/clients?action=add-plan     body: {"brand": "brand-basket", "plan": {...}}  (one more plan: what to post, where and for how long)
+ * POST /api/clients?action=set-limit    body: {"brand": "brand-basket", "limit": 3}  (posters a week the website may make for each channel)
+ * POST /api/clients?action=set-logo-required  body: {"brand": "brand-basket", "required": true}  (every poster must carry the website's real logo)
+ * POST /api/clients?action=remove-plan  body: {"brand": "brand-basket", "index": 0}  (stops making posters for that plan)
  * POST /api/clients?action=remove    body: {"brand": "brand-basket"}  (only an added client with no channels or extra posts)
  */
 import { scheduleData } from '../lib/schedule-source.js';
 import { channelsFor } from '../lib/channels.js';
-import { addClient, isBrandSlug, setWebsite } from '../lib/clients.js';
+import { addClient, addPlan, isBrandSlug, removePlan, setRequireAuthenticLogo, setWebsite, setWeeklyLimit } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
 import { loadChannels, loadClients, loadManual, saveClients, storeConfigured } from '../lib/store.js';
 
-const MAX_BODY_BYTES = 2 * 1024;
+const MAX_BODY_BYTES = 4 * 1024;
 
 const plannedBrands = (): Set<string> => new Set(parseSchedule(scheduleData).map((p) => p.brand ?? 'default'));
 
 async function add(body: Record<string, unknown>): Promise<Response> {
   const { file, etag } = await loadClients();
   const planned = plannedBrands();
-  const result = addClient(file, body['name'], new Set([...planned, ...file.clients.map((c) => c.brand)]), Date.now(), body['website']);
+  const result = addClient(file, body['name'], new Set([...planned, ...file.clients.map((c) => c.brand)]), Date.now(), body['website'], body['plan'], body['requireAuthenticLogo']);
   await saveClients(result.file, etag);
   return json(200, { brand: result.brand });
 }
@@ -30,6 +34,30 @@ async function website(body: Record<string, unknown>): Promise<Response> {
   if (!isBrandSlug(brand)) throw new EditError('unknown client');
   const { file, etag } = await loadClients();
   await saveClients(setWebsite(file, brand, body['website']), etag);
+  return json(200, { ok: true });
+}
+
+async function plan(body: Record<string, unknown>, change: 'add' | 'remove'): Promise<Response> {
+  const brand = body['brand'];
+  if (!isBrandSlug(brand)) throw new EditError('unknown client');
+  const { file, etag } = await loadClients();
+  await saveClients(change === 'add' ? addPlan(file, brand, body['plan'], Date.now()) : removePlan(file, brand, body['index']), etag);
+  return json(200, { ok: true });
+}
+
+async function limit(body: Record<string, unknown>): Promise<Response> {
+  const brand = body['brand'];
+  if (!isBrandSlug(brand)) throw new EditError('unknown client');
+  const { file, etag } = await loadClients();
+  await saveClients(setWeeklyLimit(file, brand, body['limit']), etag);
+  return json(200, { ok: true });
+}
+
+async function logoRequired(body: Record<string, unknown>): Promise<Response> {
+  const brand = body['brand'];
+  if (!isBrandSlug(brand)) throw new EditError('unknown client');
+  const { file, etag } = await loadClients();
+  await saveClients(setRequireAuthenticLogo(file, brand, body['required']), etag);
   return json(200, { ok: true });
 }
 
@@ -55,6 +83,10 @@ export async function POST(request: Request): Promise<Response> {
   try {
     if (action === 'add') return await add(body);
     if (action === 'set-website') return await website(body);
+    if (action === 'add-plan') return await plan(body, 'add');
+    if (action === 'remove-plan') return await plan(body, 'remove');
+    if (action === 'set-limit') return await limit(body);
+    if (action === 'set-logo-required') return await logoRequired(body);
     if (action === 'remove') return await remove(body);
     return json(400, { error: 'unknown action' });
   } catch (error) {

@@ -1,5 +1,9 @@
 /**
- * POST /api/clients?action=add       body: {"name": "...", "website": "..."}   (website is optional)
+ * POST /api/clients?action=add       body: {"name": "...", "website": "...", "plan": {...}}   (website and plan are optional; a plan needs the website)
+ * POST /api/clients?action=add-plan     body: {"brand": "...", "plan": {...}}   (one more plan)
+ * POST /api/clients?action=set-limit    body: {"brand": "...", "limit": 3}   (posters a week the website may make for each channel)
+ * POST /api/clients?action=set-logo-required  body: {"brand": "...", "required": true}   (every poster must carry the website's real logo)
+ * POST /api/clients?action=remove-plan  body: {"brand": "...", "index": 0}
  * POST /api/clients?action=set-website  body: {"brand": "...", "website": "..."}  (empty clears it)
  * POST /api/clients?action=remove    body: {"brand": "..."}
  * Adds or removes a client in the dashboard. Signed-in people only, from this site's own pages only; the
@@ -8,8 +12,8 @@
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
-const ACTIONS = ['add', 'set-website', 'remove'] as const;
-const MAX_BODY_BYTES = 2 * 1024;
+const ACTIONS = ['add', 'set-website', 'add-plan', 'remove-plan', 'set-limit', 'set-logo-required', 'remove'] as const;
+const MAX_BODY_BYTES = 4 * 1024;
 const TIMEOUT_MS = 25_000;
 
 export async function POST(request: Request): Promise<Response> {

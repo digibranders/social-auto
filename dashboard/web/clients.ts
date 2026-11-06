@@ -1,4 +1,5 @@
-import type { ChannelHealth, CostEntry, StatusPost, StatusResponse } from '../shared/status.ts';
+import type { ChannelHealth, ClientPlanData, CostEntry, StatusPost, StatusResponse } from '../shared/status.ts';
+import { WEEKLY_LIMIT_DEFAULT } from '../shared/quota.ts';
 import { brandLabel, dayKeyOf, formatTime, weekdayName } from './calendar.ts';
 
 export interface ClientSummary {
@@ -22,6 +23,14 @@ export interface ClientSummary {
   product: string | null;
   /** The client's website (https address) that posts are planned from; null when none was given. */
   website: string | null;
+  /** Everything for this client is held back: the client itself is paused, or everything is. */
+  paused: boolean;
+  /** What was chosen to post, where and for how long: one entry per plan; empty when nothing was. */
+  plans: ClientPlanData[];
+  /** The most posters a week the website may make for each channel. */
+  weeklyLimit: number;
+  /** Every poster made from the website must carry its real logo. */
+  requireAuthenticLogo: boolean;
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
@@ -81,6 +90,10 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       added,
       product: entry?.product ?? null,
       website: entry?.website ?? null,
+      paused: data.pauses.all || data.pauses.brands.includes(brand),
+      plans: entry?.plans ?? [],
+      weeklyLimit: entry?.weeklyLimit ?? WEEKLY_LIMIT_DEFAULT,
+      requireAuthenticLogo: entry?.requireAuthenticLogo === true,
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };

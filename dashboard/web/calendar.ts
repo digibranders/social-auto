@@ -149,11 +149,13 @@ const STATE_LABELS: Record<PostState, string> = {
   due: 'Due now',
   missed: 'Missed',
   unknown: 'Unknown',
+  skipped: 'Skipped',
+  paused: 'Paused',
 };
 export const stateLabel = (state: PostState): string => STATE_LABELS[state];
 
 /** Marks that carry the meaning without relying on colour. */
-const STATE_MARKS: Record<PostState, string> = { published: '✓', scheduled: '◷', due: '●', missed: '!', unknown: '?' };
+const STATE_MARKS: Record<PostState, string> = { published: '✓', scheduled: '◷', due: '●', missed: '!', unknown: '?', skipped: '⊘', paused: '‖' };
 export const stateMark = (state: PostState): string => STATE_MARKS[state];
 
 /**
@@ -185,4 +187,30 @@ export function captionProblem(text: string): string | null {
   if (length > MAX_CAPTION_LENGTH) return `The caption is ${length - MAX_CAPTION_LENGTH} characters too long.`;
   if (hashtags > MAX_HASHTAGS) return `Instagram allows ${MAX_HASHTAGS} hashtags; this has ${hashtags}.`;
   return null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A post can be set up to this many days ahead (the publisher allows 90 from now). */
+export const MAX_DAYS_AHEAD = 89;
+const pad2 = (value: number): string => String(value).padStart(2, '0');
+
+/**
+ * The time (HH:MM, India) a post would have if dropped on this hour of the hourly grid, or on a day (hour null): it takes the hour it is
+ * dropped on and keeps its minutes; dropped on a day, it keeps its own time.
+ */
+export function dropTime(post: Pick<StatusPost, 'date'>, hour: number | null): string {
+  return hour !== null ? `${pad2(hour)}:${pad2(minuteOf(post.date))}` : `${pad2(hourOf(post.date))}:${pad2(minuteOf(post.date))}`;
+}
+
+/**
+ * Whether a post may be dropped on this day (and hour): onto a moment still ahead and within 90 days, never where it already is, and
+ * (for a planned post) never onto another day that already has a planned post of its client, because only one planned post a day is kept.
+ */
+export function mayLandOn(post: StatusPost, day: string, hour: number | null, others: readonly StatusPost[], now: number): boolean {
+  const time = dropTime(post, hour);
+  const moment = Date.parse(`${day}T${time}:00+05:30`);
+  if (Number.isNaN(moment) || moment <= now || moment > now + MAX_DAYS_AHEAD * DAY_MS) return false;
+  if (day === dayKeyOf(post.date) && time === dropTime(post, null)) return false;
+  if (!post.manual && others.some((p) => p.id !== post.id && !p.manual && p.brand === post.brand && dayKeyOf(p.date) === day)) return false;
+  return true;
 }

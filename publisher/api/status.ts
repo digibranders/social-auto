@@ -16,9 +16,10 @@ import { memberHealth } from '../lib/linkedin.js';
 import { accountProfile, mediaSince, tokenHealth, type AccountMedia, type AccountProfile } from '../lib/instagram.js';
 import { applyOverrides } from '../lib/overrides.js';
 import { toScheduled } from '../lib/manual.js';
-import { buildStatus, parseSchedule, type StatusPost } from '../lib/schedule.js';
+import { brandIsPaused, isPaused, type PauseFile } from '../lib/pauses.js';
+import { buildStatus, isWantedOn, parseSchedule, type StatusPost } from '../lib/schedule.js';
 import { loadCosts } from '../lib/usage.js';
-import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted } from '../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted } from '../lib/store.js';
 
 /** Instagram is asked at most once a minute per warm function instance, however many people look. */
 const CACHE_MS = 60_000;
@@ -93,18 +94,29 @@ async function lookUpInstagram(earliest: number): Promise<InstagramView> {
 }
 
 /** Adds each channel's status. A hand-made post that skips Instagram takes its state and look from the channels it does go to. */
-function withCrossposts(post: StatusPost, channels: ChannelFile, posted: PostedLog, now: number): StatusPost {
-  const crossposts = crosspostStatusFor({ ...post, channels: post.channels ?? undefined }, channels, posted, now);
+function withCrossposts(post: StatusPost, channels: ChannelFile, posted: PostedLog, now: number, pauses: PauseFile): StatusPost {
+  const crossposts = crosspostStatusFor({ ...post, skipped: post.state === 'skipped', channels: post.channels ?? undefined }, channels, posted, now, pauses);
   if (post.channels === null || post.channels.includes('instagram') || crossposts.length === 0) return { ...post, crossposts };
   const first = crossposts[0] as (typeof crossposts)[number];
   const pending = crossposts.find((c) => c.state !== 'published');
   return {
     ...post,
     platform: first.platform,
-    state: pending ? pending.state : 'published',
+    state: post.state === 'skipped' ? 'skipped' : pending ? pending.state : 'published',
     permalink: first.permalink,
     crossposts,
   };
+}
+
+/**
+ * A post that is still to go out shows as paused when its client is paused, or when every place it goes to is: the team's own Instagram
+ * (when it is meant for it) and each connected channel. A post that goes somewhere that is not paused is not shown as paused.
+ */
+function withPauses(post: StatusPost, pauses: PauseFile): StatusPost {
+  if (post.state !== 'scheduled' && post.state !== 'due') return post;
+  const targets = [...(isWantedOn({ channels: post.channels ?? undefined }, 'instagram') ? [isPaused(pauses, post.brand, 'instagram')] : []), ...post.crossposts.map((c) => c.state === 'paused')];
+  const held = brandIsPaused(pauses, post.brand) || (targets.length > 0 && targets.every(Boolean));
+  return held ? { ...post, state: 'paused', editable: Date.parse(post.date) > Date.now() } : post;
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -114,7 +126,7 @@ export async function GET(request: Request): Promise<Response> {
   const origin = process.env['PUBLIC_ORIGIN'] ?? new URL(request.url).origin;
 
   try {
-    const [{ overrides }, { file: channels }, { log: posted }, { file: manual }, { file: added }] = await Promise.all([loadOverrides(), loadChannels(), loadPosted(), loadManual(), loadClients()]);
+    const [{ overrides }, { file: channels }, { log: posted }, { file: manual }, { file: added }, { file: pauses }] = await Promise.all([loadOverrides(), loadChannels(), loadPosted(), loadManual(), loadClients(), loadPauses()]);
     const posts = applyOverrides([...parseSchedule(scheduleData), ...manual.posts.map(toScheduled)], overrides);
 
     if (!cache || now - cache.at >= CACHE_MS) {
@@ -129,21 +141,23 @@ export async function GET(request: Request): Promise<Response> {
     const summary = buildStatus(posts, media, now, origin);
     return json(200, {
       generatedAt: new Date(now).toISOString(),
+      pauses,
       channels: [
-        { id: null, platform: 'instagram', account: profile.username, avatar: profile.pictureUrl, brands, ...health },
+        { id: null, platform: 'instagram', account: profile.username, avatar: profile.pictureUrl, brands, paused: pauses.channels.includes('instagram'), ...health },
         ...channels.channels.map((channel) => ({
           id: channel.id,
           platform: channel.platform,
           account: channelLabel(channel),
           avatar: null,
           brands: [channel.brand],
+          paused: isPaused(pauses, channel.brand, channel.id),
           ...(channel.platform === 'linkedin' || channel.platform === 'instagram' ? { expiresAt: channel.expiresAt } : {}),
           ...(channelHealth[channel.id] ?? { ok: false, error: 'not checked' }),
         })),
       ],
       ...summary,
-      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}) }))],
-      posts: summary.posts.map((p) => withCrossposts(p, channels, posted, now)),
+      runway: [...summary.runway, ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}), ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), ...(c.weeklyLimit ? { weeklyLimit: c.weeklyLimit } : {}), ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}) }))],
+      posts: summary.posts.map((p) => withPauses(withCrossposts(p, channels, posted, now, pauses), pauses)),
       // The cost view is a nicety: if its log is unreadable the rest of the status must still load.
       costs: await loadCosts(process.env['USAGE_LOG_FILE']).catch((error: unknown) => {
         console.error(describeError(error));

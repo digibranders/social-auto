@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError } from './schedule.ts';
+import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError, usesTeamInstagram, type ScheduledPost } from './schedule.ts';
 
 const hour = 60 * 60 * 1000;
 const NOW = Date.parse('2026-12-10T12:00:00+05:30');
@@ -104,4 +104,35 @@ test('parseSchedule rejects incomplete posts', () => {
 test('sameCaption ignores whitespace differences', () => {
   assert.ok(sameCaption('Hello\n\nworld ', 'Hello world'));
   assert.ok(!sameCaption('Hello', 'Hello there'));
+});
+
+test('the team\'s shared Instagram is a target of a post unless the post was made from a client\'s plan', () => {
+  assert.equal(usesTeamInstagram({}), true, 'a post with no channels goes everywhere, as before');
+  assert.equal(usesTeamInstagram({ channels: ['instagram'] }), true, 'a hand-made post that names the account still uses it');
+  assert.equal(usesTeamInstagram({ channels: ['linkedin:abc'] }), false);
+  assert.equal(usesTeamInstagram({ channels: ['instagram'], fromPlan: true }), false, 'a plan that says Instagram means the client\'s own account');
+  assert.equal(usesTeamInstagram({ fromPlan: true }), false);
+  assert.equal(usesTeamInstagram({ channels: ['instagram'], fromPlan: false }), true);
+});
+
+test('a post made from a plan is never matched to the shared Instagram account\'s pictures, and is not reported unknown when that account cannot be reached', () => {
+  const plan = { ...scheduled('p1', -30, 'Same caption'), channels: ['instagram'], fromPlan: true };
+  const plain = { ...scheduled('p2', -30, 'Same caption'), channels: ['instagram'] };
+  const matched = buildStatus([plan], [media('m1', 'Same caption')], NOW, 'https://pub.example').posts[0];
+  assert.notEqual(matched?.state, 'published', 'the caption on the shared account is not this client\'s post');
+  assert.equal(matched?.permalink, null);
+  assert.equal(buildStatus([plain], [media('m1', 'Same caption')], NOW, 'https://pub.example').posts[0]?.state, 'published', 'a post that does use the shared account is matched as before');
+  assert.notEqual(buildStatus([plan], null, NOW, 'https://pub.example').posts[0]?.state, 'unknown');
+  assert.equal(buildStatus([plain], null, NOW, 'https://pub.example').posts[0]?.state, 'unknown');
+});
+
+
+test('a post with its own time that was never sent is missed after half an hour, and a plain planned post keeps the day', () => {
+  const at = '2026-11-06T14:00:00+05:30';
+  const post = (extra: Partial<ScheduledPost>): ScheduledPost => ({ id: 'x', brand: 'acme', date: at, caption: 'c', image: '/x.jpg', ...extra });
+  const stateAt = (p: ScheduledPost, minutes: number) => buildStatus([p], [], Date.parse(at) + minutes * 60_000, 'https://example.test').posts[0]?.state;
+  assert.equal(stateAt(post({ ownTime: true, channels: ['linkedin'] }), 10), 'due');
+  assert.equal(stateAt(post({ ownTime: true, channels: ['linkedin'] }), 31), 'missed');
+  assert.equal(stateAt(post({ manual: true, channels: ['linkedin'] }), 31), 'missed');
+  assert.equal(stateAt(post({ channels: ['linkedin'] }), 31), 'due', 'a plain planned post is sent by the daily run, which may come hours later');
 });

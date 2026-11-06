@@ -50,7 +50,9 @@ export interface DirectorInput {
 const MIN_CONCEPT_CHARS = 80;
 const MIN_TYPOGRAPHY_CHARS = 60;
 /** Typography descriptions share more words than pictures do (weight, size, colour), so their overlap threshold is higher. */
-const TYPOGRAPHY_OVERLAP = 0.5;
+const TYPOGRAPHY_OVERLAP = 0.4;
+/** Descriptions of type all use the same few words, so a higher similarity than for pictures is needed before two are called alike. */
+const TYPOGRAPHY_EMBEDDING = 0.9;
 
 export const DIRECTOR_SYSTEM = `You are the creative director of a batch of social media posters. For each post you are given its approved headline and the verified fact it states. Invent ONE visual concept per post, in your own words.
 A concept is a description of an actual picture, complete and specific enough that an illustrator could make it without asking you anything: the subject, the world or setting it lives in, how it is made (the medium, materials, light, camera, mood), how it is composed, and the single idea that makes it communicate the fact. Do not name a style category or choose from a list of looks; describe this picture. "A modern professional illustration showing business growth" is not a concept. "A tiny website built from individual architectural blocks sits under a photographer's hard side light, one section lifted out so the structure under it shows, almost monochrome except for one small coral detail" is.
@@ -62,8 +64,14 @@ Rules:
 - The picture must communicate THIS post's fact. In "factToPicture", say in one sentence how it does; if you cannot, the concept is decoration and must be replaced.
 - The brand's colours and look are an input, not a rule: they may appear as a detail or an accent and need not fill the scene. Do not repeat the same palette treatment on every poster.
 - Never put the headline's words into the picture as text: the headline is added separately.
-TYPOGRAPHY. The headline is part of the poster's design, not a caption stuck on top. In "typography", invent how this poster's headline is set, so that it grows out of this poster's picture: its personality, its size against the picture, its weight, its letterforms, its colour (it may be taken from the scene), where it sits, its spacing, and how it interacts with the artwork. Describe what the viewer will actually see, not generic design words ("bold and modern" says nothing). Say why the treatment strengthens the message. Do not choose from a list of fonts or styles, and do not give every poster the same treatment: the four headlines of a batch, and the headlines in TYPOGRAPHY_HISTORY, must differ in their hierarchy and in their relationship to the artwork, not only in colour. A heavy black sans-serif headline at the top is the default to get away from, unless the idea really calls for it.
-Stay inside what image models letter reliably: plain, fully legible letterforms with every character complete. Allowed and encouraged: different weights, widths, personalities and colours, different sizes and positions, an asymmetric, vertical or slightly rotated headline that stays easy to read, a headline set on a flat surface of the scene. Avoid: script or very decorative lettering, very condensed or overlapping letters, letters built out of objects, text crossing an important object or a face, text on a busy area, very small type, long headlines in capitals. Keep the headline's own capitalisation and punctuation exactly: you may not change its case. The brand name and the web address are always added small, legible and secondary; do not design them.
+TYPOGRAPHY AND TEXT PLACEMENT. The headline is part of the poster's design, not a caption stuck on a picture. In "typography", invent a complete typographic composition that belongs to this poster's concept, in your own words:
+- how the headline looks: its personality, its scale against the picture, its weight, its letterforms, its colour (it may be taken from the scene), its spacing and rhythm;
+- precisely where it sits relative to the subjects and to the empty space the picture leaves for it, and how the text and the artwork interact to form one advertisement (beside, above, below, around, within the scene);
+- how the placement guides the viewer's eye through the poster;
+- where the brand name and the web address sit and how they are integrated as secondary elements (they are always added by the image model, small, legible and secondary, but you decide where they belong in this composition).
+Describe what the viewer will actually see; "bold and modern" says nothing. Say why the treatment strengthens the message. Do not choose from a list of fonts, styles, layouts or positions.
+The posters of a batch, and the posters in TYPOGRAPHY_HISTORY, must differ in the whole typographic composition: the relationship between text and picture, the hierarchy and the position, not only the colour or one word's size. Do not default to a headline at the top with the brand details at the bottom, or to a small first line over a larger second line in dark sans-serif; use them only when that arrangement is genuinely the best answer to this picture. Make real choices: a different type personality, scale relationship and position for each poster, such as a large single statement that the picture is built around, a headline running down one side, a headline set low on a quiet surface, type that shares the scene's colour, or a headline that is small and calm in a large silence. These are illustrations of the freedom you have, not a menu.
+Keep it within what image models letter correctly: every character complete and fully legible. Avoid script or very decorative lettering, very condensed or overlapping letters, letters built out of objects, text crossing an important object or a face, text on a busy area, long headlines in capitals. Keep the headline's own capitalisation and punctuation exactly: you may not change its case.
 Return JSON only: {"concepts":[{"postId":"...","concept":"...","people":false,"factToPicture":"...","typography":"..."}]} with exactly one concept for every post, using the given postId.`;
 
 function parseConcepts(posts: readonly BatchPost[]): (value: unknown) => CreativeConcept[] {
@@ -205,8 +213,17 @@ export async function directBatch(input: DirectorInput, deps: DirectorDeps = {})
     // Typography is compared the same way, but only as a reason to ask again: a headline set like another is a weaker fault than a repeated picture, so it never drops a post.
     const typeRefs: ConceptRef[] = [...planned.values()].map((c) => ({ id: c.postId, concept: c.typography }));
     (input.typographyHistory ?? []).slice(0, 30).forEach((t, i) => typeRefs.push({ id: `past-${i}`, concept: t, past: true }));
+    let typeEmbeddings: Map<string, number[]> | undefined;
+    if (deps.embed) {
+      try {
+        const vectors = await deps.embed(typeRefs.map((r) => r.concept));
+        typeEmbeddings = new Map(typeRefs.map((r, i) => [r.id, vectors[i] as number[]]));
+      } catch (error) {
+        if (error instanceof BudgetError) throw error;
+      }
+    }
     const typeConflicts: Array<{ later: string; problem: string }> = [];
-    for (const pair of flagSimilar(typeRefs, { config: { ...config, maxWordOverlap: TYPOGRAPHY_OVERLAP }, shared })) {
+    for (const pair of flagSimilar(typeRefs, { config: { ...config, maxWordOverlap: TYPOGRAPHY_OVERLAP, maxEmbeddingSimilarity: TYPOGRAPHY_EMBEDDING }, shared, ...(typeEmbeddings ? { embeddings: typeEmbeddings } : {}) })) {
       const later = pair.b.startsWith('past-') ? pair.a : pair.a.startsWith('past-') ? pair.b : pair.b;
       const other = later === pair.a ? pair.b : pair.a;
       flags.push({ ...pair, decision: 'same', why: `typography: ${pair.reason}` });

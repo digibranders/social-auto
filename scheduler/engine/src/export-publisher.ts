@@ -11,6 +11,7 @@
  *   node src/export-publisher.ts --brand brands/brandbasket [--publisher ../../publisher]
  */
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -29,6 +30,12 @@ export interface ExportedPost {
   caption: string;
   /** Poster path in the publisher, or null once the poster was pruned. */
   image: string | null;
+  /** The platforms the owner chose for this client's campaign ("instagram", "facebook", ...); missing means every connected channel. */
+  channels?: string[];
+  /** Made from a client's posting plan: the publisher sends it only to that client's own connected channels, never to the team's one shared Instagram account. */
+  fromPlan?: true;
+  /** Sent at its own time by the frequent run (every few minutes), not left to the once-a-day run, so a time other than 10:00 is honoured. */
+  ownTime?: true;
 }
 
 /** 128-bit content hash: stable for the same image, unguessable without it. */
@@ -65,23 +72,66 @@ async function readSchedule(path: string): Promise<ExportedPost[]> {
   }
 }
 
-export async function exportToPublisher(brandDir: string, publisherDir: string, now = Date.now()): Promise<ExportedPost[]> {
+/**
+ * The platforms of the plan a week file was made for, from the campaign runner's records (brands/<site>/campaigns/*.json);
+ * undefined for a week file no campaign made (it then goes to every connected channel, as before plans existed).
+ */
+async function platformsForWeek(brandDir: string, weekFile: string): Promise<string[] | undefined> {
+  let names: string[];
+  try {
+    names = (await readdir(join(brandDir, 'campaigns'))).filter((f) => f.endsWith('.json'));
+  } catch {
+    return undefined;
+  }
+  for (const name of names) {
+    try {
+      const state = JSON.parse(await readFile(join(brandDir, 'campaigns', name), 'utf8')) as { plan?: { platforms?: unknown }; batches?: Array<{ weekFile?: unknown }> };
+      const platforms = state.plan?.platforms;
+      if (state.batches?.some((b) => b.weekFile === weekFile) && Array.isArray(platforms) && platforms.length > 0 && platforms.every((p) => typeof p === 'string')) return platforms as string[];
+    } catch {
+      // An unreadable record is skipped; the post then follows the default rather than a guess.
+    }
+  }
+  return undefined;
+}
+
+export interface ExportOptions {
+  /**
+   * The client's own name, when it is not the site folder's (a client "fynix-digital" whose site folder is "fynix"). The posts are filed under it, because a
+   * client's channels belong to the client: filed under the folder's name they would match no channel and be sent nowhere.
+   */
+  brand?: string;
+  /** Only these week files are exported: the ones this client's plans made. */
+  weekFiles?: readonly string[];
+}
+
+export async function exportToPublisher(brandDir: string, publisherDir: string, now = Date.now(), options: ExportOptions = {}): Promise<ExportedPost[]> {
   // The publisher app sends what it is given to the platforms, so handing it posts is publishing: refused (and nothing is written) while the switch is off.
   assertPublishingEnabled('exporting to the publisher');
-  const brand = basename(brandDir);
+  /** The site folder: the review queue and the picture folders are named after it. */
+  const site = basename(brandDir);
+  /** The client the posts are for. */
+  const brand = options.brand ?? site;
   const postsDir = join(publisherDir, 'public', 'posts', brand);
   await rm(postsDir, { recursive: true, force: true });
   await mkdir(postsDir, { recursive: true });
   await mkdir(join(publisherDir, 'data'), { recursive: true });
 
   const exported: ExportedPost[] = [];
-  const files = (await readdir(brandDir)).filter((f) => WEEK_FILE.test(f)).sort();
+  const files = (await readdir(brandDir)).filter((f) => WEEK_FILE.test(f) && (options.weekFiles === undefined || options.weekFiles.includes(f))).sort();
   for (const file of files) {
     const plan = parseWeekPlan(await readJson(join(brandDir, file)), file);
-    const outDir = resolve('out', brand, basename(file, '.json'));
+    const platforms = await platformsForWeek(brandDir, file);
+    // A site the campaign runner manages must trace every AI poster to a plan, because the plan says where it may go. One that
+    // cannot be traced (its record is gone) is held back rather than sent to every connected channel.
+    if (plan.renderMode === 'ai_v1' && !platforms && existsSync(join(brandDir, 'campaigns'))) {
+      console.warn(`${brand}: ${file} is not tied to any posting plan, so its posters were not exported`);
+      continue;
+    }
+    const outDir = resolve('out', site, basename(file, '.json'));
     for (const post of plan.posts) {
       // Fully AI posters are exported only as the exact approved version (its picture and its caption); every other plan by its own approval.
-      const approved = plan.renderMode === 'ai_v1' ? new ReviewStore(brandDir, brand).approvedFor(post.id) : undefined;
+      const approved = plan.renderMode === 'ai_v1' ? new ReviewStore(brandDir, site).approvedFor(post.id) : undefined;
       if (plan.renderMode === 'ai_v1' ? !approved : !isPublishable(plan, post)) continue;
       let poster: string | null = null;
       if (Date.parse(post.date) >= now - KEEP_RECENT_MS) {
@@ -96,13 +146,19 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
         date: post.date,
         caption: approved ? approved.version.caption : composeCaption(post),
         image: poster,
+        // A fully AI poster goes only to the platforms the owner chose; every other plan keeps going to every connected channel.
+        ...(approved && platforms ? { channels: platforms, fromPlan: true as const } : {}),
+        // A fully AI poster has the time its plan chose; the frequent run sends it then (the daily run would send one set for the afternoon the next morning).
+        ...(approved ? { ownTime: true as const } : {}),
       });
     }
   }
 
   // The schedule is shared by all brands: replace only this brand's entries.
   const schedulePath = join(publisherDir, SCHEDULE_FILE);
-  const others = (await readSchedule(schedulePath)).filter((p) => p.brand !== brand);
+  // Entries an earlier version filed under the site folder's name (which no channel matches) are cleared, so a client does not show up twice.
+  const strayFromPlans = (p: { brand?: string; id: string; ownTime?: boolean }): boolean => brand !== site && p.brand === site && p.ownTime === true && p.id.startsWith(`${site}-w`);
+  const others = (await readSchedule(schedulePath)).filter((p) => p.brand !== brand && !strayFromPlans(p));
   const merged = [...others, ...exported].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
   await writeFile(schedulePath, scheduleModule(merged));
   await rm(join(publisherDir, 'public', 'schedule.json'), { force: true });

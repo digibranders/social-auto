@@ -2,12 +2,12 @@
  * A customer's scheduled posts. Called by a product's server with its own key; a product only reaches posts of
  * workspaces it created.
  *
- * POST   /api/v1/posts                              {"externalId", "day": "2026-11-20", "caption", "pictureId", "channels"?: ["linkedin:..."]}
- *                                                   goes out at 10:00 IST on that day, to the chosen channels (default: all connected)
+ * POST   /api/v1/posts                              {"externalId", "day": "2026-11-20", "time"?: "14:30", "caption", "pictureId", "channels"?: ["linkedin:..."]}
+ *                                                   goes out on that day at the time given (India time; 10:00 when left out), to the chosen channels (default: all connected)
  * GET    /api/v1/posts?externalId=...[&from=YYYY-MM-DD&to=YYYY-MM-DD]
  *                                                   all of the customer's posts (planned and extra), earliest first, and where each stands on each channel;
  *                                                   from is the first day shown and to the last, both in India time
- * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out
+ * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "time"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out
  * DELETE /api/v1/posts?externalId=...&postId=...    removes a post that has not gone out yet
  */
 import { scheduleData } from '../../lib/schedule-source.js';
@@ -19,7 +19,7 @@ import { applyOverrides, EditError } from '../../lib/overrides.js';
 import { postView, scheduledView } from '../../lib/post-view.js';
 import { productOf } from '../../lib/product-request.js';
 import { parseSchedule } from '../../lib/schedule.js';
-import { loadChannels, loadClients, loadManual, loadOverrides, loadPosted, storeConfigured } from '../../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted, storeConfigured } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -60,9 +60,9 @@ export async function POST(request: Request): Promise<Response> {
   const caller = await workspaceFor(request, body['externalId']);
   if (caller instanceof Response) return caller;
   try {
-    const post = await saveNewPost({ brand: caller.brand, day: body['day'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], allowInstagram: false }, Date.now());
-    const [{ file: channels }, { log }] = await Promise.all([loadChannels(), loadPosted()]);
-    return json(201, { post: postView(post, channels, log, Date.now(), originOf(request)) });
+    const post = await saveNewPost({ brand: caller.brand, day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], variants: body['variants'], allowInstagram: false }, Date.now());
+    const [{ file: channels }, { log }, { file: pauses }] = await Promise.all([loadChannels(), loadPosted(), loadPauses()]);
+    return json(201, { post: postView(post, channels, log, Date.now(), originOf(request), pauses) });
   } catch (error) {
     return failure(error, 'schedule the post');
   }
@@ -76,7 +76,7 @@ export async function GET(request: Request): Promise<Response> {
   const to = params.has('to') ? startOfDay(params.get('to')) : null;
   if ((params.has('from') && from === null) || (params.has('to') && to === null)) return json(400, { error: 'from and to must be days like 2026-11-20' });
   try {
-    const [{ file: manual }, { file: channels }, { log }, { overrides }] = await Promise.all([loadManual(), loadChannels(), loadPosted(), loadOverrides()]);
+    const [{ file: manual }, { file: channels }, { log }, { overrides }, { file: pauses }] = await Promise.all([loadManual(), loadChannels(), loadPosted(), loadOverrides(), loadPauses()]);
     const now = Date.now();
     const origin = originOf(request);
     // Planned posts carry the customer's workspace id as their client; dashboard edits are applied on top.
@@ -84,7 +84,7 @@ export async function GET(request: Request): Promise<Response> {
     const posts = applyOverrides([...planned, ...manual.posts.filter((p) => p.brand === caller.brand).map(toScheduled)], overrides)
       .filter((p) => (from === null || Date.parse(p.date) >= from) && (to === null || Date.parse(p.date) < to + DAY_MS))
       .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
-    return json(200, { posts: posts.map((p) => scheduledView(p, channels, log, now, origin)) });
+    return json(200, { posts: posts.map((p) => scheduledView(p, channels, log, now, origin, pauses)) });
   } catch (error) {
     return failure(error, 'read the posts');
   }
@@ -98,9 +98,9 @@ export async function PATCH(request: Request): Promise<Response> {
   const caller = await workspaceFor(request, params.get('externalId'));
   if (caller instanceof Response) return caller;
   try {
-    const post = await updateNewPost(params.get('postId'), { day: body['day'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'] }, Date.now(), caller.brand);
-    const [{ file: channels }, { log }] = await Promise.all([loadChannels(), loadPosted()]);
-    return json(200, { post: postView(post, channels, log, Date.now(), originOf(request)) });
+    const post = await updateNewPost(params.get('postId'), { day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], variants: body['variants'] }, Date.now(), caller.brand);
+    const [{ file: channels }, { log }, { file: pauses }] = await Promise.all([loadChannels(), loadPosted(), loadPauses()]);
+    return json(200, { post: postView(post, channels, log, Date.now(), originOf(request), pauses) });
   } catch (error) {
     return failure(error, 'change the post');
   }

@@ -4,25 +4,19 @@
  * Both use the sealed token waiting in the hidden cookie; neither ever returns it.
  */
 import { describeError, json } from '../../lib/http.js';
+import { askPublisher } from '../../lib/google-publisher.js';
 import { clearedPickCookie, parsePickCookie, PICK_COOKIE } from '../../lib/google-flow.js';
 import { isSameOrigin, isSignedIn, readCookie } from '../../lib/security.js';
 
-const TIMEOUT_MS = 25_000;
 const LOCATION_ID = /^\d{1,25}$/;
 
+/** Passes the publisher's answer on as JSON; an expired waiting connection also clears its cookie. */
 async function ask(action: 'locations' | 'save', payload: Record<string, unknown>): Promise<Response> {
-  const target = process.env['EDIT_URL'];
-  const secret = process.env['EDIT_SECRET'];
-  if (!target || !secret) return json(503, { error: 'Editing is not configured' });
-  const response = await fetch(new URL(`/api/google-connect?action=${action}`, target), {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (response.status === 410) return json(410, { error: typeof body?.['error'] === 'string' ? body['error'] : 'The waiting connection expired. Connect Google again.' }, { 'Set-Cookie': clearedPickCookie() });
-  if (!response.ok) return json(response.status === 400 ? 400 : 502, { error: typeof body?.['error'] === 'string' ? body['error'] : `The publisher answered ${response.status}` });
+  const { status, body } = await askPublisher(action, payload);
+  const message = typeof body?.['error'] === 'string' ? body['error'] : null;
+  if (status === 410) return json(410, { error: message ?? 'The waiting connection expired. Connect Google again.' }, { 'Set-Cookie': clearedPickCookie() });
+  if (status === 503) return json(503, { error: message ?? 'Editing is not configured' });
+  if (status < 200 || status >= 300) return json(status === 400 ? 400 : 502, { error: message ?? `The publisher answered ${status}` });
   return json(200, body ?? {}, action === 'save' ? { 'Set-Cookie': clearedPickCookie() } : {});
 }
 

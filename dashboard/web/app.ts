@@ -1,5 +1,5 @@
 /** The calendar page. Every piece of text goes into the page as text, never as HTML. */
-import { parseStatus, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
+import { NO_PAUSES, parseStatus, PLATFORMS, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
 import {
   addDays,
   addMonths,
@@ -12,6 +12,9 @@ import {
   formatMonth,
   captionProblem,
   captionStats,
+  dropTime,
+  mayLandOn,
+  MAX_DAYS_AHEAD,
   formatTime,
   groupByDay,
   hourOf,
@@ -35,7 +38,9 @@ import { helpPage } from './help-page.ts';
 import { reviewPage, resetReview } from './review-page.ts';
 import { addClientForm } from './add-client.ts';
 import { clientOption, dropdown } from './dropdown.ts';
+import { makeDraggable, type DragRules } from './drag.ts';
 import { newPostForm } from './new-post.ts';
+import { startMakeStatus } from './make-status.ts';
 import { parseRoute, routeHash, type Route } from './route.ts';
 
 type View = 'day' | 'week' | 'month' | 'list';
@@ -73,6 +78,8 @@ const STATE_HELP: Record<PostState, string> = {
   due: 'Its time has come. It should appear within the hour.',
   missed: 'Its time passed and it is not on the account.',
   unknown: 'The account could not be checked, so its status is not known.',
+  skipped: 'This post was skipped, so it will not be sent. You can undo that until its time comes.',
+  paused: 'This post is held back by a pause. It is sent when the pause ends, unless its time comes first: then it is skipped, not sent late.',
 };
 const state: State = {
   view: 'week',
@@ -168,6 +175,21 @@ function describe(post: StatusPost): string {
   return `${brandLabel(post.brand)}, ${formatDateTime(post.date)}, ${stateLabel(post.state)}`;
 }
 
+/** Where a post may be dropped (see mayLandOn). */
+const mayLand = (post: StatusPost, day: string, hour: number | null): boolean => mayLandOn(post, day, hour, state.data?.posts ?? [], Date.now());
+
+/** Moves a post to the day (and hour) it was dropped on, then shows the calendar as it now is. */
+async function movePost(post: StatusPost, day: string, hour: number | null): Promise<void> {
+  const time = dropTime(post, hour);
+  const problem = await sendEdit(post, 'move', JSON.stringify({ day, time }), 'application/json');
+  state.notice = problem
+    ? { kind: 'warn', text: problem }
+    : { kind: 'ok', text: `Post moved to ${formatDayLabel(day)} at ${formatTime(`${day}T${time}:00+05:30`)}.` };
+  await load();
+}
+
+const dragRules: DragRules = { allowed: mayLand, drop: (post, day, hour) => void movePost(post, day, hour) };
+
 /** A post inside an hourly cell: a small preview, like a draft in a calendar slot. */
 function slotPost(post: StatusPost, large: boolean): HTMLElement {
   const element = h(
@@ -182,6 +204,7 @@ function slotPost(post: StatusPost, large: boolean): HTMLElement {
     ),
   );
   element.addEventListener('click', () => openDetail(post));
+  if (post.editable) makeDraggable(element, post, dragRules);
   return element;
 }
 
@@ -212,6 +235,7 @@ function monthChip(post: StatusPost): HTMLElement {
     h('span', { class: 'mtext' }, snippet(post.caption, 40)),
   );
   chip.addEventListener('click', () => openDetail(post));
+  if (post.editable) makeDraggable(chip, post, dragRules);
   return chip;
 }
 
@@ -226,7 +250,7 @@ function editedTag(post: StatusPost): HTMLElement | false {
 const MAX_PICTURE_BYTES = 4 * 1024 * 1024;
 
 /** Sends one change to the server; resolves to an explanation when it did not work. */
-async function sendEdit(post: StatusPost, action: 'caption' | 'image' | 'revert', body?: BodyInit, contentType?: string): Promise<string | null> {
+async function sendEdit(post: StatusPost, action: 'caption' | 'variants' | 'image' | 'revert' | 'skip' | 'unskip' | 'move', body?: BodyInit, contentType?: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/edit?post=${encodeURIComponent(post.id)}&action=${action}`, {
       method: 'POST',
@@ -254,13 +278,28 @@ async function reopenAfterChange(id: string, mode: 'view' | 'edit'): Promise<voi
   else dialog.close();
 }
 
+/** What each platform reads best as; shown under its caption so a client knows what to aim for. */
+const PLATFORM_HINTS: Record<Platform, string> = {
+  instagram: 'Instagram reads best short, with 3 to 5 hashtags.',
+  facebook: 'Facebook reads best at 40 to 80 words, with 0 to 2 hashtags.',
+  linkedin: 'LinkedIn reads best a little longer, 120 to 250 words, with 0 to 3 hashtags.',
+  google: 'Google shows plain text only: 2 to 4 sentences, no hashtags.',
+};
+
+/** The platforms a post goes to, in the usual order; only these can have a caption of their own. */
+function platformsOf(post: StatusPost): Platform[] {
+  const going = new Set<Platform>(post.crossposts.map((c) => c.platform));
+  if (post.channels === null || post.channels.includes('instagram')) going.add('instagram');
+  return PLATFORMS.filter((p) => going.has(p));
+}
+
 function editPanel(post: StatusPost): HTMLElement {
   const message = h('p', { class: 'form-message', role: 'status' });
   const show = (text: string, isError: boolean): void => {
     message.textContent = text;
     message.classList.toggle('is-error', isError);
   };
-  const buttons: HTMLButtonElement[] = [];
+  const buttons: Array<HTMLButtonElement | HTMLInputElement> = [];
   const busy = (working: boolean): void => {
     for (const element of buttons) element.disabled = working;
   };
@@ -268,12 +307,69 @@ function editPanel(post: StatusPost): HTMLElement {
   const area = h('textarea', { class: 'caption-input', rows: '12', 'aria-label': 'Caption', maxlength: String(MAX_CAPTION_LENGTH * 2) });
   area.value = post.caption;
   const count = h('p', { class: 'muted counter' });
+
+  // One caption for everything, or a caption of its own for a platform. `texts` holds what is typed for each tab, `own` the platforms that have their own.
+  const targets = platformsOf(post);
+  let tab: 'main' | Platform = 'main';
+  const texts: Record<string, string> = { main: post.caption };
+  const own = new Set<Platform>();
+  for (const platform of targets) {
+    const saved = post.variants[platform]?.caption;
+    if (saved !== undefined) {
+      own.add(platform);
+      texts[platform] = saved;
+    }
+  }
+  const hint = h('p', { class: 'muted' });
+  const useMain = button('Use the main caption', 'btn btn-quiet', () => {
+    if (tab === 'main') return;
+    own.delete(tab);
+    texts[tab] = texts['main'] ?? '';
+    area.value = texts['main'] ?? '';
+    update();
+  });
+  const tabBar = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Caption for' });
   const update = (): void => {
     const { length, hashtags } = captionStats(area.value);
     count.textContent = `${length} / ${MAX_CAPTION_LENGTH} characters · ${hashtags} / ${MAX_HASHTAGS} hashtags`;
     count.classList.toggle('is-error', captionProblem(area.value) !== null);
+    if (tab === 'main') {
+      hint.textContent = targets.length > 1 ? 'Goes to every channel that has no caption of its own.' : '';
+    } else {
+      hint.textContent = `${own.has(tab) ? `This is the ${platformLabel(tab)} caption.` : `${platformLabel(tab)} uses the main caption until you change it here.`} ${PLATFORM_HINTS[tab]}`;
+    }
+    useMain.hidden = tab === 'main' || !own.has(tab);
+    for (const element of tabBar.querySelectorAll<HTMLButtonElement>('button')) {
+      const on = element.dataset['tab'] === tab;
+      element.classList.toggle('tab-on', on);
+      element.setAttribute('aria-selected', String(on));
+    }
   };
-  area.addEventListener('input', update);
+  const remember = (): void => {
+    texts[tab] = area.value;
+    if (tab !== 'main') {
+      if (area.value.trim() !== (texts['main'] ?? '').trim() && area.value.trim() !== '') own.add(tab);
+      else own.delete(tab);
+    }
+  };
+  const showTab = (next: 'main' | Platform): void => {
+    remember();
+    tab = next;
+    area.value = texts[next] ?? texts['main'] ?? '';
+    update();
+  };
+  area.addEventListener('input', () => {
+    remember();
+    update();
+  });
+  if (targets.length > 1) {
+    for (const key of ['main', ...targets] as const) {
+      const tabButton = button(key === 'main' ? 'Main' : platformLabel(key), 'tab', () => showTab(key));
+      tabButton.dataset['tab'] = key;
+      tabButton.setAttribute('role', 'tab');
+      tabBar.append(tabButton);
+    }
+  }
   update();
 
   const run = async (work: () => Promise<string | null>, mode: 'view' | 'edit'): Promise<void> => {
@@ -289,9 +385,32 @@ function editPanel(post: StatusPost): HTMLElement {
   };
 
   const save = button('Save caption', 'btn btn-primary', () => {
-    const problem = captionProblem(area.value);
-    if (problem) return show(problem, true);
-    void run(() => sendEdit(post, 'caption', JSON.stringify({ caption: area.value }), 'application/json'), 'view');
+    remember();
+    const main = texts['main'] ?? '';
+    const mainProblem = captionProblem(main);
+    if (mainProblem) return show(mainProblem, true);
+    // Only what changed is sent: the main caption, and each platform that got, changed or lost a caption of its own.
+    const patch: Record<string, { caption: string | null }> = {};
+    for (const platform of targets) {
+      const saved = post.variants[platform]?.caption;
+      if (own.has(platform)) {
+        const text = texts[platform] ?? '';
+        const problem = captionProblem(text);
+        if (problem) return show(`${platformLabel(platform)}: ${problem}`, true);
+        if (text !== saved) patch[platform] = { caption: text };
+      } else if (saved !== undefined) {
+        patch[platform] = { caption: null };
+      }
+    }
+    const mainChanged = main !== post.caption;
+    if (!mainChanged && Object.keys(patch).length === 0) return show('Nothing has changed.', true);
+    void run(async () => {
+      if (mainChanged) {
+        const problem = await sendEdit(post, 'caption', JSON.stringify({ caption: main }), 'application/json');
+        if (problem) return problem;
+      }
+      return Object.keys(patch).length > 0 ? sendEdit(post, 'variants', JSON.stringify({ variants: patch }), 'application/json') : null;
+    }, 'view');
   });
   buttons.push(save);
 
@@ -316,14 +435,54 @@ function editPanel(post: StatusPost): HTMLElement {
   const cancel = button('Cancel', 'btn btn-quiet', () => openDetail(post, 'view'));
   buttons.push(cancel);
 
+  // When it goes out: a day and a time, for a planned post as well as one made by hand.
+  const day = h('input', { type: 'date', class: 'schedule-input', id: 'move-day', min: today(), max: addDays(today(), MAX_DAYS_AHEAD) });
+  day.value = dayKeyOf(post.date);
+  const time = h('input', { type: 'time', class: 'schedule-input', id: 'move-time' });
+  time.value = dropTime(post, null);
+  const move = button('Move post', 'btn', () => {
+    if (!day.value || !time.value) return show('Choose a day and a time.', true);
+    const unchanged = day.value === dayKeyOf(post.date) && time.value === dropTime(post, null);
+    if (unchanged) return show('That is when it already goes out.', true);
+    void run(() => sendEdit(post, 'move', JSON.stringify({ day: day.value, time: time.value }), 'application/json'), 'edit');
+  });
+  buttons.push(day, time, move);
+  const schedule = h(
+    'div',
+    { class: 'schedule' },
+    h('h3', {}, 'When it goes out'),
+    h(
+      'div',
+      { class: 'schedule-row' },
+      h('label', { for: 'move-day' }, 'Day'),
+      day,
+      h('label', { for: 'move-time' }, 'Time'),
+      time,
+      move,
+    ),
+    h('p', { class: 'muted' }, post.manual ? 'India time. It goes out within a few minutes of the time you choose.' : 'India time. It goes out within a few minutes of the time you choose. Only one planned post a day is kept, so a day that already has one is not offered.'),
+  );
+
+  // Skipping and deleting are here too, so everything for one post is in one place.
+  const skip = post.state === 'skipped' ? button('Undo skip', 'btn btn-quiet', () => void skipPost(post, false)) : button('Skip this post', 'btn btn-quiet', () => void skipPost(post, true));
+  const remove = post.manual ? button('Delete post', 'btn btn-quiet btn-danger', () => void deleteManualPost(post)) : null;
+  buttons.push(skip);
+  if (remove) buttons.push(remove);
+
   return h(
     'div',
     { class: 'edit-panel' },
+    schedule,
     h('h3', {}, 'Caption'),
+    targets.length > 1 ? h('p', { class: 'muted' }, 'Write one caption for everything, or give a channel its own: Instagram short, LinkedIn a little longer.') : null,
+    tabBar,
     area,
     count,
+    hint,
+    useMain,
     h('p', { class: 'muted' }, 'The pictures must be square JPG, up to 4 MB. Changes go out at the scheduled time.'),
     h('div', { class: 'actions' }, save, pick, file, revert, cancel),
+    h('div', { class: 'actions actions-more' }, skip, remove),
     message,
   );
 }
@@ -338,7 +497,7 @@ function channelNames(post: StatusPost): string {
   return names.join(', ');
 }
 
-function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
+function openDetail(post: StatusPost, mode: 'view' | 'edit' = post.editable ? 'edit' : 'view'): void {
   const source = pictureOf(post);
   const link = safeHttpsUrl(post.permalink);
   const editing = mode === 'edit' && post.editable;
@@ -383,8 +542,14 @@ function openDetail(post: StatusPost, mode: 'view' | 'edit' = 'view'): void {
                 { class: 'view-panel' },
                 post.editable ? button('Edit post', 'btn btn-primary', () => openDetail(post, 'edit')) : null,
                 post.editable && post.manual ? button('Delete post', 'btn btn-quiet btn-danger', () => void deleteManualPost(post)) : null,
+                post.editable && post.state === 'skipped' ? button('Undo skip', 'btn', () => void skipPost(post, false)) : null,
+                post.editable && (post.state === 'scheduled' || post.state === 'paused') ? button('Skip this post', 'btn btn-quiet', () => void skipPost(post, true)) : null,
                 h('h3', {}, 'Caption'),
                 h('p', { class: 'caption' }, post.caption),
+                ...platformsOf(post).flatMap((platform) => {
+                  const own = post.variants[platform]?.caption;
+                  return own === undefined ? [] : [h('h3', {}, `${platformLabel(platform)} caption`), h('p', { class: 'caption' }, own)];
+                }),
               ),
         ),
       ),
@@ -418,6 +583,16 @@ function banners(): HTMLElement[] {
   }
   const data = state.data;
   if (!data) return out;
+  if (data.pauses.all) {
+    out.push(
+      h(
+        'div',
+        { class: 'banner banner-warn banner-notice', role: 'status' },
+        h('span', {}, 'Everything is paused. Nothing is being sent for any client.'),
+        button('Resume everything', 'btn banner-dismiss', () => void setPause('all', null, false)),
+      ),
+    );
+  }
   for (const channel of data.channels) {
     if (channel.ok) continue;
     const who = channel.account ? ` (${channel.account})` : '';
@@ -446,7 +621,7 @@ function channelsPanel(): HTMLElement {
         'span',
         { class: 'channel-text' },
         h('span', { class: 'channel-name' }, channelName(channel)),
-        h('span', { class: 'channel-sub' }, `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}`),
+        h('span', { class: 'channel-sub' }, `${platformLabel(channel.platform)} · ${channel.brands.map(brandLabel).join(', ')}${channel.paused ? ' · Paused' : ''}`),
       ),
       channel.ok ? null : statusMark(false),
     );
@@ -568,7 +743,7 @@ function timeGrid(days: string[]): HTMLElement {
     for (const day of days) {
       const posts = (groups.get(day) ?? []).filter((p) => hourOf(p.date) === hour);
       const past = day < nowKey || (day === nowKey && hour < nowHour);
-      const cell = h('div', { class: `tcell${past ? ' tcell-past' : ''}`, role: 'gridcell' }, ...posts.map((p) => slotPost(p, large)));
+      const cell = h('div', { class: `tcell${past ? ' tcell-past' : ''}`, role: 'gridcell', 'data-drop-day': day, 'data-drop-hour': String(hour) }, ...posts.map((p) => slotPost(p, large)));
       if (day === nowKey && isNow) {
         const line = h('span', { class: 'nowline', 'aria-hidden': 'true' });
         line.style.setProperty('--at', `${(minuteOf(Date.now()) / 60) * 100}%`);
@@ -615,7 +790,7 @@ function monthView(): HTMLElement {
       const classes = ['mcell', day < now ? 'mcell-past' : '', monthOf(day) !== month ? 'mcell-out' : ''].filter(Boolean).join(' ');
       return h(
         'div',
-        { class: classes },
+        { class: classes, 'data-drop-day': day },
         h('div', { class: `mnum${day === now ? ' mnum-today' : ''}` }, String(Number(day.slice(8)))),
         ...posts.slice(0, MONTH_CHIPS_PER_DAY).map(monthChip),
         more > 0 ? button(`+${more} more`, 'more', () => { state.view = 'day'; jumpTo(day); }) : null,
@@ -690,7 +865,7 @@ function rail(): HTMLElement {
 const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', review: 'Review posters', help: 'Help · Connect a channel' } as const;
 
 function clientPicker(): HTMLElement {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [], costs: [] }, Date.now());
+  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now());
   const select = dropdown([{ value: '', label: 'All clients' }, ...clients.map((c) => clientOption(c.brand, c.label))], state.calendarClient ?? '', 'Client');
   select.addEventListener('change', () => {
     state.calendarClient = select.value || null;
@@ -719,6 +894,42 @@ function panelHeader(): HTMLElement {
   );
 }
 
+/** Pauses or resumes everything, one client or one channel, then reloads the feed so the page shows it at once. */
+async function setPause(scope: 'all' | 'brand' | 'channel', id: string | null, paused: boolean): Promise<void> {
+  const label = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now()).find((c) => c.brand === id)?.label;
+  const what = scope === 'all' ? 'everything' : scope === 'brand' ? (label ?? brandLabel(id ?? '')) : 'this channel';
+  if (paused && scope === 'all' && !confirm('Pause everything? Nothing will be sent for any client until you resume. Posts whose time comes in the meantime are skipped, not sent late.')) return;
+  try {
+    const response = await fetch('/api/pause', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ scope, ...(id === null ? {} : { id }), paused }),
+    });
+    if (response.status === 401) return void location.replace('/login');
+    const body: unknown = await response.json().catch(() => null);
+    state.notice = response.ok
+      ? { kind: 'ok', text: paused ? `Paused ${what}. Nothing is sent there until you resume it.` : `Resumed ${what}.` }
+      : { kind: 'warn', text: messageOf(body) ?? `Could not ${paused ? 'pause' : 'resume'} (${response.status}).` };
+  } catch (error) {
+    state.notice = { kind: 'warn', text: error instanceof Error ? error.message : String(error) };
+  }
+  await load();
+}
+
+/** Skips a post (it stays on the calendar but is never sent) or brings it back, then shows it again. */
+async function skipPost(post: StatusPost, skip: boolean): Promise<void> {
+  const problem = await sendEdit(post, skip ? 'skip' : 'unskip');
+  if (problem) {
+    state.notice = { kind: 'warn', text: problem };
+    await load();
+    dialog.close();
+    return;
+  }
+  state.notice = { kind: 'ok', text: skip ? 'Post skipped. It will not be sent. You can undo that from the post until its time comes.' : 'Post brought back. It will go out at its time.' };
+  await reopenAfterChange(post.id, 'view');
+}
+
 /** Removes a Facebook Page, LinkedIn profile or client Instagram account from a client after asking, then reloads the feed. */
 async function disconnect(channel: ChannelHealth): Promise<void> {
   if (!channel.id) return;
@@ -737,7 +948,7 @@ async function disconnect(channel: ChannelHealth): Promise<void> {
 
 /** Opens the Add channel window; with no client chosen it asks which one the channel is for. */
 function openPicker(brand: string | null): void {
-  const clients = summarizeClients(state.data ?? { generatedAt: '', channels: [], posts: [], runway: [], costs: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
+  const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
   const connected: Record<string, Platform[]> = {};
   for (const channel of state.data?.channels ?? []) for (const b of channel.brands) (connected[b] ??= []).push(channel.platform);
   picker.replaceChildren(channelPicker(brand, clients, connected, clientsContext, () => picker.close()));
@@ -745,7 +956,7 @@ function openPicker(brand: string | null): void {
 }
 
 /** Saves a hand-made post: the picture first, then the post that points to it. */
-async function submitNewPost(post: { brand: string; day: string; caption: string; picture: File; channels: string[] }): Promise<string | null> {
+async function submitNewPost(post: { brand: string; day: string; time: string; caption: string; picture: File; channels: string[] }): Promise<string | null> {
   const call = async (query: string, body: BodyInit, contentType: string): Promise<{ answer: Record<string, unknown> | null; problem: string | null }> => {
     try {
       const response = await fetch(`/api/manual?${query}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': contentType }, body });
@@ -762,26 +973,39 @@ async function submitNewPost(post: { brand: string; day: string; caption: string
   const uploaded = await call('action=image', post.picture, 'image/jpeg');
   const imageKey = uploaded.answer?.['imageKey'];
   if (uploaded.problem || typeof imageKey !== 'string') return uploaded.problem ?? 'The picture could not be saved.';
-  const created = await call('action=create', JSON.stringify({ brand: post.brand, day: post.day, caption: post.caption, imageKey, channels: post.channels }), 'application/json');
+  const created = await call('action=create', JSON.stringify({ brand: post.brand, day: post.day, time: post.time, caption: post.caption, imageKey, channels: post.channels }), 'application/json');
   if (created.problem) return created.problem;
   picker.close();
-  state.notice = { kind: 'ok', text: `Post scheduled for ${post.day} at 10:00 AM. It shows under Next posts.` };
+  state.notice = { kind: 'ok', text: `Post scheduled for ${post.day} at ${post.time} India time. It shows under Next posts.` };
   await load();
   return null;
 }
 
+/** The client whose "make posters from the website" form should be open the next time its page is drawn (set by the New post window). */
+let planFormFor: string | null = null;
+
 /** Opens the New post window; `channel` is ticked in advance. */
 function openNewPost(brand: string | null, channel: string | null): void {
-  const data = state.data ?? { generatedAt: '', channels: [], posts: [], runway: [], costs: [] };
-  const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
-  picker.replaceChildren(newPostForm(brand, channel, { clients, channels: data.channels, submit: submitNewPost, close: () => picker.close() }));
+  const data = state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] };
+  const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label, website: Boolean(c.added && c.website) }));
+  picker.replaceChildren(newPostForm(brand, channel, {
+    clients,
+    channels: data.channels,
+    submit: submitNewPost,
+    fromWebsite: (target) => {
+      picker.close();
+      planFormFor = target;
+      go({ page: 'client', brand: target, tab: 'channels' });
+    },
+    close: () => picker.close(),
+  }));
   picker.showModal();
 }
 
 /** Adds a client, then opens its page so the channels can be connected. */
-async function submitNewClient(name: string, website: string): Promise<string | null> {
+async function submitNewClient(name: string, website: string, plan: Record<string, unknown> | null, requireAuthenticLogo: boolean): Promise<string | null> {
   try {
-    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}) }) });
+    const response = await fetch('/api/clients?action=add', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, ...(website ? { website } : {}), ...(website && plan ? { plan } : {}), ...(website && plan && requireAuthenticLogo ? { requireAuthenticLogo: true } : {}) }) });
     if (response.status === 401) {
       location.replace('/login');
       return 'You were signed out.';
@@ -789,7 +1013,7 @@ async function submitNewClient(name: string, website: string): Promise<string | 
     const answer = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     if (!response.ok || typeof answer?.['brand'] !== 'string') return messageOf(answer) ?? `The server answered ${response.status}`;
     picker.close();
-    state.notice = { kind: 'ok', text: 'Client added. Connect their channels next.' };
+    state.notice = { kind: 'ok', text: plan ? 'Client added. The posters are being made from the website; they will appear in Review for you to approve. Connect their channels next.' : 'Client added. Connect their channels next.' };
     await load();
     go({ page: 'client', brand: answer['brand'], tab: 'channels' });
     return null;
@@ -820,6 +1044,36 @@ async function saveWebsite(client: ClientSummary, website: string): Promise<stri
     return error instanceof Error ? error.message : String(error);
   }
 }
+
+/** Sends one plan change for a client added in the dashboard; resolves to an explanation when it did not work. */
+async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required', body: Record<string, unknown>, done: string): Promise<string | null> {
+  try {
+    const response = await fetch(`/api/clients?action=${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (response.status === 401) {
+      location.replace('/login');
+      return 'You were signed out.';
+    }
+    const reply: unknown = await response.json().catch(() => null);
+    if (!response.ok) return messageOf(reply) ?? `The server answered ${response.status}`;
+    state.notice = { kind: 'ok', text: done };
+    await load();
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+const addPlan = (client: ClientSummary, plan: Record<string, unknown>): Promise<string | null> =>
+  changePlans('add-plan', { brand: client.brand, plan }, 'Plan added. The posters will be made from the website and appear in Review for you to approve.');
+
+const setLimit = (client: ClientSummary, limit: number): Promise<string | null> =>
+  changePlans('set-limit', { brand: client.brand, limit }, `Limit saved: ${limit} poster${limit === 1 ? '' : 's'} a week for each channel. Plans already there stay as they are.`);
+
+const setLogoRequired = (client: ClientSummary, required: boolean): Promise<string | null> =>
+  changePlans('set-logo-required', { brand: client.brand, required }, required ? 'Saved: every poster for this client must carry the website\'s real logo.' : 'Saved: when the website has no usable logo, posters use the brand name as text.');
+
+const removePlan = (client: ClientSummary, index: number): Promise<string | null> =>
+  changePlans('remove-plan', { brand: client.brand, index }, 'Plan removed. Posters already made stay in Review; no more are made for it.');
 
 /** Removes a client that was added in the dashboard, after asking. The server refuses while it still has channels. */
 async function removeClient(client: ClientSummary): Promise<void> {
@@ -865,7 +1119,14 @@ const clientsContext: ClientsContext = {
   addClient: openAddClient,
   removeClient: (client) => void removeClient(client),
   saveWebsite,
+  addPlan,
+  removePlan,
+  setLimit,
+  setLogoRequired,
+  wantsPlanForm: (brand) => (planFormFor === brand ? ((planFormFor = null), true) : false),
   disconnect: (channel) => void disconnect(channel),
+  allPaused: () => state.data?.pauses.all === true,
+  setPause: (scope, id, paused) => void setPause(scope, id, paused),
 };
 
 function screen(): HTMLElement {
@@ -933,6 +1194,7 @@ async function load(): Promise<void> {
   } finally {
     state.loading = false;
     render();
+    makeStatus.refresh();
   }
 }
 
@@ -999,6 +1261,14 @@ window.addEventListener('hashchange', () => {
   state.notice = null;
   state.route = parseRoute(location.hash);
   render();
+});
+
+// What is being made for each client's plans, bottom right on every page.
+const makeStatus = startMakeStatus({
+  clients: () => summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now()).filter((c) => c.plans.length > 0).map((c) => ({ brand: c.brand, label: c.label, plans: c.plans })),
+  calendar: () => state.data?.posts,
+  reloadCalendar: () => void load(),
+  openReview: () => go({ page: 'review' }),
 });
 
 applyStoredTheme();

@@ -27,7 +27,7 @@ test('parseStatus accepts a valid feed and fills optional channel errors', () =>
   assert.equal(parsed.posts[0]?.state, 'published');
   assert.equal(parsed.channels[0]?.error, undefined);
   const withError = parseStatus({ ...valid, channels: [{ platform: 'instagram', account: null, avatar: null, brands: [], ok: false, error: 'Token expired' }] });
-  assert.deepEqual(withError.channels[0], { id: null, platform: 'instagram', account: null, avatar: null, brands: [], ok: false, error: 'Token expired' });
+  assert.deepEqual(withError.channels[0], { id: null, platform: 'instagram', account: null, avatar: null, brands: [], paused: false, ok: false, error: 'Token expired' });
 });
 
 test('parseStatus keeps a channel id and the Facebook line of a post, and defaults them when absent', () => {
@@ -64,6 +64,29 @@ test('a client added in the dashboard can carry its website', () => {
   assert.equal(parsed.runway[1]?.website, undefined);
 });
 
+test('parseStatus reads what is paused, and a paused channel, and defaults to nothing paused', () => {
+  assert.deepEqual(parseStatus(valid).pauses, { all: false, brands: [], channels: [] });
+  const parsed = parseStatus({
+    ...valid,
+    pauses: { all: false, brands: ['acme', 7], channels: ['facebook:1'] },
+    channels: [{ id: 'facebook:1', platform: 'facebook', account: 'Page', avatar: null, brands: ['acme'], paused: true, ok: true }],
+    posts: [{ ...valid.posts[0], state: 'skipped' }, { ...valid.posts[0], id: 'p2', state: 'paused' }],
+  });
+  assert.deepEqual(parsed.pauses, { all: false, brands: ['acme'], channels: ['facebook:1'] });
+  assert.equal(parsed.channels[0]?.paused, true);
+  assert.deepEqual(parsed.posts.map((p) => p.state), ['skipped', 'paused']);
+  assert.throws(() => parseStatus({ ...valid, pauses: 'yes' }), /status\.pauses must be an object/);
+});
+
+test('a post carries the captions and pictures platforms have of their own, and nothing else', () => {
+  const parsed = parseStatus({
+    ...valid,
+    posts: [{ ...valid.posts[0], variants: { linkedin: { caption: 'Long', image: 'https://x.test/wide.jpg', secret: 1 }, fax: { caption: 'no' }, google: 'bad' } }],
+  });
+  assert.deepEqual(parsed.posts[0]?.variants, { linkedin: { caption: 'Long', image: 'https://x.test/wide.jpg' } });
+  assert.deepEqual(parseStatus(valid).posts[0]?.variants, {});
+});
+
 test('parseStatus keeps the AI cost entries, defaults to none, and rejects a negative or unknown one', () => {
   assert.deepEqual(parseStatus(valid).costs, []);
   const entry = { brand: 'brandbasket', post: 'brandbasket-w01-d1', purpose: 'picture', at: '2026-11-04T05:00:00.000Z', usd: 0.0138 };
@@ -72,3 +95,16 @@ test('parseStatus keeps the AI cost entries, defaults to none, and rejects a neg
   assert.throws(() => parseStatus({ ...valid, costs: [{ ...entry, purpose: 'lunch' }] }), StatusParseError);
   assert.throws(() => parseStatus({ ...valid, costs: [{ ...entry, at: 'soon' }] }), StatusParseError);
 });
+
+test('a client keeps every plan it has, each with its own platforms, and an entry that is not a plan is skipped', () => {
+  const plan = (platforms: string[], postsPerWeek: number) => ({ platforms, startDate: '2026-11-06', durationDays: 31, postsPerWeek, time: '10:00', utcOffset: '+05:30' });
+  const parsed = parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://acme.com', plans: [plan(['instagram'], 3), 'nonsense', plan(['linkedin'], 1)] }] });
+  assert.deepEqual(parsed.runway[0]?.plans?.map((p) => [p.platforms, p.postsPerWeek]), [[['instagram'], 3], [['linkedin'], 1]]);
+  assert.equal(parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0 }] }).runway[0]?.plans, undefined);
+});
+
+test('a client that requires the real logo says so, and one that does not says nothing', () => {
+  const parsed = parseStatus({ ...valid, runway: [{ brand: 'a', postsLeft: 0, added: true, requireAuthenticLogo: true }, { brand: 'b', postsLeft: 0, added: true, requireAuthenticLogo: 'yes' }, { brand: 'c', postsLeft: 0, added: true }] });
+  assert.deepEqual(parsed.runway.map((r) => r.requireAuthenticLogo), [true, undefined, undefined]);
+});
+

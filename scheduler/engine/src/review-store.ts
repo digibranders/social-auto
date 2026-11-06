@@ -9,7 +9,7 @@
  */
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { extname, join, resolve, sep } from 'node:path';
 import { appendDurable, copyDurable, LockError, withFileLock } from './file-lock.ts';
 
 /** "held": approved before a log recovery that could not tell whether the approval was withdrawn in the damaged tail; it goes nowhere until the owner confirms it again. */
@@ -24,6 +24,8 @@ export interface EvidenceSnapshot {
   url: string;
   context: string;
 }
+
+import type { BrandingDecision } from './branding.ts';
 
 export interface PostVersion {
   versionId: string;
@@ -45,6 +47,8 @@ export interface PostVersion {
   validation: { accepted: boolean; readings: number; defects: string[]; reportFile: string };
   attempts: number;
   costUsd: number;
+  /** How the poster was branded: what was intended, what the poster really carries, the logo that was found and why it was or was not used. Frozen before the picture was bought; not part of the hashes. Older versions have none. */
+  branding?: BrandingDecision;
   parentVersionId?: string;
   createdAt: string;
   createdBy: string;
@@ -107,6 +111,7 @@ export interface NewVersion {
   validation: PostVersion['validation'];
   attempts: number;
   costUsd: number;
+  branding?: BrandingDecision;
   parentVersionId?: string;
   createdBy?: string;
 }
@@ -254,6 +259,7 @@ export class ReviewStore {
         brand: this.brand, postId: input.postId, planFile: input.planFile, versionNumber,
         headline: input.headline, caption: input.caption, ctaUrl: input.ctaUrl, factIds: input.factIds, evidence: input.evidence,
         imageFile, imageSha256, contentSha256, validation: input.validation, attempts: input.attempts, costUsd: input.costUsd,
+        ...(input.branding ? { branding: input.branding } : {}),
         ...(input.parentVersionId ? { parentVersionId: input.parentVersionId } : {}),
         createdAt: this.now().toISOString(), createdBy: input.createdBy ?? 'engine',
       };
@@ -365,6 +371,20 @@ export class ReviewStore {
   }
 
   /** The picture of any version for a signed-in reviewer to look at (a preview, never a download of something unapproved). */
+  /**
+   * The frozen copy of the logo a version was branded with, for the owner to see next to the poster. Only a file inside the brand's own folder, and only
+   * while it still has the hash recorded for it; anything else is not served.
+   */
+  logoPath(versionId: string): { path: string; ext: string } {
+    const { branding } = this.get(versionId).version;
+    if (!branding?.logoFile || !branding.logoAssetSha256) throw new ReviewError('NOT_FOUND', 'no logo was kept for this poster');
+    const root = resolve(this.brandDir);
+    const path = resolve(root, branding.logoFile);
+    if (!path.startsWith(root + sep) || !existsSync(path)) throw new ReviewError('NOT_FOUND', 'no logo was kept for this poster');
+    if (sha256(readFileSync(path)) !== branding.logoAssetSha256) throw new ReviewError('TAMPERED', `the kept logo of ${versionId} is not the one that was recorded`);
+    return { path, ext: extname(path).toLowerCase() };
+  }
+
   previewPath(versionId: string): string {
     const item = this.get(versionId);
     this.verify(item.version);

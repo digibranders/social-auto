@@ -70,7 +70,7 @@ export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: s
 export const queryStatus = (filter: ReviewFilter): string => (filter === 'pending' ? 'open' : filter);
 
 /** Where to ask for a version's picture, as a preview or as a download. */
-export const imageUrl = (versionId: string, view: 'image' | 'download' = 'image'): string => `/api/review?view=${view}&id=${encodeURIComponent(versionId)}`;
+export const imageUrl = (versionId: string, view: 'image' | 'download' | 'logo' = 'image'): string => `/api/review?view=${view}&id=${encodeURIComponent(versionId)}`;
 
 /** How the page words a failed request: the service's own words when it gave any. */
 export function failureText(body: unknown, status: number): string {
@@ -102,3 +102,75 @@ export function groupBatches(posts: readonly ReviewSummary[]): Batch[] {
 
 /** The question the owner is asked when looking at a batch together. */
 export const BATCH_QUESTION = 'Would these look meaningfully different if they were all published in the same week\'s feed?';
+/** How a poster was branded, as the review service records it (frozen before the picture was bought). */
+export interface BrandingRecord {
+  intendedMode: 'authentic_logo' | 'text_only_fallback' | 'logo_required_unavailable';
+  appliedMode: 'text_only' | 'authentic_logo' | 'none';
+  status: 'resolved' | 'awaiting_compositor' | 'applied' | 'blocked';
+  logoKind?: 'wordmark' | 'symbol';
+  /** True when a kept copy of the logo can be shown. */
+  hasLogoFile: boolean;
+  sourcePage?: string;
+  sourceUrl?: string;
+  provenance?: string;
+  reason?: string;
+  logoWidth?: number;
+  logoHeight?: number;
+  /** Where and how the logo was put on this poster; only a poster that carries it has one. */
+  placement?: { corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'; treatment: 'none' | 'halo' | 'plate'; contrast: number };
+}
+
+const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | null => (typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : null);
+const text = (value: unknown): string | undefined => (typeof value === 'string' && value !== '' ? value : undefined);
+
+/** Reads the branding record of a version, or null for a version made before it was kept. Anything unexpected is ignored rather than trusted. */
+export function parseBranding(raw: unknown): BrandingRecord | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  const intendedMode = oneOf(r['intendedMode'], ['authentic_logo', 'text_only_fallback', 'logo_required_unavailable'] as const);
+  const appliedMode = oneOf(r['appliedMode'], ['text_only', 'authentic_logo', 'none'] as const);
+  const status = oneOf(r['status'], ['resolved', 'awaiting_compositor', 'applied', 'blocked'] as const);
+  if (!intendedMode || !appliedMode || !status) return null;
+  const sourcePage = text(r['sourcePage']);
+  const sourceUrl = text(r['sourceUrl']);
+  const provenance = text(r['provenance']);
+  const reason = text(r['reason']);
+  const logoKind = oneOf(r['logoKind'], ['wordmark', 'symbol'] as const);
+  const p = typeof r['placement'] === 'object' && r['placement'] !== null ? (r['placement'] as Record<string, unknown>) : null;
+  const corner = p ? oneOf(p['corner'], ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const) : null;
+  const treatment = p ? oneOf(p['treatment'], ['none', 'halo', 'plate'] as const) : null;
+  const placement = corner && treatment && typeof p?.['contrast'] === 'number' && Number.isFinite(p['contrast']) ? { corner, treatment, contrast: p['contrast'] } : undefined;
+  return {
+    intendedMode, appliedMode, status, hasLogoFile: typeof r['logoFile'] === 'string' && r['logoFile'] !== '',
+    ...(logoKind ? { logoKind } : {}), ...(sourcePage ? { sourcePage } : {}), ...(sourceUrl ? { sourceUrl } : {}), ...(provenance ? { provenance } : {}), ...(reason ? { reason } : {}),
+    ...(typeof r['logoWidth'] === 'number' ? { logoWidth: r['logoWidth'] } : {}), ...(typeof r['logoHeight'] === 'number' ? { logoHeight: r['logoHeight'] } : {}),
+    ...(placement ? { placement } : {}),
+  };
+}
+
+export interface BrandingView {
+  /** `done`: the real logo is on the poster. `note`: a real logo was found but is not on it. `plain`: the brand name and web address as text, no logo was usable. */
+  tone: 'done' | 'note' | 'plain';
+  headline: string;
+  explanation: string;
+  rows: Array<[string, string]>;
+}
+
+/** What the owner is told. A real logo is never said to be on a poster unless the record says it was applied. */
+export function brandingView(b: BrandingRecord): BrandingView {
+  const onPoster = b.appliedMode === 'authentic_logo' ? 'The website\'s real logo' : b.appliedMode === 'text_only' ? 'The brand name and web address, written as text' : 'Nothing: this poster should not have been made';
+  const rows: Array<[string, string]> = [['On this poster', onPoster]];
+  if (b.logoKind) rows.push(['Logo found', `${b.logoKind === 'wordmark' ? 'Full logo' : 'Symbol only'}${b.logoWidth && b.logoHeight ? `, ${Math.round(b.logoWidth)} × ${Math.round(b.logoHeight)}` : ''}`]);
+  if (b.sourcePage) rows.push(['Found on', b.sourcePage]);
+  if (b.sourceUrl) rows.push(['Picture address', b.sourceUrl]);
+  if (b.provenance) rows.push(['Why it is their logo', b.provenance]);
+  // Only a poster whose own record says where the logo was put is said to carry it.
+  if (b.status === 'applied' && b.placement) {
+    const where = b.placement.corner.replace('-', ' ');
+    const how = b.placement.treatment === 'none' ? 'nothing added behind it' : b.placement.treatment === 'halo' ? 'a thin outline around it so it stays readable' : 'a small plate behind it so it stays readable';
+    return { tone: 'done', headline: 'Real logo applied', explanation: 'The website\'s own logo, unchanged, is on this poster.', rows: [...rows, ['Placed', `${where} corner, ${how}`]] };
+  }
+  if (b.intendedMode === 'authentic_logo') return { tone: 'note', headline: 'Real logo found, not applied', explanation: b.reason ?? 'The website\'s logo was found and verified, but this poster uses the brand name and web address as text.', rows };
+  return { tone: 'plain', headline: 'Text sign-off used: no usable logo', explanation: b.reason ? `No real logo was used. ${b.reason}` : 'No real logo was used on this poster.', rows };
+}
+

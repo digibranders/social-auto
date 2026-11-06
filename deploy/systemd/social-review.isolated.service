@@ -1,0 +1,26 @@
+[Unit]
+Description=Social Auto review service (owner approval queue for generated posters)
+After=network-online.target
+
+[Service]
+# A dedicated account that owns the brands and ledger folders and has no platform credentials. Create it first: see docs/publishing-audit.md.
+User=social-review
+Group=social-review
+WorkingDirectory=/home/social/social-auto/scheduler/engine
+EnvironmentFile=/etc/social-auto/review.env
+Environment=HOST=127.0.0.1
+Environment=PORT=4012
+ExecStart=/home/social/.local/node/bin/node src/review-server.ts
+Restart=always
+RestartSec=3
+MemoryMax=384M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/social-auto/brands /var/lib/social-auto/ledger /var/lib/social-auto/out
+# Only the review service itself listens; the dashboard reaches it on the local address and nginx is not involved.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

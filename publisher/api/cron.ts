@@ -5,6 +5,7 @@
  *
  * GET /api/cron            (called by Vercel Cron with Authorization: Bearer $CRON_SECRET)
  * GET /api/cron?dryRun=1   prepares everything without publishing (no alerts)
+ * GET /api/cron?only=manual   the frequent run: only hand-made posts that became due in the last 15 minutes
  * GET /api/cron?dryRun=1&post=<id>   same, for a named post regardless of its date
  */
 import { scheduleData } from '../lib/schedule-source.js';
@@ -14,16 +15,20 @@ import { parseProducts } from '../lib/products.js';
 import { dispatch, eventForExpiry } from '../lib/webhooks.js';
 import { notify } from '../lib/notify.js';
 import { applyOverrides } from '../lib/overrides.js';
-import { dueManualPosts, duePost, lowQueueWarnings, parseSchedule } from '../lib/schedule.js';
+import { brandIsPaused, isPaused, type PauseFile } from '../lib/pauses.js';
+import { dueManualPosts, duePlannedPost, lowQueueWarnings, parseSchedule } from '../lib/schedule.js';
 import { sendPost } from '../lib/send-post.js';
 import { toScheduled } from '../lib/manual.js';
-import { loadChannels, loadClients, loadManual, loadOverrides } from '../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses } from '../lib/store.js';
 
 /**
  * A connection with an end date (LinkedIn gives no refresh; an Instagram token is renewed weekly, so this means the
  * renewal stopped working) is announced to the team and the product, once a day on 7, 3, 1 and 0 days left.
  */
-async function warnAboutExpiringConnections(): Promise<void> {
+/** How far back the frequent run looks for a hand-made post that became due. */
+const FREQUENT_WINDOW_MS = 15 * 60 * 1000;
+
+async function warnAboutExpiringConnections(pauses: PauseFile): Promise<void> {
   try {
     const { file } = await loadChannels();
     // A broken PRODUCTS setting must not stop the team's own warnings.
@@ -35,7 +40,8 @@ async function warnAboutExpiringConnections(): Promise<void> {
       }
     })();
     const { file: added } = products.length > 0 ? await loadClients() : { file: { clients: [] } };
-    for (const { channel, days } of expiringSoon(file, Date.now())) {
+    // A paused account is held on purpose, so its connection ending is not worth a phone alert.
+    for (const { channel, days } of expiringSoon(file, Date.now()).filter(({ channel: c }) => !isPaused(pauses, c.brand, c.id))) {
       const item = eventForExpiry(channel, days, added, Date.now());
       if (item) await dispatch([item], products);
       const name = channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram';
@@ -65,12 +71,18 @@ export async function GET(request: Request): Promise<Response> {
     // quietly posting the unedited version.
     const { overrides } = await loadOverrides();
     const { file: manualFile } = await loadManual();
+    const { file: pauses } = await loadPauses();
     // Planned posts drive the runway warnings; hand-made posts are added for sending only.
     const schedule = applyOverrides(parseSchedule(scheduleData), overrides);
     const everything = applyOverrides([...parseSchedule(scheduleData), ...manualFile.posts.map(toScheduled)], overrides);
 
-    if (!dryRun) {
-      for (const { brand, postsLeft } of lowQueueWarnings(schedule, Date.now())) {
+    // The frequent run (every few minutes) only sends hand-made posts that were given their own time. It leaves
+    // planned posts and the daily warnings to the daily run, and its short window keeps a failing post from alerting all day.
+    const onlyManual = url.searchParams.get('only') === 'manual';
+
+    if (!dryRun && !onlyManual) {
+      // Skipped posts will not go out, so they are not posts left; a paused client is held on purpose, so it is not warned about.
+      for (const { brand, postsLeft } of lowQueueWarnings(schedule.filter((p) => !p.skipped), Date.now()).filter((w) => !brandIsPaused(pauses, w.brand))) {
         await notify({
           title: postsLeft === 0 ? 'No scheduled posts left' : 'Schedule running low',
           message:
@@ -79,19 +91,21 @@ export async function GET(request: Request): Promise<Response> {
           priority: postsLeft <= 1 ? 'high' : 'default',
         });
       }
-      await warnAboutExpiringConnections();
+      await warnAboutExpiringConnections(pauses);
     }
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
     const testPostId = dryRun ? url.searchParams.get('post') : null;
-    const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : duePost(schedule, Date.now());
-    const due = testPostId ? (planned ? [planned] : []) : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now())];
+    const planned = testPostId ? (everything.find((p) => p.id === testPostId) ?? null) : onlyManual ? null : duePlannedPost(schedule, Date.now());
+    const due = testPostId
+      ? planned ? [planned] : []
+      : [...(planned ? [planned] : []), ...dueManualPosts(everything, Date.now(), onlyManual ? FREQUENT_WINDOW_MS : undefined)].filter((p, i, all) => all.findIndex((q) => q.id === p.id) === i);
     if (due.length === 0) return json(200, { status: testPostId ? 'post-not-found' : 'nothing-due' });
 
     const results: Array<Record<string, unknown>> = [];
     let failed = false;
     for (const post of due) {
-      const { instagram, facebook, linkedin, google, accounts, failed: postFailed } = await sendPost(post, origin, dryRun);
+      const { instagram, facebook, linkedin, google, accounts, failed: postFailed } = await sendPost(post, origin, dryRun, pauses);
       failed ||= postFailed;
       results.push({ ...instagram, facebook, linkedin, google, instagramAccounts: accounts });
     }

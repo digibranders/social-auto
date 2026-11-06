@@ -52,18 +52,18 @@ test('engine: every code path that schedules or exports checks the switch', () =
 test('dashboard: the routes that talk to the publisher are exactly the known ones, and those that create or change a post are behind the switch', () => {
   const api = join(REPO, 'dashboard', 'api');
   const reaching = sources(api, () => true).filter((p) => /EDIT_URL|EDIT_SECRET/.test(text(p))).map(rel).sort();
-  // Connection and client management (no post is created or changed by these) and the two routes that do create or change posts. A new route that talks to
+  // Connection and client management and pausing (pausing only stops sending, so the switch never blocks it; no post is created or changed by these) and the two routes that do create or change posts. A new route that talks to
   // the publisher fails here until it is looked at and added to this list.
   assert.deepEqual(reaching, [
     'dashboard/api/_connect/facebook-callback.ts',
     'dashboard/api/_connect/instagram-callback.ts',
     'dashboard/api/_connect/linkedin-callback.ts',
     'dashboard/api/_google/callback.ts',
-    'dashboard/api/_google/pick.ts',
     'dashboard/api/clients.ts',
     'dashboard/api/disconnect.ts',
     'dashboard/api/edit.ts',
     'dashboard/api/manual.ts',
+    'dashboard/api/pause.ts',
   ]);
   for (const file of ['edit.ts', 'manual.ts']) assert.match(text(join(api, file)), /publishingEnabled\(\)/, file);
 });

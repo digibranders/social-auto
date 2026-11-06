@@ -7,6 +7,7 @@ import { buildEvidence, displayFact, type EvidenceFact } from './evidence.ts';
 import type { PageBlock, PageStructure } from './evidence-extract.ts';
 import { assignFacts, offerableFacts, rankFacts } from './fact-assignment.ts';
 import { InsufficientConceptsError, planWeek, profileForPrompt } from './planner.ts';
+import { materialSentences } from './claim-verdict.ts';
 
 const NOW = new Date('2026-11-04T00:00:00Z');
 const block = (over: Partial<PageBlock>): PageBlock => ({ id: 'b', text: '', tag: 'p', region: 'prose', isHeading: false, headingText: '', chrome: '', cardId: '', cardGroup: '', cardTitle: '', rowLabel: '', colLabel: '', tableHeader: false, demo: false, strip: false, lang: 'en', ...over });
@@ -381,4 +382,51 @@ test('in fact mode a subline that restates the headline is taken away on the las
 
 test('a caption that says the same thing twice goes back to the writer and, on the last try, the post is left out', async () => {
   await assert.rejects(run(model(() => ({ subline: '', caption: 'Setup is quick and easy to do. Setup is easy and quick to do today.' })), { facts: facts() }, 1), InsufficientConceptsError);
+});
+
+test('with candidates: twice as many are written, each reviewed before any picture, the best are kept in order on the real days, and the rest wait as reserve drafts', async () => {
+  const m = model();
+  const seen: string[] = [];
+  const review = {
+    judge: async (input: { id: string; draft: { headline: string; subline?: string; caption: string }; facts: readonly EvidenceFact[] }) => {
+      seen.push(input.id);
+      const f = input.facts[0] as EvidenceFact;
+      return { decision: 'SUPPORTED' as const, factId: f.id, violations: [], coverage: materialSentences({ headline: input.draft.headline, subline: (input.draft as { subline?: string }).subline ?? '', caption: input.draft.caption }).map((sentence) => ({ field: sentence.field, claimText: sentence.text, sourceQuote: f.source.quote })) };
+    },
+    adjudicate: async () => { throw new Error('not needed'); },
+    rewrite: async () => { throw new Error('not needed'); },
+    recheck: () => [],
+  };
+  const plan = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 2 }, usedPainPoints: [], fetchFn: m.fetchFn, evidence: { facts: facts() }, candidates: { review } });
+  assert.equal(plan.posts.length, 2);
+  assert.deepEqual(plan.posts.map((p) => p.id), ['w01-d1', 'w01-d2'], 'the chosen posts take the real days in order');
+  assert.deepEqual(plan.posts.map((p) => p.date), ['2026-11-04T10:00:00+05:30', '2026-11-05T10:00:00+05:30']);
+  assert.ok(plan.candidateReport && plan.candidateReport.written >= 3 && plan.candidateReport.written <= 4, `candidates written: ${plan.candidateReport?.written}`);
+  assert.equal(plan.candidateReport?.requested, 2);
+  assert.equal(seen.length, plan.candidateReport?.written, 'every candidate was reviewed once');
+  const factsUsed = plan.posts.map((p) => p.factIds?.[0]);
+  assert.equal(new Set(factsUsed).size, factsUsed.length, 'no fact twice in the batch');
+  assert.ok((plan.reserveDrafts?.length ?? 0) + plan.posts.length <= (plan.candidateReport?.written ?? 0));
+  assert.ok(plan.posts.every((p) => p.evidenceChecks?.includes('semantic_support_structured_verdict')));
+});
+
+test('with candidates, a candidate the review drops is not used, and with too few left there are fewer posts, never padded', async () => {
+  const m = model();
+  const review = {
+    judge: async (input: { id: string; draft: { headline: string; subline?: string; caption: string }; facts: readonly EvidenceFact[] }) => {
+      const f = input.facts[0] as EvidenceFact;
+      const bad = input.id !== 'w01-d1';
+      return bad
+        ? { decision: 'UNSUPPORTED' as const, factId: f.id, coverage: [], violations: [{ field: 'headline' as const, unsupportedText: input.draft.headline, reasonCode: 'CHANGED_MEANING', explanation: 'The source says something quite different from this headline.', sourceContext: f.source.quote }] }
+        : { decision: 'SUPPORTED' as const, factId: f.id, violations: [], coverage: materialSentences({ headline: input.draft.headline, subline: (input.draft as { subline?: string }).subline ?? '', caption: input.draft.caption }).map((sentence) => ({ field: sentence.field, claimText: sentence.text, sourceQuote: f.source.quote })) };
+    },
+    adjudicate: async () => { throw new Error('not needed'); },
+    rewrite: async () => { throw new Error('the rewrite is not possible'); },
+    recheck: () => [],
+  };
+  const plan = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 3 }, usedPainPoints: [], fetchFn: m.fetchFn, evidence: { facts: facts() }, candidates: { review } });
+  assert.equal(plan.posts.length, 1);
+  assert.equal(plan.posts[0]?.id, 'w01-d1');
+  assert.ok(plan.insufficientConcepts && plan.insufficientConcepts.produced === 1);
+  assert.match(plan.insufficientConcepts?.reasons.join(' ') ?? '', /could not be rewritten/);
 });

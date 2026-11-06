@@ -16,10 +16,11 @@
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
+import { listCampaigns } from './campaign-runner.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
 
@@ -122,6 +123,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         }
         return send(res, 404, { error: 'Not found' });
       }
+      // What is being made for each client's plans, for the dashboard's status panel. Read only.
+      if (parts[0] === 'review' && parts[1] === 'campaigns' && parts.length === 2) {
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        return send(res, 200, { campaigns: await listCampaigns(options.brandsRoot) });
+      }
       if (parts[0] !== 'review' || parts[1] !== 'posts') return send(res, 404, { error: 'Not found' });
 
       if (parts.length === 2) {
@@ -155,6 +161,14 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       if (parts.length === 4 && action === 'image' && req.method === 'GET') {
         const bytes = store.previewBytes(versionId);
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
+        return void res.end(bytes);
+      }
+      if (parts.length === 4 && action === 'logo' && req.method === 'GET') {
+        const { path, ext } = store.logoPath(versionId);
+        const bytes = readFileSync(path);
+        const type = ({ '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' } as Record<string, string>)[ext] ?? 'application/octet-stream';
+        // The logo is a file from a website: it is shown only as a picture, and nothing in it may run.
+        res.writeHead(200, { 'Content-Type': type, 'Content-Length': bytes.length, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox" });
         return void res.end(bytes);
       }
       if (parts.length === 4 && action === 'download' && req.method === 'GET') {

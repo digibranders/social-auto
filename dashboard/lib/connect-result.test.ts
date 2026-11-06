@@ -21,3 +21,12 @@ test('a person with no login and no return address sees a plain page naming the 
   const lost = finishConnect({ request, platform: 'linkedin', outcome: 'failed', clearCookie: 'c=' });
   assert.equal(lost.status, 400);
 });
+
+test('a client connecting Google sees its own wording, and a missing listing explains what to do', async () => {
+  const done = finishConnect({ request, platform: 'google', outcome: 'connected', clearCookie: 'c=' });
+  assert.equal(done.status, 200);
+  assert.match(await done.text(), /Your Google Business listing is now linked/);
+  const none = finishConnect({ request, platform: 'google', outcome: 'nolocation', clearCookie: 'c=' });
+  assert.equal(none.status, 400);
+  assert.match(await none.text(), /does not manage a business listing/);
+});

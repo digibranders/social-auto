@@ -4,9 +4,11 @@
  *
  * GET  /api/google/start?brand=<client>
  * GET  /api/google/callback?code=...&state=...
- * GET  /api/google/pick          POST /api/google/pick?location=<id>
+ * GET  /api/google/pick          POST /api/google/pick?location=<id>     (signed-in team members, from the dashboard)
+ * GET  /api/google/choose        POST /api/google/choose                 (a client with no login: plain page and form)
  */
 import * as callback from '../_google/callback.js';
+import * as choose from '../_google/choose.js';
 import * as pick from '../_google/pick.js';
 import * as start from '../_google/start.js';
 import { json } from '../../lib/http.js';
@@ -21,11 +23,20 @@ export function GET(request: Request): Response | Promise<Response> {
       return callback.GET(request);
     case 'pick':
       return pick.GET(request);
+    case 'choose':
+      return choose.GET(request);
     default:
       return json(404, { error: 'Not found' });
   }
 }
 
 export function POST(request: Request): Response | Promise<Response> {
-  return stepOf(request) === 'pick' ? pick.POST(request) : json(404, { error: 'Not found' });
+  switch (stepOf(request)) {
+    case 'pick':
+      return pick.POST(request);
+    case 'choose':
+      return choose.POST(request);
+    default:
+      return json(404, { error: 'Not found' });
+  }
 }

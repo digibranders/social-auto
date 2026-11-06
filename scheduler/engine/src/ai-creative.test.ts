@@ -13,7 +13,7 @@ import type { Brand, PlannedPost } from './content.ts';
 
 const manifest: TextManifest = { headline: 'Answers from your own docs', brandName: 'OyeChats', domain: 'oyechats.com' };
 const clean: CreativeReview['marks'] = { graphicalLogoOrIcon: false, badgeSealAwardOrCertification: false, inventedNumberPriceOrStatistic: false, interfaceOrScreenshotWithText: false, personPresentedAsCustomerOrEndorser: false, flagOrReligiousSymbol: false };
-const review = (texts: string[], over: Partial<CreativeReview> = {}): CreativeReview => ({ regions: texts.map((text) => ({ text, readable: true })), marks: { ...clean }, relevance: 2, composition: 2, readableSmall: true, notes: 'none', ...over });
+const review = (texts: string[], over: Partial<CreativeReview> = {}): CreativeReview => ({ regions: texts.map((text) => ({ text, readable: true })), marks: { ...clean }, relevance: 2, composition: 2, readableSmall: true, textOverImportantArt: false, people: { present: false, estimatedCount: 0, prominent: false, description: '' }, notes: 'none', ...over });
 
 test('a poster that carries exactly the allowed text, once, is accepted', () => {
   const verdict = judgeCreative(manifest, review(['Answers from', 'your own docs', 'OyeChats', 'oyechats.com']));
@@ -73,6 +73,12 @@ test('text that would not be readable at a small size rejects it, and the retry 
   assert.match(retryNoteFor(verdict.defects), /not be readable at a small size/);
 });
 
+test('text that covers the main artwork rejects it', () => {
+  const verdict = judgeCreative(manifest, review(['Answers from your own docs', 'OyeChats', 'oyechats.com'], { textOverImportantArt: true }));
+  assert.deepEqual(verdict.defects, [{ kind: 'text_over_art' }]);
+  assert.match(retryNoteFor(verdict.defects), /sits on quiet space/);
+});
+
 test('a poster with an optional supporting line must carry it once', () => {
   const withSub: TextManifest = { ...manifest, subline: 'Set up in minutes' };
   assert.equal(judgeCreative(withSub, review(['Answers from your own docs', 'Set up in minutes', 'OyeChats', 'oyechats.com'])).accepted, true);
@@ -93,6 +99,7 @@ test('the prompt names every allowed text, forbids the rest, and carries a corre
   const typed = buildCreativePrompt(manifest, { fact: 'f', colors, concept: { concept: 'A picture.', factToPicture: 'It shows it.', typography: 'The headline climbs the right edge in a thin condensed face, tinted like the lamp.' } });
   assert.match(typed, /TYPOGRAPHY \(an essential part of the concept, not optional styling\): The headline climbs the right edge/);
   assert.match(typed, /do not fall back to a large black headline above the artwork/);
+  assert.match(typed, /Do not automatically place the headline at the top or the brand details at the bottom/);
   assert.doesNotMatch(typed, /small sign-off/);
   const retry = buildCreativePrompt(manifest, { fact: 'f', colors, retryNote: retryNoteFor([{ kind: 'extra_text', text: 'reply sent' }]) });
   assert.match(retry, /CORRECTION/);
@@ -112,7 +119,7 @@ test('the vision answer must be well formed, or the call is retried and then fai
     writeFileSync(image, 'x');
     const ai = aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234', AI_PROVIDER: 'openai' });
     const answer = (content: unknown): typeof fetch => async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }], usage: { prompt_tokens: 10, completion_tokens: 5 } }), { status: 200 });
-    const good = await reviewCreative(ai, image, 'a fact', answer({ regions: [{ text: 'Hi', readable: true }], marks: clean, relevance: 2, composition: 1, readableSmall: true, notes: 'none' }));
+    const good = await reviewCreative(ai, image, 'a fact', answer({ regions: [{ text: 'Hi', readable: true }], marks: clean, relevance: 2, composition: 1, readableSmall: true, textOverImportantArt: false, people: { present: false, estimatedCount: 0, prominent: false, description: '' }, notes: 'none' }));
     assert.equal(good.regions[0]?.text, 'Hi');
     await assert.rejects(reviewCreative(ai, image, 'a fact', answer({ regions: [{ text: 'Hi' }], marks: clean, relevance: 2, composition: 1 })), /No valid response/);
     await assert.rejects(reviewCreative(ai, image, 'a fact', answer({ regions: [], marks: { ...clean, flagOrReligiousSymbol: 'no' }, relevance: 2, composition: 1 })), /No valid response/);
@@ -204,22 +211,30 @@ test('a poster rejected twice is dropped with its reasons: fewer posters, never 
   }
 });
 
-test('a poster must pass every independent reading: one dissenting reading rejects it, and all its defects are kept', async () => {
+test('a mark that only one reader saw goes to one third reading: cleared it passes, confirmed it is rejected', async () => {
   const ctx = setup();
   try {
     const prompts: string[] = [];
-    const calls: number[] = [];
-    const report = await run(ctx, [post('w01-d1', 'Answers from your own docs')], {
+    const thirds: number[] = [];
+    const flagged = (reading: number) => (reading === 2 ? review(['Answers from your own docs', 'OyeChats', 'oyechats.com'], { marks: { ...clean, graphicalLogoOrIcon: true } }) : review(['Answers from your own docs', 'OyeChats', 'oyechats.com']));
+    const cleared = await run(ctx, [post('w01-d1', 'Answers from your own docs')], {
       scene: scene(prompts),
-      review: async (_file, _fact, reading) => {
-        calls.push(reading);
-        return reading === 2 ? review(['Answers from your own docs', 'OyeChats', 'oyechats.com'], { marks: { ...clean, graphicalLogoOrIcon: true } }) : review(['Answers from your own docs', 'OyeChats', 'oyechats.com']);
-      },
+      review: async (_f, _m, reading) => flagged(reading),
+      third: async () => { thirds.push(1); return { reading: review(['Answers from your own docs', 'OyeChats', 'oyechats.com']), cropped: false }; },
     });
-    assert.deepEqual(calls.slice(0, 2), [1, 2], 'two independent readings per attempt');
-    assert.equal(report.results[0]?.status, 'rejected');
-    assert.equal(report.results[0]?.attempts[0]?.readings.length, 2);
-    assert.ok(report.results[0]?.attempts[0]?.defects.some((d) => d.kind === 'forbidden_mark'));
+    assert.equal(cleared.results[0]?.status, 'accepted');
+    assert.equal(thirds.length, 1, 'exactly one third reading');
+    assert.deepEqual(cleared.results[0]?.attempts[0]?.adjudication?.cleared, ['mark:graphicalLogoOrIcon']);
+    assert.equal(cleared.results[0]?.attempts[0]?.readings.length, 3);
+    const confirmed = await run(ctx, [post('w01-d2', 'Answers from your own docs')], {
+      scene: scene(prompts),
+      review: async (_f, _m, reading) => flagged(reading),
+      third: async () => ({ reading: review(['Answers from your own docs', 'OyeChats', 'oyechats.com'], { marks: { ...clean, graphicalLogoOrIcon: true } }), cropped: true }),
+      maxAttempts: 1,
+    });
+    assert.equal(confirmed.results[1]?.status ?? confirmed.results[0]?.status, 'rejected');
+    const last = confirmed.results.at(-1);
+    assert.ok(last?.attempts[0]?.defects.some((d) => d.kind === 'forbidden_mark'));
   } finally {
     ctx.done();
   }
@@ -314,6 +329,242 @@ test('with the creative director off (the default), no director call, comparison
   }
 });
 
+const folks = (present: boolean, prominent: boolean, description = ''): CreativeReview['people'] => ({ present, estimatedCount: present ? 3 : 0, prominent, description });
+
+test('people: a concept with no people and a poster where they are a main part is not the planned poster; small background figures are not a defect', () => {
+  const ok = ['Answers from your own docs', 'OyeChats', 'oyechats.com'];
+  const big = judgeCreative(manifest, review(ok, { people: folks(true, true, 'two large illustrated colleagues at a desk') }), { people: false });
+  assert.deepEqual(big.defects, [{ kind: 'people_plan_mismatch', description: 'two large illustrated colleagues at a desk' }]);
+  assert.match(retryNoteFor(big.defects), /showed people prominently.*no people|concept has none/);
+  assert.equal(judgeCreative(manifest, review(ok, { people: folks(true, false, 'three tiny figures in the background') }), { people: false }).accepted, true);
+  assert.equal(judgeCreative(manifest, review(ok, { people: folks(true, true, 'a presenter') }), { people: true }).accepted, true, 'people that the plan asked for are not a defect');
+  assert.equal(judgeCreative(manifest, review(ok, { people: folks(true, true, 'a presenter') })).accepted, true, 'with no plan nothing is compared');
+});
+
+test('people: a reading must say what it saw of people, or it is refused', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'creative-'));
+  try {
+    const image = join(dir, 'a.jpg');
+    writeFileSync(image, 'x');
+    const ai = aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234', AI_PROVIDER: 'openai' });
+    const answer = (people: unknown): typeof fetch => async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ regions: [], marks: clean, relevance: 2, composition: 2, readableSmall: true, textOverImportantArt: false, ...(people === undefined ? {} : { people }), notes: 'none' }) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200 });
+    await assert.rejects(reviewCreative(ai, image, 'f', answer(undefined)), /No valid response/);
+    await assert.rejects(reviewCreative(ai, image, 'f', answer({ present: 'yes' })), /No valid response/);
+    const seen = await reviewCreative(ai, image, 'f', answer({ present: false, estimatedCount: 2, prominent: true, description: 'x' }));
+    assert.equal(seen.people.prominent, false, 'prominent without presence is not prominent');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('people in the pipeline: a mismatch with small figures is a warning, and a batch with too many prominent people loses the later posters', async () => {
+  const { observedPeople } = await import('./ai-creative-pipeline.ts');
+  assert.deepEqual(observedPeople([review(['x'])]), { observed: 'none', description: '' });
+  assert.equal(observedPeople([review(['x'], { people: folks(true, false, 'tiny') }), review(['x'])]).observed, 'background');
+  assert.equal(observedPeople([review(['x'], { people: folks(true, false, 'tiny') }), review(['x'], { people: folks(true, true, 'big') })]).observed, 'prominent');
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    const out = ['Answers from your own docs', 'OyeChats', 'oyechats.com'];
+    const report = await makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, directorEnabled: true, factOf: () => 'f',
+      posts: [post('p1', 'Answers from your own docs'), post('p2', 'Answers from your own docs'), post('p3', 'Answers from your own docs')],
+      deps: {
+        direct: async (ps) => ({ concepts: ps.map((p, i) => ({ postId: p.id, concept: CONCEPTS[i] as string, people: i === 0, factToPicture: 'It shows the fact as an idea.', typography: 'Set it large at the top left.', replans: 0 })), dropped: [], flags: [] }),
+        lookAlikes: async () => ({ scenes: [], typography: [] }),
+        scene: scene(prompts),
+        // p1 is planned with people and shows them; p2 shows people prominently although it was planned without (a mismatch that both readers see: a retry); p3 has small background figures.
+        review: async (file) => review(out, { people: file.includes('p3.') ? folks(true, false, 'three tiny figures in the background') : file.includes('attempt2') && file.includes('p2.') ? folks(false, false) : folks(true, true, 'two large colleagues') }),
+        third: async () => { throw new Error('no third reading expected'); },
+      },
+    });
+    const [p1, p2, p3] = report.results;
+    assert.equal(p1?.status, 'accepted');
+    assert.equal(p2?.attempts.length, 2, 'the mismatch asked for a second picture');
+    assert.match(p2?.attempts[0]?.defects.map((d) => d.kind).join(' ') ?? '', /people_plan_mismatch/);
+    assert.equal(p2?.status, 'accepted');
+    assert.equal(p3?.status, 'accepted');
+    assert.deepEqual(p3?.people, { planned: false, observed: 'background', description: 'three tiny figures in the background' });
+    assert.match((p3?.attempts[0]?.warnings ?? []).join(' '), /PEOPLE_PLAN_MISMATCH/);
+    assert.deepEqual(report.peopleRule, { cap: 1, prominent: ['p1'] });
+  } finally {
+    ctx.done();
+  }
+});
+
+test('people in the pipeline: more prominent people than the batch may have rejects the later poster', async () => {
+  const ctx = setup();
+  try {
+    const out = ['Answers from your own docs', 'OyeChats', 'oyechats.com'];
+    const report = await makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, directorEnabled: true, factOf: () => 'f',
+      posts: [post('p1', 'Answers from your own docs'), post('p2', 'Answers from your own docs')],
+      deps: {
+        direct: async (ps) => ({ concepts: ps.map((p, i) => ({ postId: p.id, concept: CONCEPTS[i] as string, people: true, factToPicture: 'It shows the fact as an idea.', typography: 'Set it large at the top left.', replans: 0 })), dropped: [], flags: [] }),
+        lookAlikes: async () => ({ scenes: [], typography: [] }),
+        scene: scene([]),
+        review: async () => review(out, { people: folks(true, true, 'a presenter') }),
+      },
+    });
+    assert.deepEqual(report.results.map((r) => r.status), ['accepted', 'rejected']);
+    assert.match(report.results[1]?.reason ?? '', /too many posters of this batch show people prominently \(2, at most 1\)/);
+    assert.equal(report.results[1]?.file, undefined);
+  } finally {
+    ctx.done();
+  }
+});
+
+test('a business named after its own address: the name and the address together are accepted, one alone or three are not, and it is the same for any such business', () => {
+  const same: TextManifest = { headline: 'How can B2B companies earn trust?', brandName: 'Fynix Digital', domain: 'fynix.digital' };
+  assert.equal(judgeCreative(same, review(['How can', 'B2B companies earn trust?', 'Fynix Digital', 'fynix.digital'])).accepted, true);
+  const onlyOne = judgeCreative(same, review(['How can B2B companies earn trust?', 'fynix.digital']));
+  assert.deepEqual(onlyOne.defects.map((d) => d.kind), ['missing_text']);
+  const three = judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital', 'fynix.digital', 'Fynix Digital']));
+  assert.deepEqual(three.defects.map((d) => d.kind), ['repeated_text']);
+  assert.ok(!judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital', 'fynix.digital', 'Free quote'])).accepted, 'other text is still extra');
+  // When the headline already names the business, the address alone is enough, and the name may also be shown.
+  const named: TextManifest = { headline: 'Why Fynix Digital earns trust', brandName: 'Fynix Digital', domain: 'fynix.digital' };
+  assert.equal(judgeCreative(named, review(['Why Fynix Digital earns trust', 'fynix.digital'])).accepted, true);
+  assert.equal(judgeCreative(named, review(['Why Fynix Digital earns trust', 'Fynix Digital', 'fynix.digital'])).accepted, true);
+  assert.deepEqual(judgeCreative(named, review(['Why Fynix Digital earns trust'])).defects.map((d) => d.kind), ['missing_text']);
+});
+
+test('a business named after its own address: the name shown twice with no address is rejected, and the address twice with no name is too', () => {
+  const same: TextManifest = { headline: 'How can B2B companies earn trust?', brandName: 'Fynix Digital', domain: 'fynix.digital' };
+  const nameTwice = judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital', 'Fynix Digital']));
+  assert.deepEqual(nameTwice.defects.map((d) => [d.kind, (d as { text?: string }).text]), [['missing_text', 'the web address'], ['repeated_text', 'the brand name']]);
+  const addressTwice = judgeCreative(same, review(['How can B2B companies earn trust?', 'fynix.digital', 'fynix.digital']));
+  assert.deepEqual(addressTwice.defects.map((d) => [d.kind, (d as { text?: string }).text]), [['repeated_text', 'the web address'], ['missing_text', 'the brand name']]);
+  // A sign-off the reader returns as one line shows both; only the total can be counted then.
+  assert.equal(judgeCreative(same, review(['How can B2B companies earn trust?', 'Fynix Digital fynix.digital'])).accepted, true);
+  assert.equal(judgeCreative(same, review(['How can B2B companies earn trust?', 'fynix.digital'])).accepted, false, 'one piece of text cannot be both');
+});
+
+
+// ---- The real logo: what is drawn, what is left to the logo, and what is checked
+
+const logoManifest: TextManifest = { ...manifest, brandSignoff: 'logo' };
+
+test('with a full logo the prompt leaves a calm upper corner and does not ask for the brand name; with a symbol alone the name stays; with no logo nothing changes', () => {
+  const context = { fact: 'a fact', colors: { background: '#fff', ink: '#111', accent: '#63d' } };
+  const wordmark = buildCreativePrompt(logoManifest, { ...context, logo: 'wordmark' });
+  assert.match(wordmark, /LOGO SPACE.*upper corners/s);
+  assert.doesNotMatch(wordmark, /BRAND NAME/);
+  assert.match(wordmark, /brand name is not part of the text/i);
+  assert.match(wordmark, /2\. WEB ADDRESS: "oyechats\.com"/, 'the web address is the second text once the name is not drawn');
+  const symbol = buildCreativePrompt(manifest, { ...context, logo: 'symbol' });
+  assert.match(symbol, /LOGO SPACE/);
+  assert.match(symbol, /BRAND NAME: "OyeChats"/, 'a symbol does not carry the name, so the name is drawn');
+  const plain = buildCreativePrompt(manifest, context);
+  assert.doesNotMatch(plain, /LOGO SPACE/);
+  assert.match(plain, /BRAND NAME: "OyeChats"/);
+});
+
+test('with a full logo the poster must not draw the brand name again, and the headline may still name it', () => {
+  assert.deepEqual(judgeCreative(logoManifest, review(['Answers from your own docs', 'oyechats.com'])), { accepted: true, defects: [] });
+  const doubled = judgeCreative(logoManifest, review(['Answers from your own docs', 'OyeChats', 'oyechats.com']));
+  assert.equal(doubled.accepted, false);
+  assert.deepEqual(doubled.defects, [{ kind: 'extra_text', text: 'oyechats' }], 'a drawn name beside the logo is text that was not asked for');
+  const named = { ...logoManifest, headline: 'OyeChats answers from your docs' };
+  assert.equal(judgeCreative(named, review(['OyeChats answers from your docs', 'oyechats.com'])).accepted, true, 'the name inside the approved headline is the headline\'s own');
+  assert.equal(judgeCreative(named, review(['OyeChats answers from your docs', 'OyeChats', 'oyechats.com'])).accepted, false, 'but a second, separate name is not');
+  assert.ok(judgeCreative(logoManifest, review(['Answers from your own docs'])).defects.some((d) => d.kind === 'missing_text' && d.text === 'the web address'));
+  const fynix: TextManifest = { headline: 'Grow with search', brandName: 'Fynix Digital', domain: 'fynix.digital', brandSignoff: 'logo' };
+  assert.equal(judgeCreative(fynix, review(['Grow with search', 'fynix.digital'])).accepted, true);
+  assert.equal(judgeCreative(fynix, review(['Grow with search', 'Fynix Digital', 'fynix.digital'])).accepted, false, 'a business named after its address cannot hide a drawn name behind the address');
+});
+
+const placement = (over: Partial<import('./logo-compositor.ts').Placement> = {}): import('./logo-compositor.ts').Placement => ({
+  placed: true, logoRect: [740, 60, 200, 50], plateRect: null, plateColor: null, treatment: 'none', haloColor: null, score: 0.9, contrast: 12, logoSha256: 'a'.repeat(64), outputSha256: 'b'.repeat(64), width: 1024, height: 1024, considered: 100, bestScores: [0.9], ...over,
+});
+const logoInput = { path: '/frozen/logo.png', kind: 'wordmark' as const, sha256: 'a'.repeat(64) };
+const withLogo = (ctx: ReturnType<typeof setup>, posts: PlannedPost[], deps: Parameters<typeof makeCreatives>[0]['deps'], logo: typeof logoInput = logoInput) =>
+  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), logo, deps: { direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
+const boxed = (texts: string[]): CreativeReview => review(texts, { regions: texts.map((text, i) => ({ text, readable: true, box: [50, 50 + i * 100, 500, 120 + i * 100] as [number, number, number, number] })) });
+
+test('an accepted poster gets the real logo: the logo-free picture is kept as the attempt, the poster carries the logo, and its place is recorded', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    const placed: Array<{ avoid: unknown; kind: string; sha: string | undefined }> = [];
+    const report = await withLogo(ctx, [post('w01-d1', 'Answers from your own docs')], {
+      scene: scene(prompts),
+      review: async () => boxed(['Answers from your own docs', 'oyechats.com']),
+      place: async (input) => { placed.push({ avoid: input.avoid, kind: input.logoKind, sha: input.expectedLogoSha256 }); writeFileSync(input.outPath, 'poster with logo'); return placement(); },
+    });
+    const result = report.results[0];
+    assert.equal(result?.status, 'accepted');
+    assert.equal(readFileSync(result?.file as string, 'utf8'), 'poster with logo');
+    assert.equal(readFileSync(result?.attempts[0]?.imageFile as string, 'utf8'), 'picture 1', 'the picture the model drew is not overwritten');
+    assert.deepEqual(result?.logo, { corner: 'top-right', treatment: 'none', logoRect: [740, 60, 200, 50], contrast: 12, logoSha256: 'a'.repeat(64), outputSha256: 'b'.repeat(64) });
+    assert.equal(result?.manifest.brandSignoff, 'logo');
+    assert.match(prompts[0] ?? '', /LOGO SPACE/);
+    assert.deepEqual(placed[0]?.avoid, [[51, 51, 512, 123], [51, 154, 512, 225], [51, 51, 512, 123], [51, 154, 512, 225]], 'every piece of text either reading found is kept clear, in the poster\'s pixels');
+    assert.deepEqual([placed[0]?.kind, placed[0]?.sha], ['wordmark', 'a'.repeat(64)]);
+  } finally {
+    ctx.done();
+  }
+});
+
+test('when no corner is calm the poster is drawn once more with that asked for, and a second failure drops it', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    let calls = 0;
+    const refuse = async (): Promise<import('./logo-compositor.ts').PlacementFailure> => ({ placed: false, reason: 'NO_SAFE_PLACEMENT', detail: 'no place on the poster was quiet and clear enough' });
+    const second = await withLogo(ctx, [post('w01-d1', 'Answers from your own docs')], {
+      scene: scene(prompts), review: async () => boxed(['Answers from your own docs', 'oyechats.com']),
+      place: async (input) => { calls += 1; if (calls === 1) return refuse(); writeFileSync(input.outPath, 'poster with logo'); return placement(); },
+    });
+    assert.equal(second.results[0]?.status, 'accepted');
+    assert.equal(second.results[0]?.attempts.length, 2);
+    assert.match(prompts[1] ?? '', /CORRECTION.*calm corner/is);
+    assert.ok(second.results[0]?.attempts[0]?.warnings?.some((w) => w.startsWith('NO_SAFE_LOGO_PLACEMENT')));
+
+    const ctx2 = setup();
+    try {
+      const failed = await withLogo(ctx2, [post('w01-d1', 'Answers from your own docs')], { scene: scene([]), review: async () => boxed(['Answers from your own docs', 'oyechats.com']), place: refuse });
+      assert.equal(failed.results[0]?.status, 'rejected');
+      assert.equal(failed.results[0]?.file, undefined);
+      assert.equal(failed.results[0]?.logo, undefined);
+      assert.match(failed.results[0]?.reason ?? '', /calm corner/);
+    } finally {
+      ctx2.done();
+    }
+  } finally {
+    ctx.done();
+  }
+});
+
+test('text the readers could not place means no place can be called clear of it, and a changed logo file fails the poster without another picture', async () => {
+  const ctx = setup();
+  try {
+    let asked = 0;
+    const unplaced = await withLogo(ctx, [post('w01-d1', 'Answers from your own docs')], {
+      scene: scene([]), review: async () => review(['Answers from your own docs', 'oyechats.com']),
+      place: async () => { asked += 1; return placement(); },
+    });
+    assert.equal(asked, 0, 'the compositor is never asked when a piece of text has no known place');
+    assert.equal(unplaced.results[0]?.status, 'rejected');
+
+    const ctx2 = setup();
+    try {
+      const prompts: string[] = [];
+      const changed = await withLogo(ctx2, [post('w01-d1', 'Answers from your own docs')], {
+        scene: scene(prompts), review: async () => boxed(['Answers from your own docs', 'oyechats.com']),
+        place: async () => ({ placed: false, reason: 'LOGO_CHANGED', detail: 'the logo file is not the one that was checked and kept' }),
+      });
+      assert.equal(changed.results[0]?.status, 'failed');
+      assert.equal(prompts.length, 1, 'a different picture would not fix a changed logo');
+      assert.match(changed.results[0]?.reason ?? '', /real logo could not be put/);
+    } finally {
+      ctx2.done();
+    }
+  } finally {
+    ctx.done();
+  }
+});
+
 test('the first prompt asks for a sign-off that survives a phone screen, so the first attempt is not rejected for small print', () => {
   const prompt = buildCreativePrompt(manifest, { fact: 'f', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' } });
   assert.match(prompt, /BRAND NAME: "OyeChats", as a clear sign-off in bold or semibold lettering/);
@@ -340,4 +591,10 @@ test("with a concept the director's picture is followed and the generic-visual i
   const prompt = buildCreativePrompt(manifest, { fact: 'f', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' }, concept: { concept: 'A clay key passes across a canyon.', factToPicture: 'It shows access.' } });
   assert.match(prompt, /THE PICTURE \(follow it/);
   assert.doesNotMatch(prompt, /THE VISUAL IDEA/);
+});
+
+test('a symbol alone keeps the drawn name; the brand sign-off is only dropped for a full logo', () => {
+  assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'wordmark' }).brandSignoff, 'logo');
+  assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'symbol' }).brandSignoff, undefined);
+  assert.equal(manifestOf(post('p', 'Hello there'), brand).brandSignoff, undefined);
 });

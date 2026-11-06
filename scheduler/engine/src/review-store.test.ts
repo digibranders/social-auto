@@ -217,3 +217,22 @@ test('while another live process holds the store\'s lock nothing is decided, and
     done();
   }
 });
+test('how a poster was branded is kept with its version, does not change the version\'s identity, and approval does not depend on it', () => {
+  const s = setup();
+  try {
+    const branding = { intendedMode: 'authentic_logo' as const, appliedMode: 'text_only' as const, status: 'awaiting_compositor' as const, logoKind: 'wordmark' as const, logoAssetSha256: 'a'.repeat(64), reasonCode: 'LOGO_COMPOSITOR_UNAVAILABLE' as const };
+    const plain = s.store.addVersion(input(s.picture('a.jpg', 'picture one')));
+    assert.equal(plain.branding, undefined, 'a version with no record has none');
+    const other = new ReviewStore(join(s.dir, 'other'), 'acme').addVersion(input(s.picture('b.jpg', 'picture one'), { branding }));
+    assert.equal(other.versionId, plain.versionId, 'the record is not part of the version\'s identity');
+    assert.equal(other.contentSha256, plain.contentSha256);
+    assert.deepEqual(other.branding, branding);
+    const stored = s.store.get(s.store.addVersion(input(s.picture('c.jpg', 'picture two'), { branding })).versionId);
+    assert.deepEqual(stored.version.branding, branding, 'it survives a save and a load');
+    s.store.approve(stored.version.versionId, 'owner');
+    assert.equal(s.store.get(stored.version.versionId).status, 'approved');
+  } finally {
+    s.done();
+  }
+});
+
