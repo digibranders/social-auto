@@ -17,6 +17,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
+import { listCampaigns } from './campaign-runner.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -99,6 +100,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       if (!authorised(req, options.secret)) return send(res, 401, { error: 'Not allowed' });
       const url = new URL(req.url ?? '/', 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
+      // What is being made for each client's plans, for the dashboard's status panel. Read only.
+      if (parts[0] === 'review' && parts[1] === 'campaigns' && parts.length === 2) {
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        return send(res, 200, { campaigns: await listCampaigns(options.brandsRoot) });
+      }
       if (parts[0] !== 'review' || parts[1] !== 'posts') return send(res, 404, { error: 'Not found' });
 
       if (parts.length === 2) {

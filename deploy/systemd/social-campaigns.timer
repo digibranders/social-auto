@@ -1,8 +1,8 @@
 [Unit]
-Description=Check every 30 minutes whether a client's posting plan has posters left to make
+Description=Check every 5 minutes whether a client's posting plan has posters left to make
 
 [Timer]
-OnCalendar=*:0/30
+OnCalendar=*:0/5
 Persistent=true
 Unit=social-campaigns.service
 

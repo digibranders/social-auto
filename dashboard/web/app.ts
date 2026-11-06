@@ -40,6 +40,7 @@ import { addClientForm } from './add-client.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { makeDraggable, type DragRules } from './drag.ts';
 import { newPostForm } from './new-post.ts';
+import { startMakeStatus } from './make-status.ts';
 import { parseRoute, routeHash, type Route } from './route.ts';
 
 type View = 'day' | 'week' | 'month' | 'list';
@@ -1193,6 +1194,7 @@ async function load(): Promise<void> {
   } finally {
     state.loading = false;
     render();
+    makeStatus.refresh();
   }
 }
 
@@ -1259,6 +1261,12 @@ window.addEventListener('hashchange', () => {
   state.notice = null;
   state.route = parseRoute(location.hash);
   render();
+});
+
+// What is being made for each client's plans, bottom right on every page.
+const makeStatus = startMakeStatus({
+  clients: () => summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now()).filter((c) => c.plans.length > 0).map((c) => ({ brand: c.brand, label: c.label, plans: c.plans })),
+  openReview: () => go({ page: 'review' }),
 });
 
 applyStoredTheme();

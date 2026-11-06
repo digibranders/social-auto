@@ -168,3 +168,19 @@ test('the kept logo is shown beside the poster, as a locked-down picture, only w
   }
 });
 
+test('the campaign list is for signed-in callers only, is read only, and shows what is being made', async () => {
+  const s = await start();
+  try {
+    mkdirSync(join(s.root, 'brands', 'acme', 'campaigns'), { recursive: true });
+    writeFileSync(join(s.root, 'brands', 'acme', 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', brand: 'acme-client', siteBrand: 'acme', site: 'https://acme.test', plan: { platforms: ['instagram'], startDate: '2026-11-07', durationDays: 1, time: '10:00', utcOffset: '+05:30' }, status: 'running', createdAt: 'a', updatedAt: 'b', batches: [{ index: 0, dates: ['2026-11-07'], status: 'running', stage: 'drawing', detail: 'w01-d1: attempt 1, drawing the poster…', tail: 'SECRET RAW OUTPUT' }] }));
+    assert.equal((await s.call('/review/campaigns', { auth: false })).status, 401);
+    assert.equal((await s.call('/review/campaigns', { method: 'POST', body: '{}' })).status, 405);
+    const answer = (await (await s.call('/review/campaigns')).json()) as { campaigns: Array<{ brand: string; batches: Array<{ stage?: string; tail?: string }> }> };
+    assert.equal(answer.campaigns[0]?.brand, 'acme-client');
+    assert.equal(answer.campaigns[0]?.batches[0]?.stage, 'drawing');
+    assert.equal(answer.campaigns[0]?.batches[0]?.tail, undefined, 'the raw output stays on the server');
+  } finally {
+    await s.done();
+  }
+});
+

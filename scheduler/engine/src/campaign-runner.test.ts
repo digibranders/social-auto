@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { acquireLease, makeCampaigns, releaseCampaigns, statusOf, type PlannedClient, type RunnerDeps } from './campaign-runner.ts';
+import { acquireLease, listCampaigns, makeCampaigns, parseProgressLine, releaseCampaigns, statusOf, type PlannedClient, type RunnerDeps } from './campaign-runner.ts';
 
 const NOW = new Date('2026-11-05T12:00:00Z');
 const root = (): { dir: string; done: () => void } => { const dir = mkdtempSync(join(tmpdir(), 'campaign-')); return { dir, done: () => rmSync(dir, { recursive: true, force: true }) }; };
@@ -248,6 +248,71 @@ test('a client that requires a real logo has every batch asked for it, and one s
     const others: string[][] = [];
     await makeCampaigns([client({ brand: 'plain', website: 'https://plain.example.org' })], r.dir, deps({ calls: others }));
     assert.ok(!others[0]?.includes('--require-logo'));
+  } finally {
+    r.done();
+  }
+});
+
+test('the autopilot\'s progress lines are read for the step, the latest thing said and posters finished, and other lines say nothing', () => {
+  assert.deepEqual(parseProgressLine('1/4 Reading https://oyechats.com and building the brand profile…'), { stage: 'reading', detail: 'Reading https://oyechats.com and building the brand profile…' });
+  assert.equal(parseProgressLine('2/4 Writing 4 new pain-point posts from 2026-11-09 (week-02.json)…')?.stage, 'writing');
+  assert.equal(parseProgressLine('3/4 Drawing the posters with the picture model (no template)…')?.stage, 'drawing');
+  assert.equal(parseProgressLine('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.')?.stage, 'finishing');
+  assert.deepEqual(parseProgressLine('    w01-d1: attempt 1, drawing the poster…'), { detail: 'w01-d1: attempt 1, drawing the poster…' });
+  assert.deepEqual(parseProgressLine('    w01-d2: accepted after 2 attempts'), { detail: 'w01-d2: accepted after 2 attempts', drawn: true });
+  assert.equal(parseProgressLine('    w01-d3: dropped (the copy failed the claim gate)')?.detail, 'w01-d3: dropped (the copy failed the claim gate)');
+  assert.deepEqual(parseProgressLine('    3 posters added to the owner\'s review queue.'), { queued: 3 });
+  assert.deepEqual(parseProgressLine('    0 posters added to the owner\'s review queue.'), { queued: 0 });
+  assert.equal(parseProgressLine('    1 poster added to the owner\'s review queue.')?.queued, 1);
+  assert.equal(parseProgressLine(''), null);
+  assert.equal(parseProgressLine('AI: OpenAI (gpt-5 for text, gpt-image-1 at medium quality for pictures)'), null);
+  assert.equal(parseProgressLine('\u001b[32m3/4 Drawing\u001b[0m')?.stage, 'drawing', 'colour codes are removed');
+  assert.equal((parseProgressLine(`3/4 ${'x'.repeat(500)}`)?.detail ?? '').length, 160, 'a long line is cut short');
+});
+
+test('while a batch runs its record says what it is doing, and when it ends that is cleared', async () => {
+  const r = root();
+  try {
+    let during: Array<Record<string, unknown>> = [];
+    const exec: RunnerDeps['exec'] = async (_args, onLine) => {
+      onLine?.('1/4 Reading https://oyechats.com and building the brand profile…');
+      onLine?.('3/4 Drawing the posters with the picture model (no template)…');
+      onLine?.('    w01-d1: attempt 1, drawing the poster…');
+      onLine?.('    1 poster added to the owner\'s review queue.');
+      await new Promise((done) => setTimeout(done, 80));
+      during = state(r.dir);
+      return { code: 0, tail: 'done' };
+    };
+    await makeCampaigns([client()], r.dir, deps({ exec }));
+    const mid = (during[0]?.['batches'] as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+    assert.equal(during[0]?.['status'], 'running');
+    assert.equal(mid['stage'], 'drawing');
+    assert.equal(mid['detail'], 'w01-d1: attempt 1, drawing the poster…');
+    assert.equal(mid['queued'], 1, 'how many reached the review queue is kept');
+    const done = (state(r.dir)[0]?.['batches'] as Array<Record<string, unknown>>)[0] as Record<string, unknown>;
+    assert.equal(done['status'], 'done');
+    assert.equal(done['stage'], undefined);
+    assert.equal(done['detail'], undefined);
+  } finally {
+    r.done();
+  }
+});
+
+test('the campaign list gives the dashboard what each plan is doing, a short reason for a failure, and never the raw output', async () => {
+  const r = root();
+  try {
+    await makeCampaigns([client()], r.dir, deps({ exec: async () => ({ code: 1, tail: `${'noise '.repeat(200)}\nError: LOGO_REQUIRED: The website has no logo picture, only the name.\n` }) }));
+    mkdirSync(join(r.dir, 'broken', 'campaigns'), { recursive: true });
+    writeFileSync(join(r.dir, 'broken', 'campaigns', 'x.json'), '{ not json');
+    const list = await listCampaigns(r.dir);
+    assert.equal(list.length, 1, 'an unreadable record is left out');
+    const batch = list[0]?.batches[0];
+    assert.equal(batch?.status, 'failed');
+    assert.equal(batch?.failure, 'Error: LOGO_REQUIRED: The website has no logo picture, only the name.');
+    assert.ok(!('tail' in (batch as object)), 'the raw output is not passed on');
+    assert.deepEqual(list[0]?.plan.platforms, ['instagram', 'facebook']);
+    assert.equal(list[0]?.brand, 'oyechats');
+    assert.deepEqual(await listCampaigns(join(r.dir, 'nowhere')), []);
   } finally {
     r.done();
   }
