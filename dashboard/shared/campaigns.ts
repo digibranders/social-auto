@@ -176,15 +176,24 @@ const FAILURE_WORDS: Readonly<Record<string, string>> = {
   INSUFFICIENT_EVIDENCE: 'The website did not give enough facts to write posters from.',
 };
 
-/** The last line of a failed run, without "Error:" and its code in front: the sentence after the code when there is one, else the code in words. */
+/** What to do about a stop the owner can fix themselves. */
+const FAILURE_HINTS: Readonly<Record<string, string>> = {
+  LOGO_REQUIRED: 'Turn off "Require the website\'s real logo" on the client\'s page to have the brand name used as text instead.',
+};
+
+/**
+ * The last line of a failed run, without "Error:" or "BrandingError:" and its code in front: the sentence after the code when there is one, else the code
+ * in words, and, for a stop the owner can fix, what to do about it.
+ */
 export function plainFailure(text: string): string {
-  const line = text.replace(/^\s*Error:\s*/i, '').trim();
+  const line = text.replace(/^\s*(?:[A-Za-z]*Error):\s*/, '').trim();
   const coded = /^([A-Z][A-Z_]{3,})(?::\s*(.*))?$/.exec(line);
   if (!coded) return line;
   const code = coded[1] as string;
   const rest = coded[2] ?? '';
-  if (rest !== '') return rest;
-  return FAILURE_WORDS[code] ?? line;
+  const said = rest !== '' ? rest : (FAILURE_WORDS[code] ?? line);
+  const hint = FAILURE_HINTS[code];
+  return hint ? `${said} ${hint}` : said;
 }
 
 const posters = (n: number): string => `${n} poster${n === 1 ? '' : 's'}`;

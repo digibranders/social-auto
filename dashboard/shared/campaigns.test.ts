@@ -72,7 +72,7 @@ test('a failed run says why, in the words recorded, and how many posters were ma
   const [item] = statusItems([client()], [failed], NOW);
   assert.equal(item?.state, 'failed');
   assert.equal(item?.headline, 'It did not work');
-  assert.equal(item?.failure, 'The website has no logo picture, only the name.', 'the sentence after the code, without the technical prefix');
+  assert.match(item?.failure ?? '', /^The website has no logo picture, only the name\. Turn off/, 'the sentence after the code, without the technical prefix');
   const partial = campaign({ status: 'partial', plan: { platforms: ['instagram'], startDate: '2026-11-07', durationDays: 31, postsPerWeek: 3, time: '10:00' } }, [
     batch({ index: 0, dates: ['2026-11-07', '2026-11-09'], status: 'done', queued: 2 }), batch({ index: 1, dates: ['2026-11-11'], status: 'failed', failure: 'a model call failed' }),
   ]);
@@ -139,7 +139,8 @@ test('the campaign list is read with care: entries that are not campaigns, and f
 });
 
 test('a failure is told without its technical prefix, and a bare code is put into words', () => {
-  assert.equal(plainFailure('Error: LOGO_REQUIRED: The website has no logo picture, only the name.'), 'The website has no logo picture, only the name.');
+  assert.equal(plainFailure('Error: LOGO_REQUIRED: The website has no logo picture, only the name.'), 'The website has no logo picture, only the name. Turn off "Require the website\'s real logo" on the client\'s page to have the brand name used as text instead.', 'a stop the owner can fix says how');
+  assert.equal(plainFailure('BrandingError: LOGO_REQUIRED: The real logo cannot be placed on posters yet, and this client requires one.'), 'The real logo cannot be placed on posters yet, and this client requires one. Turn off "Require the website\'s real logo" on the client\'s page to have the brand name used as text instead.', 'the error\'s own name is dropped too');
   assert.equal(plainFailure('Error: BUDGET_EXHAUSTED'), 'The spending limit was reached, so no more posters were drawn.');
   assert.equal(plainFailure('SITE_ACCESS_BLOCKED:'), 'The website does not allow its pages to be read.');
   assert.equal(plainFailure('a model call failed'), 'a model call failed');
