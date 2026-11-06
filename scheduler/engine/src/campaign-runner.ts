@@ -75,7 +75,7 @@ export interface RunnerDeps {
   /** Runs the autopilot with these arguments and resolves with its exit code and the end of its output. */
   exec: (args: string[], onLine?: (line: string) => void) => Promise<{ code: number; tail: string }>;
   /** Hands the brand's approved posters to the publisher. */
-  release: (brandDir: string) => Promise<number>;
+  release: (brandDir: string, options: { brand: string; weekFiles: string[] }) => Promise<number>;
   now?: () => Date;
   /** Whether publishing is switched on; release is skipped, and says so, when it is not. */
   publishingEnabled: () => boolean;
@@ -307,6 +307,9 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
     } catch {
       continue;
     }
+    // A client's posters are released together, under the client's own name, from every week file its plans made: the schedule keeps one set of entries
+    // for a client, so releasing one plan at a time would wipe what the others released.
+    const groups = new Map<string, Array<{ file: string; state: CampaignState }>>();
     for (const f of files) {
       const file = join(brandsRoot, siteBrand, 'campaigns', f);
       const state = await readState(file);
@@ -315,20 +318,30 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
         if (state.releaseNote !== 'publishing is switched off, so nothing was released') { state.releaseNote = 'publishing is switched off, so nothing was released'; await writeState(file, state); }
         continue;
       }
+      groups.set(state.brand, [...(groups.get(state.brand) ?? []), { file, state }]);
+    }
+    for (const [client, members] of groups) {
+      const weekFiles = [...new Set(members.flatMap(({ state }) => state.batches.flatMap((b) => (b.weekFile ? [b.weekFile] : []))))];
       try {
-        const posts = await deps.release(join(brandsRoot, siteBrand));
-        if (state.released?.posts !== posts) {
-          state.released = { at: stamp(deps), posts };
-          delete state.releaseNote;
-          state.updatedAt = stamp(deps);
-          await writeState(file, state);
-          log(`${state.brand}: ${posts} approved post${posts === 1 ? '' : 's'} are with the publisher`);
+        const posts = await deps.release(join(brandsRoot, siteBrand), { brand: client, weekFiles });
+        let changed = false;
+        for (const { file, state } of members) {
+          if (state.released?.posts !== posts || state.releaseNote) {
+            changed = true;
+            state.released = { at: stamp(deps), posts };
+            delete state.releaseNote;
+            state.updatedAt = stamp(deps);
+            await writeState(file, state);
+          }
+          released.push(state);
         }
-        released.push(state);
+        if (changed) log(`${client}: ${posts} approved post${posts === 1 ? '' : 's'} are with the publisher`);
       } catch (error) {
-        state.releaseNote = `release failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300);
-        await writeState(file, state);
-        log(`${state.brand}: ${state.releaseNote}`);
+        for (const { file, state } of members) {
+          state.releaseNote = `release failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300);
+          await writeState(file, state);
+        }
+        log(`${client}: release failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 320));
       }
     }
   }
@@ -403,7 +416,7 @@ async function main(): Promise<void> {
       child.on('close', (code) => done({ code: code ?? 1, tail: out.slice(-4000) }));
       child.on('error', (error) => done({ code: 1, tail: error.message }));
     }),
-    release: async (brandDir) => (await exportToPublisher(brandDir, publisherDir)).length,
+    release: async (brandDir, options) => (await exportToPublisher(brandDir, publisherDir, Date.now(), options)).length,
     publishingEnabled: () => process.env['SOCIAL_PUBLISHING_ENABLED'] === 'true',
     log: (m) => console.log(m),
   };

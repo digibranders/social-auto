@@ -352,3 +352,28 @@ test('the campaign list says what happens to approved posters: nothing is schedu
   }
 });
 
+test('a client\'s posters are released together, under the client\'s own name, from every week file its plans made, and once however many plans it has', async () => {
+  const r = root();
+  try {
+    let week = 0;
+    const exec: RunnerDeps['exec'] = async () => {
+      week += 1;
+      mkdirSync(join(r.dir, 'oyechats'), { recursive: true });
+      writeFileSync(join(r.dir, 'oyechats', `week-0${week}.json`), '{}');
+      return { code: 0, tail: 'done' };
+    };
+    const a = { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 1 };
+    const b = { platforms: ['linkedin'], startDate: '2026-11-09', durationDays: 1 };
+    await makeCampaigns([client({ brand: 'oye-chats', plans: [a, b] })], r.dir, deps({ exec }));
+    const calls: Array<{ dir: string; brand: string; weekFiles: string[] }> = [];
+    const out = await releaseCampaigns(r.dir, deps({ publishingEnabled: () => true, release: async (dir, options) => { calls.push({ dir, ...options }); return 2; } }));
+    assert.equal(calls.length, 1, 'one release for the client, not one per plan');
+    assert.equal(calls[0]?.brand, 'oye-chats', 'the client\'s name, not the site folder\'s');
+    assert.deepEqual([...(calls[0]?.weekFiles ?? [])].sort(), ['week-01.json', 'week-02.json']);
+    assert.equal(out.length, 2, 'both plans are recorded as released');
+    assert.ok(state(r.dir).every((s) => (s['released'] as { posts: number }).posts === 2));
+  } finally {
+    r.done();
+  }
+});
+
