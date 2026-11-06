@@ -242,6 +242,8 @@ export interface CampaignSummary {
   status: CampaignStatus;
   createdAt: string;
   updatedAt: string;
+  /** What happens to approved posters: `off` when publishing is switched off (nothing is scheduled), `on` with how many posters were handed to the publisher at the last pass. Missing before the first pass. */
+  release?: { state: 'off' } | { state: 'on'; posts: number };
   batches: Array<{ index: number; dates: string[]; status: BatchStatus; stage?: BatchStage; stoppedAt?: BatchStage; detail?: string; drawn?: number; queued?: number; startedAt?: string; finishedAt?: string; failure?: string; note?: string }>;
 }
 
@@ -274,6 +276,7 @@ export async function listCampaigns(brandsRoot: string): Promise<CampaignSummary
         id: state.id, brand: state.brand, site: state.site,
         plan: { platforms: state.plan.platforms, startDate: state.plan.startDate, durationDays: state.plan.durationDays, ...(state.plan.postsPerWeek ? { postsPerWeek: state.plan.postsPerWeek } : {}), time: state.plan.time },
         status: state.status, createdAt: state.createdAt, updatedAt: state.updatedAt,
+        ...(state.released ? { release: { state: 'on' as const, posts: state.released.posts } } : state.releaseNote ? { release: { state: 'off' as const } } : {}),
         batches: state.batches.map((b) => ({
           index: b.index, dates: b.dates, status: b.status,
           ...(b.stage ? { stage: b.stage } : {}), ...(b.stoppedAt ? { stoppedAt: b.stoppedAt } : {}), ...(b.detail ? { detail: b.detail } : {}), ...(typeof b.drawn === 'number' ? { drawn: b.drawn } : {}), ...(typeof b.queued === 'number' ? { queued: b.queued } : {}),

@@ -11,6 +11,14 @@ export const PLATFORMS = [
 ] as const;
 export type PlanPlatform = (typeof PLATFORMS)[number]['id'];
 
+/**
+ * The platforms a client really has an account of its own connected on. The team's one shared Instagram account (it has no channel id) does not count:
+ * posters made from a plan are never sent through it, so choosing Instagram for a client with no Instagram of its own would send them nowhere.
+ */
+export function connectedPlatforms(channels: ReadonlyArray<{ platform: string; id: string | null }>): PlanPlatform[] {
+  return PLATFORMS.map((p) => p.id).filter((id) => channels.some((c) => c.platform === id && c.id !== null));
+}
+
 export const DURATIONS = [
   { id: 'day', label: 'Just one day', days: 1 },
   { id: 'week', label: '1 week', days: 7 },

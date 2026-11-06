@@ -1,6 +1,6 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
-import { planPayload, planSentence } from '../shared/posting-plan.ts';
+import { connectedPlatforms, planPayload, planSentence } from '../shared/posting-plan.ts';
 import { planFields } from './add-client.ts';
 import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
 import { websiteHost, type ClientSummary } from './clients.ts';
@@ -224,7 +224,7 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
     message.textContent = text;
     message.classList.toggle('is-error', error);
   };
-  const fields = planFields(`newplan-${client.brand}`, { existing: client.plans, limit: client.weeklyLimit });
+  const fields = planFields(`newplan-${client.brand}`, { existing: client.plans, limit: client.weeklyLimit, available: connectedPlatforms(client.channels) });
   const save = button('Add this plan', 'btn btn-primary', () => {
     const chosen = fields.read(true);
     if (!chosen.plan) return say(chosen.problem ?? 'Choose what to post.', true);

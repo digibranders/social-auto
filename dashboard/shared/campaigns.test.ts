@@ -162,3 +162,14 @@ test('the writing step\'s long list of reasons is told as its meaning', () => {
   assert.doesNotMatch(plainFailure(long), /w03-d1|headline/);
 });
 
+test('a finished plan says what approving does next, so an approved poster missing from the calendar is not a mystery', () => {
+  const finished = (release?: Campaign['release']) => statusItems([client()], [campaign({ status: 'awaiting_approval', ...(release ? { release } : {}) }, [batch({ status: 'done', queued: 1 })])], NOW)[0];
+  assert.equal(finished()?.note, undefined, 'before anything is known, nothing is claimed');
+  assert.equal(finished({ state: 'off' })?.note, 'Publishing is switched off, so approving a poster does not schedule it yet.');
+  assert.equal(finished({ state: 'on', posts: 2 })?.note, '2 approved posters are with the publisher and go out at their time.');
+  assert.equal(finished({ state: 'on', posts: 1 })?.note, '1 approved poster is with the publisher and goes out at its time.', 'one poster reads in the singular');
+  assert.match(finished({ state: 'on', posts: 0 })?.note ?? '', /scheduled automatically/);
+  const parsed = parseCampaigns({ campaigns: [{ id: 'c', brand: 'b', status: 'running', release: { state: 'on', posts: 4 }, plan: { platforms: ['instagram'], startDate: '2026-11-07', durationDays: 1, time: '10:00' }, batches: [] }, { id: 'd', brand: 'b', status: 'running', release: { state: 'maybe' }, plan: { platforms: ['instagram'], startDate: '2026-11-07', durationDays: 1, time: '10:00' }, batches: [] }] });
+  assert.deepEqual(parsed.map((c) => c.release), [{ state: 'on', posts: 4 }, undefined]);
+});
+

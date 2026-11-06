@@ -59,8 +59,10 @@ main() {
   cd "$ROOT" || return 1
   [[ "$(git branch --show-current)" == "main" ]] || { echo "not on main" >&2; return 1; }
   # Only changes to files git tracks can get in the way of the pull. The poster runs write new files (brands/, out/) into this
-  # checkout, and those must not stop a deploy.
-  [[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "uncommitted changes to tracked files" >&2; return 1; }
+  # checkout, and those must not stop a deploy. Two tracked paths are written by the server itself, not by a person: the publisher's
+  # schedule and its poster pictures (the weekly job commits them, and approved posters made from a client's plan are added to them
+  # in between). They are state, not code, so they do not count either.
+  [[ -z "$(git status --porcelain --untracked-files=no -- . ':(exclude)publisher/data/schedule.ts' ':(exclude)publisher/public/posts')" ]] || { echo "uncommitted changes to tracked files" >&2; return 1; }
 
   local waited=0
   while busy; do

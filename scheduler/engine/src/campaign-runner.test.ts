@@ -338,3 +338,17 @@ test('a failed run remembers the step it had reached, and one that stopped befor
   }
 });
 
+test('the campaign list says what happens to approved posters: nothing is scheduled while publishing is off, and how many were handed over when it is on', async () => {
+  const r = root();
+  try {
+    await makeCampaigns([client()], r.dir, deps());
+    assert.equal((await listCampaigns(r.dir))[0]?.release, undefined, 'before the first release pass there is nothing to say');
+    await releaseCampaigns(r.dir, deps({ publishingEnabled: () => false }));
+    assert.deepEqual((await listCampaigns(r.dir))[0]?.release, { state: 'off' });
+    await releaseCampaigns(r.dir, deps({ publishingEnabled: () => true, release: async () => 3 }));
+    assert.deepEqual((await listCampaigns(r.dir))[0]?.release, { state: 'on', posts: 3 });
+  } finally {
+    r.done();
+  }
+});
+

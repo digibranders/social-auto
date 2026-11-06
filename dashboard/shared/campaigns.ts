@@ -42,6 +42,8 @@ export interface Campaign {
   status: 'queued' | 'running' | 'awaiting_approval' | 'partial' | 'failed' | 'interrupted';
   createdAt: string;
   updatedAt: string;
+  /** What happens to approved posters; missing before the first release pass. */
+  release?: { state: 'off' } | { state: 'on'; posts: number };
   batches: CampaignBatch[];
 }
 
@@ -99,11 +101,19 @@ export function parseCampaigns(raw: unknown): Campaign[] {
       });
     }
     out.push({
-      id, brand, site: str(c['site'], 200) ?? '', status: status as Campaign['status'], createdAt: str(c['createdAt'], 40) ?? '', updatedAt: str(c['updatedAt'], 40) ?? '', batches,
+      id, brand, site: str(c['site'], 200) ?? '', status: status as Campaign['status'], ...parseRelease(c['release']), createdAt: str(c['createdAt'], 40) ?? '', updatedAt: str(c['updatedAt'], 40) ?? '', batches,
       plan: { platforms: (plan['platforms'] as unknown[]).filter((p): p is string => typeof p === 'string'), startDate: plan['startDate'], durationDays: plan['durationDays'], ...(typeof plan['postsPerWeek'] === 'number' ? { postsPerWeek: plan['postsPerWeek'] } : {}), time: str(plan['time'], 10) ?? '10:00' },
     });
   }
   return out;
+}
+
+/** What happens to approved posters, as the review service reports it; anything else is left out rather than guessed at. */
+function parseRelease(raw: unknown): { release?: Campaign['release'] } {
+  const r = raw as { state?: unknown; posts?: unknown } | null | undefined;
+  if (r?.state === 'off') return { release: { state: 'off' } };
+  if (r?.state === 'on' && typeof r.posts === 'number' && Number.isFinite(r.posts) && r.posts >= 0) return { release: { state: 'on', posts: Math.floor(r.posts) } };
+  return {};
 }
 
 /** The same plan, recognised by what the owner chose (the record and the client's list carry the same fields). */
@@ -148,6 +158,8 @@ export interface StatusItem {
   failure?: string;
   /** For a finished item: how many posters wait in Review. */
   ready?: number;
+  /** For a finished item: what approving does next, so nobody has to guess why an approved poster is not on the calendar. */
+  note?: string;
   updatedAt: string;
 }
 
@@ -293,7 +305,8 @@ export function statusItems(clients: readonly ClientForStatus[], campaigns: read
         items.push({ ...base, state: 'failed', percent: 100, steps: stepsFor(3, false), headline: 'No poster passed the checks', failure: 'The posters were drawn, but the automatic checks turned every one back, so nothing is waiting in Review. Adding the plan again makes new ones.' });
         continue;
       }
-      items.push({ ...base, state: 'review', percent: 100, steps: stepsFor(4, true), headline: counted ? `${posters(ready)} ready for your review${ready < total ? `, ${total - ready} did not pass the checks` : ''}` : 'Finished: look in Review', ...(counted ? { ready } : {}) });
+      const afterApproval = record.release?.state === 'off' ? 'Publishing is switched off, so approving a poster does not schedule it yet.' : record.release?.state === 'on' ? (record.release.posts > 0 ? `${record.release.posts} approved poster${record.release.posts === 1 ? ' is' : 's are'} with the publisher and ${record.release.posts === 1 ? 'goes' : 'go'} out at ${record.release.posts === 1 ? 'its' : 'their'} time.` : 'Approved posters are scheduled automatically, within about 5 minutes.') : undefined;
+      items.push({ ...base, ...(afterApproval ? { note: afterApproval } : {}), state: 'review', percent: 100, steps: stepsFor(4, true), headline: counted ? `${posters(ready)} ready for your review${ready < total ? `, ${total - ready} did not pass the checks` : ''}` : 'Finished: look in Review', ...(counted ? { ready } : {}) });
     }
   }
   return items;

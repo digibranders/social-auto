@@ -59,6 +59,7 @@ test('an approved AI poster is exported with the platforms the owner chose, and 
     const posts = await exportToPublisher(b.brandDir, b.publisher);
     assert.deepEqual(posts.map((p) => p.id), ['oyechats-w01-d1']);
     assert.deepEqual(posts[0]?.channels, ['instagram', 'facebook']);
+    assert.equal(posts[0]?.fromPlan, true, 'a plan\'s post is marked, so it never goes to the shared account');
     assert.equal(posts[0]?.caption, 'Approved caption of w01-d1');
     assert.match(readFileSync(join(b.publisher, 'data', 'schedule.ts'), 'utf8'), /"channels": \[\s*"instagram",\s*"facebook"\s*\]/);
   } finally {
@@ -110,6 +111,17 @@ test('an approved AI poster is marked as having its own time, so the frequent ru
     const posts = await exportToPublisher(b.brandDir, b.publisher);
     assert.equal(posts[0]?.ownTime, true);
     assert.match(readFileSync(join(b.publisher, 'data', 'schedule.ts'), 'utf8'), /"ownTime": true/);
+  } finally {
+    b.done();
+  }
+});
+
+test('an approved AI poster with no plan record behind it is not marked as made from a plan', async () => {
+  const b = aiBrand();
+  try {
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.equal(posts[0]?.fromPlan, undefined);
+    assert.equal(posts[0]?.channels, undefined);
   } finally {
     b.done();
   }
