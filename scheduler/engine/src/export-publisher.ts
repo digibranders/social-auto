@@ -11,6 +11,7 @@
  *   node src/export-publisher.ts --brand brands/brandbasket [--publisher ../../publisher]
  */
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -101,6 +102,12 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
   for (const file of files) {
     const plan = parseWeekPlan(await readJson(join(brandDir, file)), file);
     const platforms = await platformsForWeek(brandDir, file);
+    // A site the campaign runner manages must trace every AI poster to a plan, because the plan says where it may go. One that
+    // cannot be traced (its record is gone) is held back rather than sent to every connected channel.
+    if (plan.renderMode === 'ai_v1' && !platforms && existsSync(join(brandDir, 'campaigns'))) {
+      console.warn(`${brand}: ${file} is not tied to any posting plan, so its posters were not exported`);
+      continue;
+    }
     const outDir = resolve('out', brand, basename(file, '.json'));
     for (const post of plan.posts) {
       // Fully AI posters are exported only as the exact approved version (its picture and its caption); every other plan by its own approval.
