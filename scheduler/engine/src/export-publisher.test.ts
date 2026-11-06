@@ -92,3 +92,15 @@ test('two plans of one client keep their own platforms: each week file goes wher
     b.done();
   }
 });
+
+test('on a site the campaign runner manages, an AI poster that no plan record accounts for is held back, not sent to every channel', async () => {
+  const b = aiBrand(['instagram']);
+  try {
+    // The record that tied week-01.json to its plan is gone; another plan's record exists, so the site is runner-managed.
+    writeFileSync(join(b.brandDir, 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', plan: { platforms: ['instagram'] }, batches: [{ index: 0, dates: ['2099-11-10'], status: 'done', weekFile: 'week-09.json' }] }));
+    assert.deepEqual(await exportToPublisher(b.brandDir, b.publisher), []);
+  } finally {
+    b.done();
+  }
+});
+
