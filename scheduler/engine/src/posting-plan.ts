@@ -130,7 +130,9 @@ export function planBatches(plan: PostingPlan, size: number = POSTERS_PER_RUN): 
 /** The autopilot's arguments for one batch of the plan: it writes exactly these days, as AI posters into the review queue, and schedules nothing. */
 export function autopilotArgsFor(plan: PostingPlan, site: string, batch: PlanBatch): string[] {
   const first = batch.dates[0] as string;
-  const args = ['src/autopilot.ts', '--site', site, '--route', 'ai', '--days', String(batch.dates.length), '--start', first, '--time', plan.time, '--utc-offset', plan.utcOffset];
+  const args = ['src/autopilot.ts', '--site', site, '--route', 'ai', '--days', String(batch.dates.length), '--start', first, '--time', plan.time, '--utc-offset', plan.utcOffset,
+    // The autopilot wants a destination before it looks at the route. The AI route never schedules or exports on its own: it queues each poster for the owner's review and stops.
+    '--target', 'publisher'];
   // The pattern is needed only when the batch is not simply consecutive days: the autopilot then picks the first N matching days from the start.
   const consecutive = batch.dates.every((d, i) => d === addDays(first, i));
   if (!consecutive) args.push('--weekdays', [...new Set(batch.dates.map(weekdayOf))].join(','));

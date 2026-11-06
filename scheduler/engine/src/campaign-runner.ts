@@ -145,6 +145,7 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       batch.status = outcome.code === 0 ? 'done' : 'failed';
       batch.finishedAt = stamp(deps);
       batch.tail = outcome.tail.slice(-1500);
+      log(outcome.code === 0 ? `${client.brand}: batch ${batch.index + 1} finished` : `${client.brand}: batch ${batch.index + 1} failed: ${outcome.tail.trim().split('\n').at(-1)?.slice(0, 300) ?? 'no output'}`);
       state.status = statusOf(state.batches);
       state.updatedAt = stamp(deps);
       await writeState(file, state);
