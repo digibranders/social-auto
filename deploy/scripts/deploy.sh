@@ -32,10 +32,19 @@ healthy() {
   curl -fsS -m 5 http://127.0.0.1:4021/healthz > /dev/null && curl -fsS -m 5 http://127.0.0.1:4011/healthz > /dev/null
 }
 
+# The review queue service runs engine code, so it is restarted when that code changed. Not every server runs it, and a
+# server whose sudoers file does not yet allow it must still deploy: a problem here is reported and never rolls back.
+restart_review() {
+  [[ "${ENGINE_CHANGED:-0}" == "1" ]] || return 0
+  systemctl cat social-review.service > /dev/null 2>&1 || return 0
+  sudo -n /bin/systemctl restart social-review.service || echo "could not restart social-review: add it to /etc/sudoers.d/social-auto (see deploy/sudoers-social-auto)" >&2
+}
+
 install_and_restart() {
   (cd publisher && npm ci --omit=dev --silent --no-audit --no-fund) || return 1
   (cd dashboard && npm ci --silent --no-audit --no-fund && npm run build --silent) || return 1
   sudo -n /bin/systemctl restart social-publisher.service social-dashboard.service || return 1
+  restart_review
   local attempt
   for attempt in $(seq 1 20); do
     healthy && return 0
@@ -49,7 +58,9 @@ install_and_restart() {
 main() {
   cd "$ROOT" || return 1
   [[ "$(git branch --show-current)" == "main" ]] || { echo "not on main" >&2; return 1; }
-  [[ -z "$(git status --porcelain)" ]] || { echo "uncommitted changes" >&2; return 1; }
+  # Only changes to files git tracks can get in the way of the pull. The poster runs write new files (brands/, out/) into this
+  # checkout, and those must not stop a deploy.
+  [[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "uncommitted changes to tracked files" >&2; return 1; }
 
   local waited=0
   while busy; do
@@ -68,6 +79,9 @@ main() {
   deployed="$(cat "$MARKER" 2>/dev/null || true)"
   git pull --quiet --ff-only origin main || { echo "git pull failed" >&2; alert "Deploy failed: git pull did not work."; return 1; }
   new="$(git rev-parse HEAD)"
+  # Engine code changed since the version the apps were last started from (or since this checkout, when that is unknown).
+  ENGINE_CHANGED=0
+  git diff --quiet "${deployed:-$previous}" "$new" -- scheduler/engine/src 2> /dev/null || ENGINE_CHANGED=1
 
   if [[ "$new" == "$deployed" ]] && healthy; then
     echo "already on $(git rev-parse --short HEAD) and healthy"
