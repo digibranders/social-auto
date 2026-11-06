@@ -42,6 +42,7 @@ import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
 import { CopyStage } from './copy-stage.ts';
+import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines } from './headline-gate.ts';
 import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
 import { recordRenderedArt } from './art-review.ts';
 import { reviewAndRepair } from './review-loop.ts';
@@ -321,7 +322,18 @@ async function main(): Promise<void> {
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
     if (route === 'ai' && values['copy-first'] && !values['plan-only']) {
-      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p) })));
+      // The editorial gate reads each headline with its fact (one cheap request for the batch) and the owner is told which ones it would drop. It only advises here: the owner decides.
+      const advice = new Map<string, string>();
+      if (headlineGateFromEnv(process.env).enabled) {
+        try {
+          const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+          const items = finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), fact: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined).join(' ') || p.anchor || p.painPoint }));
+          for (const verdict of judgeHeadlines(await scoreHeadlines(ai, items), headlineGateFromEnv(process.env).config)) if (!verdict.keep && verdict.reason) advice.set(verdict.id, verdict.reason);
+        } catch (error) {
+          console.log(`    The headline check could not run (${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}); no advice is shown.`);
+        }
+      }
+      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })));
       console.log(`3/4 Copy first: ${finalPlan.posts.length} posts are waiting for the owner to keep or drop them. No picture was bought. Then: --draw-kept ${planFile}`);
       return;
     }

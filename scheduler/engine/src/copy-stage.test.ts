@@ -101,3 +101,15 @@ test('the list shows every batch of the brand in order', () => {
     done();
   }
 });
+
+test('advice about a weak headline is kept with the post and does not decide anything', () => {
+  const { stage: s, done } = stage();
+  try {
+    const batch = s.open('week-01.json', [{ ...posts[0]!, advice: 'weak headline: it tells the reader nothing specific' }, posts[1]!]);
+    assert.equal(batch.posts[0]?.advice, 'weak headline: it tells the reader nothing specific');
+    assert.equal(batch.posts[1]?.advice, undefined);
+    assert.deepEqual(batch.posts.map((p) => p.state), ['pending', 'pending']);
+  } finally {
+    done();
+  }
+});

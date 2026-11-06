@@ -4,6 +4,7 @@
  * only facts that are usable and state a claim of the brand itself are ever offered.
  */
 import { displayFact, type EvidenceFact } from './evidence.ts';
+import { isPageFurniture } from './fact-boilerplate.ts';
 
 /** Facts a post may be written from: usable, the brand's own claim, one fact per wording and scope. */
 export function offerableFacts(facts: readonly EvidenceFact[]): EvidenceFact[] {
@@ -11,6 +12,7 @@ export function offerableFacts(facts: readonly EvidenceFact[]): EvidenceFact[] {
   const out: EvidenceFact[] = [];
   for (const fact of facts) {
     if (fact.status !== 'usable' || fact.intent !== 'claim' || fact.attribution !== 'brand') continue;
+    if (isPageFurniture(displayFact(fact))) continue;
     const key = displayFact(fact).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);

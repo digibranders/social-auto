@@ -2,6 +2,7 @@
 import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
 import { assertCopySupported } from './copy-gate.ts';
+import { checkCopyQuality } from './copy-quality.ts';
 import { creativePrompt, formatFor } from './creative.ts';
 import { checkConcept, parseConcept, type Concept, type ConceptConfig, type ConceptRecord } from './concepts.ts';
 import { assignHooks, checkHook, defaultHooks, fallbackHeadline, HookError, normalizeHeadline, repetitionWarnings, type HookSpec } from './hooks.ts';
@@ -230,6 +231,8 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
   if (typeof draft.headline === 'string' && draft.headline.replaceAll('|', '').length > 60) {
     throw new Error(`post ${position} headline is too long; keep it under 45 characters`);
   }
+  const weak = checkCopyQuality({ headline: draft.headline, caption: draft.caption });
+  if (weak) throw new Error(`post ${position} failed the writing check: ${weak}`);
   const hookProblem = assignment?.hook ? checkHook({ hook: assignment.hook, headline: draft.headline, ...(draft.listItems ? { listItems: draft.listItems } : {}) }) : undefined;
   if (hookProblem) throw new HookError(`post ${position} (${assignment?.hook}): ${hookProblem}`);
   if (proofPoints !== undefined) {
@@ -381,7 +384,7 @@ export async function planWeek(options: {
             validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode });
           } catch (error) {
             // On the last try a post whose copy the claim gate still turns back, or that does not stay with its fact, is left out (fewer posts, never unsupported copy); the others stay.
-            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point/.test(error.message)) {
+            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point|failed the writing check/.test(error.message)) {
               droppedHere.push(error.message);
               return;
             }

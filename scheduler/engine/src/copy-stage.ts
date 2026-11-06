@@ -27,6 +27,8 @@ export interface CopyPost {
   caption: string;
   /** Hash of the headline and caption this entry was made from. */
   contentHash: string;
+  /** A note for the owner, such as "weak headline: it tells the reader nothing specific". Advice only: the owner can still keep the post. */
+  advice?: string;
   state: CopyState;
   decidedBy?: string;
   decidedAt?: string;
@@ -88,14 +90,14 @@ export class CopyStage {
   }
 
   /** Records a freshly written batch. Opening the same batch again changes nothing (decisions already made stay). */
-  open(planFile: string, posts: ReadonlyArray<{ postId: string; headline: string; caption: string }>): CopyBatch {
+  open(planFile: string, posts: ReadonlyArray<{ postId: string; headline: string; caption: string; advice?: string }>): CopyBatch {
     return this.change(planFile, (existing) => {
       if (existing) return { batch: existing, result: existing };
       const batch: CopyBatch = {
         brand: this.brand,
         planFile,
         createdAt: this.now().toISOString(),
-        posts: posts.map((p) => ({ postId: p.postId, headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption), state: 'pending' })),
+        posts: posts.map((p) => ({ postId: p.postId, headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
       };
       return { batch, result: batch };
     });

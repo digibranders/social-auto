@@ -9,7 +9,7 @@ interface Detail {
   history: ReviewSummary[];
 }
 
-interface CopyBatch { brand: string; planFile: string; posts: Array<{ postId: string; headline: string; caption: string; state: 'pending' | 'kept' | 'dropped' }> }
+interface CopyBatch { brand: string; planFile: string; posts: Array<{ postId: string; headline: string; caption: string; advice?: string; state: 'pending' | 'kept' | 'dropped' }> }
 
 interface State {
   /** Written posts waiting to be kept or dropped, before any picture is bought. */
@@ -74,6 +74,7 @@ function copyView(redraw: () => void): HTMLElement | null {
         { class: `rv-copy-post rv-copy-${post.state}` },
         h('p', {}, h('b', {}, post.headline)),
         h('p', {}, post.caption),
+        post.advice ? h('p', { class: 'rv-copy-advice' }, `Suggested drop: ${post.advice}`) : null,
         h('div', { class: 'rv-actions' },
           h('span', {}, post.state === 'kept' ? 'Kept' : post.state === 'dropped' ? 'Dropped' : 'Waiting for you'),
           button('Keep', `btn${post.state === 'kept' ? ' btn-primary' : ''}`, () => void chooseCopy(batch, post.postId, 'keep', redraw), `Keep: ${post.headline}`),

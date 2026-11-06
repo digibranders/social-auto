@@ -535,3 +535,4 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-copy-dropped { opacity: 0.55; }
 .rv-copy-post .rv-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .rv-copy-post .rv-actions span { flex: 1; font-size: 0.9em; }
+.rv-copy-advice { color: var(--warn, #b45309); font-size: 0.9em; }
