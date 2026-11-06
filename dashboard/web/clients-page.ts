@@ -1,6 +1,7 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
 import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
-import { planSentence } from '../shared/posting-plan.ts';
+import { planPayload, planSentence } from '../shared/posting-plan.ts';
+import { planFields } from './add-client.ts';
 import { websiteHost, type ClientSummary } from './clients.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
@@ -23,6 +24,10 @@ export interface ClientsContext {
   removeClient(client: ClientSummary): void;
   /** Saves (or, when empty, clears) the website; resolves to an explanation when it could not be saved. */
   saveWebsite(client: ClientSummary, website: string): Promise<string | null>;
+  /** Adds one more posting plan to the client; resolves to an explanation when it could not be added. */
+  addPlan(client: ClientSummary, plan: Record<string, unknown>): Promise<string | null>;
+  /** Takes the plan at this place off the client; resolves to an explanation when it could not be. */
+  removePlan(client: ClientSummary, index: number): Promise<string | null>;
   disconnect(channel: ChannelHealth): void;
   /** Whether everything is paused. */
   allPaused(): boolean;
@@ -200,7 +205,51 @@ function websiteCard(client: ClientSummary, ctx: ClientsContext): HTMLElement {
     h('div', { class: 'card-head' }, h('h2', {}, 'Website')),
     h('p', { class: 'muted' }, client.website ? `Posts for ${client.label} are planned from ${websiteHost(client.website)}.` : `Add ${client.label}’s website. Posts are planned from it.`),
     h('div', { class: 'website-row' }, input, save),
-    client.plan ? h('p', { class: 'muted plan-line' }, `Posting plan: ${planSentence(client.plan)}. The posters are made from the website and wait in Review until you approve them.`) : null,
+    message,
+  );
+}
+
+/** The posting plans of a client added in the dashboard: each listed with a way to take it off, and a form to add another. Needs the website, because posters are made from it. */
+function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | null {
+  if (!client.website) return null;
+  const message = h('p', { class: 'form-message', role: 'status' });
+  const say = (text: string, error: boolean): void => {
+    message.textContent = text;
+    message.classList.toggle('is-error', error);
+  };
+  const fields = planFields(`newplan-${client.brand}`);
+  const save = button('Add this plan', 'btn btn-primary', () => {
+    const chosen = fields.read(true);
+    if (!chosen.plan) return say(chosen.problem ?? 'Choose what to post.', true);
+    save.disabled = true;
+    say('Saving…', false);
+    void ctx.addPlan(client, planPayload(chosen.plan)).then((problem) => {
+      if (!problem) return;
+      say(problem, true);
+      save.disabled = false;
+    });
+  });
+  const form = h('div', { class: 'plan-box', hidden: 'hidden' }, fields.element, h('div', { class: 'actions' }, save, button('Cancel', 'btn btn-quiet', () => { form.hidden = true; say('', false); })));
+  for (const control of fields.controls) {
+    control.addEventListener('input', () => fields.refresh(true));
+    control.addEventListener('change', () => fields.refresh(true));
+  }
+  const open = button('Add a plan', 'btn', () => {
+    form.hidden = false;
+    fields.refresh(true);
+  });
+  return h(
+    'div',
+    { class: 'panel-card plans-card' },
+    h('div', { class: 'card-head' }, h('h2', {}, 'Posting plans'), open),
+    h('p', { class: 'muted' }, 'Each plan has its own platforms, days and rhythm. The posters are made from the website and wait in Review until you approve them. Nothing is posted before that.'),
+    client.plans.length === 0
+      ? h('p', { class: 'muted' }, 'No plan yet. Add one to have posters made.')
+      : h('ul', { class: 'plan-list' }, ...client.plans.map((plan, index) => h('li', { class: 'plan-item' }, h('span', {}, planSentence(plan)), button('Remove', 'btn btn-quiet', () => {
+        if (!confirm('Stop making posters for this plan? Posters already made stay in Review.')) return;
+        void ctx.removePlan(client, index).then((problem) => { if (problem) say(problem, true); });
+      })))),
+    form,
     message,
   );
 }
@@ -245,6 +294,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     ),
     h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), ctx.allPaused() ? null : button(client.paused ? 'Resume client' : 'Pause client', client.paused ? 'btn' : 'btn btn-quiet', () => ctx.setPause('brand', client.brand, !client.paused)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
     client.added ? websiteCard(client, ctx) : null,
+    client.added ? plansCard(client, ctx) : null,
     client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
     tab === 'channels' ? channels : tab === 'posts' ? posts : costPage(client, ctx),

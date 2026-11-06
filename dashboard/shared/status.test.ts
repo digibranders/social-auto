@@ -95,3 +95,11 @@ test('parseStatus keeps the AI cost entries, defaults to none, and rejects a neg
   assert.throws(() => parseStatus({ ...valid, costs: [{ ...entry, purpose: 'lunch' }] }), StatusParseError);
   assert.throws(() => parseStatus({ ...valid, costs: [{ ...entry, at: 'soon' }] }), StatusParseError);
 });
+
+test('a client keeps every plan it has, each with its own platforms, and an entry that is not a plan is skipped', () => {
+  const plan = (platforms: string[], postsPerWeek: number) => ({ platforms, startDate: '2026-11-06', durationDays: 31, postsPerWeek, time: '10:00', utcOffset: '+05:30' });
+  const parsed = parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://acme.com', plans: [plan(['instagram'], 3), 'nonsense', plan(['linkedin'], 1)] }] });
+  assert.deepEqual(parsed.runway[0]?.plans?.map((p) => [p.platforms, p.postsPerWeek]), [[['instagram'], 3], [['linkedin'], 1]]);
+  assert.equal(parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0 }] }).runway[0]?.plans, undefined);
+});
+

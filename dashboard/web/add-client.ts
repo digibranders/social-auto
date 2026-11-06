@@ -42,6 +42,46 @@ export function describePlan(plan: PlanInput): string[] {
   return lines;
 }
 
+/** The choices that make a posting plan (platforms, how long, how often, first day) with the live summary under them. Used by the Add client window and the client's own page. */
+export interface PlanFields {
+  element: HTMLElement;
+  /** The plan the choices make (or why not); `on: false` reads as no plan. */
+  read(on: boolean): ReturnType<typeof readPlan>;
+  /** Redraws the summary, and the how-often box, from the current choices. */
+  refresh(on: boolean): void;
+  /** Every control, so a caller can redraw when any of them changes. */
+  controls: HTMLElement[];
+}
+
+/** `prefix` keeps the element ids apart when two forms are on the page. */
+export function planFields(prefix: string): PlanFields {
+  const ticks = new Map<PlanPlatform, HTMLInputElement>(PLATFORMS.map((p) => [p.id, h('input', { type: 'checkbox', id: `${prefix}-${p.id}`, ...(p.id === 'instagram' ? { checked: 'checked' } : {}) })]));
+  const duration = h('select', { id: `${prefix}-duration`, class: 'text-input', 'aria-label': 'For how long' }, ...DURATIONS.map((d) => h('option', { value: d.id }, d.label)));
+  const often = h('select', { id: `${prefix}-often`, class: 'text-input', 'aria-label': 'How often' }, h('option', { value: '0' }, 'Every day'), ...[1, 2, 3, 4, 5, 6].map((n) => h('option', { value: String(n), ...(n === 3 ? { selected: 'selected' } : {}) }, `${n} time${n === 1 ? '' : 's'} a week`)));
+  const startDate = h('input', { id: `${prefix}-start`, type: 'date', class: 'text-input', 'aria-label': 'First day to post' });
+  startDate.value = tomorrowAt('+05:30');
+  const summary = h('div', { class: 'plan-summary', role: 'status', 'aria-live': 'polite' });
+  const element = h('div', { class: 'plan-fields' },
+    h('p', { class: 'label' }, 'Post on'),
+    h('div', { class: 'check-grid' }, ...PLATFORMS.map((p) => h('label', { class: 'check-row', for: `${prefix}-${p.id}` }, ticks.get(p.id) as HTMLInputElement, h('span', {}, p.label)))),
+    h('label', { class: 'label', for: `${prefix}-duration` }, 'For how long'),
+    duration,
+    h('label', { class: 'label', for: `${prefix}-often` }, 'How often'),
+    often,
+    h('label', { class: 'label', for: `${prefix}-start` }, 'First day'),
+    startDate,
+    summary,
+  );
+  const read = (on: boolean): ReturnType<typeof readPlan> => readPlan({ on, platforms: [...ticks].filter(([, box]) => box.checked).map(([id]) => id), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value) });
+  const refresh = (on: boolean): void => {
+    often.disabled = duration.value === 'day';
+    const { plan, problem } = read(on);
+    summary.classList.toggle('is-error', Boolean(problem));
+    summary.replaceChildren(...(problem ? [h('p', {}, problem)] : plan ? describePlan(plan).map((line) => h('p', {}, line)) : []));
+  };
+  return { element, read, refresh, controls: [duration, often, startDate, ...ticks.values()] };
+}
+
 export function addClientForm(deps: AddClientDeps): HTMLElement {
   const input = h('input', { id: 'client-name', type: 'text', class: 'text-input', 'aria-label': 'Client name', maxlength: '60', autocomplete: 'off', placeholder: 'e.g. Brand Basket' });
   const site = h('input', { id: 'client-website', type: 'text', class: 'text-input', 'aria-label': 'Client website', maxlength: '200', autocomplete: 'off', inputmode: 'url', placeholder: 'e.g. brandbasket.in' });
@@ -52,39 +92,19 @@ export function addClientForm(deps: AddClientDeps): HTMLElement {
   });
   // What to post, where and for how long. Offered once a website is written, because the posts are made from it.
   const planOn = h('input', { id: 'plan-on', type: 'checkbox', checked: 'checked' });
-  const ticks = new Map<PlanPlatform, HTMLInputElement>(PLATFORMS.map((p) => [p.id, h('input', { type: 'checkbox', id: `plan-${p.id}`, ...(p.id === 'instagram' ? { checked: 'checked' } : {}) })]));
-  const duration = h('select', { id: 'plan-duration', class: 'text-input', 'aria-label': 'For how long' }, ...DURATIONS.map((d) => h('option', { value: d.id }, d.label)));
-  const often = h('select', { id: 'plan-often', class: 'text-input', 'aria-label': 'How often' }, h('option', { value: '0' }, 'Every day'), ...[1, 2, 3, 4, 5, 6].map((n) => h('option', { value: String(n), ...(n === 3 ? { selected: 'selected' } : {}) }, `${n} time${n === 1 ? '' : 's'} a week`)));
-  const startDate = h('input', { id: 'plan-start', type: 'date', class: 'text-input', 'aria-label': 'First day to post' });
-  startDate.value = tomorrowAt('+05:30');
-  const summary = h('div', { class: 'plan-summary', role: 'status', 'aria-live': 'polite' });
+  const fields = planFields('plan');
   const planBox = h('div', { class: 'plan-box' },
     h('label', { class: 'check-row', for: 'plan-on' }, planOn, h('span', {}, 'Make posts from this website')),
+    fields.element,
   );
-  const planFields = h('div', { class: 'plan-fields' },
-    h('p', { class: 'label' }, 'Post on'),
-    h('div', { class: 'check-grid' }, ...PLATFORMS.map((p) => h('label', { class: 'check-row', for: `plan-${p.id}` }, ticks.get(p.id) as HTMLInputElement, h('span', {}, p.label)))),
-    h('label', { class: 'label', for: 'plan-duration' }, 'For how long'),
-    duration,
-    h('label', { class: 'label', for: 'plan-often' }, 'How often'),
-    often,
-    h('label', { class: 'label', for: 'plan-start' }, 'First day'),
-    startDate,
-    summary,
-  );
-  planBox.append(planFields);
-  const currentPlan = (): ReturnType<typeof readPlan> => readPlan({ on: planOn.checked && site.value.trim() !== '', platforms: [...ticks].filter(([, box]) => box.checked).map(([id]) => id), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value) });
+  const currentPlan = (): ReturnType<typeof readPlan> => fields.read(planOn.checked && site.value.trim() !== '');
   const refresh = (): void => {
-    const hasSite = site.value.trim() !== '';
-    planBox.hidden = !hasSite;
-    planFields.hidden = !planOn.checked;
-    often.disabled = duration.value === 'day';
-    const { plan, problem } = currentPlan();
-    summary.classList.toggle('is-error', Boolean(problem));
-    summary.replaceChildren(...(problem ? [h('p', {}, problem)] : plan ? describePlan(plan).map((line) => h('p', {}, line)) : []));
+    planBox.hidden = site.value.trim() === '';
+    fields.element.hidden = !planOn.checked;
+    fields.refresh(planOn.checked && site.value.trim() !== '');
   };
-  for (const control of [planOn, duration, often, startDate, site, ...ticks.values()]) control.addEventListener('input', refresh);
-  for (const control of [planOn, duration, often, startDate, ...ticks.values()]) control.addEventListener('change', refresh);
+  for (const control of [planOn, site, ...fields.controls]) control.addEventListener('input', refresh);
+  for (const control of [planOn, ...fields.controls]) control.addEventListener('change', refresh);
   refresh();
   const message = h('p', { class: 'form-message', role: 'status' });
   const save = button('Add client', 'btn btn-primary', () => {

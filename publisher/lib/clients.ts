@@ -14,13 +14,14 @@ export interface AddedClient {
   name?: string;
   /** The client's own website (plain https address) that posts are planned from. */
   website?: string;
-  /** What to post, where and for how long, chosen when the website was added. The content job makes the posters for it; nothing posts before they are approved. */
-  plan?: ClientPlan;
+  /** What to post, where and for how long: one entry per plan, each with its own platforms, so Instagram can have a different rhythm from LinkedIn. The content job makes the posters; nothing posts before they are approved. */
+  plans?: ClientPlan[];
 }
 
 export const PLAN_PLATFORMS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 export const PLAN_WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 export const MAX_PLAN_DAYS = 31;
+export const MAX_PLANS_PER_CLIENT = 8;
 
 export interface ClientPlan {
   platforms: string[];
@@ -96,14 +97,21 @@ export function parseClientsFile(raw: unknown): ClientsFile {
       for (const key of ['product', 'externalId', 'name', 'website'] as const) {
         if (c[key] !== undefined && typeof c[key] !== 'string') throw new Error(`clients[${i}].${key} must be a string`);
       }
-      if (c['plan'] !== undefined) {
-        try {
-          parseClientPlan(c['plan'], 0, { allowPast: true });
-        } catch (error) {
-          throw new Error(`clients[${i}].plan is not valid: ${error instanceof Error ? error.message : String(error)}`);
-        }
+      // A client saved by the first version has one `plan`; it is read as a list of one.
+      const { plan: single, ...rest } = c as Record<string, unknown>;
+      const listed = rest['plans'] !== undefined ? rest['plans'] : single !== undefined ? [single] : undefined;
+      if (listed !== undefined) {
+        if (!Array.isArray(listed) || listed.length > MAX_PLANS_PER_CLIENT) throw new Error(`clients[${i}].plans must be a list of at most ${MAX_PLANS_PER_CLIENT}`);
+        listed.forEach((entry, n) => {
+          try {
+            parseClientPlan(entry, 0, { allowPast: true });
+          } catch (error) {
+            throw new Error(`clients[${i}].plans[${n}] is not valid: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        });
+        return { ...rest, plans: listed } as unknown as AddedClient;
       }
-      return c as unknown as AddedClient;
+      return rest as unknown as AddedClient;
     }),
   };
 }
@@ -164,7 +172,7 @@ export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySe
   if (posting && !site) throw new EditError('a posting plan needs the client\'s website to make the posts from');
   if (existing.has(brand) || file.clients.some((c) => c.brand === brand)) throw new EditError('there is already a client with that name', 409);
   if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many added clients; remove one first');
-  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}), ...(posting ? { plan: posting } : {}) }] }, brand };
+  return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}), ...(posting ? { plans: [posting] } : {}) }] }, brand };
 }
 
 /** Sets or clears (empty) the website of a client added in the dashboard. */
@@ -177,15 +185,29 @@ export function setWebsite(file: ClientsFile, brand: string, website: unknown): 
   return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(site ? { website: site } : {}) } : c)) };
 }
 
-/** Sets or clears (null) the posting plan of a client added in the dashboard. A plan needs the client's website. */
-export function setPlan(file: ClientsFile, brand: string, plan: unknown, now: number): ClientsFile {
+/** Adds one more posting plan to a client added in the dashboard (it needs the client's website). The plans already there, and the posters already made for them, are left alone. */
+export function addPlan(file: ClientsFile, brand: string, plan: unknown, now: number): ClientsFile {
   const index = file.clients.findIndex((c) => c.brand === brand);
   if (index === -1) throw new EditError('only a client added in the dashboard has a posting plan here', 404);
   const current = file.clients[index] as AddedClient;
-  const { plan: _old, ...rest } = current;
-  if (plan === null || plan === undefined) return { clients: file.clients.map((c, i) => (i === index ? rest : c)) };
   if (!current.website) throw new EditError('add the client\'s website first: the posts are made from it');
-  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, plan: parseClientPlan(plan, now) } : c)) };
+  const added = parseClientPlan(plan, now);
+  const plans = current.plans ?? [];
+  if (plans.length >= MAX_PLANS_PER_CLIENT) throw new EditError(`a client can have at most ${MAX_PLANS_PER_CLIENT} plans; remove one first`);
+  if (plans.some((p) => JSON.stringify(p) === JSON.stringify(added))) throw new EditError('that plan is already there');
+  return { clients: file.clients.map((c, i) => (i === index ? { ...current, plans: [...plans, added] } : c)) };
+}
+
+/** Takes one plan off a client (by its place in the list). Posters already made for it stay in the review queue; no more are made. */
+export function removePlan(file: ClientsFile, brand: string, position: unknown): ClientsFile {
+  const index = file.clients.findIndex((c) => c.brand === brand);
+  if (index === -1) throw new EditError('only a client added in the dashboard has a posting plan here', 404);
+  const current = file.clients[index] as AddedClient;
+  const plans = current.plans ?? [];
+  if (typeof position !== 'number' || !Number.isInteger(position) || position < 0 || position >= plans.length) throw new EditError('that plan was not found', 404);
+  const { plans: _old, ...rest } = current;
+  const left = plans.filter((_, n) => n !== position);
+  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(left.length > 0 ? { plans: left } : {}) } : c)) };
 }
 
 /** Every client the system knows: the planned ones from the content job, then the ones added by hand. */

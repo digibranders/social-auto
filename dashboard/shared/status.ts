@@ -92,6 +92,11 @@ export interface ClientPlanData {
   utcOffset: string;
 }
 
+/** The plans of a client, skipping any entry that is not a plan. */
+function plansOf(value: unknown): ClientPlanData[] {
+  return Array.isArray(value) ? value.flatMap((v) => planData(v) ?? []) : [];
+}
+
 function planData(value: unknown): ClientPlanData | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const p = value as Record<string, unknown>;
@@ -105,7 +110,7 @@ export interface StatusResponse {
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
-  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plan?: ClientPlanData }>;
+  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[] }>;
   costs: CostEntry[];
 }
 
@@ -228,7 +233,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(planData(entry['plan']) ? { plan: planData(entry['plan']) as ClientPlanData } : {}) };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(plansOf(entry['plans']).length > 0 ? { plans: plansOf(entry['plans']) } : {}) };
   });
 
   const pauseRoot = root['pauses'] === undefined ? {} : record(root['pauses'], 'status.pauses');

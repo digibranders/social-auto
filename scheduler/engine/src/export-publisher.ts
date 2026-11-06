@@ -66,14 +66,27 @@ async function readSchedule(path: string): Promise<ExportedPost[]> {
   }
 }
 
-/** The platforms chosen for the brand's campaign, written by the campaign runner; undefined when the brand has no campaign (it then goes to every connected channel). */
-async function campaignPlatforms(brandDir: string): Promise<string[] | undefined> {
+/**
+ * The platforms of the plan a week file was made for, from the campaign runner's records (brands/<site>/campaigns/*.json);
+ * undefined for a week file no campaign made (it then goes to every connected channel, as before plans existed).
+ */
+async function platformsForWeek(brandDir: string, weekFile: string): Promise<string[] | undefined> {
+  let names: string[];
   try {
-    const raw = JSON.parse(await readFile(join(brandDir, 'campaign.json'), 'utf8')) as { platforms?: unknown };
-    return Array.isArray(raw.platforms) && raw.platforms.length > 0 && raw.platforms.every((p) => typeof p === 'string') ? (raw.platforms as string[]) : undefined;
+    names = (await readdir(join(brandDir, 'campaigns'))).filter((f) => f.endsWith('.json'));
   } catch {
     return undefined;
   }
+  for (const name of names) {
+    try {
+      const state = JSON.parse(await readFile(join(brandDir, 'campaigns', name), 'utf8')) as { plan?: { platforms?: unknown }; batches?: Array<{ weekFile?: unknown }> };
+      const platforms = state.plan?.platforms;
+      if (state.batches?.some((b) => b.weekFile === weekFile) && Array.isArray(platforms) && platforms.length > 0 && platforms.every((p) => typeof p === 'string')) return platforms as string[];
+    } catch {
+      // An unreadable record is skipped; the post then follows the default rather than a guess.
+    }
+  }
+  return undefined;
 }
 
 export async function exportToPublisher(brandDir: string, publisherDir: string, now = Date.now()): Promise<ExportedPost[]> {
@@ -84,10 +97,10 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
   await mkdir(join(publisherDir, 'data'), { recursive: true });
 
   const exported: ExportedPost[] = [];
-  const platforms = await campaignPlatforms(brandDir);
   const files = (await readdir(brandDir)).filter((f) => WEEK_FILE.test(f)).sort();
   for (const file of files) {
     const plan = parseWeekPlan(await readJson(join(brandDir, file)), file);
+    const platforms = await platformsForWeek(brandDir, file);
     const outDir = resolve('out', brand, basename(file, '.json'));
     for (const post of plan.posts) {
       // Fully AI posters are exported only as the exact approved version (its picture and its caption); every other plan by its own approval.

@@ -24,8 +24,8 @@ export interface ClientSummary {
   website: string | null;
   /** Everything for this client is held back: the client itself is paused, or everything is. */
   paused: boolean;
-  /** What was chosen to post, where and for how long when the website was added; null when nothing was. */
-  plan: ClientPlanData | null;
+  /** What was chosen to post, where and for how long: one entry per plan; empty when nothing was. */
+  plans: ClientPlanData[];
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
@@ -86,7 +86,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       product: entry?.product ?? null,
       website: entry?.website ?? null,
       paused: data.pauses.all || data.pauses.brands.includes(brand),
-      plan: entry?.plan ?? null,
+      plans: entry?.plans ?? [],
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };
