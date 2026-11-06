@@ -31,6 +31,8 @@ export interface ExportedPost {
   image: string | null;
   /** The platforms the owner chose for this client's campaign ("instagram", "facebook", ...); missing means every connected channel. */
   channels?: string[];
+  /** Sent at its own time by the frequent run (every few minutes), not left to the once-a-day run, so a time other than 10:00 is honoured. */
+  ownTime?: true;
 }
 
 /** 128-bit content hash: stable for the same image, unguessable without it. */
@@ -128,6 +130,8 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
         image: poster,
         // A fully AI poster goes only to the platforms the owner chose; every other plan keeps going to every connected channel.
         ...(approved && platforms ? { channels: platforms } : {}),
+        // A fully AI poster has the time its plan chose; the frequent run sends it then (the daily run would send one set for the afternoon the next morning).
+        ...(approved ? { ownTime: true as const } : {}),
       });
     }
   }

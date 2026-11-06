@@ -49,6 +49,13 @@ function todayAt(utcOffset: string, now: number): string {
   return new Date(now + sign * (h * 60 + m) * 60_000).toISOString().slice(0, 10);
 }
 
+/** The time of day now at a UTC offset like "+05:30", as HH:MM. */
+function nowTimeAt(utcOffset: string, now: number): string {
+  const sign = utcOffset.startsWith('-') ? -1 : 1;
+  const [h = 0, m = 0] = utcOffset.slice(1).split(':').map(Number);
+  return new Date(now + sign * (h * 60 + m) * 60_000).toISOString().slice(11, 16);
+}
+
 /** Reads a posting plan from untrusted data, or says in plain words what is wrong. A saved plan may have a start date that has since passed. */
 export function parseClientPlan(raw: unknown, now: number, options: { allowPast?: boolean } = {}): ClientPlan {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new EditError('the posting plan is not valid');
@@ -67,6 +74,7 @@ export function parseClientPlan(raw: unknown, now: number, options: { allowPast?
   const startDate = r['startDate'];
   if (typeof startDate !== 'string' || !isRealDate(startDate)) throw new EditError('the start date must be a real date');
   if (!options.allowPast && startDate < todayAt(utcOffset, now)) throw new EditError('the start date is in the past');
+  if (!options.allowPast && startDate === todayAt(utcOffset, now) && time <= nowTimeAt(utcOffset, now)) throw new EditError('that time has already passed today; choose a later time or start tomorrow');
   const durationDays = r['durationDays'];
   if (typeof durationDays !== 'number' || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > MAX_PLAN_DAYS) throw new EditError(`the length must be from 1 to ${MAX_PLAN_DAYS} days`);
   const plan: ClientPlan = { platforms: PLAN_PLATFORMS.filter((p) => chosen.has(p)), startDate, durationDays, time, utcOffset };

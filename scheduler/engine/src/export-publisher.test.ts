@@ -104,3 +104,14 @@ test('on a site the campaign runner manages, an AI poster that no plan record ac
   }
 });
 
+test('an approved AI poster is marked as having its own time, so the frequent run sends it then and the once-a-day run does not leave it for the next morning', async () => {
+  const b = aiBrand(['instagram']);
+  try {
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.equal(posts[0]?.ownTime, true);
+    assert.match(readFileSync(join(b.publisher, 'data', 'schedule.ts'), 'utf8'), /"ownTime": true/);
+  } finally {
+    b.done();
+  }
+});
+

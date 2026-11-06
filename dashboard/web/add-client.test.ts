@@ -52,3 +52,18 @@ test('a plan is held to the client\'s weekly limit when the client already has p
   assert.ok(choose({ platforms: ['facebook'] }).plan, 'another channel has its own places');
 });
 
+test('the time of day the owner chooses is the time of the plan, and is told back in the summary', () => {
+  const chosen = readPlan(form({ time: '15:30', startDate: '2026-11-07' }), NOW);
+  assert.equal(chosen.plan?.time, '15:30');
+  assert.equal(describePlan(chosen.plan as never)[0], '1 post on Instagram, at 15:30 India time.');
+  assert.equal(readPlan(form({ startDate: '2026-11-07' }), NOW).plan?.time, '10:00', 'ten o\'clock unless another time is chosen');
+});
+
+test('a time that is not a time, or that has already passed today, is refused in plain words', () => {
+  // NOW is 17:30 in India on 5 November.
+  assert.match(readPlan(form({ time: '', startDate: '2026-11-07' }), NOW).problem ?? '', /time of day/);
+  assert.match(readPlan(form({ time: '09:00', startDate: '2026-11-05' }), NOW).problem ?? '', /already passed today/);
+  assert.equal(readPlan(form({ time: '18:00', startDate: '2026-11-05' }), NOW).problem, null, 'later today is fine');
+  assert.equal(readPlan(form({ time: '09:00', startDate: '2026-11-06' }), NOW).problem, null, 'tomorrow is fine at any hour');
+});
+
