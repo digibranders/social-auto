@@ -321,3 +321,15 @@ test('the status of a post follows the platforms it names', () => {
   assert.equal(named(['instagram']).length, 0);
   assert.equal(named(['facebook:77']).length, 1);
 });
+
+import { targetChannels } from './crosspost.ts';
+
+test('a plan post that names only a platform goes to the client\'s only account there, is held when there are two, and goes to the exact account when one is named', () => {
+  const two = addFacebookPages(channels, 'brandbasket', [{ id: '88', name: 'Second page', accessToken: 'page-token-2' }], KEY, T0);
+  const planned = { brand: 'brandbasket', fromPlan: true, channels: ['facebook'] };
+  assert.deepEqual(targetChannels(channels, planned, 'facebook').map((c) => c.id), ['facebook:77'], 'one account: the platform name is exact enough');
+  assert.deepEqual(targetChannels(two, planned, 'facebook'), [], 'two accounts: nothing is sent, because the choice cannot be guessed');
+  assert.deepEqual(targetChannels(two, { ...planned, channels: ['facebook:88'] }, 'facebook').map((c) => c.id), ['facebook:88'], 'a named account is the only one sent to');
+  assert.deepEqual(targetChannels(two, { brand: 'brandbasket', channels: ['facebook'] }, 'facebook').map((c) => c.id), ['facebook:77', 'facebook:88'], 'a hand-made post that names the platform keeps going to all of its accounts');
+  assert.deepEqual(targetChannels(two, { brand: 'someone-else', fromPlan: true, channels: ['facebook'] }, 'facebook'), [], 'another client\'s accounts are never used');
+});

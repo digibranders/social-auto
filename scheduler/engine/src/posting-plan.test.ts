@@ -110,3 +110,12 @@ test('a client that requires the website\'s real logo has the autopilot told so,
   assert.ok(!autopilotArgsFor(plan(), 'https://oyechats.com', batch, { requireAuthenticLogo: false }).includes('--require-logo'));
 });
 
+
+test('a plan may name the exact account for each platform; anything else about accounts is refused', () => {
+  const base = { platforms: ['linkedin', 'facebook'], startDate: '2099-11-10', durationDays: 1 };
+  assert.deepEqual(parsePostingPlan({ ...base, channelIds: ['facebook:77', 'linkedin:abc'] }, { now: new Date(0) }).channelIds, ['facebook:77', 'linkedin:abc']);
+  assert.equal(parsePostingPlan(base, { now: new Date(0) }).channelIds, undefined);
+  assert.throws(() => parsePostingPlan({ ...base, channelIds: ['linkedin:a', 'linkedin:b'] }, { now: new Date(0) }), /one account for linkedin/);
+  assert.throws(() => parsePostingPlan({ ...base, channelIds: ['google:1'] }, { now: new Date(0) }), /not one of this plan's platforms/);
+  assert.throws(() => parsePostingPlan({ ...base, channelIds: ['nonsense'] }, { now: new Date(0) }), /valid account id/);
+});

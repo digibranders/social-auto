@@ -162,3 +162,14 @@ test('only the week files a client\'s plans made are exported when they are name
   }
 });
 
+
+test('a plan bound to exact accounts exports its posters to those accounts, and a platform left unbound goes by name', async () => {
+  const b = aiBrand(['linkedin', 'facebook']);
+  try {
+    writeFileSync(join(b.brandDir, 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', plan: { platforms: ['linkedin', 'facebook'], channelIds: ['linkedin:abc'] }, batches: [{ index: 0, dates: ['2099-11-10'], status: 'done', weekFile: 'week-01.json' }] }));
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.deepEqual(posts.map((p) => (p as { channels?: string[] }).channels), [['linkedin:abc', 'facebook']]);
+  } finally {
+    b.done();
+  }
+});
