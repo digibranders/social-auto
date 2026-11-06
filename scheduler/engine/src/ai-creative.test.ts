@@ -598,3 +598,30 @@ test('a symbol alone keeps the drawn name; the brand sign-off is only dropped fo
   assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'symbol' }).brandSignoff, undefined);
   assert.equal(manifestOf(post('p', 'Hello there'), brand).brandSignoff, undefined);
 });
+
+test('with the director off, a poster that shows people when the batch is already at its limit is asked to be redrawn without them, not thrown away after it was paid for', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    const report = await makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, factOf: () => 'OyeChats answers from your own documents.',
+      posts: [post('p1', 'Answers from your own docs'), post('p2', 'Plan your week')],
+      deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
+        scene: scene(prompts),
+        // Both posters first show people prominently; the second, drawn again after the note, shows none.
+        review: async (file) => review([file.includes('p1') ? 'Answers from your own docs' : 'Plan your week', 'OyeChats', 'oyechats.com'], { people: file.includes('p2') && file.includes('attempt2') ? folks(false, false) : folks(true, true, 'a person at a desk') }),
+        third: async () => { throw new Error('no third reading expected'); },
+      },
+    });
+    const [p1, p2] = report.results;
+    assert.equal(p1?.status, 'accepted');
+    assert.equal(p1?.attempts.length, 1);
+    assert.equal(p2?.attempts.length, 2, 'the second poster was redrawn once');
+    assert.match(p2?.attempts[0]?.defects.map((d) => d.kind).join(' ') ?? '', /people_plan_mismatch/);
+    assert.equal(p2?.status, 'accepted');
+    assert.deepEqual(report.peopleRule, { cap: 1, prominent: ['p1'] });
+  } finally {
+    ctx.done();
+  }
+});

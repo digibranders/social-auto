@@ -233,3 +233,43 @@ test('the campaign list is for signed-in callers only, is read only, and shows w
   }
 });
 
+
+test('the owner can change the words of a written post before it is drawn, a refused edit says why, and a whole batch can be put away', async () => {
+  const s = await start();
+  try {
+    const brandDir = join(s.root, 'brands', 'acme');
+    const plan = { brand: 'acme', timezone: '+05:30', posts: [{ id: 'p1', headline: 'Answers from your own docs', subline: '', caption: 'The assistant answers from your pages.', hashtags: ['#acme'] }] };
+    writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify(plan));
+    new CopyStage(brandDir, 'acme').open('week-01.json', [{ postId: 'p1', headline: plan.posts[0]?.headline ?? '', caption: 'The assistant answers from your pages.\n\n#acme' }]);
+    const put = (path: string, body: unknown) => s.call(path, { method: 'PUT', body: JSON.stringify(body) });
+    const ok = await put('/review/copy/acme/week-01.json/p1/edit', { by: 'owner', headline: 'Your docs answer for you' });
+    assert.equal(ok.status, 200);
+    const batch = ((await ok.json()) as { batch: { posts: Array<{ headline: string; edited?: boolean }> } }).batch;
+    assert.equal(batch.posts[0]?.headline, 'Your docs answer for you');
+    assert.equal(batch.posts[0]?.edited, true);
+    const refused = await put('/review/copy/acme/week-01.json/p1/edit', { by: 'owner', headline: '- JANE DOE -' });
+    assert.equal(refused.status, 422);
+    assert.match(((await refused.json()) as { error: string }).error, /credit/);
+    assert.equal((await put('/review/copy/acme/week-01.json/p1/edit', { headline: 'Another headline for you' })).status, 400, 'who is editing must be given');
+    assert.equal((await put('/review/copy/acme/week-01.json/zz/edit', { by: 'owner', headline: 'Another headline for you' })).status, 404);
+    assert.equal((await s.call('/review/copy/acme/week-01.json/close', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 200);
+    assert.deepEqual(((await (await s.call('/review/copy')).json()) as { batches: unknown[] }).batches, [], 'a batch put away is not listed');
+    assert.equal((await put('/review/copy/acme/week-01.json/p1/edit', { by: 'owner', headline: 'Another headline for you' })).status, 409);
+    assert.equal((await put('/review/copy/acme/week-01.json/p1/edit', { by: 'owner', headline: 'Another headline for you' }).then((r) => r.status)), 409);
+  } finally {
+    await s.done();
+  }
+});
+
+test('the facts routes answer plainly for a brand with no facts yet, an unknown brand and a bad fact id, and need the secret', async () => {
+  const s = await start();
+  try {
+    assert.equal((await s.call('/review/brands/acme/facts')).status, 404, 'no facts read yet');
+    assert.equal((await s.call('/review/brands/nope/facts')).status, 404, 'unknown brand');
+    assert.equal((await s.call('/review/brands/acme/facts/abc/remove', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404, 'no facts to change');
+    assert.equal((await s.call('/review/brands/acme/facts/%2E%2E%2Fx/remove', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 400, 'a bad fact id');
+    assert.equal((await s.call('/review/brands/acme/facts', { auth: false })).status, 401);
+  } finally {
+    await s.done();
+  }
+});

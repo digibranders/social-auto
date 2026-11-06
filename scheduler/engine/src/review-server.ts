@@ -9,8 +9,11 @@
  *   GET  /review/posts/<versionId>/download                                        the picture, approved versions only
  *   POST /review/posts/<versionId>/approve   {"by":"..."}
  *   POST /review/posts/<versionId>/reject    {"by":"...","reason":"...","comment":"..."}
+ *   GET  /review/brands/<brand>/facts      the facts found on the site; POST .../facts/<factId>/confirm|remove|restore {"by":"..."}
  *   GET  /review/copy                                                              the written posts waiting to be kept or dropped, before any picture is bought
  *   POST /review/copy/<brand>/<week-NN.json>/<postId>/keep|drop   {"by":"..."}
+ *   PUT  /review/copy/<brand>/<week-NN.json>/<postId>/edit   {"by":"...","headline":"...","caption":"..."}   (checked like the writer's own words; 422 when refused)
+ *   POST /review/copy/<brand>/<week-NN.json>/close   {"by":"..."}   put a batch away without drawing it
  *
  * Everything is decided here, on the server, by the review store: the browser never says what is approvable. A version id names its brand
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
@@ -23,6 +26,9 @@ import { acquireLock, LockError } from './file-lock.ts';
 import { listCampaigns } from './campaign-runner.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
+import { editCopy } from './copy-edit.ts';
+import { loadFacts } from './evidence-pipeline.ts';
+import { decideFact, FactsError, factsView } from './facts-view.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
@@ -44,6 +50,7 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
 const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503 };
 
 function fail(res: ServerResponse, error: unknown): void {
+  if (error instanceof FactsError) return send(res, FACTS_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof CopyStageError) return send(res, COPY_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof ReviewError) {
     // An integrity failure is reported without its details: the file names are for the operator's log, not the browser.
@@ -54,7 +61,8 @@ function fail(res: ServerResponse, error: unknown): void {
   send(res, 500, { error: 'Internal error' });
 }
 
-const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, LOCKED: 503 };
+const FACTS_STATUS: Record<FactsError['code'], number> = { NOT_FOUND: 404, INVALID: 400, HELD: 409, LOCKED: 503 };
+const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, CLOSED: 409, REJECTED: 422, LOCKED: 503 };
 
 const authorised = (req: IncomingMessage, secret: string): boolean => {
   const given = Buffer.from(String(req.headers['authorization'] ?? '').replace(/^Bearer\s+/i, ''));
@@ -109,9 +117,23 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       if (!authorised(req, options.secret)) return send(res, 401, { error: 'Not allowed' });
       const url = new URL(req.url ?? '/', 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
+      // The facts found on a brand's site: read them, and remove, confirm or put back one.
+      if (parts[0] === 'review' && parts[1] === 'brands' && parts[3] === 'facts') {
+        const factsBrand = decodeURIComponent(parts[2] ?? '');
+        if (!BRAND.test(factsBrand) || !brands().includes(factsBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+        const factsDir = join(root, factsBrand);
+        if (parts.length === 4 && req.method === 'GET') return send(res, 200, await factsView(factsDir, factsBrand));
+        const verb = parts[5];
+        if (parts.length === 6 && req.method === 'POST' && (verb === 'confirm' || verb === 'remove' || verb === 'restore')) {
+          text((await readJson(req))['by'], 80);
+          await decideFact(factsDir, decodeURIComponent(parts[4] ?? ''), verb);
+          return send(res, 200, await factsView(factsDir, factsBrand));
+        }
+        return send(res, 404, { error: 'Not found' });
+      }
       if (parts[0] === 'review' && parts[1] === 'copy') {
         if (parts.length === 2 && req.method === 'GET') {
-          const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list()).filter((b) => !b.drawnAt);
+          const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list()).filter((b) => !b.drawnAt && !b.closedAt);
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
           const plain = batches.map((b) => ({ ...b, posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
@@ -122,6 +144,22 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const by = text((await readJson(req))['by'], 80);
           const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
           return send(res, 200, { batch });
+        }
+        // Put a whole batch away (POST .../<brand>/<planFile>/close) or change the words of one post before it is drawn (PUT .../<brand>/<planFile>/<postId>/edit).
+        if (parts.length === 5 && req.method === 'POST' && parts[4] === 'close') {
+          const [, , closeBrand = '', closePlan = ''] = parts.map(decodeURIComponent);
+          if (!BRAND.test(closeBrand) || !brands().includes(closeBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const by = text((await readJson(req))['by'], 80);
+          return send(res, 200, { batch: new CopyStage(join(root, closeBrand), closeBrand).close(closePlan, by) });
+        }
+        if (parts.length === 6 && req.method === 'PUT' && verb === 'edit') {
+          if (!BRAND.test(brand) || !brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const body = await readJson(req);
+          const brandDir = join(root, brand);
+          const facts = (await loadFacts(brandDir))?.facts ?? [];
+          const headline = typeof body['headline'] === 'string' ? body['headline'] : undefined;
+          const caption = typeof body['caption'] === 'string' ? body['caption'] : undefined;
+          return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), by: text(body['by'], 80), facts }) });
         }
         return send(res, 404, { error: 'Not found' });
       }

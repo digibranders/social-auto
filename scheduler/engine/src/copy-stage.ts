@@ -13,7 +13,7 @@ import { LockError, syncDir, withFileLock } from './file-lock.ts';
 export type CopyState = 'pending' | 'kept' | 'dropped';
 
 export class CopyStageError extends Error {
-  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'LOCKED';
+  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'CLOSED' | 'REJECTED' | 'LOCKED';
   constructor(code: CopyStageError['code'], message: string) {
     super(message);
     this.name = 'CopyStageError';
@@ -27,6 +27,8 @@ export interface CopyPost {
   caption: string;
   /** Hash of the headline and caption this entry was made from. */
   contentHash: string;
+  /** True once the owner has changed the writer's words. */
+  edited?: boolean;
   /** A note for the owner, such as "weak headline: it tells the reader nothing specific". Advice only: the owner can still keep the post. */
   advice?: string;
   state: CopyState;
@@ -41,6 +43,9 @@ export interface CopyBatch {
   posts: CopyPost[];
   /** Set when the kept posts have been sent to be drawn: from then on the choices are final. */
   drawnAt?: string;
+  /** Set when the owner put the whole batch away without drawing it: it is no longer listed and its posts cannot be drawn. */
+  closedAt?: string;
+  closedBy?: string;
 }
 
 export const PLAN_FILE = /^week-\d{2,4}\.json$/;
@@ -119,6 +124,7 @@ export class CopyStage {
     return this.change(planFile, (batch) => {
       if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
       if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already sent to be drawn, so its choices are final');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so its choices are final');
       const post = batch.posts.find((p) => p.postId === postId);
       if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
       post.state = state;
@@ -149,7 +155,42 @@ export class CopyStage {
     this.change(planFile, (batch) => {
       if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
       if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn once; a second run would buy the pictures again');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
       return { batch: { ...batch, drawnAt: this.now().toISOString() }, result: undefined };
+    });
+  }
+
+  /**
+   * Replaces the words of one post before it is drawn. `applyToPlan` writes the same words into the plan file and runs inside the lock, ahead of this file's own
+   * write, so the plan and the list can never disagree; if it throws, nothing changes. The post keeps its choice: a kept post stays kept, with the new words.
+   */
+  edit(planFile: string, postId: string, words: { headline: string; caption: string }, by: string, applyToPlan: () => void): CopyBatch {
+    if (!POST_ID.test(postId)) throw new CopyStageError('INVALID', 'that is not a post id');
+    if (by.trim() === '') throw new CopyStageError('INVALID', 'who is editing must be given');
+    return this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already sent to be drawn, so its words are final');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so its words are final');
+      const post = batch.posts.find((p) => p.postId === postId);
+      if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
+      applyToPlan();
+      post.headline = words.headline;
+      post.caption = words.caption;
+      post.contentHash = copyHash(words.headline, words.caption);
+      post.edited = true;
+      delete post.advice;
+      return { batch, result: batch };
+    });
+  }
+
+  /** Puts a whole batch away without drawing it (for example an old batch written before a fix). It is no longer listed. */
+  close(planFile: string, by: string): CopyBatch {
+    if (by.trim() === '') throw new CopyStageError('INVALID', 'who is closing must be given');
+    return this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn');
+      const closed = { ...batch, closedAt: batch.closedAt ?? this.now().toISOString(), closedBy: batch.closedBy ?? by.trim().slice(0, 80) };
+      return { batch: closed, result: closed };
     });
   }
 }

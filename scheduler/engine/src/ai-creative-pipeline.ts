@@ -249,8 +249,10 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
       continue;
     }
     const concept = conceptOf.get(post.id);
-    // With the director off there is no concept and so no plan about people: nothing is held against the picture for showing them.
-    const plannedPeople = concept?.people ?? true;
+    // With the director off there is no concept, so people are planned by what the batch already has: while it is under its limit of posters showing people prominently
+    // they are allowed, and once it is at the limit the next poster is asked to be drawn without them (a retry), instead of being thrown away after it was paid for.
+    const prominentSoFar = report.results.filter((r) => r.status === 'accepted' && r.people?.observed === 'prominent').length;
+    const plannedPeople = concept?.people ?? prominentSoFar < (input.peopleCap ?? 1);
     if (director && !concept) {
       result.status = 'dropped';
       result.reason = direction.dropped.find((d) => d.postId === post.id)?.reason ?? 'the creative director gave this post no concept';
