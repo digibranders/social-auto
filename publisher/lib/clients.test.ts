@@ -66,8 +66,8 @@ const NOW_MS = Date.parse('2026-11-05T12:00:00Z');
 const planOf = (over: Record<string, unknown> = {}) => ({ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1, ...over });
 
 test('a client can be added with a posting plan, which is checked and saved with it', () => {
-  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com', planOf({ durationDays: 31, postsPerWeek: 3, platforms: ['facebook', 'instagram'] }));
-  assert.deepEqual(made.file.clients[0]?.plans, [{ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 31, time: '10:00', utcOffset: '+05:30', postsPerWeek: 3 }]);
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com', planOf({ durationDays: 31, postsPerWeek: 2, platforms: ['facebook', 'instagram'] }));
+  assert.deepEqual(made.file.clients[0]?.plans, [{ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 31, time: '10:00', utcOffset: '+05:30', postsPerWeek: 2 }]);
   assert.equal(made.file.clients[0]?.website, 'https://oyechats.com');
   assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(made.file))), made.file, 'it survives a save and a load');
 });
@@ -101,9 +101,9 @@ test('a saved plan may have a start date that has passed, but is not accepted as
 
 test('plans can be added and removed later, for an added client with a website only, and each keeps its own platforms', () => {
   const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
-  const one = addPlan(made, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 31, postsPerWeek: 3 }), NOW_MS);
+  const one = addPlan(made, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 31, postsPerWeek: 2 }), NOW_MS);
   const two = addPlan(one, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 31, postsPerWeek: 1 }), NOW_MS);
-  assert.deepEqual(two.clients[0]?.plans?.map((p) => [p.platforms, p.postsPerWeek]), [[['instagram'], 3], [['linkedin'], 1]]);
+  assert.deepEqual(two.clients[0]?.plans?.map((p) => [p.platforms, p.postsPerWeek]), [[['instagram'], 2], [['linkedin'], 1]]);
   assert.throws(() => addPlan(two, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 31, postsPerWeek: 1 }), NOW_MS), /already there/);
   const left = removePlan(two, 'oye-chats', 0);
   assert.deepEqual(left.clients[0]?.plans?.map((p) => p.platforms), [['linkedin']]);
@@ -128,13 +128,14 @@ test('a client saved with the first version\'s single plan reads as a list of on
 test('a client\'s weekly limit can be changed, only governs plans added afterwards, and the default is not stored', () => {
   const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
   const four = (file: typeof made) => addPlan(file, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 7, postsPerWeek: 4, startDate: '2026-11-09' }), NOW_MS);
-  assert.throws(() => four(made), /can have 3 posts a week/);
+  assert.throws(() => four(made), /can have 2 posts a week/);
   const raised = setWeeklyLimit(made, 'oye-chats', 5);
   assert.equal(raised.clients[0]?.weeklyLimit, 5);
   assert.equal(four(raised).clients[0]?.plans?.length, 1);
   const lowered = setWeeklyLimit(four(raised), 'oye-chats', 1);
   assert.equal(lowered.clients[0]?.plans?.length, 1, 'a plan already there stays when the limit is lowered');
-  assert.equal(setWeeklyLimit(raised, 'oye-chats', 3).clients[0]?.weeklyLimit, undefined, 'the default is not stored');
+  assert.equal(setWeeklyLimit(raised, 'oye-chats', 2).clients[0]?.weeklyLimit, undefined, 'the default is not stored');
+  assert.equal(setWeeklyLimit(made, 'oye-chats', 3).clients[0]?.weeklyLimit, 3, 'a limit other than the default is stored');
   assert.throws(() => setWeeklyLimit(made, 'oye-chats', 0), /whole number from 1 to 7/);
   assert.throws(() => setWeeklyLimit(made, 'oye-chats', 2.5), /whole number from 1 to 7/);
   assert.throws(() => setWeeklyLimit(made, 'nobody', 2), /only a client added in the dashboard/);

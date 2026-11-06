@@ -7,8 +7,8 @@
 import { EditError } from './overrides.js';
 import type { ClientPlan } from './clients.js';
 
-/** Posts per channel per week unless the client has its own limit. */
-export const DEFAULT_WEEKLY_LIMIT = 3;
+/** Posts per channel per week unless the client has its own limit: two posters a week for each channel (the owner's decision; each client may be given its own limit). */
+export const DEFAULT_WEEKLY_LIMIT = 2;
 export const MAX_WEEKLY_LIMIT = 7;
 /** How far ahead posters may be planned, counted from today. */
 export const HORIZON_DAYS = 31;
