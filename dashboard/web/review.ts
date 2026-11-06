@@ -85,6 +85,8 @@ export interface BrandingRecord {
   reason?: string;
   logoWidth?: number;
   logoHeight?: number;
+  /** Where and how the logo was put on this poster; only a poster that carries it has one. */
+  placement?: { corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'; treatment: 'none' | 'halo' | 'plate'; contrast: number };
 }
 
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | null => (typeof value === 'string' && (allowed as readonly string[]).includes(value) ? (value as T) : null);
@@ -103,10 +105,15 @@ export function parseBranding(raw: unknown): BrandingRecord | null {
   const provenance = text(r['provenance']);
   const reason = text(r['reason']);
   const logoKind = oneOf(r['logoKind'], ['wordmark', 'symbol'] as const);
+  const p = typeof r['placement'] === 'object' && r['placement'] !== null ? (r['placement'] as Record<string, unknown>) : null;
+  const corner = p ? oneOf(p['corner'], ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const) : null;
+  const treatment = p ? oneOf(p['treatment'], ['none', 'halo', 'plate'] as const) : null;
+  const placement = corner && treatment && typeof p?.['contrast'] === 'number' && Number.isFinite(p['contrast']) ? { corner, treatment, contrast: p['contrast'] } : undefined;
   return {
     intendedMode, appliedMode, status, hasLogoFile: typeof r['logoFile'] === 'string' && r['logoFile'] !== '',
     ...(logoKind ? { logoKind } : {}), ...(sourcePage ? { sourcePage } : {}), ...(sourceUrl ? { sourceUrl } : {}), ...(provenance ? { provenance } : {}), ...(reason ? { reason } : {}),
     ...(typeof r['logoWidth'] === 'number' ? { logoWidth: r['logoWidth'] } : {}), ...(typeof r['logoHeight'] === 'number' ? { logoHeight: r['logoHeight'] } : {}),
+    ...(placement ? { placement } : {}),
   };
 }
 
@@ -126,7 +133,12 @@ export function brandingView(b: BrandingRecord): BrandingView {
   if (b.sourcePage) rows.push(['Found on', b.sourcePage]);
   if (b.sourceUrl) rows.push(['Picture address', b.sourceUrl]);
   if (b.provenance) rows.push(['Why it is their logo', b.provenance]);
-  if (b.status === 'applied') return { tone: 'done', headline: 'Real logo applied', explanation: 'The website\'s own logo, unchanged, is on this poster.', rows };
+  // Only a poster whose own record says where the logo was put is said to carry it.
+  if (b.status === 'applied' && b.placement) {
+    const where = b.placement.corner.replace('-', ' ');
+    const how = b.placement.treatment === 'none' ? 'nothing added behind it' : b.placement.treatment === 'halo' ? 'a thin outline around it so it stays readable' : 'a small plate behind it so it stays readable';
+    return { tone: 'done', headline: 'Real logo applied', explanation: 'The website\'s own logo, unchanged, is on this poster.', rows: [...rows, ['Placed', `${where} corner, ${how}`]] };
+  }
   if (b.intendedMode === 'authentic_logo') return { tone: 'note', headline: 'Real logo found, not applied', explanation: b.reason ?? 'The website\'s logo was found and verified, but this poster uses the brand name and web address as text.', rows };
   return { tone: 'plain', headline: 'Text sign-off used: no usable logo', explanation: b.reason ? `No real logo was used. ${b.reason}` : 'No real logo was used on this poster.', rows };
 }

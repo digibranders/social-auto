@@ -5,8 +5,9 @@
  * number. One vision request transcribes every piece of text it can see and answers a short list of yes/no questions; the decision is made here, in
  * code, by comparing the transcript with the exact list of allowed text. When the reading is uncertain the poster is rejected.
  *
- * The real logo is not on these posters: a model cannot be made to copy a logo exactly, and a convincing imitation is worse than none, so the brand is
- * shown by its name in ordinary lettering and its address.
+ * The model never draws the logo: it cannot copy one exactly, and a convincing imitation is worse than none. The brand is shown either by the real logo, which
+ * code adds afterwards to a quiet corner the model was asked to leave (`brandSignoff: 'logo'`, or a symbol beside a drawn name), or by its name in ordinary
+ * lettering and its address.
  */
 import { readFile } from 'node:fs/promises';
 import type { AiConfig } from './ai.ts';
@@ -19,6 +20,8 @@ export interface TextManifest {
   brandName: string;
   /** The brand's web address as shown, e.g. "oyechats.com". */
   domain: string;
+  /** How the brand is named on the poster: `drawn` (its name in ordinary lettering, the default) or `logo` (the real logo, which already carries the name and is added afterwards by code, so the name is not drawn). */
+  brandSignoff?: 'drawn' | 'logo';
 }
 
 /** A headline as plain text: the accent markers (|like this|) the template renderer used are removed. */
@@ -41,6 +44,16 @@ export interface CreativeContext {
   concept?: { concept: string; factToPicture: string; typography?: string };
   /** What the previous attempt got wrong, so the next one is told instead of repeating itself. */
   retryNote?: string;
+  /** Set when the brand's real logo will be added afterwards: the model leaves a quiet corner for it. `wordmark` carries the name itself; `symbol` does not. */
+  logo?: 'wordmark' | 'symbol';
+}
+
+/** The words that ask for room for the logo, and say what is not to be drawn in its place. */
+function logoSpaceLines(manifest: TextManifest, kind: 'wordmark' | 'symbol'): string[] {
+  return [
+    `LOGO SPACE. The brand's real ${kind === 'wordmark' ? 'logo' : 'symbol'} is added afterwards by other software, so leave a calm, quiet area near one of the two upper corners, about ${kind === 'wordmark' ? 'a fifth' : 'a tenth'} of the poster's width, free of text, of busy detail and of the main subject. Choose whichever upper corner suits the composition. Do not draw the logo, a placeholder, an empty box or badge, or any marking there.`,
+    ...(manifest.brandSignoff === 'logo' ? ['The brand name is not part of the text on this poster: it is inside the logo. Do not write the brand name anywhere (the headline may contain it only where its wording says so).'] : []),
+  ];
 }
 
 /** The prompt for one whole poster. It names exactly what may be written on it and what must never appear, and leaves the composition to the model. */
@@ -50,10 +63,11 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
     'TEXT CONTRACT. The only visible text on the poster is the following, each exactly once and spelled character for character:',
     `1. HEADLINE: "${manifest.headline}"`,
     ...(manifest.subline ? [`2. SUPPORTING LINE: "${manifest.subline}"`] : []),
-    `${manifest.subline ? 3 : 2}. BRAND NAME: "${manifest.brandName}", in plain, clearly legible lettering, secondary to the headline, placed wherever it fits the composition naturally; its letters are at least about 3 percent of the poster's height, never tiny${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`,
-    `${manifest.subline ? 4 : 3}. WEB ADDRESS: "${manifest.domain}", clearly legible and not tiny: its letters are at least about 3 percent of the poster's height, with strong contrast; next to or near the brand name.`,
+    ...(manifest.brandSignoff === 'logo' ? [] : [`${manifest.subline ? 3 : 2}. BRAND NAME: "${manifest.brandName}", in plain, clearly legible lettering, secondary to the headline, placed wherever it fits the composition naturally; its letters are at least about 3 percent of the poster's height, never tiny${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`]),
+    `${(manifest.subline ? 3 : 2) + (manifest.brandSignoff === 'logo' ? 0 : 1)}. WEB ADDRESS: "${manifest.domain}", clearly legible and not tiny: its letters are at least about 3 percent of the poster's height, with strong contrast${manifest.brandSignoff === 'logo' ? '' : '; next to or near the brand name'}.`,
     'Show no other words, letters, numbers or symbols that resemble writing anywhere: no labels, buttons, slogans, interface messages, captions, watermarks, signs, screens with writing, or made-up text.',
     'Never draw or imitate a logo, an app icon, a custom wordmark, a certification badge, a seal, a medal or an award.',
+    ...(context.logo ? logoSpaceLines(manifest, context.logo) : []),
     ...(context.concept
       ? [
           `THE PICTURE (follow it; it was chosen for this post alone): ${context.concept.concept}`,
@@ -193,6 +207,7 @@ export type CreativeDefect =
   | { kind: 'poor_composition' }
   | { kind: 'illegible_small' }
   | { kind: 'text_over_art' }
+  | { kind: 'no_logo_space' }
   | { kind: 'people_plan_mismatch'; description: string };
 
 export interface CreativeVerdict {
@@ -245,7 +260,11 @@ export function judgeCreative(manifest: TextManifest, review: CreativeReview, pl
   if (manifest.subline) take('the supporting line', manifest.subline, true, false);
   const addressWords = tokens(manifest.domain);
   const nameWords = tokens(manifest.brandName);
-  if (addressWords.length > 0 && addressWords.length === nameWords.length && addressWords.every((w, i) => w === nameWords[i])) {
+  if (manifest.brandSignoff === 'logo') {
+    // The real logo carries the name, so the name is not drawn: the web address is required once, and any other mention of the name (outside the headline, which
+    // was taken first) is left in `rest` and rejected as text that was not asked for.
+    take('the web address', manifest.domain, true, false);
+  } else if (addressWords.length > 0 && addressWords.length === nameWords.length && addressWords.every((w, i) => w === nameWords[i])) {
     // A business named after its own address ("Fynix Digital" and "fynix.digital") has two pieces of text that read as the same words. They are told
     // apart by shape: an address has a dot between letters, a name does not. Each is then required once (the name may be left to the headline).
     const found = runsOf(rest, addressWords);
@@ -295,6 +314,7 @@ export function retryNoteFor(defects: readonly CreativeDefect[]): string {
       case 'poor_composition': return 'the headline was hard to read or cut off; make it larger with clear margins and strong contrast.';
       case 'people_plan_mismatch': return `the picture showed people prominently (${d.description}) although this poster's concept has none; remove them and keep to the concept.`;
       case 'text_over_art': return 'the text covered an important part of the artwork; compose the picture so that the text sits on quiet space and does not cross the main subject.';
+      case 'no_logo_space': return 'there was no calm corner for the brand\'s logo; leave a quiet, uncluttered area near an upper corner, free of text and of the main subject, and do not draw anything there.';
       case 'illegible_small': return 'the text would not be readable at a small size; make the headline, the brand name and the web address larger and higher in contrast against what is behind them.';
     }
   });

@@ -12,8 +12,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'nod
 import { extname, join, resolve, sep } from 'node:path';
 import type { Brand, LogoKind } from './content.ts';
 
-/** Whether the code that places a real logo on a finished poster exists and is switched on. It is not built yet: while false, no poster carries the real logo and a client that requires one is stopped. */
-export const COMPOSITOR_READY = false;
+/** Whether the code that places a real logo on a finished poster is switched on (logo-compositor.ts). While false, no poster carries the real logo and a client that requires one is stopped. */
+export const COMPOSITOR_READY = true;
 
 export type BrandingIntent = 'authentic_logo' | 'text_only_fallback' | 'logo_required_unavailable';
 export type BrandingApplied = 'text_only' | 'authentic_logo' | 'none';
@@ -65,6 +65,21 @@ export interface LogoFileInfo {
   transparent: boolean;
 }
 
+/** Where and how the real logo was put on one finished poster, as measured by the compositor and checked again in code. Only set on a poster that really carries it. */
+export interface LogoPlacementRecord {
+  corner: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
+  treatment: 'none' | 'halo' | 'plate';
+  haloColor?: string;
+  plateColor?: string;
+  /** The logo's own rectangle on the poster (x, y, width, height), in pixels. */
+  logoRect: [number, number, number, number];
+  /** The contrast ratio the logo has against what is directly behind it. */
+  contrast: number;
+  /** The hash of the logo file that was drawn and of the finished picture. */
+  logoSha256: string;
+  outputSha256: string;
+}
+
 export interface BrandingDecision {
   intendedMode: BrandingIntent;
   appliedMode: BrandingApplied;
@@ -84,6 +99,8 @@ export interface BrandingDecision {
   reasonCode?: BrandingReason;
   /** The reason in plain words, for the owner. */
   reason?: string;
+  /** Set per poster, when the real logo was put on it. */
+  placement?: LogoPlacementRecord;
 }
 
 export class BrandingError extends Error {
