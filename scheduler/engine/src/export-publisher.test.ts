@@ -25,7 +25,7 @@ test('posterFileName is a 32-character hex name that reveals nothing about the p
   assert.ok(!name.includes('w01'));
 });
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportToPublisher } from './export-publisher.ts';
@@ -122,6 +122,41 @@ test('an approved AI poster with no plan record behind it is not marked as made 
     const posts = await exportToPublisher(b.brandDir, b.publisher);
     assert.equal(posts[0]?.fromPlan, undefined);
     assert.equal(posts[0]?.channels, undefined);
+  } finally {
+    b.done();
+  }
+});
+
+test('posters are filed under the client\'s own name, not the site folder\'s, so the client\'s channels match them; entries an earlier version filed under the folder name are cleared', async () => {
+  const b = aiBrand(['instagram']);
+  try {
+    mkdirSync(join(b.publisher, 'data'), { recursive: true });
+    const entry = (over: Record<string, unknown>) => ({ date: '2099-11-01T10:00:00+05:30', caption: 'c', image: null, ...over });
+    // The schedule already holds: an earlier export filed under the folder name, a post of another client, and a weekly-job post that happens to share the folder name.
+    writeFileSync(join(b.publisher, 'data', 'schedule.ts'), scheduleModule([
+      entry({ brand: 'oyechats', id: 'oyechats-w01-d9', ownTime: true }),
+      entry({ brand: 'oyechats', id: 'oyechats-weekly-1' }),
+      entry({ brand: 'other', id: 'other-w01-d1', ownTime: true }),
+    ] as never));
+    const posts = await exportToPublisher(b.brandDir, b.publisher, undefined, { brand: 'oye-chats' });
+    assert.deepEqual(posts.map((p) => [p.brand, p.id]), [['oye-chats', 'oye-chats-w01-d1']]);
+    assert.match(posts[0]?.image ?? '', /^\/posts\/oye-chats\//);
+    assert.ok(readdirSync(join(b.publisher, 'public', 'posts', 'oye-chats')).length === 1, 'the picture is under the client\'s name');
+    assert.ok(!existsSync(join(b.publisher, 'public', 'posts', 'oyechats')), 'nothing is filed under the folder name');
+    const ids = (parseScheduleModule(readFileSync(join(b.publisher, 'data', 'schedule.ts'), 'utf8')) as Array<{ id: string }>).map((p) => p.id).sort();
+    assert.deepEqual(ids, ['other-w01-d1', 'oye-chats-w01-d1', 'oyechats-weekly-1'], 'the stray entry from an earlier export is gone; another client\'s and a weekly post are kept');
+  } finally {
+    b.done();
+  }
+});
+
+test('only the week files a client\'s plans made are exported when they are named', async () => {
+  const b = aiBrand(['instagram']);
+  try {
+    const none = await exportToPublisher(b.brandDir, b.publisher, undefined, { brand: 'oye-chats', weekFiles: ['week-09.json'] });
+    assert.deepEqual(none, [], 'a week file nobody asked for is left out');
+    const some = await exportToPublisher(b.brandDir, b.publisher, undefined, { brand: 'oye-chats', weekFiles: ['week-01.json'] });
+    assert.equal(some.length, 1);
   } finally {
     b.done();
   }
