@@ -49,10 +49,15 @@ test('a real logo is never said to be on a poster unless the record says it was 
   assert.deepEqual(found.rows[0], ['On this poster', 'The brand name and web address, written as text']);
   assert.ok(found.rows.some(([label, value]) => label === 'Found on' && value === 'https://acme.test/'));
   assert.ok(found.rows.some(([label, value]) => label === 'Logo found' && value === 'Full logo, 400 × 100'));
-  const applied = brandingView(parseBranding(record({ appliedMode: 'authentic_logo', status: 'applied', reason: undefined })) as never);
+  const placement = { corner: 'top-right', treatment: 'halo', contrast: 12.5 };
+  const applied = brandingView(parseBranding(record({ appliedMode: 'authentic_logo', status: 'applied', reason: undefined, placement })) as never);
   assert.equal(applied.headline, 'Real logo applied');
   assert.equal(applied.tone, 'done');
   assert.equal(applied.rows[0]?.[1], 'The website\'s real logo');
+  assert.deepEqual(applied.rows.at(-1), ['Placed', 'top right corner, a thin outline around it so it stays readable']);
+  const bare = brandingView(parseBranding(record({ appliedMode: 'authentic_logo', status: 'applied', reason: undefined })) as never);
+  assert.equal(bare.headline, 'Real logo found, not applied', 'a record that says applied but shows no place on the poster is not believed');
+  assert.equal(parseBranding(record({ placement: { corner: 'middle', treatment: 'halo', contrast: 3 } }))?.placement, undefined, 'a place that makes no sense is ignored');
 });
 
 test('with no usable logo the owner is told so, and given the real reason', () => {

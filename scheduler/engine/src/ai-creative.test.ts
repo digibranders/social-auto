@@ -408,3 +408,133 @@ test('a business named after its own address: the name shown twice with no addre
   assert.equal(judgeCreative(same, review(['How can B2B companies earn trust?', 'fynix.digital'])).accepted, false, 'one piece of text cannot be both');
 });
 
+
+// ---- The real logo: what is drawn, what is left to the logo, and what is checked
+
+const logoManifest: TextManifest = { ...manifest, brandSignoff: 'logo' };
+
+test('with a full logo the prompt leaves a calm upper corner and does not ask for the brand name; with a symbol alone the name stays; with no logo nothing changes', () => {
+  const context = { fact: 'a fact', colors: { background: '#fff', ink: '#111', accent: '#63d' } };
+  const wordmark = buildCreativePrompt(logoManifest, { ...context, logo: 'wordmark' });
+  assert.match(wordmark, /LOGO SPACE.*upper corners/s);
+  assert.doesNotMatch(wordmark, /BRAND NAME/);
+  assert.match(wordmark, /brand name is not part of the text/i);
+  assert.match(wordmark, /2\. WEB ADDRESS: "oyechats\.com"/, 'the web address is the second text once the name is not drawn');
+  const symbol = buildCreativePrompt(manifest, { ...context, logo: 'symbol' });
+  assert.match(symbol, /LOGO SPACE/);
+  assert.match(symbol, /BRAND NAME: "OyeChats"/, 'a symbol does not carry the name, so the name is drawn');
+  const plain = buildCreativePrompt(manifest, context);
+  assert.doesNotMatch(plain, /LOGO SPACE/);
+  assert.match(plain, /BRAND NAME: "OyeChats"/);
+});
+
+test('with a full logo the poster must not draw the brand name again, and the headline may still name it', () => {
+  assert.deepEqual(judgeCreative(logoManifest, review(['Answers from your own docs', 'oyechats.com'])), { accepted: true, defects: [] });
+  const doubled = judgeCreative(logoManifest, review(['Answers from your own docs', 'OyeChats', 'oyechats.com']));
+  assert.equal(doubled.accepted, false);
+  assert.deepEqual(doubled.defects, [{ kind: 'extra_text', text: 'oyechats' }], 'a drawn name beside the logo is text that was not asked for');
+  const named = { ...logoManifest, headline: 'OyeChats answers from your docs' };
+  assert.equal(judgeCreative(named, review(['OyeChats answers from your docs', 'oyechats.com'])).accepted, true, 'the name inside the approved headline is the headline\'s own');
+  assert.equal(judgeCreative(named, review(['OyeChats answers from your docs', 'OyeChats', 'oyechats.com'])).accepted, false, 'but a second, separate name is not');
+  assert.ok(judgeCreative(logoManifest, review(['Answers from your own docs'])).defects.some((d) => d.kind === 'missing_text' && d.text === 'the web address'));
+  const fynix: TextManifest = { headline: 'Grow with search', brandName: 'Fynix Digital', domain: 'fynix.digital', brandSignoff: 'logo' };
+  assert.equal(judgeCreative(fynix, review(['Grow with search', 'fynix.digital'])).accepted, true);
+  assert.equal(judgeCreative(fynix, review(['Grow with search', 'Fynix Digital', 'fynix.digital'])).accepted, false, 'a business named after its address cannot hide a drawn name behind the address');
+});
+
+const placement = (over: Partial<import('./logo-compositor.ts').Placement> = {}): import('./logo-compositor.ts').Placement => ({
+  placed: true, logoRect: [740, 60, 200, 50], plateRect: null, plateColor: null, treatment: 'none', haloColor: null, score: 0.9, contrast: 12, logoSha256: 'a'.repeat(64), outputSha256: 'b'.repeat(64), width: 1024, height: 1024, considered: 100, bestScores: [0.9], ...over,
+});
+const logoInput = { path: '/frozen/logo.png', kind: 'wordmark' as const, sha256: 'a'.repeat(64) };
+const withLogo = (ctx: ReturnType<typeof setup>, posts: PlannedPost[], deps: Parameters<typeof makeCreatives>[0]['deps'], logo: typeof logoInput = logoInput) =>
+  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), logo, deps: { direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
+const boxed = (texts: string[]): CreativeReview => review(texts, { regions: texts.map((text, i) => ({ text, readable: true, box: [50, 50 + i * 100, 500, 120 + i * 100] as [number, number, number, number] })) });
+
+test('an accepted poster gets the real logo: the logo-free picture is kept as the attempt, the poster carries the logo, and its place is recorded', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    const placed: Array<{ avoid: unknown; kind: string; sha: string | undefined }> = [];
+    const report = await withLogo(ctx, [post('w01-d1', 'Answers from your own docs')], {
+      scene: scene(prompts),
+      review: async () => boxed(['Answers from your own docs', 'oyechats.com']),
+      place: async (input) => { placed.push({ avoid: input.avoid, kind: input.logoKind, sha: input.expectedLogoSha256 }); writeFileSync(input.outPath, 'poster with logo'); return placement(); },
+    });
+    const result = report.results[0];
+    assert.equal(result?.status, 'accepted');
+    assert.equal(readFileSync(result?.file as string, 'utf8'), 'poster with logo');
+    assert.equal(readFileSync(result?.attempts[0]?.imageFile as string, 'utf8'), 'picture 1', 'the picture the model drew is not overwritten');
+    assert.deepEqual(result?.logo, { corner: 'top-right', treatment: 'none', logoRect: [740, 60, 200, 50], contrast: 12, logoSha256: 'a'.repeat(64), outputSha256: 'b'.repeat(64) });
+    assert.equal(result?.manifest.brandSignoff, 'logo');
+    assert.match(prompts[0] ?? '', /LOGO SPACE/);
+    assert.deepEqual(placed[0]?.avoid, [[51, 51, 512, 123], [51, 154, 512, 225], [51, 51, 512, 123], [51, 154, 512, 225]], 'every piece of text either reading found is kept clear, in the poster\'s pixels');
+    assert.deepEqual([placed[0]?.kind, placed[0]?.sha], ['wordmark', 'a'.repeat(64)]);
+  } finally {
+    ctx.done();
+  }
+});
+
+test('when no corner is calm the poster is drawn once more with that asked for, and a second failure drops it', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    let calls = 0;
+    const refuse = async (): Promise<import('./logo-compositor.ts').PlacementFailure> => ({ placed: false, reason: 'NO_SAFE_PLACEMENT', detail: 'no place on the poster was quiet and clear enough' });
+    const second = await withLogo(ctx, [post('w01-d1', 'Answers from your own docs')], {
+      scene: scene(prompts), review: async () => boxed(['Answers from your own docs', 'oyechats.com']),
+      place: async (input) => { calls += 1; if (calls === 1) return refuse(); writeFileSync(input.outPath, 'poster with logo'); return placement(); },
+    });
+    assert.equal(second.results[0]?.status, 'accepted');
+    assert.equal(second.results[0]?.attempts.length, 2);
+    assert.match(prompts[1] ?? '', /CORRECTION.*calm corner/is);
+    assert.ok(second.results[0]?.attempts[0]?.warnings?.some((w) => w.startsWith('NO_SAFE_LOGO_PLACEMENT')));
+
+    const ctx2 = setup();
+    try {
+      const failed = await withLogo(ctx2, [post('w01-d1', 'Answers from your own docs')], { scene: scene([]), review: async () => boxed(['Answers from your own docs', 'oyechats.com']), place: refuse });
+      assert.equal(failed.results[0]?.status, 'rejected');
+      assert.equal(failed.results[0]?.file, undefined);
+      assert.equal(failed.results[0]?.logo, undefined);
+      assert.match(failed.results[0]?.reason ?? '', /calm corner/);
+    } finally {
+      ctx2.done();
+    }
+  } finally {
+    ctx.done();
+  }
+});
+
+test('text the readers could not place means no place can be called clear of it, and a changed logo file fails the poster without another picture', async () => {
+  const ctx = setup();
+  try {
+    let asked = 0;
+    const unplaced = await withLogo(ctx, [post('w01-d1', 'Answers from your own docs')], {
+      scene: scene([]), review: async () => review(['Answers from your own docs', 'oyechats.com']),
+      place: async () => { asked += 1; return placement(); },
+    });
+    assert.equal(asked, 0, 'the compositor is never asked when a piece of text has no known place');
+    assert.equal(unplaced.results[0]?.status, 'rejected');
+
+    const ctx2 = setup();
+    try {
+      const prompts: string[] = [];
+      const changed = await withLogo(ctx2, [post('w01-d1', 'Answers from your own docs')], {
+        scene: scene(prompts), review: async () => boxed(['Answers from your own docs', 'oyechats.com']),
+        place: async () => ({ placed: false, reason: 'LOGO_CHANGED', detail: 'the logo file is not the one that was checked and kept' }),
+      });
+      assert.equal(changed.results[0]?.status, 'failed');
+      assert.equal(prompts.length, 1, 'a different picture would not fix a changed logo');
+      assert.match(changed.results[0]?.reason ?? '', /real logo could not be put/);
+    } finally {
+      ctx2.done();
+    }
+  } finally {
+    ctx.done();
+  }
+});
+
+test('a symbol alone keeps the drawn name; the brand sign-off is only dropped for a full logo', () => {
+  assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'wordmark' }).brandSignoff, 'logo');
+  assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'symbol' }).brandSignoff, undefined);
+  assert.equal(manifestOf(post('p', 'Hello there'), brand).brandSignoff, undefined);
+});

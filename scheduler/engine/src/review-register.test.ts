@@ -4,7 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isPublishable, type Brand, type PlannedPost } from './content.ts';
-import { registerForReview } from './review-register.ts';
+import { brandingFor, registerForReview } from './review-register.ts';
+import type { BrandingDecision, LogoPlacementRecord } from './branding.ts';
 import { ReviewStore } from './review-store.ts';
 import type { CreativeReport } from './ai-creative-pipeline.ts';
 import type { EvidenceFact } from './evidence.ts';
@@ -48,4 +49,15 @@ test('only accepted posters enter the queue, as pending versions that carry thei
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('a poster is recorded as carrying the real logo only when its own result shows where it was put', () => {
+  const decision: BrandingDecision = { intendedMode: 'authentic_logo', appliedMode: 'authentic_logo', status: 'applied', logoKind: 'wordmark', logoAssetSha256: 'a'.repeat(64) };
+  const placement: LogoPlacementRecord = { corner: 'top-left', treatment: 'halo', haloColor: 'rgb(255,255,255)', logoRect: [50, 50, 143, 44], contrast: 17.6, logoSha256: 'a'.repeat(64), outputSha256: 'b'.repeat(64) };
+  assert.deepEqual(brandingFor(decision, placement), { ...decision, placement }, 'with a place on the poster the record keeps it');
+  const without = brandingFor(decision, undefined);
+  assert.deepEqual([without.appliedMode, without.status, without.placement], ['text_only', 'awaiting_compositor', undefined], 'a poster that came back without the logo is not said to carry it');
+  assert.match(without.reason ?? '', /not placed/);
+  const text: BrandingDecision = { intendedMode: 'text_only_fallback', appliedMode: 'text_only', status: 'resolved' };
+  assert.deepEqual(brandingFor(text, undefined), text, 'a text sign-off decision is left as it was');
 });

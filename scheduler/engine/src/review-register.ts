@@ -3,7 +3,7 @@
  * it has no picture that passed. Registering the same result twice makes nothing new (see ReviewStore.addVersion).
  */
 import { basename } from 'node:path';
-import type { BrandingDecision } from './branding.ts';
+import type { BrandingDecision, LogoPlacementRecord } from './branding.ts';
 import type { CreativeReport } from './ai-creative-pipeline.ts';
 import { composeCaption, type Brand, type PlannedPost } from './content.ts';
 import type { EvidenceFact } from './evidence.ts';
@@ -45,8 +45,18 @@ export function registerForReview(input: {
       validation: { accepted: true, readings: last?.readings.length ?? 0, defects: [], reportFile: basename(input.reportFile) },
       attempts: result.attempts.length,
       costUsd: result.costUsd,
-      ...(input.branding ? { branding: input.branding } : {}),
+      ...(input.branding ? { branding: brandingFor(input.branding, result.logo) } : {}),
     }));
   }
   return versions;
+}
+
+/**
+ * What a poster's record says about its branding. The real logo is said to be on a poster only when the poster's own result shows where it was put: a
+ * decision that said it would be applied, for a poster that came back without it, is recorded as text-only, with the reason.
+ */
+export function brandingFor(decision: BrandingDecision, placement: LogoPlacementRecord | undefined): BrandingDecision {
+  if (placement) return { ...decision, placement };
+  if (decision.status !== 'applied') return decision;
+  return { ...decision, appliedMode: 'text_only', status: 'awaiting_compositor', reasonCode: 'LOGO_COMPOSITOR_UNAVAILABLE', reason: 'The real logo was meant to go on this poster but was not placed, so it carries the brand name and web address as text.' };
 }
