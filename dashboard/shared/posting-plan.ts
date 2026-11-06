@@ -76,11 +76,20 @@ export function platformNames(platforms: readonly string[]): string {
   return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? '');
 }
 
+/** The time of day now at a UTC offset like "+05:30", as HH:MM. */
+export function nowTimeAt(utcOffset: string, now: Date = new Date()): string {
+  const sign = utcOffset.startsWith('-') ? -1 : 1;
+  const [h = 0, m = 0] = utcOffset.slice(1).split(':').map(Number);
+  return new Date(now.getTime() + sign * (h * 60 + m) * 60_000).toISOString().slice(11, 16);
+}
+
 /** A problem with the choices made so far, in plain words, or null when they make a plan. */
-export function planProblem(input: Pick<PlanInput, 'platforms' | 'startDate' | 'durationDays'>, now: Date = new Date(), utcOffset = '+05:30'): string | null {
+export function planProblem(input: Pick<PlanInput, 'platforms' | 'startDate' | 'durationDays'> & { time?: string }, now: Date = new Date(), utcOffset = '+05:30'): string | null {
   if (input.platforms.length === 0) return 'Choose at least one platform.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate) || new Date(`${input.startDate}T00:00:00Z`).toISOString().slice(0, 10) !== input.startDate) return 'Choose the day to start.';
   if (input.startDate < todayAt(utcOffset, now)) return 'The start day has already passed.';
+  if (input.time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.time)) return 'Choose the time of day to post.';
+  if (input.time !== undefined && input.startDate === todayAt(utcOffset, now) && input.time <= nowTimeAt(utcOffset, now)) return 'That time has already passed today. Choose a later time, or start tomorrow.';
   if (input.durationDays < 1 || input.durationDays > MAX_PLAN_DAYS) return `Choose from 1 to ${MAX_PLAN_DAYS} days.`;
   return null;
 }

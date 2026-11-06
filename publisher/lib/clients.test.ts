@@ -156,3 +156,12 @@ test('the real-logo requirement defaults to off, is stored only when on, and can
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', requireAuthenticLogo: 'yes' }] }), /requireAuthenticLogo/);
 });
 
+test('a plan keeps the time of day it was given, and a time that has already passed today is refused', () => {
+  // NOW_MS is 17:30 in India on 5 November.
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com', planOf({ time: '15:30', startDate: '2026-11-06' }));
+  assert.equal(made.file.clients[0]?.plans?.[0]?.time, '15:30');
+  assert.throws(() => addClient({ clients: [] }, 'Late', new Set(), NOW_MS, 'late.com', planOf({ time: '09:00', startDate: '2026-11-05' })), /already passed today/);
+  assert.doesNotThrow(() => addClient({ clients: [] }, 'Later', new Set(), NOW_MS, 'later.com', planOf({ time: '18:00', startDate: '2026-11-05' })));
+  assert.doesNotThrow(() => parseClientPlan(planOf({ time: '09:00', startDate: '2026-11-05' }), NOW_MS, { allowPast: true }), 'a saved plan is read back whatever the hour');
+});
+
