@@ -1,5 +1,6 @@
 import { brandLabel } from './calendar.ts';
-import { DURATIONS, PLATFORMS, dayLabel, planCost, planDates, planPayload, planProblem, platformNames, tomorrowAt, type PlanInput, type PlanPlatform } from '../shared/posting-plan.ts';
+import { DURATIONS, PLATFORMS, dayLabel, planCost, planDates, planPayload, planProblem, platformNames, todayAt, tomorrowAt, type PlanInput, type PlanPlatform } from '../shared/posting-plan.ts';
+import { WEEKLY_LIMIT_DEFAULT, availability, quotaProblem, type QuotaPlan } from '../shared/quota.ts';
 import { button, h } from './ui.ts';
 
 /** What the Add client window needs from the page. */
@@ -23,12 +24,13 @@ export function previewLabel(name: string): string {
 }
 
 /** The plan the form's choices make, or why they do not make one. Pure, so it is tested without a page. */
-export function readPlan(values: { on: boolean; platforms: readonly string[]; startDate: string; durationId: string; postsPerWeek: number }, now: Date = new Date()): { plan: PlanInput | null; problem: string | null } {
+/** `quota` is what the client already has planned and its weekly limit; without it only the choices themselves are checked. */
+export function readPlan(values: { on: boolean; platforms: readonly string[]; startDate: string; durationId: string; postsPerWeek: number }, now: Date = new Date(), quota?: { existing: readonly QuotaPlan[]; limit: number }): { plan: PlanInput | null; problem: string | null } {
   if (!values.on) return { plan: null, problem: null };
   const duration = DURATIONS.find((d) => d.id === values.durationId) ?? DURATIONS[0];
   const platforms = PLATFORMS.map((p) => p.id).filter((id) => values.platforms.includes(id));
   const plan: PlanInput = { platforms, startDate: values.startDate, durationDays: duration.days, ...(duration.days > 1 && values.postsPerWeek > 0 ? { postsPerWeek: values.postsPerWeek } : {}), time: '10:00', utcOffset: '+05:30' };
-  const problem = planProblem(plan, now, plan.utcOffset);
+  const problem = planProblem(plan, now, plan.utcOffset) ?? (quota ? quotaProblem(quota.existing, plan, quota.limit, todayAt(plan.utcOffset, now)) : null);
   return { plan: problem ? null : plan, problem };
 }
 
@@ -53,14 +55,20 @@ export interface PlanFields {
   controls: HTMLElement[];
 }
 
-/** `prefix` keeps the element ids apart when two forms are on the page. */
-export function planFields(prefix: string): PlanFields {
+/**
+ * `prefix` keeps the element ids apart when two forms are on the page. `existing` is what the client already has planned: when it is given, the form shows
+ * which weeks still have free places on each chosen channel, and holds the choices to them. `limit` is the client's posters a week for each channel.
+ */
+export function planFields(prefix: string, options: { existing?: readonly QuotaPlan[]; limit?: number } = {}): PlanFields {
+  const limit = options.limit ?? WEEKLY_LIMIT_DEFAULT;
+  const existing = options.existing ?? [];
   const ticks = new Map<PlanPlatform, HTMLInputElement>(PLATFORMS.map((p) => [p.id, h('input', { type: 'checkbox', id: `${prefix}-${p.id}`, ...(p.id === 'instagram' ? { checked: 'checked' } : {}) })]));
   const duration = h('select', { id: `${prefix}-duration`, class: 'text-input', 'aria-label': 'For how long' }, ...DURATIONS.map((d) => h('option', { value: d.id }, d.label)));
-  const often = h('select', { id: `${prefix}-often`, class: 'text-input', 'aria-label': 'How often' }, h('option', { value: '0' }, 'Every day'), ...[1, 2, 3, 4, 5, 6].map((n) => h('option', { value: String(n), ...(n === 3 ? { selected: 'selected' } : {}) }, `${n} time${n === 1 ? '' : 's'} a week`)));
+  const often = h('select', { id: `${prefix}-often`, class: 'text-input', 'aria-label': 'How often' }, ...Array.from({ length: limit }, (_, i) => i + 1).map((n) => h('option', { value: String(n), ...(n === Math.min(3, limit) ? { selected: 'selected' } : {}) }, `${n} time${n === 1 ? '' : 's'} a week`)));
   const startDate = h('input', { id: `${prefix}-start`, type: 'date', class: 'text-input', 'aria-label': 'First day to post' });
   startDate.value = tomorrowAt('+05:30');
   const summary = h('div', { class: 'plan-summary', role: 'status', 'aria-live': 'polite' });
+  const quota = h('div', { class: 'quota' });
   const element = h('div', { class: 'plan-fields' },
     h('p', { class: 'label' }, 'Post on'),
     h('div', { class: 'check-grid' }, ...PLATFORMS.map((p) => h('label', { class: 'check-row', for: `${prefix}-${p.id}` }, ticks.get(p.id) as HTMLInputElement, h('span', {}, p.label)))),
@@ -70,11 +78,30 @@ export function planFields(prefix: string): PlanFields {
     often,
     h('label', { class: 'label', for: `${prefix}-start` }, 'First day'),
     startDate,
+    options.existing ? quota : null,
     summary,
   );
-  const read = (on: boolean): ReturnType<typeof readPlan> => readPlan({ on, platforms: [...ticks].filter(([, box]) => box.checked).map(([id]) => id), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value) });
+  const chosen = (): string[] => [...ticks].filter(([, box]) => box.checked).map(([id]) => id);
+  const read = (on: boolean, now: Date = new Date()): ReturnType<typeof readPlan> => readPlan({ on, platforms: chosen(), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value) }, now, { existing, limit });
+  const drawQuota = (): void => {
+    const channels = chosen();
+    if (channels.length === 0) return void quota.replaceChildren();
+    const rows = availability(existing, channels, limit, todayAt('+05:30'));
+    quota.replaceChildren(
+      h('p', { class: 'label' }, `Places free each week (${limit} a week for each channel)`),
+      h('table', { class: 'quota-table' },
+        h('thead', {}, h('tr', {}, h('th', {}, 'Week'), ...channels.map((c) => h('th', {}, platformNames([c]))))),
+        h('tbody', {}, ...rows.map((row) => h('tr', {}, h('td', {}, row.label), ...channels.map((c) => {
+          const cell = row.channels[c] as { used: number; free: number };
+          return h('td', { class: cell.free === 0 ? 'is-full' : '' }, cell.free === 0 ? `full (${cell.used} of ${limit})` : `${cell.free} free${cell.used > 0 ? ` (${cell.used} planned)` : ''}`);
+        })))),
+      ),
+      h('p', { class: 'muted' }, 'Weeks that have passed are not listed, and what was not used in them is gone.'),
+    );
+  };
   const refresh = (on: boolean): void => {
     often.disabled = duration.value === 'day';
+    if (options.existing) drawQuota();
     const { plan, problem } = read(on);
     summary.classList.toggle('is-error', Boolean(problem));
     summary.replaceChildren(...(problem ? [h('p', {}, problem)] : plan ? describePlan(plan).map((line) => h('p', {}, line)) : []));

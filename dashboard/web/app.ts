@@ -980,11 +980,24 @@ async function submitNewPost(post: { brand: string; day: string; time: string; c
   return null;
 }
 
+/** The client whose "make posters from the website" form should be open the next time its page is drawn (set by the New post window). */
+let planFormFor: string | null = null;
+
 /** Opens the New post window; `channel` is ticked in advance. */
 function openNewPost(brand: string | null, channel: string | null): void {
   const data = state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] };
-  const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label }));
-  picker.replaceChildren(newPostForm(brand, channel, { clients, channels: data.channels, submit: submitNewPost, close: () => picker.close() }));
+  const clients = summarizeClients(data, Date.now()).map((c) => ({ brand: c.brand, label: c.label, website: Boolean(c.added && c.website) }));
+  picker.replaceChildren(newPostForm(brand, channel, {
+    clients,
+    channels: data.channels,
+    submit: submitNewPost,
+    fromWebsite: (target) => {
+      picker.close();
+      planFormFor = target;
+      go({ page: 'client', brand: target, tab: 'channels' });
+    },
+    close: () => picker.close(),
+  }));
   picker.showModal();
 }
 
@@ -1032,7 +1045,7 @@ async function saveWebsite(client: ClientSummary, website: string): Promise<stri
 }
 
 /** Sends one plan change for a client added in the dashboard; resolves to an explanation when it did not work. */
-async function changePlans(action: 'add-plan' | 'remove-plan', body: Record<string, unknown>, done: string): Promise<string | null> {
+async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit', body: Record<string, unknown>, done: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/clients?action=${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (response.status === 401) {
@@ -1051,6 +1064,9 @@ async function changePlans(action: 'add-plan' | 'remove-plan', body: Record<stri
 
 const addPlan = (client: ClientSummary, plan: Record<string, unknown>): Promise<string | null> =>
   changePlans('add-plan', { brand: client.brand, plan }, 'Plan added. The posters will be made from the website and appear in Review for you to approve.');
+
+const setLimit = (client: ClientSummary, limit: number): Promise<string | null> =>
+  changePlans('set-limit', { brand: client.brand, limit }, `Limit saved: ${limit} poster${limit === 1 ? '' : 's'} a week for each channel. Plans already there stay as they are.`);
 
 const removePlan = (client: ClientSummary, index: number): Promise<string | null> =>
   changePlans('remove-plan', { brand: client.brand, index }, 'Plan removed. Posters already made stay in Review; no more are made for it.');
@@ -1101,6 +1117,8 @@ const clientsContext: ClientsContext = {
   saveWebsite,
   addPlan,
   removePlan,
+  setLimit,
+  wantsPlanForm: (brand) => (planFormFor === brand ? ((planFormFor = null), true) : false),
   disconnect: (channel) => void disconnect(channel),
   allPaused: () => state.data?.pauses.all === true,
   setPause: (scope, id, paused) => void setPause(scope, id, paused),

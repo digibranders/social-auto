@@ -1,4 +1,5 @@
 import type { ChannelHealth, ClientPlanData, CostEntry, StatusPost, StatusResponse } from '../shared/status.ts';
+import { WEEKLY_LIMIT_DEFAULT } from '../shared/quota.ts';
 import { brandLabel, dayKeyOf, formatTime, weekdayName } from './calendar.ts';
 
 export interface ClientSummary {
@@ -26,6 +27,8 @@ export interface ClientSummary {
   paused: boolean;
   /** What was chosen to post, where and for how long: one entry per plan; empty when nothing was. */
   plans: ClientPlanData[];
+  /** The most posters a week the website may make for each channel. */
+  weeklyLimit: number;
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
@@ -87,6 +90,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       website: entry?.website ?? null,
       paused: data.pauses.all || data.pauses.brands.includes(brand),
       plans: entry?.plans ?? [],
+      weeklyLimit: entry?.weeklyLimit ?? WEEKLY_LIMIT_DEFAULT,
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };

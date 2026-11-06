@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { EditError } from './overrides.js';
+import { DEFAULT_WEEKLY_LIMIT, MAX_WEEKLY_LIMIT, assertWithinLimit } from './quota.js';
 
 /** A client added in the dashboard, kept apart from the clients the content job plans posts for. */
 export interface AddedClient {
@@ -16,6 +17,8 @@ export interface AddedClient {
   website?: string;
   /** What to post, where and for how long: one entry per plan, each with its own platforms, so Instagram can have a different rhythm from LinkedIn. The content job makes the posters; nothing posts before they are approved. */
   plans?: ClientPlan[];
+  /** The most posters a week the website may make for each channel; missing means the default (3). */
+  weeklyLimit?: number;
 }
 
 export const PLAN_PLATFORMS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
@@ -97,6 +100,7 @@ export function parseClientsFile(raw: unknown): ClientsFile {
       for (const key of ['product', 'externalId', 'name', 'website'] as const) {
         if (c[key] !== undefined && typeof c[key] !== 'string') throw new Error(`clients[${i}].${key} must be a string`);
       }
+      if (c['weeklyLimit'] !== undefined && (typeof c['weeklyLimit'] !== 'number' || !Number.isInteger(c['weeklyLimit']) || c['weeklyLimit'] < 1 || c['weeklyLimit'] > MAX_WEEKLY_LIMIT)) throw new Error(`clients[${i}].weeklyLimit must be a whole number from 1 to ${MAX_WEEKLY_LIMIT}`);
       // A client saved by the first version has one `plan`; it is read as a list of one.
       const { plan: single, ...rest } = c as Record<string, unknown>;
       const listed = rest['plans'] !== undefined ? rest['plans'] : single !== undefined ? [single] : undefined;
@@ -170,6 +174,7 @@ export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySe
   const site = website === undefined || website === null || (typeof website === 'string' && website.trim() === '') ? undefined : normalizeWebsite(website);
   const posting = plan === undefined || plan === null ? undefined : parseClientPlan(plan, now);
   if (posting && !site) throw new EditError('a posting plan needs the client\'s website to make the posts from');
+  if (posting) assertWithinLimit([], posting, DEFAULT_WEEKLY_LIMIT, now);
   if (existing.has(brand) || file.clients.some((c) => c.brand === brand)) throw new EditError('there is already a client with that name', 409);
   if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many added clients; remove one first');
   return { file: { clients: [...file.clients, { brand, createdAt: new Date(now).toISOString(), ...(site ? { website: site } : {}), ...(posting ? { plans: [posting] } : {}) }] }, brand };
@@ -195,7 +200,17 @@ export function addPlan(file: ClientsFile, brand: string, plan: unknown, now: nu
   const plans = current.plans ?? [];
   if (plans.length >= MAX_PLANS_PER_CLIENT) throw new EditError(`a client can have at most ${MAX_PLANS_PER_CLIENT} plans; remove one first`);
   if (plans.some((p) => JSON.stringify(p) === JSON.stringify(added))) throw new EditError('that plan is already there');
+  assertWithinLimit(plans, added, current.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, now);
   return { clients: file.clients.map((c, i) => (i === index ? { ...current, plans: [...plans, added] } : c)) };
+}
+
+/** Sets how many posters a week the website may make for each channel of a client. It only governs plans added afterwards; a plan already there stays. */
+export function setWeeklyLimit(file: ClientsFile, brand: string, limit: unknown): ClientsFile {
+  const index = file.clients.findIndex((c) => c.brand === brand);
+  if (index === -1) throw new EditError('only a client added in the dashboard has a posting limit here', 404);
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > MAX_WEEKLY_LIMIT) throw new EditError(`the limit must be a whole number from 1 to ${MAX_WEEKLY_LIMIT} posts a week`);
+  const { weeklyLimit: _old, ...rest } = file.clients[index] as AddedClient;
+  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(limit !== DEFAULT_WEEKLY_LIMIT ? { weeklyLimit: limit } : {}) } : c)) };
 }
 
 /** Takes one plan off a client (by its place in the list). Posters already made for it stay in the review queue; no more are made. */

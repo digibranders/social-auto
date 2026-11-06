@@ -557,4 +557,13 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .plan-list { list-style: none; margin: .5rem 0; padding: 0; display: grid; gap: .4rem; }
 .plan-item { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .5rem .75rem; border: 1px solid var(--cell-border); border-radius: var(--radius); }
 .plans-card .plan-box[hidden] { display: none; }
+.quota { display: grid; gap: .4rem; }
+.quota-table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.quota-table th, .quota-table td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--cell-border); }
+.quota-table th { color: var(--muted); font-weight: 500; font-size: .78rem; }
+.quota-table td.is-full { color: var(--due, #e0a84a); font-weight: 600; }
+.limit-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: .5rem 0; }
+.limit-select { width: auto; min-width: 4.5rem; }
+.from-website { border: 1px solid var(--cell-border); border-radius: var(--radius); padding: .75rem 1rem; margin: .5rem 0; display: grid; gap: .5rem; }
+.from-website[hidden] { display: none; }
 

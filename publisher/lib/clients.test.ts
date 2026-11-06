@@ -60,7 +60,7 @@ test('a client can be added with a website, and its website can be changed and c
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', website: 5 }] }), /website/);
 });
 
-import { MAX_PLANS_PER_CLIENT, addPlan, parseClientPlan, removePlan } from './clients.ts';
+import { MAX_PLANS_PER_CLIENT, addPlan, parseClientPlan, removePlan, setWeeklyLimit } from './clients.ts';
 
 const NOW_MS = Date.parse('2026-11-05T12:00:00Z');
 const planOf = (over: Record<string, unknown> = {}) => ({ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1, ...over });
@@ -119,7 +119,25 @@ test('a client saved with the first version\'s single plan reads as a list of on
   const legacy = parseClientsFile({ clients: [{ brand: 'old', createdAt: 'x', website: 'https://old.example', plan: planOf() }] });
   assert.equal(legacy.clients[0]?.plans?.length, 1);
   assert.ok(!('plan' in (legacy.clients[0] as object)));
-  let file = addClient({ clients: [] }, 'Busy', new Set(), NOW_MS, 'busy.com').file;
+  // A higher limit for this client, so that the number of plans is what is tested here.
+  let file = setWeeklyLimit(addClient({ clients: [] }, 'Busy', new Set(), NOW_MS, 'busy.com').file, 'busy', 7);
   for (let n = 0; n < MAX_PLANS_PER_CLIENT; n += 1) file = addPlan(file, 'busy', planOf({ startDate: `2026-11-${String(10 + n).padStart(2, '0')}` }), NOW_MS);
   assert.throws(() => addPlan(file, 'busy', planOf({ startDate: '2026-12-01' }), NOW_MS), /at most/);
 });
+
+test('a client\'s weekly limit can be changed, only governs plans added afterwards, and the default is not stored', () => {
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
+  const four = (file: typeof made) => addPlan(file, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 7, postsPerWeek: 4, startDate: '2026-11-09' }), NOW_MS);
+  assert.throws(() => four(made), /can have 3 posts a week/);
+  const raised = setWeeklyLimit(made, 'oye-chats', 5);
+  assert.equal(raised.clients[0]?.weeklyLimit, 5);
+  assert.equal(four(raised).clients[0]?.plans?.length, 1);
+  const lowered = setWeeklyLimit(four(raised), 'oye-chats', 1);
+  assert.equal(lowered.clients[0]?.plans?.length, 1, 'a plan already there stays when the limit is lowered');
+  assert.equal(setWeeklyLimit(raised, 'oye-chats', 3).clients[0]?.weeklyLimit, undefined, 'the default is not stored');
+  assert.throws(() => setWeeklyLimit(made, 'oye-chats', 0), /whole number from 1 to 7/);
+  assert.throws(() => setWeeklyLimit(made, 'oye-chats', 2.5), /whole number from 1 to 7/);
+  assert.throws(() => setWeeklyLimit(made, 'nobody', 2), /only a client added in the dashboard/);
+  assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', weeklyLimit: 9 }] }), /weeklyLimit/);
+});
+

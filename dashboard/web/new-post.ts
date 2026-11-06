@@ -8,10 +8,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** What the form needs from the page: the clients and channels, and the call that saves a post. */
 export interface NewPostDeps {
-  clients: Array<{ brand: string; label: string }>;
+  /** `website` is true when posters can be made from the client's website. */
+  clients: Array<{ brand: string; label: string; website?: boolean }>;
   channels: ChannelHealth[];
   /** Resolves to an explanation when the post could not be saved. */
   submit(post: { brand: string; day: string; time: string; caption: string; picture: File; channels: string[] }): Promise<string | null>;
+  /** Leaves this window for the client's page, with the form that makes posters from its website open. */
+  fromWebsite(brand: string): void;
   close(): void;
 }
 
@@ -57,11 +60,21 @@ export function newPostForm(brand: string | null, preselect: string | null, deps
           })),
     );
   };
+  // Posters can also be made from the client's own website, within its weekly limit; that is chosen on the client's page.
+  const fromSite = h('div', { class: 'from-website', hidden: 'hidden' },
+    h('p', {}, 'Or let the website make the posters. Choose the channels, the days and for how long, and see what is left of this client\'s weekly limit.'),
+    button('Make posters from the website', 'btn', () => deps.fromWebsite(who.value)),
+  );
+  const drawFromSite = (): void => {
+    fromSite.hidden = !deps.clients.find((c) => c.brand === who.value)?.website;
+  };
   who.addEventListener('change', () => {
     ticked.clear();
     drawChannels();
+    drawFromSite();
   });
   drawChannels();
+  drawFromSite();
 
   const day = h('input', { type: 'date', class: 'btn', 'aria-label': 'Day', min: earliestDay(Date.now()) });
   const time = h('input', { type: 'time', class: 'btn', 'aria-label': 'Time', value: DEFAULT_TIME });
@@ -115,6 +128,7 @@ export function newPostForm(brand: string | null, preselect: string | null, deps
     { class: 'dialog-inner' },
     h('div', { class: 'dialog-head' }, h('h2', {}, 'New post'), button('Close', 'btn btn-quiet', deps.close)),
     deps.clients.length > 1 ? h('label', { class: 'picker-client' }, h('span', { class: 'muted' }, 'For client'), who) : null,
+    fromSite,
     h('h3', { class: 'label' }, 'Post to'),
     boxes,
     h('h3', { class: 'label' }, 'Day and time'),

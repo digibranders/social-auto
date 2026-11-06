@@ -51,9 +51,9 @@ export function todayAt(utcOffset: string, now: Date = new Date()): string {
 export const tomorrowAt = (utcOffset: string, now: Date = new Date()): string => addDays(todayAt(utcOffset, now), 1);
 
 /** The days the plan posts on. A single day is that day whatever its weekday; otherwise every day of the window that fits the pattern. */
-export function planDates(plan: Pick<PlanInput, 'startDate' | 'durationDays' | 'postsPerWeek'>): string[] {
+export function planDates(plan: Pick<PlanInput, 'startDate' | 'durationDays' | 'postsPerWeek'> & { weekdays?: readonly string[] }): string[] {
   if (plan.durationDays <= 1) return [plan.startDate];
-  const pattern = plan.postsPerWeek ? new Set<string>(EVEN_SPREAD[plan.postsPerWeek] ?? []) : null;
+  const pattern = plan.weekdays ? new Set<string>(plan.weekdays) : plan.postsPerWeek ? new Set<string>(EVEN_SPREAD[plan.postsPerWeek] ?? []) : null;
   const out: string[] = [];
   for (let i = 0; i < plan.durationDays; i++) {
     const day = addDays(plan.startDate, i);

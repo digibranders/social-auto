@@ -42,3 +42,13 @@ test('what the owner is told: the count, the days, the cost, and that nothing po
   const daily = describePlan(readPlan(form({ durationId: 'month', postsPerWeek: 0 }), NOW).plan as never);
   assert.equal(daily[1], 'Fri 6 Nov to Sun 6 Dec', 'with more than 14 days it shows the range');
 });
+
+test('a plan is held to the client\'s weekly limit when the client already has plans', () => {
+  const existing = [{ platforms: ['instagram'], startDate: '2026-11-09', durationDays: 21, postsPerWeek: 2 }];
+  const choose = (over: Partial<Parameters<typeof readPlan>[0]> = {}) => readPlan({ ...form({ durationId: 'week', postsPerWeek: 3 }), startDate: '2026-11-09', ...over }, NOW, { existing, limit: 3 });
+  assert.equal(choose().plan, null);
+  assert.match(choose().problem ?? '', /only 1 more fits that week/);
+  assert.ok(choose({ postsPerWeek: 1 }).plan, '1 a week fits next to 2 a week');
+  assert.ok(choose({ platforms: ['facebook'] }).plan, 'another channel has its own places');
+});
+
