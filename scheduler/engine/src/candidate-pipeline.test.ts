@@ -163,3 +163,17 @@ test('a rewrite may not drop a plan name next to a figure, a qualifier, or a per
   assert.match(validateRewrite(request, { factId: 'f1', headline: 'Basic plan: 25 team members', subline: '', caption: 'Plenty of room.' }, plan).join(' '), /drops the qualifier "up to"/);
   assert.deepEqual(validateRewrite(request, { factId: 'f1', headline: 'Basic plan: up to 25 team members', subline: '', caption: 'Plenty of room for your team.' }, plan), []);
 });
+
+test('the writer is told how long a rewritten headline may be, and a rewrite whose headline is too long is refused with its length', () => {
+  const f = fact();
+  const request = buildRewriteRequest({ headline: 'Your data never trains any model, guaranteed', subline: '', caption: 'We never train on your data and never will.' }, f, []);
+  assert.equal(request.maxHeadlineChars, 45, 'the request carries the limit the writer is asked to keep');
+  const base = { factId: 'f1', subline: '', caption: 'Your data is not used to train models.' };
+  const fits = 'OyeChats never trains models on your data';
+  assert.deepEqual(validateRewrite(request, { ...base, headline: fits }, f), []);
+  const long = 'OyeChats never trains any of its models on the data that you share with it in conversations';
+  assert.ok(long.length > 60);
+  assert.match(validateRewrite(request, { ...base, headline: long }, f).join(' '), new RegExp(`the headline is ${long.length} characters; it must be at most 60`));
+  assert.deepEqual(validateRewrite(request, { ...base, headline: 'OyeChats never trains models on |your data|' }, f), [], 'the emphasis marks are not counted');
+});
+
