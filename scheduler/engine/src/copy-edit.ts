@@ -9,12 +9,14 @@ import { checkCopy } from './copy-gate.ts';
 import { checkCopyQuality } from './copy-quality.ts';
 import { CopyStage, CopyStageError, PLAN_FILE, type CopyBatch } from './copy-stage.ts';
 import { composeCaption } from './content.ts';
+import { composeVariant, isNetwork, NETWORK_RULES, type Network } from './networks.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
 
 export const MAX_HEADLINE_CHARS = 60;
 export const MAX_CAPTION_CHARS = 1500;
 
-interface RawPost { id?: unknown; headline?: unknown; subline?: unknown; caption?: unknown; hashtags?: unknown; factIds?: unknown }
+interface RawVariant { caption?: unknown; hashtags?: unknown; fallback?: unknown }
+interface RawPost { id?: unknown; headline?: unknown; subline?: unknown; caption?: unknown; hashtags?: unknown; factIds?: unknown; variants?: Record<string, RawVariant> }
 
 export function editCopy(input: {
   brandDir: string;
@@ -24,6 +26,8 @@ export function editCopy(input: {
   headline?: string;
   /** The caption's own words; the hashtags stay as the writer made them. */
   caption?: string;
+  /** The network whose caption is being changed. Without one, or for Instagram, it is the main caption. */
+  network?: string;
   by: string;
   /** The facts the brand has, to check the new words against the ones this post was written from. */
   facts: readonly EvidenceFact[];
@@ -41,12 +45,17 @@ export function editCopy(input: {
   if (!post || typeof post.headline !== 'string' || typeof post.caption !== 'string' || !Array.isArray(post.hashtags)) throw new CopyStageError('NOT_FOUND', 'no such post in this plan');
 
   // Emphasis marks (|) are the writer's way of picking words to stress; the owner types plain words, and the marks of the old headline do not carry over.
+  if (input.network !== undefined && !isNetwork(input.network)) throw new CopyStageError('INVALID', 'that is not a network');
+  const network: Network | undefined = input.network as Network | undefined;
+  // A caption for another network is that network's own version; Instagram's is the main caption.
+  const variant = network && network !== 'instagram' ? post.variants?.[network] : undefined;
+  if (network && network !== 'instagram' && (!variant || typeof variant.caption !== 'string' || !Array.isArray(variant.hashtags))) throw new CopyStageError('NOT_FOUND', `this post has no caption for ${network}`);
   const headline = (input.headline ?? post.headline).replaceAll('|', '').replace(/\s+/g, ' ').trim();
-  const caption = (input.caption ?? post.caption).trim();
+  const caption = (input.caption ?? (variant ? (variant.caption as string) : post.caption)).trim();
   if (headline === '') throw new CopyStageError('REJECTED', 'the headline cannot be empty');
   if (headline.length > MAX_HEADLINE_CHARS) throw new CopyStageError('REJECTED', `the headline is ${headline.length} characters; a poster can carry at most ${MAX_HEADLINE_CHARS}`);
   if (caption === '') throw new CopyStageError('REJECTED', 'the caption cannot be empty');
-  if (caption.length > MAX_CAPTION_CHARS) throw new CopyStageError('REJECTED', `the caption is ${caption.length} characters; at most ${MAX_CAPTION_CHARS} are allowed`);
+  if (caption.length > (network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS)) throw new CopyStageError('REJECTED', `the caption is ${caption.length} characters; at most ${network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS} are allowed`);
   const weak = checkCopyQuality({ headline, caption });
   if (weak) throw new CopyStageError('REJECTED', weak);
 
@@ -59,10 +68,20 @@ export function editCopy(input: {
   }
 
   const hashtags = (post.hashtags as unknown[]).filter((h): h is string => typeof h === 'string');
-  const composed = composeCaption({ caption, hashtags });
-  return new CopyStage(input.brandDir, input.brand).edit(input.planFile, input.postId, { headline, caption: composed }, input.by, () => {
+  // What the list shows for the main caption stays the main caption when only another network's caption changes.
+  const mainCaption = variant ? (post.caption as string).trim() : caption;
+  const composed = composeCaption({ caption: mainCaption, hashtags });
+  const networkText = variant ? composeVariant({ caption, hashtags: (variant.hashtags as unknown[]).filter((h): h is string => typeof h === 'string') })
+    : network === 'instagram' && post.variants?.['instagram'] ? composed : undefined;
+  return new CopyStage(input.brandDir, input.brand).edit(input.planFile, input.postId, { headline, caption: composed, ...(network && networkText !== undefined ? { network, networkCaption: networkText } : {}) }, input.by, () => {
     post.headline = headline;
-    post.caption = caption;
+    if (variant) {
+      variant.caption = caption;
+      delete variant.fallback;
+    } else {
+      post.caption = caption;
+      if (post.variants?.['instagram']) post.variants['instagram'].caption = caption;
+    }
     const temp = `${planPath}.${process.pid}.tmp`;
     writeFileSync(temp, `${JSON.stringify(raw, null, 2)}\n`);
     renameSync(temp, planPath);

@@ -86,3 +86,58 @@ test('a batch put away is no longer drawn and its choices are final', () => {
     done();
   }
 });
+
+function networkWorkspace(): { dir: string; stage: CopyStage; done: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'copy-edit-net-'));
+  const posts = [{ id: 'p1', headline: 'Set up in |ten minutes|', subline: '', caption: 'One script tag and the assistant is live on your site.\n\nExplore our services at acme.example (link in bio)', hashtags: ['#acme', '#setup'], factIds: ['f1'],
+    variants: { instagram: { caption: 'One script tag and the assistant is live on your site.\n\nExplore our services at acme.example (link in bio)', hashtags: ['#acme', '#setup'] }, linkedin: { caption: 'Teams can add the assistant with one script tag.\n\nExplore our services at acme.example', hashtags: ['#acme'], fallback: true } } }];
+  writeFileSync(join(dir, 'week-01.json'), JSON.stringify({ brand: 'acme', timezone: '+05:30', posts }));
+  const stage = new CopyStage(dir, 'acme', () => new Date('2026-11-06T10:00:00Z'));
+  stage.open('week-01.json', [{ postId: 'p1', headline: posts[0]?.headline ?? '', caption: composeCaption(posts[0] as never), captions: { instagram: { text: composeCaption(posts[0] as never) }, linkedin: { text: 'Teams can add the assistant with one script tag.\n\nExplore our services at acme.example\n\n#acme', fallback: true } } }]);
+  return { dir, stage, done: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test('one network\'s caption can be changed on its own: the plan, the list and the draw check all follow, and the other networks are untouched', () => {
+  const { dir, stage, done } = networkWorkspace();
+  try {
+    stage.decide('week-01.json', 'p1', 'kept', 'owner');
+    const batch = edit(dir, { network: 'linkedin', caption: 'Teams can put the assistant on their site with one script tag in under 10 minutes.\n\nExplore our services at acme.example' });
+    const post = batch.posts[0];
+    assert.match(post?.captions?.['linkedin']?.text ?? '', /under 10 minutes\.[\s\S]*#acme$/);
+    assert.equal(post?.captions?.['linkedin']?.edited, true);
+    assert.equal(post?.captions?.['linkedin']?.fallback, undefined, 'an edited caption is no longer the main caption adapted');
+    assert.equal(post?.captions?.['instagram']?.edited, undefined);
+    const plan = JSON.parse(readFileSync(join(dir, 'week-01.json'), 'utf8')) as { posts: Array<{ caption: string; hashtags: string[]; variants: Record<string, { caption: string; fallback?: boolean }> }> };
+    assert.match(plan.posts[0]?.variants['linkedin']?.caption ?? '', /under 10 minutes/);
+    assert.equal(plan.posts[0]?.variants['linkedin']?.fallback, undefined);
+    assert.match(plan.posts[0]?.caption ?? '', /live on your site/, 'the main caption is unchanged');
+    const raw = plan.posts[0];
+    const texts = { instagram: composeCaption(raw as never), linkedin: `${raw?.variants['linkedin']?.caption}\n\n#acme` };
+    assert.deepEqual(stage.toDraw('week-01.json', [{ postId: 'p1', headline: post?.headline ?? '', caption: composeCaption(raw as never), captions: texts }]), { postIds: ['p1'], changed: [] });
+    assert.deepEqual(stage.toDraw('week-01.json', [{ postId: 'p1', headline: post?.headline ?? '', caption: composeCaption(raw as never), captions: { ...texts, linkedin: 'changed behind the owner\'s back' } }]), { postIds: [], changed: ['p1'] }, 'a network caption changed outside the list is not drawn');
+  } finally {
+    done();
+  }
+});
+
+test('a network the post has no caption for, and a name that is not a network, are refused', () => {
+  const { dir, done } = networkWorkspace();
+  try {
+    assert.match(refusal(() => edit(dir, { network: 'google', caption: 'Plain text for the listing.' })), /NOT_FOUND.*google/);
+    assert.match(refusal(() => edit(dir, { network: 'tiktok', caption: 'Plain text for the listing.' })), /INVALID/);
+  } finally {
+    done();
+  }
+});
+
+test('changing Instagram\'s caption changes the main caption and its network version together', () => {
+  const { dir, done } = networkWorkspace();
+  try {
+    const batch = edit(dir, { network: 'instagram', caption: 'The assistant is live on your site with one script tag.\n\nExplore our services at acme.example (link in bio)' });
+    const plan = JSON.parse(readFileSync(join(dir, 'week-01.json'), 'utf8')) as { posts: Array<{ caption: string; variants: Record<string, { caption: string }> }> };
+    assert.equal(plan.posts[0]?.caption, plan.posts[0]?.variants['instagram']?.caption);
+    assert.match(batch.posts[0]?.captions?.['instagram']?.text ?? '', /one script tag\./);
+  } finally {
+    done();
+  }
+});

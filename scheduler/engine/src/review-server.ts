@@ -13,7 +13,7 @@
  *   GET  /review/brands/<brand>/facts      the facts found on the site; POST .../facts/<factId>/confirm|remove|restore {"by":"..."}
  *   GET  /review/copy                                                              the written posts waiting to be kept or dropped, before any picture is bought
  *   POST /review/copy/<brand>/<week-NN.json>/<postId>/keep|drop   {"by":"..."}
- *   PUT  /review/copy/<brand>/<week-NN.json>/<postId>/edit   {"by":"...","headline":"...","caption":"..."}   (checked like the writer's own words; 422 when refused)
+ *   PUT  /review/copy/<brand>/<week-NN.json>/<postId>/edit   {"by":"...","headline":"...","caption":"...","network":"linkedin"}   (network optional: the caption of that network; checked like the writer's own words; 422 when refused)
  *   POST /review/copy/<brand>/<week-NN.json>/close   {"by":"..."}   put a batch away without drawing it
  *
  * Everything is decided here, on the server, by the review store: the browser never says what is approvable. A version id names its brand
@@ -162,7 +162,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const facts = (await loadFacts(brandDir))?.facts ?? [];
           const headline = typeof body['headline'] === 'string' ? body['headline'] : undefined;
           const caption = typeof body['caption'] === 'string' ? body['caption'] : undefined;
-          return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), by: text(body['by'], 80), facts }) });
+          const network = typeof body['network'] === 'string' ? body['network'] : undefined;
+          return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), by: text(body['by'], 80), facts }) });
         }
         return send(res, 404, { error: 'Not found' });
       }

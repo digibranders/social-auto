@@ -1,3 +1,4 @@
+import { isNetwork, type PostVariants } from './networks.ts';
 import type { PostOffer } from './offer.ts';
 import { readFile } from 'node:fs/promises';
 import { ArtDirectionError, HIERARCHIES, PICTURE_ROLES, TEXT_ZONES, parseArtBrief, type ArtBrief } from './art-brief.ts';
@@ -181,6 +182,8 @@ export interface PlannedPost {
   revisitOf?: string;
   caption: string;
   hashtags: string[];
+  /** A caption for each network the post is for, when the plan was written for networks; a network without one uses `caption`. */
+  variants?: PostVariants;
 }
 
 /** How the posters of a plan are made. A plan names its mode: "art_v1" posts go through art direction and measured rendering and never fall back to the older renderer unless that was explicitly allowed. "ai_v1" posters are drawn whole by the picture model and are published only from an approved version in the review store (review-store.ts), never from the plan. Plans without a mode are "legacy". */
@@ -412,6 +415,19 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     caption: requireString(raw, 'caption', where),
     hashtags,
   };
+  if (raw['variants'] !== undefined) {
+    const variants = raw['variants'];
+    if (!isObject(variants)) throw new ContentValidationError(where, '"variants" must be an object keyed by network');
+    const parsed: PostVariants = {};
+    for (const [network, value] of Object.entries(variants)) {
+      if (!isNetwork(network)) throw new ContentValidationError(where, `"variants.${network}" is not a network`);
+      if (!isObject(value) || typeof value['caption'] !== 'string' || !value['caption'].trim() || value['caption'].length > 2200) throw new ContentValidationError(where, `"variants.${network}.caption" must be text of at most 2200 characters`);
+      const tags = value['hashtags'];
+      if (!Array.isArray(tags) || !tags.every((h) => typeof h === 'string' && /^#\S+$/.test(h)) || tags.length > INSTAGRAM_HASHTAG_LIMIT) throw new ContentValidationError(where, `"variants.${network}.hashtags" must be an array of #tags`);
+      parsed[network] = { caption: value['caption'].trim(), hashtags: tags as string[], ...(value['fallback'] === true ? { fallback: true } : {}) };
+    }
+    if (Object.keys(parsed).length > 0) post.variants = parsed;
+  }
   if (mode === 'ai') post.imagePrompt = requireString(raw, 'imagePrompt', where);
   if (raw['layout'] !== undefined) {
     if (!isLayoutName(raw['layout'])) throw new ContentValidationError(where, `"layout" must be one of ${LAYOUTS.join(', ')}`);

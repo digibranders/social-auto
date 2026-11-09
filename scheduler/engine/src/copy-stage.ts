@@ -27,6 +27,8 @@ export interface CopyPost {
   caption: string;
   /** Hash of the headline and caption this entry was made from. */
   contentHash: string;
+  /** The caption of each network the post is written for (the main caption is Instagram's); `fallback` marks one that is the main caption adapted. */
+  captions?: Record<string, { text: string; edited?: boolean; fallback?: boolean }>;
   /** True once the owner has changed the writer's words. */
   edited?: boolean;
   /** A note for the owner, such as "weak headline: it tells the reader nothing specific". Advice only: the owner can still keep the post. */
@@ -51,7 +53,13 @@ export interface CopyBatch {
 export const PLAN_FILE = /^week-\d{2,4}\.json$/;
 const POST_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;
 
-export const copyHash = (headline: string, caption: string): string => createHash('sha256').update(JSON.stringify({ headline, caption })).digest('hex');
+/** The hash of the words a choice was made about: the headline, the main caption and, when the post is written for networks, every network's caption. */
+export const copyHash = (headline: string, caption: string, captions?: Record<string, string>): string => {
+  const keys = captions ? Object.keys(captions).sort() : [];
+  return createHash('sha256').update(JSON.stringify({ headline, caption, ...(keys.length > 0 ? { captions: keys.map((k) => [k, (captions as Record<string, string>)[k]]) } : {}) })).digest('hex');
+};
+
+const textsOf = (captions?: Record<string, { text: string }>): Record<string, string> | undefined => (captions ? Object.fromEntries(Object.entries(captions).map(([k, v]) => [k, v.text])) : undefined);
 
 export class CopyStage {
   private readonly dir: string;
@@ -95,14 +103,14 @@ export class CopyStage {
   }
 
   /** Records a freshly written batch. Opening the same batch again changes nothing (decisions already made stay). */
-  open(planFile: string, posts: ReadonlyArray<{ postId: string; headline: string; caption: string; advice?: string }>): CopyBatch {
+  open(planFile: string, posts: ReadonlyArray<{ postId: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>): CopyBatch {
     return this.change(planFile, (existing) => {
       if (existing) return { batch: existing, result: existing };
       const batch: CopyBatch = {
         brand: this.brand,
         planFile,
         createdAt: this.now().toISOString(),
-        posts: posts.map((p) => ({ postId: p.postId, headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
+        posts: posts.map((p) => ({ postId: p.postId, headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
       };
       return { batch, result: batch };
     });
@@ -138,13 +146,13 @@ export class CopyStage {
    * The posts to draw: kept, and still exactly the words that were kept. `current` is the plan as it is now; a post whose words changed
    * since the choice is left out and named in `changed`.
    */
-  toDraw(planFile: string, current: ReadonlyArray<{ postId: string; headline: string; caption: string }>): { postIds: string[]; changed: string[] } {
+  toDraw(planFile: string, current: ReadonlyArray<{ postId: string; headline: string; caption: string; captions?: Record<string, string> }>): { postIds: string[]; changed: string[] } {
     const batch = this.read(planFile);
     const postIds: string[] = [];
     const changed: string[] = [];
     for (const post of batch.posts.filter((p) => p.state === 'kept')) {
       const now = current.find((c) => c.postId === post.postId);
-      if (now && copyHash(now.headline, now.caption) === post.contentHash) postIds.push(post.postId);
+      if (now && copyHash(now.headline, now.caption, now.captions) === post.contentHash) postIds.push(post.postId);
       else changed.push(post.postId);
     }
     return { postIds, changed };
@@ -164,7 +172,7 @@ export class CopyStage {
    * Replaces the words of one post before it is drawn. `applyToPlan` writes the same words into the plan file and runs inside the lock, ahead of this file's own
    * write, so the plan and the list can never disagree; if it throws, nothing changes. The post keeps its choice: a kept post stays kept, with the new words.
    */
-  edit(planFile: string, postId: string, words: { headline: string; caption: string }, by: string, applyToPlan: () => void): CopyBatch {
+  edit(planFile: string, postId: string, words: { headline: string; caption: string; network?: string; networkCaption?: string }, by: string, applyToPlan: () => void): CopyBatch {
     if (!POST_ID.test(postId)) throw new CopyStageError('INVALID', 'that is not a post id');
     if (by.trim() === '') throw new CopyStageError('INVALID', 'who is editing must be given');
     return this.change(planFile, (batch) => {
@@ -176,7 +184,8 @@ export class CopyStage {
       applyToPlan();
       post.headline = words.headline;
       post.caption = words.caption;
-      post.contentHash = copyHash(words.headline, words.caption);
+      if (words.network && words.networkCaption !== undefined && post.captions?.[words.network]) post.captions[words.network] = { text: words.networkCaption, edited: true };
+      post.contentHash = copyHash(words.headline, words.caption, textsOf(post.captions));
       post.edited = true;
       delete post.advice;
       return { batch, result: batch };

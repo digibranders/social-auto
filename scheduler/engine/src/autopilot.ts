@@ -15,6 +15,7 @@
  * when the brand's art.json enables it, is switched off by ART_DIRECTION_DISABLED=1, and needs --allow-paid-ai with --dry-run.
  * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
  * --copy-first (AI route) stops after the posts are written and lists them for the owner to keep or drop; nothing is drawn or paid for.
+ * --networks instagram,linkedin (AI route) also writes each post a caption for each of those networks (stored as the post's `variants`).
  * --draw-kept week-NN.json then draws only the posts the owner kept in that batch, and queues the results for poster review.
  * --plan-only stops after the posts are written (no art direction, pictures or rendering), for a renderer that works from the plan on its own.
  * --review (needs --art) has a vision model look at each finished poster, repairs what can be repaired without a new picture, and rejects the rest
@@ -44,6 +45,8 @@ import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
 import { CopyStage } from './copy-stage.ts';
+import { composeVariant, isNetwork, NETWORKS, variantTexts, type Network, type PostVariants } from './networks.ts';
+import { writeNetworkCaptions } from './network-captions.ts';
 import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines } from './headline-gate.ts';
 import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
 import { recordRenderedArt } from './art-review.ts';
@@ -147,6 +150,7 @@ async function main(): Promise<void> {
       'plan-only': { type: 'boolean', default: false },
       'copy-first': { type: 'boolean', default: false },
       'draw-kept': { type: 'string' },
+      networks: { type: 'string' },
       'review-budget': { type: 'string', default: '0.015' },
       'allow-paid-ai': { type: 'boolean', default: false },
       'require-logo': { type: 'boolean', default: false },
@@ -157,6 +161,9 @@ async function main(): Promise<void> {
   if (!values.site) throw new Error('Usage: --site <website> --channel <instagram username> [--days 7] [--dry-run]');
   const route = values.route;
   if (route !== 'ai' && route !== 'template') throw new Error('--route must be "ai" (the model draws the whole poster) or "template" (our own layout with an AI picture)');
+  const networks = values.networks ? values.networks.split(',').map((n) => n.trim()).filter((n) => n !== '') : [];
+  for (const n of networks) if (!isNetwork(n)) throw new Error(`--networks names ${NETWORKS.join(', ')}; "${n}" is not one of them`);
+  if (networks.length > 0 && route !== 'ai') throw new Error('--networks belongs to the fully AI route');
   const target = values.target;
   const reviewBudget = Number(values['review-budget']);
   if (!Number.isFinite(reviewBudget) || reviewBudget <= 0) throw new Error('--review-budget must be a positive number of dollars');
@@ -270,7 +277,7 @@ async function main(): Promise<void> {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
       const copy = new CopyStage(brandDir, slug);
       const stored = parseWeekPlan(await readJson(join(brandDir, keptFile)), keptFile);
-      const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p) })));
+      const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })));
       for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
       if (postIds.length === 0) throw new Error(`${keptFile} has no kept posts to draw: keep at least one in the dashboard first`);
       // The batch is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
@@ -338,6 +345,14 @@ async function main(): Promise<void> {
       for (const flag of flags) console.log(`    FLAG: ${flag}`);
       await writeFileAtomic(join(brandDir, `art-report-${planFile}`), `${JSON.stringify(directed.report, null, 2)}\n`);
     }
+    if (networks.length > 0 && finalPlan.posts.length > 0) {
+      console.log(`    Writing a caption for each of ${networks.join(', ')}…`);
+      ai.usage.purpose = 'writing';
+      const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+      const written = await writeNetworkCaptions({ ai, networks: networks as Network[], posts: finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), caption: p.caption, hashtags: p.hashtags, facts: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) })) });
+      finalPlan = { ...finalPlan, posts: finalPlan.posts.map((p) => (written.variants[p.id] ? { ...p, variants: written.variants[p.id] as PostVariants } : p)) };
+      console.log(`    Captions: ${written.report.written} of ${written.report.requested} written${written.report.retried ? `, ${written.report.retried} asked for again` : ''}${written.report.fallback.length ? `, ${written.report.fallback.length} use the main caption (${written.report.fallback.map((f) => `${f.postId}/${f.network}`).join(', ')})` : ''}.`);
+    }
     await writeFileAtomic(join(brandDir, planFile), `${JSON.stringify(finalPlan, null, 2)}\n`);
     history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(plan.posts.some((p) => p.factIds) ? { factIds: plan.posts.flatMap((p) => p.factIds ?? []) } : {}) });
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
@@ -354,7 +369,7 @@ async function main(): Promise<void> {
           console.log(`    The headline check could not run (${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}); no advice is shown.`);
         }
       }
-      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })));
+      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })));
       console.log(`3/4 Copy first: ${finalPlan.posts.length} posts are waiting for the owner to keep or drop them. No picture was bought. Then: --draw-kept ${planFile}`);
       return;
     }
