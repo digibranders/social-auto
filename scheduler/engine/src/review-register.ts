@@ -6,6 +6,8 @@ import { basename } from 'node:path';
 import type { BrandingDecision, LogoPlacementRecord } from './branding.ts';
 import type { CreativeReport } from './ai-creative-pipeline.ts';
 import { composeCaption, type Brand, type PlannedPost } from './content.ts';
+import { composeVariant, NETWORKS, type PostVariant } from './networks.ts';
+import { inspectLogoFile } from './branding.ts';
 import type { EvidenceFact } from './evidence.ts';
 import { ReviewStore, type EvidenceSnapshot, type PostVersion } from './review-store.ts';
 
@@ -33,11 +35,11 @@ export function registerForReview(input: {
       return fact ? [{ factId: fact.id, text: fact.text, quote: fact.source.quote, url: fact.source.url, context: fact.source.context }] : [];
     });
     const last = result.attempts.at(-1);
-    versions.push(store.addVersion({
+    const size = (() => { try { return inspectLogoFile(result.file as string); } catch { return { width: 1024, height: 1024 }; } })();
+    const base = {
       postId: post.id,
       planFile: input.planFile,
       headline: result.manifest.headline,
-      caption: composeCaption(post),
       ctaUrl: post.cta?.evidence?.url ?? input.brand.cta?.evidence?.url ?? input.brand.website,
       factIds: post.factIds ?? [],
       evidence,
@@ -46,7 +48,12 @@ export function registerForReview(input: {
       attempts: result.attempts.length,
       costUsd: result.costUsd,
       ...(input.branding ? { branding: brandingFor(input.branding, result.logo) } : {}),
-    }));
+    };
+    // A post written for networks gets one version per network, each with its own caption, all showing this picture (networks of the same shape share one picture);
+    // a post written without networks is one version, as before.
+    const networks = NETWORKS.filter((n) => post.variants?.[n] !== undefined);
+    if (networks.length === 0) versions.push(store.addVersion({ ...base, caption: composeCaption(post) }));
+    else for (const network of networks) versions.push(store.addVersion({ ...base, network, width: size.width, height: size.height, caption: composeVariant(post.variants?.[network] as PostVariant) }));
   }
   return versions;
 }
