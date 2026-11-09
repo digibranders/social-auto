@@ -5,6 +5,7 @@
  * A poster that is rejected twice, or whose budget is spent, is dropped: fewer posters, never a poster that did not pass. An accepted poster is only
  * "pending": nothing here approves, schedules or publishes anything.
  */
+import { SQUARE_SHAPE, type PictureShape } from './networks.ts';
 import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AiConfig } from './ai.ts';
@@ -71,7 +72,7 @@ export interface CreativeReport {
 
 export interface CreativeDeps {
   /** For tests: replaces the picture call. */
-  scene?: (prompt: string, outPath: string) => Promise<void>;
+  scene?: (prompt: string, outPath: string, shape: PictureShape) => Promise<void>;
   /** For tests: replaces the vision call. */
   review?: (imagePath: string, message: string, reading: number) => Promise<CreativeReview>;
   /** How many independent readings a poster gets first (two); a third is made only to settle a disagreement. */
@@ -111,6 +112,8 @@ export interface CreativeRunInput {
    * with it off every poster is drawn on its own from the prompt contract, and no director call, embedding, comparison or side-by-side check is made.
    */
   directorEnabled?: boolean;
+  /** The shape every poster of this run is drawn in; square when not given. A run is of one shape: a post that needs two shapes is drawn by two runs. */
+  shape?: PictureShape;
   /** The brand's real logo, when the posters are to carry it: the file (checked and frozen), its shape and the hash it must still have. */
   logo?: { path: string; kind: 'wordmark' | 'symbol'; sha256: string };
   log?: (message: string) => void;
@@ -168,8 +171,9 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   await mkdir(outDir, { recursive: true });
   const report: CreativeReport = { brand: input.brandSlug, generatedAt: (deps.now?.() ?? new Date()).toISOString(), results: [] };
 
-  const scene = deps.scene ?? (async (prompt: string, outPath: string): Promise<void> => {
-    await generateScene(ai, { prompt, outPath, width: 1024, height: 1024, seed: 1 }, { openaiImages: 0 });
+  const shape = input.shape ?? SQUARE_SHAPE;
+  const scene = deps.scene ?? (async (prompt: string, outPath: string, drawShape: PictureShape): Promise<void> => {
+    await generateScene(ai, { prompt, outPath, width: drawShape.width, height: drawShape.height, seed: 1 }, { openaiImages: 0 });
   });
   const look = deps.review ?? ((imagePath: string, message: string, reading: number): Promise<CreativeReview> => reviewCreative(ai, imagePath, message, undefined, reading, allowedTexts));
   const readings = deps.readings ?? 2;
@@ -260,19 +264,20 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
       continue;
     }
     if (concept) result.concept = concept;
-    ai.usage.post = `${input.brandSlug}-${post.id}`;
+    // A wide poster of a post is its own poster to the ledger, so its picture allowance and cap are its own.
+    ai.usage.post = `${input.brandSlug}-${post.id}${shape.shape === 'square' ? '' : `-${shape.shape}`}`;
     // The ledger counts a poster's calls under the same id.
     const ledgerId = ai.usage.post;
     let note: string | undefined;
     try {
       for (let n = 1; n <= maxAttempts; n++) {
         const imageFile = join(outDir, `${post.id}.attempt${n}.jpg`);
-        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
+        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
         const attempt: CreativeAttempt = { n, prompt, imageFile, readings: [], accepted: false, defects: [] };
         result.attempts.push(attempt);
         log(`${post.id}: attempt ${n}, drawing the poster…`);
         try {
-          await scene(prompt, imageFile);
+          await scene(prompt, imageFile, shape);
         } catch (error) {
           if (error instanceof BudgetError) throw error;
           attempt.error = `the picture could not be made: ${error instanceof Error ? error.message : String(error)}`;
@@ -317,8 +322,8 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
         const file = join(outDir, `${post.id}.jpg`);
         let logoRecord: LogoPlacementRecord | undefined;
         if (verdict.accepted && input.logo) {
-          // The model draws 1024 pixel squares; a picture that cannot be measured is taken to be one.
-          const size = (() => { try { return inspectLogoFile(imageFile); } catch { return { width: 1024, height: 1024 }; } })();
+          // The picture is measured as drawn; one that cannot be measured is taken to be the shape that was asked for.
+          const size = (() => { try { return inspectLogoFile(imageFile); } catch { return { width: shape.width, height: shape.height }; } })();
           const boxes = textBoxesIn(attempt.readings, size.width, size.height);
           const placed = boxes === null
             ? ({ placed: false, reason: 'NO_SAFE_PLACEMENT', detail: 'a piece of text on the poster could not be located, so no place can be called clear of it' } as PlacementFailure)

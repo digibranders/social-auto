@@ -45,7 +45,7 @@ import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
 import { CopyStage } from './copy-stage.ts';
-import { composeVariant, isNetwork, NETWORKS, variantTexts, type Network, type PostVariants } from './networks.ts';
+import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
 import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines } from './headline-gate.ts';
 import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
@@ -252,23 +252,41 @@ async function main(): Promise<void> {
       // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
       const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
       console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
-      const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai`);
       const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
       ai.usage.purpose = 'writing';
-      const made = await makeCreatives({
-        ai, brand, brandSlug: slug, brandDir, posts: finalPlan.posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled,
-        // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
-        ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
-        factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
-      });
-      const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
-      console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${finalPlan.posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
-      if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
+      // Networks of the same shape share one picture: a square one for Instagram, Facebook and Google, a wide one for LinkedIn. Each shape is its own run; the editorial
+      // check of the headlines is made once (in the first run), and a post it dropped is not drawn again in another shape.
+      const dropped = new Set<string>();
+      let first = true;
+      let queuedTotal = 0;
+      const usageIds: string[] = [];
+      for (const group of pictureGroups(finalPlan.posts)) {
+        const posts = finalPlan.posts.filter((p) => group.postIds.includes(p.id) && !dropped.has(p.id));
+        if (posts.length === 0) continue;
+        const suffix = group.shape.shape === 'square' ? '' : `-${group.shape.shape}`;
+        const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai${suffix}`);
+        if (group.networks.length > 0) console.log(`    Drawing the ${group.shape.shape} picture for ${group.networks.join(', ')}…`);
+        const made = await makeCreatives({
+          ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape,
+          ...(first ? {} : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
+          // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
+          ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
+          factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
+        });
+        first = false;
+        for (const r of made.results) if (r.status === 'dropped') dropped.add(r.postId);
+        const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
+        console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
+        if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
+        usageIds.push(...posts.map((p) => `${slug}-${p.id}${suffix}`));
+        const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(group.networks.length > 0 ? { networks: group.networks } : {}), ...(branding ? { branding } : {}) });
+        queuedTotal += queued.length;
+        if (made.stoppedBy) break;
+      }
       console.log(ai.usage.format());
       const log = process.env['USAGE_LOG_FILE'];
-      if (log) await appendUsageLog(log, ai.usage.records(slug, finalPlan.posts.map((p) => `${slug}-${p.id}`)));
-      const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts: finalPlan.posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(branding ? { branding } : {}) });
-      console.log(`    ${queued.length} poster${queued.length === 1 ? '' : 's'} added to the owner's review queue.`);
+      if (log) await appendUsageLog(log, ai.usage.records(slug, usageIds));
+      console.log(`    ${queuedTotal} poster version${queuedTotal === 1 ? '' : 's'} added to the owner's review queue.`);
       console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
     };
     if (values['draw-kept']) {

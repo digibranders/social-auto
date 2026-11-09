@@ -23,6 +23,8 @@ export function registerForReview(input: {
   reportFile: string;
   /** How the posters were branded (frozen before anything was bought), recorded with each version. */
   branding?: BrandingDecision;
+  /** Only these networks' versions are registered (the networks this report's pictures are for); a post written for other networks is skipped. */
+  networks?: readonly string[];
 }): PostVersion[] {
   const store = new ReviewStore(input.brandDir, input.brandSlug);
   const versions: PostVersion[] = [];
@@ -51,7 +53,9 @@ export function registerForReview(input: {
     };
     // A post written for networks gets one version per network, each with its own caption, all showing this picture (networks of the same shape share one picture);
     // a post written without networks is one version, as before.
-    const networks = NETWORKS.filter((n) => post.variants?.[n] !== undefined);
+    const written = NETWORKS.filter((n) => post.variants?.[n] !== undefined);
+    const networks = input.networks ? written.filter((n) => input.networks?.includes(n)) : written;
+    if (written.length > 0 && networks.length === 0) continue;
     if (networks.length === 0) versions.push(store.addVersion({ ...base, caption: composeCaption(post) }));
     else for (const network of networks) versions.push(store.addVersion({ ...base, network, width: size.width, height: size.height, caption: composeVariant(post.variants?.[network] as PostVariant) }));
   }

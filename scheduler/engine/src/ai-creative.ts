@@ -9,6 +9,7 @@
  * code adds afterwards to a quiet corner the model was asked to leave (`brandSignoff: 'logo'`, or a symbol beside a drawn name), or by its name in ordinary
  * lettering and its address.
  */
+import type { PictureShape } from './networks.ts';
 import { readFile } from 'node:fs/promises';
 import type { AiConfig } from './ai.ts';
 import { chatJson } from './llm.ts';
@@ -46,6 +47,8 @@ export interface CreativeContext {
   retryNote?: string;
   /** Set when the brand's real logo will be added afterwards: the model leaves a quiet corner for it. `wordmark` carries the name itself; `symbol` does not. */
   logo?: 'wordmark' | 'symbol';
+  /** The shape the poster is drawn in; square when not given. */
+  shape?: PictureShape;
 }
 
 /** The words that ask for room for the logo, and say what is not to be drawn in its place. */
@@ -58,8 +61,10 @@ function logoSpaceLines(manifest: TextManifest, kind: 'wordmark' | 'symbol'): st
 
 /** The prompt for one whole poster. It names exactly what may be written on it and what must never appear, and leaves the composition to the model. */
 export function buildCreativePrompt(manifest: TextManifest, context: CreativeContext): string {
+  // The picture's shape in words: a wide poster is composed for a wide frame, never a square one cropped.
+  const shapeWords = context.shape?.shape === 'wide' ? 'wide landscape (3:2, clearly wider than it is tall, composed for that wide frame)' : 'square (1:1)';
   const lines = [
-    'Generate one complete, original, square (1:1) social media advertisement. The whole poster, including typography, artwork, layout, hierarchy and composition, is designed by you as one unified creative: do not use a fixed poster template.',
+    'Generate one complete, original, ' + shapeWords + ' social media advertisement. The whole poster, including typography, artwork, layout, hierarchy and composition, is designed by you as one unified creative: do not use a fixed poster template.',
     'TEXT CONTRACT. The only visible text on the poster is the following, each exactly once and spelled character for character:',
     `1. HEADLINE: "${manifest.headline}"`,
     ...(manifest.subline ? [`2. SUPPORTING LINE: "${manifest.subline}"`] : []),

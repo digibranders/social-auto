@@ -625,3 +625,29 @@ test('with the director off, a poster that shows people when the batch is alread
     ctx.done();
   }
 });
+
+test('a wide run asks the picture model for the wide size and the prompt for a wide frame; a square run is as before', async () => {
+  const ctx = setup();
+  try {
+    const seen: Array<{ prompt: string; width: number; height: number }> = [];
+    const draw = (shape: { shape: 'square' | 'wide'; width: number; height: number }) => makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, `out-${shape.shape}`), shape, factOf: () => 'OyeChats answers from your own documents.',
+      posts: [post('p1', 'Answers from your own docs')],
+      deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
+        scene: async (prompt, out, s) => { seen.push({ prompt, width: s.width, height: s.height }); writeFileSync(out, 'x'); },
+        review: async () => review(['Answers from your own docs', 'OyeChats', 'oyechats.com']),
+      },
+    });
+    const square = await draw({ shape: 'square', width: 1024, height: 1024 });
+    const wide = await draw({ shape: 'wide', width: 1536, height: 1024 });
+    assert.equal(square.results[0]?.status, 'accepted');
+    assert.equal(wide.results[0]?.status, 'accepted');
+    assert.deepEqual(seen.map((s) => [s.width, s.height]), [[1024, 1024], [1536, 1024]]);
+    assert.match(seen[0]?.prompt ?? '', /square \(1:1\)/);
+    assert.match(seen[1]?.prompt ?? '', /wide landscape \(3:2/);
+    assert.doesNotMatch(seen[1]?.prompt ?? '', /square \(1:1\)/);
+  } finally {
+    ctx.done();
+  }
+});
