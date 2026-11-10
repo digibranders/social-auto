@@ -133,6 +133,7 @@ function requireEnv(name: string, envPath: string): string {
 
 class PageModeError extends Error {}
 class NothingDrawnError extends Error {}
+class PartialDrawError extends Error {}
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -337,6 +338,10 @@ async function main(): Promise<void> {
       const drawn = await drawPosters({ ...stored, renderMode: 'ai_v1', posts: stored.posts.filter((p) => drawIds.includes(p.id)) }, keptFile);
       // A draw that left nothing for the owner to review is a failed draw, not a finished one: it is told as such, and what is missing can be asked for again.
       if (drawn.queued === 0) throw new NothingDrawnError(drawn.stoppedBy ? `it stopped before any picture was accepted: ${drawn.stoppedBy}` : 'no picture passed the checks, so there is nothing to review');
+      // Some posts drawn and some not (a limit reached part-way, or a post the checks refused): the pictures made wait for review, and what is missing can be asked for again.
+      const haveVersions = new Set(new ReviewStore(brandDir, slug).list().filter((i) => i.version.planFile === keptFile).map((i) => i.version.postId));
+      const missing = drawIds.filter((id) => !haveVersions.has(id));
+      if (missing.length > 0) throw new PartialDrawError(`${missing.length} of ${drawIds.length} kept post${drawIds.length === 1 ? '' : 's'} got no picture (${drawn.stoppedBy ?? 'the checks refused every try'}); the rest are waiting for review`);
       return;
     }
     if (values['semantic-check'] && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--semantic-check makes one model request per batch of posts: with --dry-run it needs --allow-paid-ai');
@@ -503,6 +508,7 @@ if (import.meta.main) {
   main().catch((error: unknown) => {
     if (error instanceof PublishingDisabledError) console.error(`PUBLISHING_DISABLED: ${error.message}`);
     else if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    else if (error instanceof PartialDrawError) console.error(`PARTIAL_DRAW: ${error.message}`);
     else if (error instanceof NothingDrawnError) console.error(`NOTHING_DRAWN: ${error.message}`);
     else if (error instanceof PageModeError) console.error(`PAGE_MODE_UNAVAILABLE: ${error.message}`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);

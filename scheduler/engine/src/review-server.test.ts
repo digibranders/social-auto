@@ -371,6 +371,10 @@ test('jobs: a failed draw can be retried once, and a draw that is waiting, runni
     assert.notEqual(second.job.id, first.job.id);
     assert.equal(second.job.retry, true);
     assert.equal(((await (await draw({ retry: true })).json()) as { job: { id: string } }).job.id, second.job.id, 'a second retry while that one waits answers with it');
+    const change = (path: string, method: string, body: Record<string, unknown>) => s.call(`/review/copy/acme/week-01.json/${path}`, { method, body: JSON.stringify({ by: 'owner', ...body }) });
+    assert.equal((await change('p1/drop', 'POST', {})).status, 409, 'once drawing is asked for, the choices are final');
+    assert.equal((await change('p1/edit', 'PUT', { headline: 'New words', caption: 'New caption' })).status, 409, 'and so are the words');
+    assert.equal((await change('close', 'POST', {})).status, 409, 'and the batch cannot be put away under the runner');
   } finally {
     await s.done();
   }

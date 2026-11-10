@@ -219,7 +219,7 @@ export function jobText(job: JobView): string {
   if (job.state === 'queued') return `${what}: waiting for its turn`;
   if (job.state === 'running') return `${what}: ${job.step ? STEP_WORDS[job.step] ?? 'working' : 'starting'}`;
   if (job.state === 'succeeded') return job.kind === 'copy' ? `${what}: done, the posts are waiting for you below` : `${what}: done, the pictures are waiting for you to approve`;
-  return `${what}: stopped. ${job.error ?? 'It did not finish.'} Nothing was published.`;
+  return `${what}: stopped. ${(job.error ?? 'It did not finish').replace(/[.\s]+$/, '')}. Nothing was published.`;
 }
 
 /** Whether a website address looks like something the service will accept: a real domain, with or without https://. */

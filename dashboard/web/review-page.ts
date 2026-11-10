@@ -171,7 +171,7 @@ function jobsView(): HTMLElement | null {
   return h('section', { class: 'rv-copy rv-jobs', 'aria-label': 'What is being made' }, h('h3', {}, 'What is being made'), ...state.jobs.map((j) => h('p', { class: `rv-job rv-job-${j.state}`, role: j.state === 'failed' ? 'alert' : 'status' }, jobText(j))));
 }
 
-function postCaptions(batch: CopyBatch, p: CopyPost, redraw: () => void): HTMLElement[] {
+function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: () => void): HTMLElement[] {
   const batchKey = `${batch.brand}|${batch.planFile}`;
   const entries: Array<{ network: string; label: string; text: string; edited: boolean }> = p.captions && Object.keys(p.captions).length > 0
     ? Object.entries(p.captions).map(([network, c]) => ({ network, label: NETWORK_NAME[network] ?? network, text: c.text, edited: c.edited === true }))
@@ -184,7 +184,7 @@ function postCaptions(batch: CopyBatch, p: CopyPost, redraw: () => void): HTMLEl
         h('small', { class: 'muted' }, `${e.label}${e.edited ? ' · edited by you' : ''}`),
         h('p', {}, body),
         hashtags ? h('p', { class: 'muted' }, hashtags) : null,
-        button('Edit', 'btn', () => { state.editing = { batch: batchKey, postId: p.postId, network: e.network }; redraw(); }, `Edit the ${e.label} words of: ${p.headline}`, state.busy || batch.drawnAt !== undefined));
+        button('Edit', 'btn', () => { state.editing = { batch: batchKey, postId: p.postId, network: e.network }; redraw(); }, `Edit the ${e.label} words of: ${p.headline}`, state.busy || locked));
     }
     const editing = state.editing as NonNullable<State['editing']>;
     const headline = h('input', { class: 'rv-input', type: 'text', maxlength: '300', 'aria-label': 'Headline' });
@@ -220,6 +220,8 @@ function copyView(redraw: () => void): HTMLElement | null {
       const batchKey = `${batch.brand}|${batch.planFile}`;
       // A batch is drawn once only: after it was asked for, the button says where it stands instead.
       const drawJob = state.jobs.find((j) => j.kind === 'draw' && j.brand === batch.brand && j.planFile === batch.planFile);
+      // Once drawing is asked for the choices and words are final.
+      const locked = batch.drawnAt !== undefined || drawJob !== undefined;
       const client = h('input', { class: 'rv-input', type: 'text', maxlength: '63', 'aria-label': 'Client name', value: state.clientFor[batchKey] ?? batch.brand });
       client.value = state.clientFor[batchKey] ?? batch.brand;
       client.addEventListener('input', () => { state.clientFor[batchKey] = client.value.trim().toLowerCase(); });
@@ -232,12 +234,12 @@ function copyView(redraw: () => void): HTMLElement | null {
           'div',
           { class: `rv-copy-post rv-copy-${p.state}` },
           h('p', {}, h('b', {}, p.headline), p.edited ? ' (edited by you)' : ''),
-          ...postCaptions(batch, p, redraw),
+          ...postCaptions(batch, p, locked, redraw),
           p.advice ? h('p', { class: 'rv-copy-advice' }, `Suggested drop: ${p.advice}`) : null,
           h('div', { class: 'rv-actions' },
             h('span', {}, p.state === 'kept' ? 'Kept' : p.state === 'dropped' ? 'Dropped' : 'Waiting for you'),
-            button('Keep', `btn${p.state === 'kept' ? ' btn-primary' : ''}`, () => void chooseCopy(batch, p.postId, 'keep', redraw), `Keep: ${p.headline}`, state.busy || batch.drawnAt !== undefined),
-            button('Drop', 'btn', () => void chooseCopy(batch, p.postId, 'drop', redraw), `Drop: ${p.headline}`, state.busy || batch.drawnAt !== undefined),
+            button('Keep', `btn${p.state === 'kept' ? ' btn-primary' : ''}`, () => void chooseCopy(batch, p.postId, 'keep', redraw), `Keep: ${p.headline}`, state.busy || locked),
+            button('Drop', 'btn', () => void chooseCopy(batch, p.postId, 'drop', redraw), `Drop: ${p.headline}`, state.busy || locked),
           ),
         )),
         h('div', { class: 'rv-actions rv-draw' },
@@ -398,6 +400,9 @@ function compareView(redraw: () => void): HTMLElement {
 }
 
 export function reviewPage(redraw: () => void): HTMLElement {
+  // The page redraws itself now and then: a box the owner is typing in keeps its focus and cursor (found by its label in the new page).
+  const typing = document.activeElement;
+  const focused = (typing instanceof HTMLInputElement || typing instanceof HTMLTextAreaElement) && typing.closest('.rv') !== null && typing.getAttribute('aria-label') ? { label: typing.getAttribute('aria-label') as string, start: typing.selectionStart, end: typing.selectionEnd } : null;
   if (state.queue === null && !state.error) void loadQueue(redraw);
   const tabs = h('div', { class: 'rv-tabs', role: 'tablist' }, ...REVIEW_FILTERS.map((f) => {
     const tab = button(f.label, `btn${state.filter === f.key ? ' btn-primary' : ''}`, () => { state.filter = f.key; state.queue = null; state.openId = null; state.detail = null; state.error = null; redraw(); }, f.label);
@@ -412,7 +417,7 @@ export function reviewPage(redraw: () => void): HTMLElement {
   }));
   const list = h('div', { class: 'rv-list' }, ...(state.queue ?? []).map((p) => card(p, redraw)));
   const empty = state.queue !== null && state.queue.length === 0 ? h('p', { class: 'empty' }, state.filter === 'pending' ? 'Nothing is waiting for you.' : 'Nothing here yet.') : null;
-  return h(
+  const page = h(
     'div',
     { class: 'rv' },
     state.notice ? h('p', { class: 'rv-notice', role: 'status' }, state.notice) : null,
@@ -427,6 +432,15 @@ export function reviewPage(redraw: () => void): HTMLElement {
     state.view === 'compare' && state.queue !== null ? compareView(redraw) : null,
     h('div', { class: 'rv-grid' }, state.view === 'compare' ? h('div', {}) : h('div', {}, list, empty), state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
   );
+  if (focused) {
+    setTimeout(() => {
+      const box = [...page.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')].find((e) => e.getAttribute('aria-label') === focused.label);
+      if (!box || !page.isConnected || document.activeElement === box) return;
+      box.focus();
+      if (focused.start !== null && focused.end !== null) box.setSelectionRange(focused.start, focused.end);
+    }, 0);
+  }
+  return page;
 }
 
 /** Forgets what was loaded, so the page asks again (after a refresh or when the owner comes back to it). */
