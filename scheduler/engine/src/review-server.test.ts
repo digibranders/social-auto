@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createReviewServer } from './review-server.ts';
 import { ReviewStore, type NewVersion } from './review-store.ts';
+import { JobStore } from './job-store.ts';
 import { CopyStage } from './copy-stage.ts';
 
 const SECRET = 'test-secret-0123456789';
@@ -338,6 +339,38 @@ test('jobs: with no length given a client is written two posts for a week on two
     assert.deepEqual([month.job.days, month.job.weekdays.length], [12, 3]);
     assert.equal((await post({ kind: 'copy', site: 'rhythm-three.example.com', weeks: 9, by: 'owner' })).status, 400);
     assert.equal((await post({ kind: 'copy', site: 'rhythm-three.example.com', postsPerWeek: 0, by: 'owner' })).status, 400);
+  } finally {
+    await s.done();
+  }
+});
+
+test('jobs: a failed draw can be retried once, and a draw that is waiting, running or done cannot', async () => {
+  const s = await start();
+  try {
+    new CopyStage(join(s.root, 'brands', 'acme'), 'acme').open('week-01.json', [{ postId: 'p1', headline: 'H one', caption: 'C one' }]);
+    writeFileSync(join(s.root, 'brands', 'acme', 'brand.json'), JSON.stringify({ website: 'https://acme.example.com' }));
+    const weekPost = { id: 'p1', date: '2099-11-10T10:00:00+05:30', painPoint: 'p', mode: 'ai', headline: 'H', subline: '', caption: 'C', hashtags: [], imagePrompt: 'a picture' };
+    writeFileSync(join(s.root, 'brands', 'acme', 'week-01.json'), JSON.stringify({ brand: 'acme', timezone: '+05:30', renderMode: 'ai_v1', posts: [weekPost] }));
+    await s.call('/review/copy/acme/week-01.json/p1/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    const draw = (body: Record<string, unknown> = {}) => s.call('/review/copy/acme/week-01.json/draw', { method: 'POST', body: JSON.stringify({ by: 'owner', ...body }) });
+    const first = (await (await draw()).json()) as { job: { id: string } };
+    const early = await draw({ retry: true });
+    assert.equal(early.status, 200, 'a retry while the first is waiting answers with the first');
+    assert.equal(((await early.json()) as { job: { id: string } }).job.id, first.job.id);
+    const store = new JobStore(join(s.root, 'jobs'));
+    new CopyStage(join(s.root, 'brands', 'acme'), 'acme').markDrawn('week-01.json');
+    const listed = async (): Promise<number> => ((await (await s.call('/review/copy')).json()) as { batches: unknown[] }).batches.length;
+    assert.equal(await listed(), 0, 'a drawn batch is no longer waiting for choices');
+    store.claim(1, 1);
+    store.update(first.job.id, { state: 'failed', error: { code: 'BUDGET_EXHAUSTED', message: 'the day is spent' } });
+    assert.equal(await listed(), 1, 'but one whose draw stopped stays listed so the draw can be asked for again');
+    assert.equal(((await (await draw()).json()) as { job: { id: string } }).job.id, first.job.id, 'without retry the failed job is what answers');
+    const retried = await draw({ retry: true });
+    assert.equal(retried.status, 202);
+    const second = (await retried.json()) as { job: { id: string; retry?: boolean } };
+    assert.notEqual(second.job.id, first.job.id);
+    assert.equal(second.job.retry, true);
+    assert.equal(((await (await draw({ retry: true })).json()) as { job: { id: string } }).job.id, second.job.id, 'a second retry while that one waits answers with it');
   } finally {
     await s.done();
   }

@@ -1,7 +1,10 @@
 /** Small rules about caption text, kept apart so the places that compose captions can all use them. */
 
-/** A sentence that ends in two full stops (the writer's full stop plus one added when the closing line was joined on) ends in one; an ellipsis ("...") is left alone. */
-export const tidyPunctuation = (text: string): string => text.replace(/(?<![.…])\.{2}(?![.…])/g, '.');
+/**
+ * A sentence that ends in two full stops (the writer's full stop plus one added when the closing line was joined on) ends in one; an ellipsis ("...") is left alone.
+ * The engine's own closing line "(link in bio)" is not a sentence: a full stop the writer put after it is dropped.
+ */
+export const tidyPunctuation = (text: string): string => text.replace(/(?<![.…])\.{2}(?![.…])/g, '.').replace(/(\(link in bio\))\.+/gi, '$1');
 
 const ONLY_TAGS = /^(?:#[^\s#]+\s*)+$/;
 

@@ -18,7 +18,7 @@ export const DRAW_TIMEOUT_MS = 45 * 60_000;
 export function engineArgs(job: Job): string[] {
   if (job.kind === 'draw') {
     if (!job.planFile) throw new Error('a draw job needs the batch to draw');
-    return ['src/autopilot.ts', '--site', job.site, '--draw-kept', job.planFile];
+    return ['src/autopilot.ts', '--site', job.site, '--draw-kept', job.planFile, ...(job.retry ? ['--redraw-missing'] : [])];
   }
   const networks = job.networks.length > 0 ? ['--networks', job.networks.join(',')] : [];
   const rhythm = job.weekdays && job.weekdays.length > 0 ? ['--weekdays', job.weekdays.join(',')] : [];
