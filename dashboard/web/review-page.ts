@@ -1,6 +1,6 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
-import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -33,7 +33,7 @@ interface State {
   jobs: JobView[];
   start: StartForm;
   /** The written post being edited, and which network's caption ('' is the main caption). */
-  editing: { batch: string; postId: string; network: string } | null;
+  editing: { batch: string; postId: string; network: string; draft?: { headline: string; caption: string } } | null;
   /** The client name each batch's pictures are released under; the site's own name until the owner changes it. */
   clientFor: Record<string, string>;
 }
@@ -178,18 +178,27 @@ function postCaptions(batch: CopyBatch, p: CopyPost, redraw: () => void): HTMLEl
     : [{ network: '', label: 'Caption', text: p.caption, edited: p.edited === true }];
   return entries.map((e) => {
     const isEditing = state.editing?.batch === batchKey && state.editing.postId === p.postId && state.editing.network === e.network;
+    const { body, hashtags } = splitHashtags(e.text);
     if (!isEditing) {
       return h('div', { class: 'rv-copy-caption' },
         h('small', { class: 'muted' }, `${e.label}${e.edited ? ' · edited by you' : ''}`),
-        h('p', {}, e.text),
+        h('p', {}, body),
+        hashtags ? h('p', { class: 'muted' }, hashtags) : null,
         button('Edit', 'btn', () => { state.editing = { batch: batchKey, postId: p.postId, network: e.network }; redraw(); }, `Edit the ${e.label} words of: ${p.headline}`, state.busy));
     }
+    const editing = state.editing as NonNullable<State['editing']>;
     const headline = h('input', { class: 'rv-input', type: 'text', maxlength: '300', 'aria-label': 'Headline' });
-    headline.value = p.headline;
+    headline.value = editing.draft?.headline ?? p.headline;
     const caption = h('textarea', { class: 'rv-input rv-textarea', rows: '6', maxlength: '4000', 'aria-label': `${e.label} caption` });
-    caption.value = e.text;
+    caption.value = editing.draft?.caption ?? body;
+    // What is typed is kept in the page's state, so a redraw (the page refreshes itself) does not wipe it.
+    const remember = (): void => { editing.draft = { headline: headline.value, caption: caption.value }; };
+    headline.addEventListener('input', remember);
+    caption.addEventListener('input', remember);
+    // After a redraw the owner carries on typing where they were.
+    if (editing.draft) setTimeout(() => { if (caption.isConnected) { caption.focus(); caption.setSelectionRange(caption.value.length, caption.value.length); } }, 0);
     return h('div', { class: 'rv-copy-caption' },
-      h('small', { class: 'muted' }, `Editing ${e.label}. The words are checked against the website before they are saved.`),
+      h('small', { class: 'muted' }, `Editing ${e.label}. The words are checked against the website before they are saved.${hashtags ? ' The hashtags stay as they are.' : ''}`),
       headline, caption,
       h('div', { class: 'rv-actions' },
         button('Save', 'btn btn-primary', () => void saveEdit(batch, p, e.network, headline.value, caption.value, redraw), 'Save', state.busy),

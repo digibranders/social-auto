@@ -9,6 +9,7 @@ import { checkCopy } from './copy-gate.ts';
 import { checkCopyQuality } from './copy-quality.ts';
 import { CopyStage, CopyStageError, PLAN_FILE, type CopyBatch } from './copy-stage.ts';
 import { composeCaption } from './content.ts';
+import { splitTrailingHashtags } from './caption-text.ts';
 import { composeVariant, isNetwork, NETWORK_RULES, type Network } from './networks.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
 
@@ -51,7 +52,8 @@ export function editCopy(input: {
   const variant = network && network !== 'instagram' ? post.variants?.[network] : undefined;
   if (network && network !== 'instagram' && (!variant || typeof variant.caption !== 'string' || !Array.isArray(variant.hashtags))) throw new CopyStageError('NOT_FOUND', `this post has no caption for ${network}`);
   const headline = (input.headline ?? post.headline).replaceAll('|', '').replace(/\s+/g, ' ').trim();
-  const caption = (input.caption ?? (variant ? (variant.caption as string) : post.caption)).trim();
+  // The caption's own words: a closing run of #tags in what was typed is the hashtags again, which stay as the writer made them (they are not added twice).
+  const caption = splitTrailingHashtags((input.caption ?? (variant ? (variant.caption as string) : post.caption)).trim()).body;
   if (headline === '') throw new CopyStageError('REJECTED', 'the headline cannot be empty');
   if (headline.length > MAX_HEADLINE_CHARS) throw new CopyStageError('REJECTED', `the headline is ${headline.length} characters; a poster can carry at most ${MAX_HEADLINE_CHARS}`);
   if (caption === '') throw new CopyStageError('REJECTED', 'the caption cannot be empty');

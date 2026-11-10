@@ -1,3 +1,4 @@
+import { tidyPunctuation } from './caption-text.ts';
 import { isNetwork, type PostVariants } from './networks.ts';
 import type { PostOffer } from './offer.ts';
 import { readFile } from 'node:fs/promises';
@@ -382,8 +383,7 @@ function parseFeatures(raw: unknown, source: string): BrandFeature[] {
 }
 
 /** Full Instagram caption: body, blank line, hashtags. */
-/** A sentence that ends in two full stops (the writer's full stop plus one added when the closing line was joined on) ends in one; an ellipsis ("...") is left alone. */
-export const tidyPunctuation = (text: string): string => text.replace(/(?<![.\u2026])\.{2}(?![.\u2026])/g, '.');
+export { tidyPunctuation };
 
 export function composeCaption(post: Pick<PlannedPost, 'caption' | 'hashtags'>): string {
   return `${tidyPunctuation(post.caption.trim())}\n\n${post.hashtags.join(' ')}`;

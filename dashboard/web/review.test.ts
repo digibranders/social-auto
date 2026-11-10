@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import { parseRoute, routeHash } from './route.ts';
 
 const good = { versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'w01-d1', versionNumber: 2, status: 'pending', headline: 'H', caption: 'C', createdAt: '2026-11-05T10:00:00Z', costUsd: 0.016 };
@@ -105,4 +105,9 @@ test('jobs are read only where well formed and told in plain words', () => {
 test('a website address is accepted with or without https and refused when it is not a domain', () => {
   for (const good of ['acme.example.com', 'https://www.acme.com/pricing', ' acme.com ']) assert.equal(looksLikeSite(good), true, good);
   for (const bad of ['', 'localhost', '127.0.0.1', 'not a site', 'http://', 'a'.repeat(201)]) assert.equal(looksLikeSite(bad), false, bad);
+});
+
+test('the words of a caption are split from its closing hashtags so an edit does not add them twice', () => {
+  assert.deepEqual(splitHashtags('Words.\n\nVisit acme.com\n\n#One #Two'), { body: 'Words.\n\nVisit acme.com', hashtags: '#One #Two' });
+  assert.deepEqual(splitHashtags('No tags.'), { body: 'No tags.', hashtags: '' });
 });
