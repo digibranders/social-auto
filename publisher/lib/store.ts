@@ -1,3 +1,4 @@
+import { NO_ALERTS, parseAlertLog, type AlertLog } from './missed.js';
 import { NO_PAUSES, parsePauses, type PauseFile } from './pauses.js';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
@@ -185,4 +186,17 @@ export async function loadPauses(): Promise<{ file: PauseFile; etag: string | nu
 
 export function savePauses(file: PauseFile, etag: string | null): Promise<void> {
   return writeJson(PAUSES_PATH, file, etag);
+}
+
+const ALERTS_PATH = 'alerts.json';
+
+/** The notices already sent (the missed-post notice), so each is sent once. */
+export async function loadAlerts(): Promise<{ log: AlertLog; etag: string | null }> {
+  if (!storeConfigured()) return { log: NO_ALERTS, etag: null };
+  const { value, etag } = await readJson(ALERTS_PATH);
+  return { log: value === null ? NO_ALERTS : parseAlertLog(value), etag };
+}
+
+export function saveAlerts(log: AlertLog, etag: string | null): Promise<void> {
+  return writeJson(ALERTS_PATH, log, etag);
 }
