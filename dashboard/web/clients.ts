@@ -31,6 +31,8 @@ export interface ClientSummary {
   weeklyLimit: number;
   /** Every poster made from the website must carry its real logo. */
   requireAuthenticLogo: boolean;
+  /** manual: a person approves each poster in Review. auto: posters that pass the automatic checks are approved by the system and released. */
+  approvalMode: 'manual' | 'auto';
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
@@ -94,6 +96,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       plans: entry?.plans ?? [],
       weeklyLimit: entry?.weeklyLimit ?? WEEKLY_LIMIT_DEFAULT,
       requireAuthenticLogo: entry?.requireAuthenticLogo === true,
+      approvalMode: entry?.approvalMode === 'auto' ? 'auto' : 'manual',
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };

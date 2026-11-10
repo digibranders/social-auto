@@ -3,6 +3,7 @@
  * POST /api/clients?action=add-plan     body: {"brand": "...", "plan": {...}}   (one more plan)
  * POST /api/clients?action=set-limit    body: {"brand": "...", "limit": 3}   (posters a week the website may make for each channel)
  * POST /api/clients?action=set-logo-required  body: {"brand": "...", "required": true}   (every poster must carry the website's real logo)
+ * POST /api/clients?action=set-approval-mode  body: {"brand": "...", "mode": "manual" | "auto"}   (auto: posters that pass the automatic checks are approved by the system)
  * POST /api/clients?action=remove-plan  body: {"brand": "...", "index": 0}
  * POST /api/clients?action=set-website  body: {"brand": "...", "website": "..."}  (empty clears it)
  * POST /api/clients?action=remove    body: {"brand": "..."}
@@ -12,7 +13,7 @@
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
-const ACTIONS = ['add', 'set-website', 'add-plan', 'remove-plan', 'set-limit', 'set-logo-required', 'remove'] as const;
+const ACTIONS = ['add', 'set-website', 'add-plan', 'remove-plan', 'set-limit', 'set-logo-required', 'set-approval-mode', 'remove'] as const;
 const MAX_BODY_BYTES = 4 * 1024;
 const TIMEOUT_MS = 25_000;
 

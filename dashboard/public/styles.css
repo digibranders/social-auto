@@ -592,6 +592,8 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .quota-table td.is-full { color: var(--due, #e0a84a); font-weight: 600; }
 .limit-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: .5rem 0; }
 .limit-select { width: auto; min-width: 4.5rem; }
+.approval-warning { margin: .25rem 0 .75rem; padding: .6rem .8rem; border: 1px solid var(--due, #e0a84a); background: var(--due-bg, transparent); color: var(--due, inherit); border-radius: var(--radius); font-size: .85rem; line-height: 1.4; }
+.approval-warning[hidden] { display: none; }
 .from-website { border: 1px solid var(--cell-border); border-radius: var(--radius); padding: .75rem 1rem; margin: .5rem 0; display: grid; gap: .5rem; }
 .from-website[hidden] { display: none; }
 .rv-branding { border: 1px solid var(--cell-border); border-radius: var(--radius); padding: .75rem 1rem; margin: .75rem 0; display: grid; gap: .4rem; }
