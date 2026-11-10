@@ -132,3 +132,37 @@ test('the list of what is being made is passed on read only, with the secret add
   assert.doesNotMatch(await answer.text(), /review-secret/);
 });
 
+
+test('writing posts for a website, editing, drawing and putting a batch away are passed on with the reviewer named, and only well-formed asks go through', async () => {
+  upstream(202, { job: { id: 'job-abc123-0123abcd' } });
+  const ok = await POST(post({ job: { site: 'https://acme.example.com/pricing', page: true, networks: ['instagram', 'linkedin'], weeks: 2, postsPerWeek: 2 } }));
+  assert.equal(ok.status, 200, 'the relay answers with the job');
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/jobs');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', kind: 'copy', site: 'https://acme.example.com/pricing', networks: ['instagram', 'linkedin'], page: true, weeks: 2, postsPerWeek: 2 });
+  for (const bad of [{ job: { site: '', networks: ['instagram'] } }, { job: { site: 'acme.example.com', networks: ['tiktok'] } }, { job: { site: 'acme.example.com', networks: ['instagram'], weeks: '2' } }, { job: { site: 'acme.example.com', networks: 'instagram' } }]) {
+    assert.equal((await POST(post(bad))).status, 400, JSON.stringify(bad));
+  }
+  calls = [];
+  upstream(200, { ok: true });
+  assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'New words', caption: 'Better caption', network: 'linkedin' } }))).status, 200);
+  assert.equal(calls[0]?.init.method, 'PUT');
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/copy/acme/week-01.json/w01-d1/edit');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', headline: 'New words', caption: 'Better caption', network: 'linkedin' });
+  assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'x', caption: '  ' } }))).status, 400);
+  assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'x', caption: 'y', network: 'tiktok' } }))).status, 400);
+  calls = [];
+  assert.equal((await POST(post({ draw: { brand: 'acme', planFile: 'week-01.json', client: 'acme-foods' } }))).status, 200);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/copy/acme/week-01.json/draw');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', client: 'acme-foods' });
+  assert.equal((await POST(post({ draw: { brand: 'acme', planFile: '../week-01.json' } }))).status, 400);
+  assert.equal((await POST(post({ draw: { brand: 'acme', planFile: 'week-01.json', client: 'Bad Name' } }))).status, 400);
+  calls = [];
+  assert.equal((await POST(post({ close: { brand: 'acme', planFile: 'week-01.json' } }))).status, 200);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/copy/acme/week-01.json/close');
+  calls = [];
+  assert.equal((await GET(get('view=jobs'))).status, 200);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/jobs');
+  assert.equal((await GET(get('view=job&id=job-abc123-0123abcd'))).status, 200);
+  assert.equal((await GET(get('view=job&id=../x'))).status, 400);
+  assert.equal((await POST(post({ draw: { brand: 'acme', planFile: 'week-01.json' } }, { origin: 'https://evil.example' }))).status, 403);
+});

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, parseBranding, parseQueue, queryStatus, REASON_LABELS } from './review.ts';
+import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import { parseRoute, routeHash } from './route.ts';
 
 const good = { versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'w01-d1', versionNumber: 2, status: 'pending', headline: 'H', caption: 'C', createdAt: '2026-11-05T10:00:00Z', costUsd: 0.016 };
@@ -88,3 +88,21 @@ test('with no usable logo the owner is told so, and given the real reason', () =
   assert.equal(plain.rows.length, 1, 'there is no logo to describe');
 });
 
+
+test('jobs are read only where well formed and told in plain words', () => {
+  const jobs = parseJobs({ jobs: [
+    { id: 'job-abc123-0123abcd', kind: 'copy', brand: 'acme', site: 'https://acme.example.com', state: 'running', step: 2 },
+    { id: 'job-abc124-0123abcd', kind: 'draw', brand: 'acme', site: 'https://acme.example.com', state: 'failed', planFile: 'week-03.json', error: { code: 'BUDGET_EXHAUSTED', message: 'the day is spent' } },
+    { id: 5, kind: 'copy' }, { id: 'x', kind: 'weird', brand: 'a', site: 'b', state: 'queued' },
+  ] });
+  assert.equal(jobs.length, 2);
+  assert.equal(jobText(jobs[0] as JobView), 'Writing posts for https://acme.example.com: writing the posts');
+  assert.match(jobText(jobs[1] as JobView), /Drawing the kept posts of acme \(week-03\): stopped\. the day is spent Nothing was published\./);
+  assert.deepEqual(jobs.map(jobActive), [true, false]);
+  assert.deepEqual(parseJobs(null), []);
+});
+
+test('a website address is accepted with or without https and refused when it is not a domain', () => {
+  for (const good of ['acme.example.com', 'https://www.acme.com/pricing', ' acme.com ']) assert.equal(looksLikeSite(good), true, good);
+  for (const bad of ['', 'localhost', '127.0.0.1', 'not a site', 'http://', 'a'.repeat(201)]) assert.equal(looksLikeSite(bad), false, bad);
+});
