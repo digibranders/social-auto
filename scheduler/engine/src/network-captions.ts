@@ -7,7 +7,7 @@
 import type { AiConfig } from './ai.ts';
 import { checkCopy } from './copy-gate.ts';
 import { checkCopyQuality } from './copy-quality.ts';
-import { tidyPunctuation } from './content.ts';
+import { tidyPunctuation } from './caption-text.ts';
 import { chatJson } from './llm.ts';
 import { NETWORK_RULES, type Network, type PostVariant, type PostVariants } from './networks.ts';
 

@@ -233,3 +233,13 @@ export function looksLikeSite(value: string): boolean {
     return false;
   }
 }
+
+const ONLY_TAGS = /^(?:#[^\s#]+\s*)+$/;
+
+/** A caption's own words and the hashtags that close it. The owner edits the words; the hashtags stay as the writer made them (the service adds them back). */
+export function splitHashtags(text: string): { body: string; hashtags: string } {
+  const paragraphs = text.trim().split(/\n{2,}/);
+  const tags: string[] = [];
+  while (paragraphs.length > 1 && ONLY_TAGS.test((paragraphs.at(-1) as string).trim())) tags.unshift((paragraphs.pop() as string).trim());
+  return { body: paragraphs.join('\n\n').trim(), hashtags: tags.join(' ') };
+}

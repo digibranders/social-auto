@@ -34,8 +34,13 @@ export interface PostVariant {
 }
 export type PostVariants = Partial<Record<Network, PostVariant>>;
 
+import { tidyPunctuation } from './caption-text.ts';
+
 /** What is sent for a network: its caption, then its hashtags. */
-export const composeVariant = (variant: PostVariant): string => (variant.hashtags.length > 0 ? `${variant.caption.trim()}\n\n${variant.hashtags.join(' ')}` : variant.caption.trim());
+export const composeVariant = (variant: PostVariant): string => {
+  const words = tidyPunctuation(variant.caption.trim());
+  return variant.hashtags.length > 0 ? `${words}\n\n${variant.hashtags.join(' ')}` : words;
+};
 
 /** The composed caption of each network a post has its own version for, or undefined when it has none. */
 export const variantTexts = (post: { variants?: PostVariants }): Record<string, string> | undefined =>
