@@ -1,6 +1,6 @@
 /**
- * The paid-call ledger. Every call that can cost money is written down BEFORE it is sent, against four independent caps (one poster, one run,
- * one brand's UTC day, the whole deployment's UTC day), and is never repeated by accident:
+ * The paid-call ledger. Every call that can cost money is written down BEFORE it is sent, against five independent caps (one poster, one run,
+ * one brand's UTC day, one brand's UTC month, the whole deployment's UTC day), and is never repeated by accident:
  *
  *   reserve   the largest cost the call may have is counted against every cap; a call that would break one is refused before it is sent;
  *   in_flight the call is marked as sent;
@@ -27,6 +27,8 @@ export interface BudgetLimits {
   perPosterUsd: number;
   perRunUsd: number;
   perBrandDayUsd: number;
+  /** What one brand may spend in a UTC calendar month. A client can be given its own figure (clients.json `spendCapUsd`); this one holds for every other client. */
+  perBrandMonthUsd: number;
   globalDayUsd: number;
   /** Picture purchases (attempts, including failed ones) per poster. There is no automatic regeneration. */
   maxImagesPerPoster: number;
@@ -40,6 +42,8 @@ export const defaultBudgetLimits: BudgetLimits = {
   perPosterUsd: 0.14,
   perRunUsd: 0.6,
   perBrandDayUsd: 1.2,
+  // About 25 posters a month cost $1 to $2 in all; this leaves room for redraws and the website reading, and stops a runaway.
+  perBrandMonthUsd: 8,
   globalDayUsd: 2.0,
   // One picture, and one more only when the first was rejected for a defect a new instruction can fix (see ai-creative-pipeline.ts).
   maxImagesPerPoster: 2,
@@ -47,7 +51,7 @@ export const defaultBudgetLimits: BudgetLimits = {
   imageReserveUsd: 0.05,
 };
 
-export type BudgetRefusal = 'POSTER_BUDGET' | 'RUN_BUDGET' | 'BRAND_DAY_BUDGET' | 'GLOBAL_DAY_BUDGET' | 'IMAGE_LIMIT' | 'REPLAY_BLOCKED' | 'KILL_SWITCH';
+export type BudgetRefusal = 'POSTER_BUDGET' | 'RUN_BUDGET' | 'BRAND_DAY_BUDGET' | 'BRAND_MONTH_BUDGET' | 'GLOBAL_DAY_BUDGET' | 'IMAGE_LIMIT' | 'REPLAY_BLOCKED' | 'KILL_SWITCH';
 
 export class BudgetError extends Error {
   readonly code: BudgetRefusal;
@@ -217,7 +221,7 @@ export class PaidLedger {
   }
 
   /** What each cap has used and may still give, as of now. */
-  spend(postId?: string): { poster: number; run: number; brandDay: number; globalDay: number } {
+  spend(postId?: string): { poster: number; run: number; brandDay: number; brandMonth: number; globalDay: number } {
     const today = dayOf(this.now().toISOString());
     return summarize(this.load(), this.context, today, postId);
   }
@@ -241,6 +245,7 @@ export class PaidLedger {
       if (request.postId !== undefined && used.poster + cost > limits.perPosterUsd + 1e-9) throw new BudgetError('POSTER_BUDGET', `this poster would spend $${(used.poster + cost).toFixed(4)}, over its $${limits.perPosterUsd.toFixed(3)} limit`);
       if (used.run + cost > limits.perRunUsd + 1e-9) throw new BudgetError('RUN_BUDGET', `this run would spend $${(used.run + cost).toFixed(4)}, over its $${limits.perRunUsd.toFixed(3)} limit`);
       if (used.brandDay + cost > limits.perBrandDayUsd + 1e-9) throw new BudgetError('BRAND_DAY_BUDGET', `this brand would spend $${(used.brandDay + cost).toFixed(4)} today, over its $${limits.perBrandDayUsd.toFixed(2)} daily limit`);
+      if (used.brandMonth + cost > limits.perBrandMonthUsd + 1e-9) throw new BudgetError('BRAND_MONTH_BUDGET', `this brand would spend $${(used.brandMonth + cost).toFixed(4)} this month, over its $${limits.perBrandMonthUsd.toFixed(2)} monthly limit`);
       if (used.globalDay + cost > limits.globalDayUsd + 1e-9) throw new BudgetError('GLOBAL_DAY_BUDGET', `the deployment would spend $${(used.globalDay + cost).toFixed(4)} today, over its $${limits.globalDayUsd.toFixed(2)} daily limit`);
       const call: PaidCall = {
         callId: randomUUID(), jobId: context.jobId, tenantId: context.tenantId, brandId: context.brandId,
@@ -290,10 +295,11 @@ export class PaidLedger {
   }
 }
 
-function summarize(calls: Map<string, PaidCall>, context: LedgerContext, today: string, postId?: string): { poster: number; run: number; brandDay: number; globalDay: number } {
+function summarize(calls: Map<string, PaidCall>, context: LedgerContext, today: string, postId?: string): { poster: number; run: number; brandDay: number; brandMonth: number; globalDay: number } {
   let poster = 0;
   let run = 0;
   let brandDay = 0;
+  let brandMonth = 0;
   let globalDay = 0;
   for (const call of calls.values()) {
     const charge = chargeOf(call);
@@ -305,8 +311,9 @@ function summarize(calls: Map<string, PaidCall>, context: LedgerContext, today: 
       globalDay += charge;
       if (call.brandId === context.brandId) brandDay += charge;
     }
+    if (call.brandId === context.brandId && call.createdAt.slice(0, 7) === today.slice(0, 7)) brandMonth += charge;
   }
-  return { poster: roundUsd(poster), run: roundUsd(run), brandDay: roundUsd(brandDay), globalDay: roundUsd(globalDay) };
+  return { poster: roundUsd(poster), run: roundUsd(run), brandDay: roundUsd(brandDay), brandMonth: roundUsd(brandMonth), globalDay: roundUsd(globalDay) };
 }
 
 /** Limits from settings (BUDGET_* variables), each falling back to the defaults. A value that is not a positive number is an error, never ignored. */
@@ -323,6 +330,7 @@ export function budgetLimitsFromEnv(env: Record<string, string | undefined>): Bu
     perPosterUsd: read('BUDGET_POSTER_USD', defaultBudgetLimits.perPosterUsd),
     perRunUsd: read('BUDGET_RUN_USD', defaultBudgetLimits.perRunUsd),
     perBrandDayUsd: read('BUDGET_BRAND_DAY_USD', defaultBudgetLimits.perBrandDayUsd),
+    perBrandMonthUsd: read('BUDGET_BRAND_MONTH_USD', defaultBudgetLimits.perBrandMonthUsd),
     globalDayUsd: read('BUDGET_GLOBAL_DAY_USD', defaultBudgetLimits.globalDayUsd),
     maxImagesPerPoster: Math.floor(read('BUDGET_IMAGES_PER_POSTER', defaultBudgetLimits.maxImagesPerPoster)),
     imageReserveUsd: read('BUDGET_IMAGE_RESERVE_USD', defaultBudgetLimits.imageReserveUsd),

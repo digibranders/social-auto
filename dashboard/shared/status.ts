@@ -110,7 +110,7 @@ export interface StatusResponse {
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
-  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[]; weeklyLimit?: number; requireAuthenticLogo?: true }>;
+  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[]; weeklyLimit?: number; requireAuthenticLogo?: true; approvalMode?: 'manual' | 'auto'; spendCapUsd?: number }>;
   costs: CostEntry[];
 }
 
@@ -233,7 +233,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(plansOf(entry['plans']).length > 0 ? { plans: plansOf(entry['plans']) } : {}), ...(entry['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true as const } : {}), ...(typeof entry['weeklyLimit'] === 'number' && Number.isInteger(entry['weeklyLimit']) && entry['weeklyLimit'] >= 1 && entry['weeklyLimit'] <= 7 ? { weeklyLimit: entry['weeklyLimit'] } : {}) };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(plansOf(entry['plans']).length > 0 ? { plans: plansOf(entry['plans']) } : {}), ...(entry['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true as const } : {}), ...(entry['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : entry['approvalMode'] === 'manual' ? { approvalMode: 'manual' as const } : {}), ...(typeof entry['spendCapUsd'] === 'number' && Number.isFinite(entry['spendCapUsd']) && entry['spendCapUsd'] > 0 ? { spendCapUsd: entry['spendCapUsd'] } : {}), ...(typeof entry['weeklyLimit'] === 'number' && Number.isInteger(entry['weeklyLimit']) && entry['weeklyLimit'] >= 1 && entry['weeklyLimit'] <= 7 ? { weeklyLimit: entry['weeklyLimit'] } : {}) };
   });
 
   const pauseRoot = root['pauses'] === undefined ? {} : record(root['pauses'], 'status.pauses');

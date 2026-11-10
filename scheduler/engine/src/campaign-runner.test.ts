@@ -67,6 +67,21 @@ test('the same plan is never made twice, and a changed plan is a new campaign', 
   }
 });
 
+test('a client with its own monthly spend limit passes it to every run; the month limit stopping a run is recorded and later batches are not tried', async () => {
+  const r = root();
+  try {
+    const calls: string[][] = [];
+    const plan = { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 31 };
+    const [made] = await makeCampaigns([client({ plan, spendCapUsd: 2.5 })], r.dir, deps({ calls, exec: async (a) => { calls.push(a); return { code: 1, tail: 'BUDGET_EXHAUSTED (BRAND_MONTH_BUDGET): this brand would spend $2.6 this month\n' }; } }));
+    assert.equal(calls.length, 1, 'the later batches were not tried');
+    assert.equal(calls[0]?.[calls[0].indexOf('--month-cap-usd') + 1], '2.5');
+    assert.equal(made?.status, 'failed');
+    assert.match(made?.batches[0]?.tail ?? '', /BRAND_MONTH_BUDGET/);
+  } finally {
+    r.done();
+  }
+});
+
 test('a failed run is recorded with the end of its output and is not retried by itself; later batches of a plan that cannot work are not tried', async () => {
   const r = root();
   try {
@@ -453,6 +468,33 @@ test('automatic approval never touches a version that a person rejected, and app
     assert.equal(store.get(v.versionId).status, 'rejected', 'a rejection by a person stands');
     const again = autoApprove(join(r.dir, 'oyechats'), 'oyechats', ['week-01.json'], NOW);
     assert.deepEqual(again, { approved: 0, left: 0 });
+  } finally {
+    r.done();
+  }
+});
+
+test('the release tells the owner about a poster close to its time that is still waiting, once, and a notice that cannot be sent never stops the release', async () => {
+  const r = root();
+  try {
+    const exec: RunnerDeps['exec'] = async () => {
+      mkdirSync(join(r.dir, 'oyechats'), { recursive: true });
+      writeFileSync(join(r.dir, 'oyechats', 'week-01.json'), JSON.stringify({ posts: [{ id: 'soon', date: '2026-11-05T20:00:00Z' }] }));
+      return { code: 0, tail: 'done' };
+    };
+    await makeCampaigns([client()], r.dir, deps({ exec }));
+    new ReviewStore(join(r.dir, 'oyechats'), 'oyechats').addVersion({
+      postId: 'soon', planFile: 'week-01.json', headline: 'H', caption: 'C', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [],
+      imagePath: (() => { const p = join(r.dir, 'soon.jpg'); writeFileSync(p, 'soon'); return p; })(),
+      validation: { accepted: true, readings: 1, defects: [], reportFile: 'report.json' }, attempts: 1, costUsd: 0,
+    });
+    const titles: string[] = [];
+    let released = 0;
+    const release = async (): Promise<number> => { released += 1; return 0; };
+    await releaseCampaigns(r.dir, deps({ release, notify: async () => { throw new Error('the phone service is down'); } }));
+    assert.equal(released, 1, 'a failing notice does not stop the release');
+    await releaseCampaigns(r.dir, deps({ release, notify: async (n) => { titles.push(n.title); return true; } }));
+    await releaseCampaigns(r.dir, deps({ release, notify: async (n) => { titles.push(n.title); return true; } }));
+    assert.deepEqual(titles, ['Poster waiting for approval: oyechats'], 'told once');
   } finally {
     r.done();
   }

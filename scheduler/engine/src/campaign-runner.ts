@@ -20,6 +20,8 @@ import { slugFromSite } from './analyze.ts';
 import { autopilotArgsFor, parsePostingPlan, planBatches, planId, todayAt, type PostingPlan } from './posting-plan.ts';
 import { exportToPublisher } from './export-publisher.ts';
 import { ReviewError, ReviewStore } from './review-store.ts';
+import { checkLeadTime, type LeadTimeNotice } from './lead-time.ts';
+import { ntfySender } from './owner-notice.ts';
 
 export type BatchStatus = 'pending' | 'running' | 'done' | 'failed' | 'interrupted';
 /** What a running batch is doing, as far as the autopilot's own progress lines say. */
@@ -73,6 +75,8 @@ export interface PlannedClient {
   requireAuthenticLogo?: boolean;
   /** Who approves the client's posters: a person (`manual`, the default) or the system after its automatic checks (`auto`). */
   approvalMode?: 'manual' | 'auto';
+  /** What the AI may cost for this client in a calendar month, in dollars; the engine's default applies when missing. */
+  spendCapUsd?: number;
 }
 
 export interface RunnerDeps {
@@ -82,6 +86,8 @@ export interface RunnerDeps {
   release: (brandDir: string, options: { brand: string; weekFiles: string[] }) => Promise<number>;
   /** How a client's posters are approved right now, asked at each release so a change of setting takes effect at the next tick. Missing means a person approves. */
   approvalMode?: (brand: string) => 'manual' | 'auto';
+  /** Tells the owner about a poster that is running out of time or has missed it (lead-time.ts); resolves to whether it was delivered. Missing means nobody is told. */
+  notify?: (notice: LeadTimeNotice) => Promise<boolean>;
   now?: () => Date;
   /** Whether publishing is switched on; release is skipped, and says so, when it is not. */
   publishingEnabled: () => boolean;
@@ -205,7 +211,7 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
         writing = writing.then(() => writeState(file, state)).catch(() => undefined);
       };
       try {
-        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true }), onLine);
+        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true, ...(client.spendCapUsd !== undefined ? { monthCapUsd: client.spendCapUsd } : {}) }), onLine);
         await writing;
       } catch (error) {
         await writing;
@@ -398,6 +404,16 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
           const result = autoApprove(join(brandsRoot, siteBrand), siteBrand, weekFiles, deps.now?.() ?? new Date(), log);
           if (result.approved > 0) log(`${client}: ${result.approved} poster${result.approved === 1 ? '' : 's'} approved automatically after the checks`);
         }
+        // Posters still waiting that are about to run out of time, or already have, are told to the owner once each.
+        if (deps.notify) {
+          try {
+            const told = await checkLeadTime(join(brandsRoot, siteBrand), siteBrand, client, weekFiles, deps.now?.() ?? new Date(), deps.notify);
+            if (told.length > 0) log(`${client}: ${told.length} notice${told.length === 1 ? '' : 's'} sent about posters waiting for approval`);
+          } catch (error) {
+            // A notice that cannot be worked out must never stop the release.
+            log(`${client}: the lead-time check failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 320));
+          }
+        }
         const posts = await deps.release(join(brandsRoot, siteBrand), { brand: client, weekFiles });
         let changed = false;
         for (const { file, state } of members) {
@@ -468,7 +484,7 @@ async function main(): Promise<void> {
   let clients: PlannedClient[] = [];
   try {
     const raw = JSON.parse(await readFile(resolve(values.clients), 'utf8')) as { clients?: Array<Record<string, unknown>> };
-    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']], ...(c['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true } : {}), ...(c['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : {}) }] : []));
+    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']], ...(c['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true } : {}), ...(c['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : {}), ...(typeof c['spendCapUsd'] === 'number' && Number.isFinite(c['spendCapUsd']) && c['spendCapUsd'] > 0 ? { spendCapUsd: c['spendCapUsd'] } : {}) }] : []));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
@@ -494,6 +510,7 @@ async function main(): Promise<void> {
     release: async (brandDir, options) => (await exportToPublisher(brandDir, publisherDir, Date.now(), options)).length,
     publishingEnabled: () => process.env['SOCIAL_PUBLISHING_ENABLED'] === 'true',
     approvalMode: (brand) => clients.find((c) => c.brand === brand)?.approvalMode ?? 'manual',
+    notify: ntfySender(),
     log: (m) => console.log(m),
   };
   await mkdir(brandsRoot, { recursive: true });

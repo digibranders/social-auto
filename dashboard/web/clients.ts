@@ -31,10 +31,23 @@ export interface ClientSummary {
   weeklyLimit: number;
   /** Every poster made from the website must carry its real logo. */
   requireAuthenticLogo: boolean;
+  /** manual: a person approves each poster in Review. auto: posters that pass the automatic checks are approved by the system and released. */
+  approvalMode: 'manual' | 'auto';
+  /** What the AI may cost for this client in a calendar month, in dollars; null when the client has no limit of its own and the default one applies. */
+  spendCapUsd: number | null;
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
   costs: CostEntry[];
+}
+
+/** The monthly AI spend limit every client has until it is given its own (the content engine's default, scheduler/engine/src/paid-ledger.ts). */
+export const SPEND_CAP_DEFAULT_USD = 8;
+
+/** What the AI cost for a client so far in the calendar month `now` falls in (UTC, as the content engine counts it), from the feed's cost entries. */
+export function spentThisMonth(costs: readonly CostEntry[], now: number): number {
+  const month = new Date(now).toISOString().slice(0, 7);
+  return Math.round(costs.filter((c) => c.at.slice(0, 7) === month).reduce((total, c) => total + c.usd, 0) * 1e4) / 1e4;
 }
 
 const LOW_QUEUE_DAYS = 7;
@@ -94,6 +107,8 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       plans: entry?.plans ?? [],
       weeklyLimit: entry?.weeklyLimit ?? WEEKLY_LIMIT_DEFAULT,
       requireAuthenticLogo: entry?.requireAuthenticLogo === true,
+      approvalMode: entry?.approvalMode === 'auto' ? 'auto' : 'manual',
+      spendCapUsd: entry?.spendCapUsd ?? null,
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };

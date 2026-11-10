@@ -16,6 +16,8 @@ import { channelLabel, postedKey, type PostedEntry } from './channels.js';
 import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
 import { isWantedOn, sameCaption, usesTeamInstagram, type ScheduledPost } from './schedule.js';
 import { forPlatform } from './variants.js';
+import { fingerprintOf } from './duplicates.js';
+import { duplicateText, guardChannels } from './send-guards.js';
 import { loadChannels, loadClients, loadPosted, savePosted } from './store.js';
 
 const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
@@ -51,13 +53,17 @@ type Platform = 'facebook' | 'linkedin' | 'instagram' | 'google';
 /** What is written, for a post held back by a pause, so that it is never sent late once the pause ends. */
 const heldEntry = (now: number): PostedEntry => ({ remoteId: 'held', permalink: null, postedAt: new Date(now).toISOString(), skipped: true });
 
-/** Marks posts as held for these channel ids ("instagram" for the team's own account). Reloads first, so another write is never lost. */
-async function recordHeld(postId: string, channelIds: readonly string[], now: number): Promise<void> {
-  if (channelIds.length === 0) return;
+/** Writes these entries (unless the log already has one for the key). Reloads first, so another write is never lost. */
+async function recordEntries(wanted: Record<string, PostedEntry>): Promise<void> {
+  if (Object.keys(wanted).length === 0) return;
   const latest = await loadPosted();
-  const entries: Record<string, PostedEntry> = {};
-  for (const id of channelIds) if (!latest.log[postedKey(postId, id)]) entries[postedKey(postId, id)] = heldEntry(now);
+  const entries = Object.fromEntries(Object.entries(wanted).filter(([logKey]) => !latest.log[logKey]));
   if (Object.keys(entries).length > 0) await savePosted({ ...latest.log, ...entries }, latest.etag);
+}
+
+/** Marks posts as held for these channel ids ("instagram" for the team's own account). */
+async function recordHeld(postId: string, channelIds: readonly string[], now: number): Promise<void> {
+  await recordEntries(Object.fromEntries(channelIds.map((id) => [postedKey(postId, id), heldEntry(now)])));
 }
 
 /** Never throws: a problem here must not hide what happened on Instagram or another channel. */
@@ -77,21 +83,41 @@ async function sendToChannels(platform: Platform, mainPost: ScheduledPost, origi
     );
     const heldIds = new Set(held.map((c) => c.id));
     if (!dryRun) await recordHeld(post.id, held.filter((c) => Date.parse(post.date) >= Date.parse(c.connectedAt)).map((c) => c.id), now);
+    // Two checks before anything is sent: a channel that already received these words under another post id is left out, and so is an exact account the
+    // post names that is no longer connected (it is never sent to a different account in its place).
+    const fingerprint = fingerprintOf(post.caption);
+    const guards = guardChannels({ channels: file.channels.filter((c) => !heldIds.has(c.id)) }, post, platform, log, now);
+    const duplicateIds = new Set(guards.duplicates.map((d) => d.channel.id));
+    if (!dryRun) {
+      await recordEntries(Object.fromEntries(guards.duplicates.map(({ channel, of }) => [postedKey(post.id, channel.id), { remoteId: 'duplicate', permalink: of.entry.permalink, postedAt: new Date(now).toISOString(), skipped: true as const, fingerprint, duplicateOf: of.key }])));
+      if (guards.gone.length > 0) {
+        await notify({
+          title: 'Post held: its account is no longer connected',
+          message: `${post.brand ?? 'default'}: the post ${post.id} is meant for ${guards.gone.join(', ')}, which is not connected any more. It was not sent anywhere else. Connect the account again, or choose another account for the plan.`,
+          priority: 'high',
+        });
+        await recordEntries(Object.fromEntries(guards.gone.map((id) => [postedKey(post.id, id), { remoteId: 'account-disconnected', permalink: null, postedAt: new Date(now).toISOString(), skipped: true as const, reason: 'ACCOUNT_DISCONNECTED' }])));
+      }
+    }
     const common = {
       post,
-      channels: { channels: file.channels.filter((c) => !heldIds.has(c.id)) },
+      channels: { channels: file.channels.filter((c) => !heldIds.has(c.id) && !duplicateIds.has(c.id)) },
       key,
       origin,
       log,
       dryRun,
       now,
-      // Reload before each write so a second channel's record never overwrites the first's.
+      // Reload before each write so a second channel's record never overwrites the first's. What was sent is remembered by its words (see duplicates.ts).
       record: async (logKey: string, entry: PostedEntry): Promise<void> => {
         const latest = await loadPosted();
-        await savePosted({ ...latest.log, [logKey]: entry }, latest.etag);
+        await savePosted({ ...latest.log, [logKey]: { ...entry, fingerprint } }, latest.etag);
       },
     };
-    const heldResults = held.map((c): CrosspostResult => ({ channel: c.id, account: channelLabel(c), status: 'held' }));
+    const heldResults = [
+      ...held.map((c): CrosspostResult => ({ channel: c.id, account: channelLabel(c), status: 'held' })),
+      ...guards.duplicates.map(({ channel, of }): CrosspostResult => ({ channel: channel.id, account: channelLabel(channel), status: 'duplicate', permalink: of.entry.permalink, error: duplicateText(channel, of) })),
+      ...guards.gone.map((id): CrosspostResult => ({ channel: id, account: id, status: 'held', error: `ACCOUNT_DISCONNECTED: ${id} is not connected any more, so the post was not sent anywhere in its place` })),
+    ];
     if (platform === 'facebook') return [...heldResults, ...(await postToFacebook({ ...common, api: facebookApi }))];
     if (platform === 'linkedin') return [...heldResults, ...(await postToLinkedIn({ ...common, api: linkedInApi }))];
     if (platform === 'google') return [...heldResults, ...(await postToGoogle({ ...common, api: googleApi }))];
