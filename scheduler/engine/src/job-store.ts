@@ -126,7 +126,9 @@ export class JobStore {
       const retrying = spec.kind === 'draw' && spec.retry === true && last?.state === 'failed';
       const standing = retrying ? undefined : spec.kind === 'draw' ? last : existing.find((j) => j.state === 'queued' || j.state === 'running');
       if (standing) return { job: standing, created: false };
-      const stamp = this.now();
+      // Jobs run in the order they were asked for: two asked in the same millisecond still get distinct, increasing times.
+      const newest = this.readAll().reduce((latest, j) => Math.max(latest, Date.parse(j.createdAt)), 0);
+      const stamp = new Date(Math.max(this.now().getTime(), newest + 1));
       const job: Job = {
         id: `job-${stamp.getTime().toString(36)}-${randomBytes(4).toString('hex')}`,
         key,
