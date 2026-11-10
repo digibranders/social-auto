@@ -98,6 +98,28 @@ test('without its settings the queue says so and calls nothing', async () => {
   assert.equal(calls.length, 0);
 });
 
+test('the queue can be asked for what is open and what is held', async () => {
+  upstream(200, { posts: [] });
+  for (const status of ['open', 'held']) assert.equal((await GET(get(`view=list&status=${status}`))).status, 200, status);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/posts?status=open');
+});
+
+test('the written posts are listed and kept or dropped through the service, with only checked names', async () => {
+  upstream(200, { batches: [] });
+  assert.equal((await GET(get('view=copy'))).status, 200);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/copy');
+  const copy = { brand: 'acme', planFile: 'week-01.json', postId: 'p1', action: 'keep' };
+  upstream(200, { batch: {} });
+  calls = [];
+  assert.equal((await POST(post({ copy }))).status, 200);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/copy/acme/week-01.json/p1/keep');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner' });
+  calls = [];
+  for (const bad of [{ ...copy, brand: '../x' }, { ...copy, planFile: '../week-01.json' }, { ...copy, postId: 'a/b' }, { ...copy, action: 'approve' }]) assert.equal((await POST(post({ copy: bad }))).status, 400);
+  assert.equal((await POST(post({ copy }, { signedIn: false }))).status, 401);
+  assert.equal((await POST(post({ copy }, { origin: 'https://evil.example' }))).status, 403);
+  assert.equal(calls.length, 0);
+});
 test('the list of what is being made is passed on read only, with the secret added on the server and never shown', async () => {
   upstream(200, { campaigns: [{ id: 'c1' }] });
   const before = calls.length;

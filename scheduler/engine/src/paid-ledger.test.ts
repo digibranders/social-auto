@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BudgetError, budgetLimitsFromEnv, defaultBudgetLimits, PaidLedger, type BudgetLimits, type BudgetRefusal } from './paid-ledger.ts';
 
@@ -128,25 +128,34 @@ test('a request that failed outright may be asked again; one that is unknown or 
   }
 });
 
-test('the log survives a restart and a stale lock from a dead process does not freeze spending', () => {
+test('the log survives a restart, and a lock left by a process that is gone does not freeze spending', () => {
   const { file, done } = workspace();
   try {
     const ledger = open(file);
     ledger.complete(ledger.reserve({ operation: 'text', model: 'm', postId: 'p1', requestKey: 'k', maxCostUsd: 0.01 }), { actualCostUsd: 0.01 });
     assert.equal(open(file).spend('p1').poster, 0.01);
     assert.match(readFileSync(file, 'utf8'), /"type":"reserve"/);
-    // A lock left by a crashed process is older than the critical section could ever last.
-    writeFileSync(`${file}.lock`, '99999');
-    const old = new Date(Date.now() - 60_000);
-    // utimes through the file system keeps this test free of timers.
-    return import('node:fs').then(({ utimesSync }) => {
-      utimesSync(`${file}.lock`, old, old);
-      assert.ok(open(file).reserve({ operation: 'text', model: 'm', requestKey: 'other', maxCostUsd: 0.01 }));
-    }).finally(done);
+    // A lock whose process no longer exists (a crash in the middle of a change).
+    writeFileSync(`${file}.lock`, JSON.stringify({ pid: 99999999, token: 'dead', host: hostname() }));
+    assert.ok(open(file).reserve({ operation: 'text', model: 'm', requestKey: 'other', maxCostUsd: 0.01 }));
+  } finally {
+    done();
+  }
+});
+
+test('a damaged lock file stops spending instead of being guessed at', () => {
+  const { file, done } = workspace();
+  try {
+    open(file);
+    writeFileSync(`${file}.lock`, '');
+    // Even opening the ledger needs the lock, so nothing can be spent through it.
+    assert.equal(refusal(() => new PaidLedger(file, defaultBudgetLimits, { jobId: 'job-2', tenantId: 'owner', brandId: 'acme', now: () => DAY, lockTimeoutMs: 200 })), 'KILL_SWITCH');
+    assert.equal(readFileSync(`${file}.lock`, 'utf8'), '', 'the damaged lock was left for a person');
   } catch (error) {
     done();
     throw error;
   }
+  done();
 });
 
 test('limits come from settings, and a value that is not a positive number is an error', () => {

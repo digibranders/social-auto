@@ -1,6 +1,6 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
-import { brandingView, costText, failureText, imageUrl, parseBranding, parseQueue, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, parseBranding, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -9,10 +9,17 @@ interface Detail {
   history: ReviewSummary[];
 }
 
+interface CopyBatch { brand: string; planFile: string; posts: Array<{ postId: string; headline: string; caption: string; advice?: string; state: 'pending' | 'kept' | 'dropped' }> }
+
 interface State {
+  /** Written posts waiting to be kept or dropped, before any picture is bought. */
+  copy: CopyBatch[];
   filter: ReviewFilter;
+  /** "cards": one poster at a time. "compare": the whole batch side by side. */
+  view: 'cards' | 'compare';
   queue: ReviewSummary[] | null;
   reasons: string[];
+  problems: string[];
   openId: string | null;
   detail: Detail | null;
   error: string | null;
@@ -21,7 +28,7 @@ interface State {
   rejecting: boolean;
 }
 
-const state: State = { filter: 'pending', queue: null, reasons: Object.keys(REASON_LABELS), openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
+const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false };
 
 async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: unknown }> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
@@ -33,14 +40,61 @@ async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; sta
   return { ok: response.ok, status: response.status, body };
 }
 
+async function loadCopy(redraw: () => void): Promise<void> {
+  const result = await call('/api/review?view=copy').catch(() => null);
+  const batches = (result?.body as { batches?: unknown } | null)?.batches;
+  if (result?.ok && Array.isArray(batches)) state.copy = batches as CopyBatch[];
+  redraw();
+}
+
+async function chooseCopy(batch: CopyBatch, postId: string, action: 'keep' | 'drop', redraw: () => void): Promise<void> {
+  state.busy = true;
+  state.error = null;
+  redraw();
+  const result = await call('/api/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ copy: { brand: batch.brand, planFile: batch.planFile, postId, action } }) }).catch(() => null);
+  state.busy = false;
+  if (!result?.ok) state.error = result ? failureText(result.body, result.status) : 'Your choice could not be saved. Nothing changed.';
+  await loadCopy(redraw);
+}
+
+function copyView(redraw: () => void): HTMLElement | null {
+  const open = state.copy.filter((b) => b.posts.length > 0);
+  if (open.length === 0) return null;
+  return h(
+    'section',
+    { class: 'rv-copy', 'aria-label': 'Written posts waiting for your choice' },
+    h('h3', {}, 'Written posts: keep the ones you want drawn'),
+    h('p', { class: 'rv-hint' }, 'No picture has been bought yet. Only the posts you keep will be drawn.'),
+    ...open.map((batch) => h(
+      'div',
+      { class: 'rv-copy-batch' },
+      h('b', {}, `${batch.brand} · ${batch.planFile}`),
+      ...batch.posts.map((post) => h(
+        'div',
+        { class: `rv-copy-post rv-copy-${post.state}` },
+        h('p', {}, h('b', {}, post.headline)),
+        h('p', {}, post.caption),
+        post.advice ? h('p', { class: 'rv-copy-advice' }, `Suggested drop: ${post.advice}`) : null,
+        h('div', { class: 'rv-actions' },
+          h('span', {}, post.state === 'kept' ? 'Kept' : post.state === 'dropped' ? 'Dropped' : 'Waiting for you'),
+          button('Keep', `btn${post.state === 'kept' ? ' btn-primary' : ''}`, () => void chooseCopy(batch, post.postId, 'keep', redraw), `Keep: ${post.headline}`),
+          button('Drop', 'btn', () => void chooseCopy(batch, post.postId, 'drop', redraw), `Drop: ${post.headline}`),
+        ),
+      )),
+    )),
+  );
+}
+
 async function loadQueue(redraw: () => void): Promise<void> {
   state.error = null;
-  const result = await call(`/api/review?view=list&status=${state.filter}`).catch(() => null);
+  void loadCopy(redraw);
+  const result = await call(`/api/review?view=list&status=${queryStatus(state.filter)}`).catch(() => null);
   if (!result?.ok) state.error = result ? failureText(result.body, result.status) : 'The review queue could not be reached.';
   else {
     const parsed = parseQueue(result.body);
     state.queue = parsed.posts;
     state.reasons = parsed.reasons;
+    state.problems = parsed.problems;
   }
   redraw();
 }
@@ -104,9 +158,9 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
   const v = detail.version;
   const decided = detail.status === 'approved' || detail.status === 'rejected';
   const actions = h('div', { class: 'rv-actions' });
-  if (detail.status === 'pending') {
+  if (detail.status === 'pending' || detail.status === 'held') {
     actions.append(
-      button('Approve', 'btn btn-primary', () => void decide(v.versionId, { action: 'approve' }, 'Approved. It can now be downloaded.', redraw), undefined, state.busy),
+      button(detail.status === 'held' ? 'Confirm approval again' : 'Approve', 'btn btn-primary', () => void decide(v.versionId, { action: 'approve' }, 'Approved. It can now be downloaded.', redraw), undefined, state.busy),
       button('Reject', 'btn', () => { state.rejecting = true; redraw(); }, undefined, state.busy),
     );
   }
@@ -132,6 +186,7 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
       detail.decision ? h('p', { class: 'muted' }, `${detail.decision.by}, ${when(detail.decision.at)}${detail.decision.reason ? ` · ${REASON_LABELS[detail.decision.reason] ?? detail.decision.reason}` : ''}${detail.decision.comment ? ` · “${detail.decision.comment}”` : ''}`) : null,
       detail.status === 'blocked' ? h('p', { class: 'muted' }, 'This poster did not pass the automatic checks, so it cannot be approved.') : null,
       detail.status === 'superseded' ? h('p', { class: 'muted' }, 'A newer version of this post replaced it.') : null,
+      detail.status === 'held' ? h('p', { class: 'muted' }, 'The review record was repaired after a crash and it could not be told whether this approval had been withdrawn. It cannot be downloaded until you approve this exact poster again.') : null,
       actions,
       rejectForm,
       h('h3', {}, 'Caption'),
@@ -149,12 +204,42 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
   );
 }
 
+function compareView(redraw: () => void): HTMLElement {
+  const batches = groupBatches(state.queue ?? []);
+  if (batches.length === 0) return h('p', { class: 'empty' }, 'Nothing to compare here yet.');
+  return h(
+    'div',
+    { class: 'rv-compare' },
+    ...batches.map((batch) => h(
+      'section',
+      { class: 'rv-batch' },
+      h('h2', {}, `${batch.brand} · ${batch.planFile.replace(/\.json$/, '')} · ${batch.posts.length} poster${batch.posts.length === 1 ? '' : 's'}`),
+      h('p', { class: 'muted' }, BATCH_QUESTION),
+      h('div', { class: 'rv-compare-grid' }, ...batch.posts.map((post) => {
+        const tile = h(
+          'button',
+          { type: 'button', class: `rv-tile${state.openId === post.versionId ? ' rv-on' : ''}`, 'aria-label': `${post.brand}: ${post.headline}` },
+          h('img', { class: 'rv-tile-image', src: imageUrl(post.versionId), alt: '', loading: 'lazy' }),
+          h('span', { class: 'rv-tile-text' }, h('b', {}, post.headline), h('small', {}, STATUS_LABELS[post.status])),
+        );
+        tile.addEventListener('click', () => void open(post.versionId, redraw));
+        return tile;
+      })),
+    )),
+  );
+}
+
 export function reviewPage(redraw: () => void): HTMLElement {
   if (state.queue === null && !state.error) void loadQueue(redraw);
   const tabs = h('div', { class: 'rv-tabs', role: 'tablist' }, ...REVIEW_FILTERS.map((f) => {
     const tab = button(f.label, `btn${state.filter === f.key ? ' btn-primary' : ''}`, () => { state.filter = f.key; state.queue = null; state.openId = null; state.detail = null; state.error = null; redraw(); }, f.label);
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-selected', String(state.filter === f.key));
+    return tab;
+  }));
+  const views = h('div', { class: 'rv-tabs' }, ...(['cards', 'compare'] as const).map((view) => {
+    const tab = button(view === 'cards' ? 'One by one' : 'Compare the batch', `btn${state.view === view ? ' btn-primary' : ''}`, () => { state.view = view; redraw(); });
+    tab.setAttribute('aria-pressed', String(state.view === view));
     return tab;
   }));
   const list = h('div', { class: 'rv-list' }, ...(state.queue ?? []).map((p) => card(p, redraw)));
@@ -164,9 +249,13 @@ export function reviewPage(redraw: () => void): HTMLElement {
     { class: 'rv' },
     state.notice ? h('p', { class: 'rv-notice', role: 'status' }, state.notice) : null,
     state.error ? h('p', { class: 'rv-error', role: 'alert' }, state.error) : null,
+    ...state.problems.map((p) => h('p', { class: 'rv-error', role: 'alert' }, p)),
+    copyView(redraw),
     tabs,
     state.queue === null && !state.error ? h('p', { class: 'empty' }, 'Loading…') : null,
-    h('div', { class: 'rv-grid' }, h('div', {}, list, empty), state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
+    views,
+    state.view === 'compare' && state.queue !== null ? compareView(redraw) : null,
+    h('div', { class: 'rv-grid' }, state.view === 'compare' ? h('div', {}) : h('div', {}, list, empty), state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
   );
 }
 

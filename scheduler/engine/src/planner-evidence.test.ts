@@ -104,7 +104,7 @@ test('a post may use a figure its own fact states; the same figure in a post ass
   const setupFact = all.find((f) => f.text === SETUP) as EvidenceFact;
   const others = all.filter((f) => f.id !== setupFact.id);
   // Only the setup fact is offered: a post can say "under 10 minutes".
-  const ok = await run(model(() => ({ subline: 'Acme Replies installs in under 10 minutes.', caption: 'Setup takes under 10 minutes with one script tag.' })), { facts: [setupFact] }, 1);
+  const ok = await run(model(() => ({ subline: 'Acme Replies installs in under 10 minutes.', caption: 'Quick to start.' })), { facts: [setupFact] }, 1);
   assert.equal(ok.posts.length, 1);
   assert.deepEqual(ok.posts[0]?.factIds, [setupFact.id]);
   // Only other facts are offered: the same sentence states a figure none of them has.
@@ -378,6 +378,10 @@ test('in fact mode a subline that restates the headline is taken away on the las
   assert.equal(plan.posts[0]?.subline, '');
   assert.ok(plan.posts[0]?.hookWarnings?.includes('editorial: subline_removed_as_redundant'));
   await assert.rejects(run(model(restate), undefined, 1), InsufficientConceptsError);
+});
+
+test('a caption that says the same thing twice goes back to the writer and, on the last try, the post is left out', async () => {
+  await assert.rejects(run(model(() => ({ subline: '', caption: 'Setup is quick and easy to do. Setup is easy and quick to do today.' })), { facts: facts() }, 1), InsufficientConceptsError);
 });
 
 test('with candidates: twice as many are written, each reviewed before any picture, the best are kept in order on the real days, and the rest wait as reserve drafts', async () => {

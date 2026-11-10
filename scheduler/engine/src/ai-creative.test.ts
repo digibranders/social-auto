@@ -1,10 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aiConfigFromEnv } from './ai.ts';
 import { buildCreativePrompt, displayDomain, judgeCreative, plainHeadline, retryNoteFor, reviewCreative, type CreativeReview, type TextManifest } from './ai-creative.ts';
+import { defaultHeadlineGate } from './headline-gate.ts';
 import { makeCreatives, manifestOf } from './ai-creative-pipeline.ts';
 import type { DirectorResult } from './creative-director.ts';
 import { BudgetError, defaultBudgetLimits, PaidLedger } from './paid-ledger.ts';
@@ -151,7 +152,7 @@ const directed = (posts: ReadonlyArray<{ id: string }>): Promise<DirectorResult>
   Promise.resolve({ concepts: posts.map((p, i) => ({ postId: p.id, concept: CONCEPTS[i % CONCEPTS.length] as string, people: false, factToPicture: 'The picture shows the fact as one clear idea.', typography: 'The headline is set large in the top left in a plain heavy letterform.', replans: 0 })), dropped: [], flags: [] });
 
 const run = (ctx: ReturnType<typeof setup>, posts: PlannedPost[], deps: Parameters<typeof makeCreatives>[0]['deps']) =>
-  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), deps: { direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
+  makeCreatives({ ai: ctx.ai, brand, brandSlug: 'oyechats', posts, factOf: () => 'OyeChats answers from your own documents.', outDir: join(ctx.dir, 'out'), directorEnabled: true, deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, direct: directed, lookAlikes: async () => ({ scenes: [], typography: [] }), ...deps } });
 
 const scene = (calls: string[]) => async (prompt: string, out: string): Promise<void> => {
   calls.push(prompt);
@@ -297,6 +298,37 @@ test('manifestOf strips the accent markers and shows the plain address', () => {
   assert.deepEqual(manifestOf(post('p', 'Track |tasks|'), brand), { headline: 'Track tasks', brandName: 'OyeChats', domain: 'oyechats.com' });
 });
 
+test('with the creative director off (the default), no director call, comparison, side-by-side check or concept memory happens, and each poster is drawn on its own', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    let touched = 0;
+    const forbidden = async (): Promise<never> => { touched += 1; throw new Error('the creative director must not run'); };
+    const report = await makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', brandDir: join(ctx.dir, 'brand'), outDir: join(ctx.dir, 'out'),
+      posts: [post('w01-d1', 'Answers from your own docs'), post('w01-d2', 'Plan your week')], factOf: () => 'OyeChats answers from your own documents.',
+      deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
+        direct: forbidden,
+        lookAlikes: forbidden,
+        scene: scene(prompts),
+        review: async (file) => review([file.includes('d1') ? 'Answers from your own docs' : 'Plan your week', 'OyeChats', 'oyechats.com']),
+      },
+    });
+    assert.equal(touched, 0);
+    assert.deepEqual(report.results.map((r) => r.status), ['accepted', 'accepted']);
+    assert.equal(prompts.length, 2, 'one picture each, nothing extra');
+    assert.ok(prompts.every((p) => !/THE PICTURE \(follow it/.test(p)), 'no concept was chosen for either poster');
+    assert.equal(report.direction, undefined);
+    assert.equal(report.lookAlikes, undefined);
+    assert.ok(report.results.every((r) => r.concept === undefined));
+    assert.equal(existsSync(join(ctx.dir, 'brand', 'creative-history.json')), false, 'no concept memory is written');
+    assert.equal(ctx.ledger.calls().length, 0, 'no paid call was made for the director');
+  } finally {
+    ctx.done();
+  }
+});
+
 const folks = (present: boolean, prominent: boolean, description = ''): CreativeReview['people'] => ({ present, estimatedCount: present ? 3 : 0, prominent, description });
 
 test('people: a concept with no people and a poster where they are a main part is not the planned poster; small background figures are not a defect', () => {
@@ -335,7 +367,7 @@ test('people in the pipeline: a mismatch with small figures is a warning, and a 
     const prompts: string[] = [];
     const out = ['Answers from your own docs', 'OyeChats', 'oyechats.com'];
     const report = await makeCreatives({
-      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, factOf: () => 'f',
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, directorEnabled: true, factOf: () => 'f',
       posts: [post('p1', 'Answers from your own docs'), post('p2', 'Answers from your own docs'), post('p3', 'Answers from your own docs')],
       deps: {
         direct: async (ps) => ({ concepts: ps.map((p, i) => ({ postId: p.id, concept: CONCEPTS[i] as string, people: i === 0, factToPicture: 'It shows the fact as an idea.', typography: 'Set it large at the top left.', replans: 0 })), dropped: [], flags: [] }),
@@ -365,7 +397,7 @@ test('people in the pipeline: more prominent people than the batch may have reje
   try {
     const out = ['Answers from your own docs', 'OyeChats', 'oyechats.com'];
     const report = await makeCreatives({
-      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, factOf: () => 'f',
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, directorEnabled: true, factOf: () => 'f',
       posts: [post('p1', 'Answers from your own docs'), post('p2', 'Answers from your own docs')],
       deps: {
         direct: async (ps) => ({ concepts: ps.map((p, i) => ({ postId: p.id, concept: CONCEPTS[i] as string, people: true, factToPicture: 'It shows the fact as an idea.', typography: 'Set it large at the top left.', replans: 0 })), dropped: [], flags: [] }),
@@ -533,8 +565,89 @@ test('text the readers could not place means no place can be called clear of it,
   }
 });
 
+test('the first prompt asks for a sign-off that survives a phone screen, so the first attempt is not rejected for small print', () => {
+  const prompt = buildCreativePrompt(manifest, { fact: 'f', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' } });
+  assert.match(prompt, /BRAND NAME: "OyeChats", as a clear sign-off in bold or semibold lettering/);
+  assert.match(prompt, /at least 4 percent of the poster's height/);
+  assert.match(prompt, /WEB ADDRESS: "oyechats\.com", set at the same size and weight as the brand name/);
+  assert.doesNotMatch(prompt, /small and secondary|small but clearly legible/);
+});
+
+test('without a concept the prompt asks for a picture that is specific to the fact and names the stock scenes to avoid, without offering a menu of styles', () => {
+  const prompt = buildCreativePrompt(manifest, { fact: 'OyeChats answers from your own documents.', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' } });
+  assert.match(prompt, /THE VISUAL IDEA/);
+  assert.match(prompt, /visible, specific relationship to this fact/);
+  assert.match(prompt, /people sitting at laptops, floating browser or app windows, targets, megaphones, growth arrows/);
+  assert.match(prompt, /only when the fact is actually about one/);
+  assert.match(prompt, /do not imply an outcome the fact does not state/);
+  assert.match(prompt, /Invent the treatment fresh/);
+  // The text contract and the legibility rule are untouched, and no list of allowed visual types is given.
+  assert.match(prompt, /TEXT CONTRACT/);
+  assert.match(prompt, /LEGIBILITY applies to every treatment/);
+  assert.doesNotMatch(prompt, /choose (one )?(of|from) the following|photographic still life|isometric|collage/i);
+});
+
+test("with a concept the director's picture is followed and the generic-visual instruction is not added on top of it", () => {
+  const prompt = buildCreativePrompt(manifest, { fact: 'f', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' }, concept: { concept: 'A clay key passes across a canyon.', factToPicture: 'It shows access.' } });
+  assert.match(prompt, /THE PICTURE \(follow it/);
+  assert.doesNotMatch(prompt, /THE VISUAL IDEA/);
+});
+
 test('a symbol alone keeps the drawn name; the brand sign-off is only dropped for a full logo', () => {
   assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'wordmark' }).brandSignoff, 'logo');
   assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'symbol' }).brandSignoff, undefined);
   assert.equal(manifestOf(post('p', 'Hello there'), brand).brandSignoff, undefined);
+});
+
+test('with the director off, a poster that shows people when the batch is already at its limit is asked to be redrawn without them, not thrown away after it was paid for', async () => {
+  const ctx = setup();
+  try {
+    const prompts: string[] = [];
+    const report = await makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, factOf: () => 'OyeChats answers from your own documents.',
+      posts: [post('p1', 'Answers from your own docs'), post('p2', 'Plan your week')],
+      deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
+        scene: scene(prompts),
+        // Both posters first show people prominently; the second, drawn again after the note, shows none.
+        review: async (file) => review([file.includes('p1') ? 'Answers from your own docs' : 'Plan your week', 'OyeChats', 'oyechats.com'], { people: file.includes('p2') && file.includes('attempt2') ? folks(false, false) : folks(true, true, 'a person at a desk') }),
+        third: async () => { throw new Error('no third reading expected'); },
+      },
+    });
+    const [p1, p2] = report.results;
+    assert.equal(p1?.status, 'accepted');
+    assert.equal(p1?.attempts.length, 1);
+    assert.equal(p2?.attempts.length, 2, 'the second poster was redrawn once');
+    assert.match(p2?.attempts[0]?.defects.map((d) => d.kind).join(' ') ?? '', /people_plan_mismatch/);
+    assert.equal(p2?.status, 'accepted');
+    assert.deepEqual(report.peopleRule, { cap: 1, prominent: ['p1'] });
+  } finally {
+    ctx.done();
+  }
+});
+
+test('a wide run asks the picture model for the wide size and the prompt for a wide frame; a square run is as before', async () => {
+  const ctx = setup();
+  try {
+    const seen: Array<{ prompt: string; width: number; height: number }> = [];
+    const draw = (shape: { shape: 'square' | 'wide'; width: number; height: number }) => makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, `out-${shape.shape}`), shape, factOf: () => 'OyeChats answers from your own documents.',
+      posts: [post('p1', 'Answers from your own docs')],
+      deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
+        scene: async (prompt, out, s) => { seen.push({ prompt, width: s.width, height: s.height }); writeFileSync(out, 'x'); },
+        review: async () => review(['Answers from your own docs', 'OyeChats', 'oyechats.com']),
+      },
+    });
+    const square = await draw({ shape: 'square', width: 1024, height: 1024 });
+    const wide = await draw({ shape: 'wide', width: 1536, height: 1024 });
+    assert.equal(square.results[0]?.status, 'accepted');
+    assert.equal(wide.results[0]?.status, 'accepted');
+    assert.deepEqual(seen.map((s) => [s.width, s.height]), [[1024, 1024], [1536, 1024]]);
+    assert.match(seen[0]?.prompt ?? '', /square \(1:1\)/);
+    assert.match(seen[1]?.prompt ?? '', /wide landscape \(3:2/);
+    assert.doesNotMatch(seen[1]?.prompt ?? '', /square \(1:1\)/);
+  } finally {
+    ctx.done();
+  }
 });

@@ -1,0 +1,99 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { JobStore, type JobSpec } from './job-store.ts';
+import { drain, engineArgs, execEngine, readLine, runJob, type Exec } from './job-runner.ts';
+
+const spec = (over: Partial<JobSpec> = {}): JobSpec => ({ kind: 'copy', brand: 'acme', site: 'https://acme.example.com', by: 'owner', networks: ['instagram', 'linkedin'], days: 4, ...over });
+const fresh = (): { s: JobStore; done: () => void } => {
+  const dir = mkdtempSync(join(tmpdir(), 'runner-'));
+  return { s: new JobStore(dir), done: () => rmSync(dir, { recursive: true, force: true }) };
+};
+const fake = (lines: Array<[string, 'out' | 'err']>, code: number | null = 0, timedOut = false): Exec => async (_args, onLine) => {
+  for (const [l, src] of lines) onLine(l, src);
+  return { code, timedOut };
+};
+
+test('a copy job stops before any picture is bought, a draw job draws only the kept posts', () => {
+  const { s, done } = fresh();
+  try {
+    const copy = s.enqueue(spec()).job;
+    assert.deepEqual(engineArgs(copy), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4']);
+    const rhythm = s.enqueue(spec({ brand: 'beta', site: 'https://beta.example.com', days: 4, weekdays: ['mon', 'thu'] })).job;
+    assert.deepEqual(engineArgs(rhythm), ['src/autopilot.ts', '--site', 'https://beta.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'mon,thu']);
+    const onePage = s.enqueue(spec({ brand: 'gamma', site: 'https://gamma.example.com/pricing', page: true, networks: [] })).job;
+    assert.deepEqual(engineArgs(onePage), ['src/autopilot.ts', '--site', 'https://gamma.example.com/pricing', '--copy-first', '--page', '--days', '4']);
+    const draw = s.enqueue(spec({ kind: 'draw', planFile: 'week-03.json' })).job;
+    assert.deepEqual(engineArgs(draw), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--draw-kept', 'week-03.json']);
+  } finally {
+    done();
+  }
+});
+
+test('lines from the engine tell the step, the plan file and the error', () => {
+  assert.deepEqual(readLine('2/4 Writing 4 new pain-point posts from 2026-11-10 (week-09.json)…', 'out'), { step: 2, planFile: 'week-09.json' });
+  assert.deepEqual(readLine('BUDGET_EXHAUSTED (daily_cap): the day is spent. Nothing more was bought.', 'err').error?.code, 'BUDGET_EXHAUSTED');
+  assert.deepEqual(readLine('PUBLISHING_DISABLED: switched off', 'err').error, { code: 'PUBLISHING_DISABLED', message: 'switched off' });
+  assert.deepEqual(readLine('    BUDGET_EXHAUSTED: not an error line', 'out'), {});
+});
+
+test('a successful copy job records the plan it wrote and the last step', async () => {
+  const { s, done } = fresh();
+  try {
+    s.enqueue(spec());
+    const job = s.claim(1, 1);
+    const result = await runJob(s, job as NonNullable<typeof job>, fake([['1/4 Reading the site', 'out'], ['2/4 Writing 4 new posts (week-09.json)…', 'out'], ['3/4 Copy first: 4 posts are waiting', 'out']]));
+    assert.equal(result.state, 'succeeded');
+    assert.equal(result.step, 3);
+    assert.equal(result.planFileMade, 'week-09.json');
+    assert.equal(result.logTail.length, 3);
+  } finally {
+    done();
+  }
+});
+
+test('a failed run carries the engine\'s error, a stop for time is reported as such', async () => {
+  const { s, done } = fresh();
+  try {
+    s.enqueue(spec());
+    const failed = await runJob(s, s.claim(1, 1) as never, fake([['BUDGET_EXHAUSTED (daily_cap): spent', 'err']], 1));
+    assert.equal(failed.state, 'failed');
+    assert.equal(failed.error?.code, 'BUDGET_EXHAUSTED');
+    s.enqueue(spec({ brand: 'globex', site: 'https://globex.example.com' }));
+    const slow = await runJob(s, s.claim(1, 1) as never, fake([], null, true));
+    assert.equal(slow.error?.code, 'TIMEOUT');
+    s.enqueue(spec({ brand: 'initech', site: 'https://initech.example.com' }));
+    const quiet = await runJob(s, s.claim(1, 1) as never, fake([], 2));
+    assert.equal(quiet.error?.message, 'the engine stopped with exit code 2');
+  } finally {
+    done();
+  }
+});
+
+test('draining starts every job that may start and respects the limit per brand', async () => {
+  const { s, done } = fresh();
+  try {
+    s.enqueue(spec());
+    s.enqueue(spec({ kind: 'draw', planFile: 'week-01.json' }));
+    s.enqueue(spec({ brand: 'globex', site: 'https://globex.example.com' }));
+    const started: string[] = [];
+    const exec: Exec = async (args) => { started.push(args.slice(3).join(' ')); return { code: 0, timedOut: false }; };
+    assert.equal(await drain(s, exec, 2, 99), 2);
+    assert.equal(await drain(s, exec, 2, 99), 1);
+    assert.deepEqual(s.list().map((j) => j.state), ['succeeded', 'succeeded', 'succeeded']);
+  } finally {
+    done();
+  }
+});
+
+test('the real process runner reads both streams, reports the exit code and stops a run that takes too long', async () => {
+  const exec = execEngine(tmpdir());
+  const seen: string[] = [];
+  const ended = await exec(['-e', 'console.log("2/4 Writing (week-01.json)"); console.error("FOO_BAR: boom"); process.exit(3)'], (l, src) => seen.push(`${src}:${l}`), 10_000);
+  assert.deepEqual(ended, { code: 3, timedOut: false });
+  assert.deepEqual(seen.sort(), ['err:FOO_BAR: boom', 'out:2/4 Writing (week-01.json)']);
+  const slow = await exec(['-e', 'setTimeout(() => {}, 60000)'], () => {}, 300);
+  assert.equal(slow.timedOut, true);
+});

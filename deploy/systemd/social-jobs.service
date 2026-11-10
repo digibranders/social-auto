@@ -1,0 +1,24 @@
+[Unit]
+Description=Social Auto job runner (reads websites, writes posts and draws kept posters when the dashboard asks; never schedules or publishes)
+After=network-online.target
+
+[Service]
+User=social
+Group=social
+WorkingDirectory=/home/social/social-auto/scheduler/engine
+# The picture key lives here and only here: the review service that takes the requests does not have it.
+EnvironmentFile=/etc/social-auto/engine.env
+Environment=JOBS_ROOT=/home/social/social-auto/scheduler/engine/jobs
+Environment=JOBS_CONCURRENCY=2
+ExecStart=/home/social/.local/node/bin/node src/job-runner.ts
+Restart=always
+RestartSec=5
+# A draw can run for 45 minutes: give a stop that long to let it finish before it is cut.
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/home/social/social-auto/scheduler/engine
+
+[Install]
+WantedBy=multi-user.target

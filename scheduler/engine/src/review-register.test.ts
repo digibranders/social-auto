@@ -61,3 +61,19 @@ test('a poster is recorded as carrying the real logo only when its own result sh
   const text: BrandingDecision = { intendedMode: 'text_only_fallback', appliedMode: 'text_only', status: 'resolved' };
   assert.deepEqual(brandingFor(text, undefined), text, 'a text sign-off decision is left as it was');
 });
+
+test('a run for one shape registers only the networks of that shape, and skips a post written for other networks', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'register-shape-'));
+  try {
+    const picture = join(dir, 'w01-d1.jpg');
+    writeFileSync(picture, 'wide picture');
+    const manifest = { headline: 'Answers from your own docs', brandName: 'OyeChats', domain: 'oyechats.com' };
+    const report: CreativeReport = { brand: 'oyechats', generatedAt: 'now', results: [{ postId: 'w01-d1', manifest, status: 'accepted', file: picture, attempts: [{ n: 1, prompt: 'p', imageFile: picture, readings: [{}, {}] as never, accepted: true, defects: [] }], costUsd: 0.02 }, { postId: 'w01-d2', manifest, status: 'accepted', file: picture, attempts: [{ n: 1, prompt: 'p', imageFile: picture, readings: [{}, {}] as never, accepted: true, defects: [] }], costUsd: 0.02 }] };
+    const both: PlannedPost = { ...post('w01-d1'), variants: { instagram: { caption: 'IG.', hashtags: [] }, linkedin: { caption: 'LI.', hashtags: [] } } };
+    const squareOnly: PlannedPost = { ...post('w01-d2'), variants: { instagram: { caption: 'IG two.', hashtags: [] } } };
+    const made = registerForReview({ brandDir: join(dir, 'brand'), brandSlug: 'oyechats', planFile: 'week-01.json', report, posts: [both, squareOnly], brand: { website: 'https://www.oyechats.com' } as unknown as Brand, facts: [fact], reportFile: '/x/creative-report.json', networks: ['linkedin'] });
+    assert.deepEqual(made.map((v) => [v.postId, v.network]), [['w01-d1', 'linkedin']], 'the Instagram-only post is not a wide poster');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

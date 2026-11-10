@@ -13,9 +13,10 @@
  * dollar. It is durable: restarting the engine never forgets what was spent or what was in flight. What this cannot do is make a provider
  * charge exactly once after a lost answer; it can only refuse to ask twice.
  */
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
+import { appendDurable, LockError, withFileLock } from './file-lock.ts';
 
 export type PaidOperation = 'text' | 'image' | 'vision';
 export type PaidStatus = 'reserved' | 'in_flight' | 'completed' | 'failed' | 'unknown';
@@ -86,6 +87,8 @@ export interface LedgerContext {
   tenantId: string;
   brandId: string;
   now?: () => Date;
+  /** How long a change waits for another live process's lock before it fails (tests shorten it). */
+  lockTimeoutMs?: number;
 }
 
 export interface ReserveRequest {
@@ -101,7 +104,6 @@ export interface ReserveRequest {
 const roundUsd = (value: number): number => Math.round(value * 1e8) / 1e8;
 const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex');
 const dayOf = (iso: string): string => iso.slice(0, 10);
-const sleepSync = (ms: number): void => void Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 /** What a call counts for against a cap: its real cost when it ended, otherwise everything it might still cost. */
 function chargeOf(call: PaidCall): number {
@@ -110,35 +112,13 @@ function chargeOf(call: PaidCall): number {
   return call.reservedCostUsd;
 }
 
-/** Runs `work` while holding the ledger's lock file, so reads and writes of the log by two processes never interleave. */
-export function withLock<T>(lockPath: string, work: () => T): T {
-  const deadline = Date.now() + 5_000;
-  for (;;) {
-    try {
-      const fd = openSync(lockPath, 'wx');
-      writeSync(fd, String(process.pid));
-      closeSync(fd);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      // A lock older than a few seconds belongs to a process that died inside the critical section, which is milliseconds long.
-      try {
-        if (Date.now() - statSync(lockPath).mtimeMs > 10_000) unlinkSync(lockPath);
-      } catch {
-        /* the holder released it between the two calls */
-      }
-      if (Date.now() > deadline) throw new BudgetError('KILL_SWITCH', 'the paid-call ledger is locked by another process, so nothing is spent');
-      sleepSync(10);
-    }
-  }
+/** Runs `work` while holding the ledger's lock (see file-lock.ts). A lock that cannot be had stops the caller, so nothing is spent. */
+export function withLock<T>(lockPath: string, work: () => T, timeoutMs?: number): T {
   try {
-    return work();
-  } finally {
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      /* already gone */
-    }
+    return withFileLock(lockPath, work, timeoutMs === undefined ? {} : { timeoutMs });
+  } catch (error) {
+    if (error instanceof LockError) throw new BudgetError('KILL_SWITCH', `the paid-call ledger is locked (${error.message}), so nothing is spent`);
+    throw error;
   }
 }
 
@@ -162,6 +142,10 @@ export class PaidLedger {
   /** No picture may be bought for the rest of this ledger's life (a site whose identity could not be confirmed). Everything else goes on. */
   disablePictures(): void {
     this.picturesOff = true;
+  }
+
+  private locked<T>(work: () => T): T {
+    return withLock(this.lockPath, work, this.context.lockTimeoutMs);
   }
 
   private now(): Date {
@@ -196,7 +180,7 @@ export class PaidLedger {
 
   private append(event: Event): void {
     try {
-      appendFileSync(this.file, `${JSON.stringify(event)}\n`);
+      appendDurable(this.file, JSON.stringify(event));
     } catch (error) {
       throw new BudgetError('KILL_SWITCH', `the paid-call ledger could not be written (${error instanceof Error ? error.message : String(error)}), so nothing is spent`);
     }
@@ -219,7 +203,7 @@ export class PaidLedger {
 
   /** A call left reserved or in flight by a process that is gone may have been accepted: it becomes "unknown", keeps its reservation, and is never replayed. */
   private markInterruptedUnknown(): void {
-    withLock(this.lockPath, () => {
+    this.locked(() => {
       this.repairTornTail();
       for (const call of this.load().values()) {
         if (call.status === 'reserved' || call.status === 'in_flight') this.append({ type: 'update', callId: call.callId, patch: { status: 'unknown', note: 'the process ended before the answer was stored' } });
@@ -242,7 +226,7 @@ export class PaidLedger {
   reserve(request: ReserveRequest): string {
     const { limits, context } = this;
     const requestHash = sha256(`${request.operation}|${request.model}|${request.requestKey}`);
-    return withLock(this.lockPath, () => {
+    return this.locked(() => {
       const calls = this.load();
       const createdAt = this.now().toISOString();
       const used = summarize(calls, context, dayOf(createdAt), request.postId);
@@ -269,7 +253,7 @@ export class PaidLedger {
   }
 
   private update(callId: string, patch: Partial<PaidCall>): void {
-    withLock(this.lockPath, () => this.append({ type: 'update', callId, patch }));
+    this.locked(() => this.append({ type: 'update', callId, patch }));
   }
 
   /** Call just before the request leaves. */

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { aiConfigFromEnv } from './ai.ts';
 import { cosine, flagSimilar, meaningfulWords, wordOverlap } from './concept-similarity.ts';
 import { batchLookAlikes, DIRECTOR_SYSTEM, directBatch, inventConcepts, loadConceptHistory, openAiEmbedder, saveConceptHistory, type BatchPost, type CreativeConcept } from './creative-director.ts';
+import { defaultHeadlineGate } from './headline-gate.ts';
 import { makeCreatives } from './ai-creative-pipeline.ts';
 import { defaultBudgetLimits, PaidLedger } from './paid-ledger.ts';
 import type { Brand, PlannedPost } from './content.ts';
@@ -214,10 +215,11 @@ test('each poster is drawn from its own concept, a dropped post buys nothing, an
   try {
     const prompts: string[] = [];
     const report = await makeCreatives({
-      ai: c.ai, brand, brandSlug: 'oyechats', brandDir: c.dir, outDir: join(c.dir, 'out'),
+      ai: c.ai, brand, brandSlug: 'oyechats', brandDir: c.dir, outDir: join(c.dir, 'out'), directorEnabled: true,
       posts: [planned('p1', 'Answers from your own docs'), planned('p2', 'One thread'), planned('p3', 'Free plan')],
       factOf: () => 'a fact',
       deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
         direct: async () => ({ concepts: [{ postId: 'p1', concept: DOCS, people: false, factToPicture: 'It shows the fact as an idea.', typography: TYPE_A, replans: 0 }, { postId: 'p3', concept: LINE, people: false, factToPicture: 'It shows the fact as an idea.', typography: TYPE_B, replans: 1 }], dropped: [{ postId: 'p2', reason: 'no distinct idea' }], flags: [] }),
         lookAlikes: async () => ({ scenes: [], typography: [] }),
         scene: async (prompt, out) => { prompts.push(prompt); writeFileSync(out, 'x'); },
@@ -243,8 +245,8 @@ test('if the director fails, no picture is bought', async () => {
   try {
     let drawn = 0;
     const report = await makeCreatives({
-      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), posts: [planned('p1', 'A'), planned('p2', 'B')], factOf: () => 'f',
-      deps: { direct: async () => { throw new Error('No valid response'); }, scene: async () => { drawn += 1; } },
+      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), directorEnabled: true, posts: [planned('p1', 'A'), planned('p2', 'B')], factOf: () => 'f',
+      deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, direct: async () => { throw new Error('No valid response'); }, scene: async () => { drawn += 1; } },
     });
     assert.equal(drawn, 0);
     assert.deepEqual(report.results.map((r) => r.status), ['failed', 'failed']);
@@ -258,8 +260,9 @@ test('posters that look alike side by side: the later one is rejected and its fi
   const c = ctx();
   try {
     const report = await makeCreatives({
-      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), posts: [planned('p1', 'Answers from your own docs'), planned('p2', 'Answers from your own docs')], factOf: () => 'f',
+      ai: c.ai, brand, brandSlug: 'oyechats', outDir: join(c.dir, 'out'), directorEnabled: true, posts: [planned('p1', 'Answers from your own docs'), planned('p2', 'Answers from your own docs')], factOf: () => 'f',
       deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
         direct: async (ps) => ({ concepts: ps.map((p, i) => ({ postId: p.id, concept: [DOCS, LINE][i] as string, people: false, factToPicture: 'It shows the fact as an idea.', typography: TYPE_A, replans: 0 })), dropped: [], flags: [] }),
         scene: async (_p, out) => writeFileSync(out, 'x'),
         review: async () => ({ ...(await reviewOk()), regions: [{ text: 'Answers from your own docs OyeChats oyechats.com', readable: true }] }),

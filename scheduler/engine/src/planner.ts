@@ -2,6 +2,7 @@
 import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
 import { assertCopySupported } from './copy-gate.ts';
+import { checkCopyQuality } from './copy-quality.ts';
 import { brandPrefixProblem, planQualifierProblem } from './headline-rules.ts';
 import { candidateCount, selectBest, type Candidate } from './candidate-selection.ts';
 import { reviewCandidates, type ReviewDeps, type ReviewOutcome } from './copy-review.ts';
@@ -233,6 +234,8 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
   if (typeof draft.headline === 'string' && draft.headline.replaceAll('|', '').length > 60) {
     throw new Error(`post ${position} headline is too long; keep it under 45 characters`);
   }
+  const weak = checkCopyQuality({ headline: draft.headline, caption: draft.caption });
+  if (weak) throw new Error(`post ${position} failed the writing check: ${weak}`);
   // A headline is a message, not a label, and a figure that belongs to a plan keeps its plan (headline-rules.ts); each is asked for again once, then the post is left out.
   const prefix = brandName !== undefined && typeof draft.headline === 'string' ? brandPrefixProblem(draft.headline, brandName) : undefined;
   if (prefix) throw new Error(`post ${position} headline rule: ${prefix}`);
@@ -400,7 +403,7 @@ export async function planWeek(options: {
             validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode, facts: factsPerPost[offset + i] ?? [] });
           } catch (error) {
             // On the last try a post whose copy the claim gate still turns back, or that does not stay with its fact, is left out (fewer posts, never unsupported copy); the others stay.
-            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point|headline rule:/.test(error.message)) {
+            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point|headline rule:|failed the writing check/.test(error.message)) {
               droppedHere.push(error.message);
               return;
             }

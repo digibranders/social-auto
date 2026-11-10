@@ -152,6 +152,9 @@ async function workspace() {
 }
 
 test('real Chrome: an art plan renders offline, the posters wait for review, approval alone makes them publishable, and only approved art enters history', real, async () => {
+  // This test checks the approval rules of the older route through the export, so the export is switched on for it alone.
+  const switchBefore = process.env['SOCIAL_PUBLISHING_ENABLED'];
+  process.env['SOCIAL_PUBLISHING_ENABLED'] = 'true';
   const { root, brandDir } = await workspace();
   const previous = process.cwd();
   try {
@@ -198,6 +201,8 @@ test('real Chrome: an art plan renders offline, the posters wait for review, app
     assert.deepEqual(afterReview.weeks[0]?.art.map((a) => a.status), ['approved', 'rejected', 'pending']);
     assert.equal(readArtHistory(afterReview as never).length, 2, 'the rejected poster no longer steers variety');
   } finally {
+    if (switchBefore === undefined) delete process.env['SOCIAL_PUBLISHING_ENABLED'];
+    else process.env['SOCIAL_PUBLISHING_ENABLED'] = switchBefore;
     process.chdir(previous);
     await rm(root, { recursive: true, force: true });
   }

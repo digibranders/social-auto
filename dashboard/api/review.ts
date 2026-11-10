@@ -3,16 +3,21 @@
  * decides what may be approved or downloaded; this function only passes requests to it with the secret the browser never sees, and only from this
  * site's own pages for anything that changes something.
  *
- *   GET  /api/review?view=list&status=pending|approved|rejected|blocked|superseded|all
+ *   GET  /api/review?view=list&status=open|pending|held|approved|rejected|blocked|superseded|all
  *   GET  /api/review?view=detail|image|download|logo&id=<versionId>
  *   GET  /api/review?view=campaigns      what is being made for each client's plans (read only)
  *   POST /api/review   { "id": "<versionId>", "action": "approve" }  or  { "id": "...", "action": "reject", "reason": "...", "comment": "..." }
+ *   GET  /api/review?view=copy                                  the written posts waiting to be kept or dropped (before any picture is bought)
+ *   POST /api/review   { "copy": { "brand": "...", "planFile": "week-01.json", "postId": "...", "action": "keep" | "drop" } }
  */
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
 const VERSION_ID = /^[a-z0-9][a-z0-9-]{0,62}\.[0-9a-f]{16}$/;
-const STATUS = /^(pending|approved|rejected|blocked|superseded|all)$/;
+const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const PLAN_FILE = /^week-\d{2,4}\.json$/;
+const POST_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;
+const STATUS = /^(open|pending|held|approved|rejected|blocked|superseded|all)$/;
 const TIMEOUT_MS = 25_000;
 const MAX_BODY_BYTES = 4 * 1024;
 /** Who is recorded as having decided: the dashboard has one password, so there is one reviewer. */
@@ -46,7 +51,9 @@ export async function GET(request: Request): Promise<Response> {
   const view = query.get('view') ?? 'list';
   const id = query.get('id') ?? '';
   let path: string;
-  if (view === 'list') {
+  if (view === 'copy') {
+    path = '/review/copy';
+  } else if (view === 'list') {
     const status = query.get('status') ?? 'pending';
     if (!STATUS.test(status)) return json(400, { error: 'Invalid request' });
     path = `/review/posts?status=${status}`;
@@ -74,11 +81,21 @@ export async function POST(request: Request): Promise<Response> {
   if (!secret || !process.env['REVIEW_URL']) return json(503, { error: 'The review queue is not configured' });
   if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'That is too large' });
 
-  let body: { id?: unknown; action?: unknown; reason?: unknown; comment?: unknown };
+  let body: { id?: unknown; action?: unknown; reason?: unknown; comment?: unknown; copy?: { brand?: unknown; planFile?: unknown; postId?: unknown; action?: unknown } };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return json(400, { error: 'Invalid request' });
+  }
+  if (body.copy !== undefined) {
+    const { brand, planFile, postId, action } = body.copy ?? {};
+    if (typeof brand !== 'string' || !BRAND.test(brand) || typeof planFile !== 'string' || !PLAN_FILE.test(planFile) || typeof postId !== 'string' || !POST_ID.test(postId) || (action !== 'keep' && action !== 'drop')) return json(400, { error: 'Invalid request' });
+    try {
+      const url = target(`/review/copy/${brand}/${planFile}/${encodeURIComponent(postId)}/${action}`);
+      return url ? await relay(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by: REVIEWER }) }, secret) : json(503, { error: 'The review queue is not configured' });
+    } catch (error) {
+      return json(502, { error: describeError(error) });
+    }
   }
   const id = typeof body.id === 'string' ? body.id : '';
   if (!VERSION_ID.test(id) || (body.action !== 'approve' && body.action !== 'reject')) return json(400, { error: 'Invalid request' });

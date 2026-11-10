@@ -51,12 +51,14 @@ test('a pause is passed to the publisher with its own secret, at the publisher\'
 test('skipping and unskipping a post go through the edit address, which is found whether EDIT_URL is a bare address or not', async () => {
   const { sent, restore } = setup();
   try {
+    process.env['SOCIAL_PUBLISHING_ENABLED'] = 'true';
     for (const action of ['skip', 'unskip']) assert.equal((await edit(call(`/api/edit?post=manual-0123456789ab&action=${action}`, { method: 'POST', headers }))).status, 200);
     assert.deepEqual(sent.map((s) => s.url), ['http://127.0.0.1:4021/api/edit?post=manual-0123456789ab&action=skip', 'http://127.0.0.1:4021/api/edit?post=manual-0123456789ab&action=unskip']);
     process.env['EDIT_URL'] = 'http://127.0.0.1:4021/api/edit';
     await edit(call('/api/edit?post=p1&action=skip', { method: 'POST', headers }));
     assert.equal(sent[2]?.url, 'http://127.0.0.1:4021/api/edit?post=p1&action=skip');
   } finally {
+    delete process.env['SOCIAL_PUBLISHING_ENABLED'];
     restore();
   }
 });

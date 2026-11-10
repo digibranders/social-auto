@@ -200,6 +200,23 @@ test('a version of one brand is never found in another brand\'s store', () => {
   }
 });
 
+test('while another live process holds the store\'s lock nothing is decided, and the caller is told it is busy; once it lets go the decision is made once', async () => {
+  const { spawn } = await import('node:child_process');
+  const { dir, picture, done } = setup();
+  try {
+    const brandDir = join(dir, 'brand');
+    const store = new ReviewStore(brandDir, 'acme', () => new Date(), 300);
+    const v = store.addVersion(input(picture('a.jpg', 'x')));
+    const holder = spawn(process.execPath, [new URL('./lock-worker.ts', import.meta.url).pathname, 'hold', join(brandDir, 'reviews.jsonl.lock'), '1500'], { stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise<void>((resolve) => holder.stdout?.on('data', (d: Buffer) => d.toString().includes('HELD') && resolve()));
+    assert.equal(code(() => store.approve(v.versionId, 'owner')), 'LOCKED');
+    assert.equal(store.get(v.versionId).status, 'pending', 'nothing was decided while the lock was held elsewhere');
+    await new Promise((resolve) => holder.on('close', resolve));
+    assert.equal(store.approve(v.versionId, 'owner').decision, 'approve');
+  } finally {
+    done();
+  }
+});
 test('how a poster was branded is kept with its version, does not change the version\'s identity, and approval does not depend on it', () => {
   const s = setup();
   try {
@@ -219,3 +236,50 @@ test('how a poster was branded is kept with its version, does not change the ver
   }
 });
 
+
+test('one post made for two networks is two lines of versions: a newer version for one network leaves the other network\'s approval alone', () => {
+  const { store, pictures, done } = (() => {
+    const dir = mkdtempSync(join(tmpdir(), 'review-net-'));
+    const store = new ReviewStore(dir, 'acme');
+    return { store, pictures: (name: string, text: string) => { const p = join(dir, name); writeFileSync(p, text); return p; }, done: () => rmSync(dir, { recursive: true, force: true }) };
+  })();
+  try {
+    const base = { postId: 'w01-d1', planFile: 'week-01.json', headline: 'Answers from your own docs', caption: 'Same words.', ctaUrl: 'https://acme.example', factIds: ['f1'], evidence: [], validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.017 };
+    const ig = store.addVersion({ ...base, network: 'instagram', imagePath: pictures('ig.jpg', 'square picture') });
+    const li = store.addVersion({ ...base, network: 'linkedin', width: 1536, height: 1024, imagePath: pictures('li.jpg', 'wide picture') });
+    assert.notEqual(ig.versionId, li.versionId, 'the same words on two networks are two versions');
+    assert.equal(li.width, 1536);
+    store.approve(ig.versionId, 'owner');
+    store.approve(li.versionId, 'owner');
+    // A changed Instagram caption is a new Instagram version; LinkedIn stays approved.
+    const ig2 = store.addVersion({ ...base, caption: 'Different words.', network: 'instagram', imagePath: pictures('ig.jpg', 'square picture') });
+    assert.equal(ig2.versionNumber, 2);
+    assert.equal(store.get(ig.versionId).status, 'superseded');
+    assert.equal(store.get(ig2.versionId).status, 'pending');
+    assert.equal(store.get(li.versionId).status, 'approved', 'the other network is untouched');
+    assert.deepEqual(store.history('w01-d1', 'linkedin').map((i) => i.version.versionId), [li.versionId]);
+    assert.equal(store.history('w01-d1').length, 3);
+    // A poster made for a network is not released through the post's name alone.
+    assert.equal(store.approvedFor('w01-d1'), undefined);
+    assert.deepEqual(store.approvedForNetworks('w01-d1').map((a) => a.version.network), ['linkedin']);
+  } finally {
+    done();
+  }
+});
+
+test('a version made without a network behaves exactly as before, and a bad network name is refused', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'review-legacy-'));
+  try {
+    const store = new ReviewStore(dir, 'acme');
+    writeFileSync(join(dir, 'a.jpg'), 'picture');
+    const input = { postId: 'p1', planFile: 'week-01.json', headline: 'H', caption: 'C', ctaUrl: 'https://acme.example', factIds: [], evidence: [], imagePath: join(dir, 'a.jpg'), validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.01 };
+    const v = store.addVersion(input);
+    assert.equal(v.network, undefined);
+    assert.equal(store.addVersion(input).versionId, v.versionId, 'the same thing registered twice is one version');
+    store.approve(v.versionId, 'owner');
+    assert.equal(store.approvedFor('p1')?.version.versionId, v.versionId);
+    assert.throws(() => store.addVersion({ ...input, network: 'Insta gram!' }), /short lower-case/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -41,6 +41,13 @@ test('an ordinary site is read: its pages, in a useful order, without the skippe
   assert.ok(snapshot.pages.every((p) => p.text.length > 100));
 });
 
+test('one page mode reads only the address given and follows none of its links', async () => {
+  const { deps, fetched } = site({ 'https://acme.com/pricing': pricing.replace('</body>', `<p>${prose(6)}</p><a href="/about">About</a></body>`), 'https://acme.com/about': about });
+  const snapshot = await crawlSite('https://acme.com/pricing', { ...deps, onlyThisPage: true });
+  assert.deepEqual(snapshot.pages.map((p) => p.url), ['https://acme.com/pricing']);
+  assert.ok(!fetched.includes('https://acme.com/about'));
+});
+
 test('pages robots.txt disallows are not read, and a robots.txt that cannot be fetched allows everything', async () => {
   const blocked = site({ 'https://acme.com/robots.txt': 'User-agent: *\nDisallow: /pricing\n', 'https://acme.com/': home, 'https://acme.com/about': about, 'https://acme.com/pricing': pricing });
   const snapshot = await crawlSite('acme.com', blocked.deps);

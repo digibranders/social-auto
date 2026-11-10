@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
+import { assertPublishingEnabled } from './publishing-switch.ts';
 
 const REQUEST_TIMEOUT_MS = 60_000;
 
@@ -84,6 +85,8 @@ export class SchedulerClient {
   }
 
   async uploadImage(filePath: string): Promise<SchedulerMedia> {
+    // The last line of defence: whatever called this, nothing is sent while publishing is switched off.
+    assertPublishingEnabled('the upload to the scheduler');
     const form = new FormData();
     form.append('file', new Blob([await readFile(filePath)], { type: 'image/jpeg' }), basename(filePath));
     const data = await this.request('/upload', { method: 'POST', body: form });
@@ -94,6 +97,7 @@ export class SchedulerClient {
   }
 
   async schedulePost(input: SchedulePostInput): Promise<CreatedPost> {
+    assertPublishingEnabled('scheduling the post');
     const body = {
       type: 'schedule',
       shortLink: false,

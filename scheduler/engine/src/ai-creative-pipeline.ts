@@ -5,6 +5,7 @@
  * A poster that is rejected twice, or whose budget is spent, is dropped: fewer posters, never a poster that did not pass. An accepted poster is only
  * "pending": nothing here approves, schedules or publishes anything.
  */
+import { SQUARE_SHAPE, type PictureShape } from './networks.ts';
 import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AiConfig } from './ai.ts';
@@ -16,6 +17,7 @@ import type { LogoPlacementRecord } from './branding.ts';
 import { inspectLogoFile } from './branding.ts';
 import { placeLogo as placeLogoOnPoster, type Box as PixelBox, type Placement, type PlacementFailure, type PlacementInput } from './logo-compositor.ts';
 import { BudgetError } from './paid-ledger.ts';
+import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines, type HeadlineGateConfig, type HeadlineScore } from './headline-gate.ts';
 import { batchLookAlikes, compareIdeas, directBatch, loadConceptHistory, openAiEmbedder, saveConceptHistory, type DirectorResult, type LookAlikes, type PlannedConcept } from './creative-director.ts';
 
 export interface CreativeAttempt {
@@ -38,6 +40,8 @@ export interface CreativeResult {
   postId: string;
   manifest: TextManifest;
   status: 'accepted' | 'rejected' | 'budget_stopped' | 'failed' | 'dropped';
+  /** How the editorial check judged the headline, when the check ran. */
+  headline?: HeadlineScore;
   /** The picture the creative director chose for this post. */
   concept?: PlannedConcept;
   /** What the plan said about people and what the readers saw in the poster that was kept (or the last one drawn). */
@@ -68,11 +72,15 @@ export interface CreativeReport {
 
 export interface CreativeDeps {
   /** For tests: replaces the picture call. */
-  scene?: (prompt: string, outPath: string) => Promise<void>;
+  scene?: (prompt: string, outPath: string, shape: PictureShape) => Promise<void>;
   /** For tests: replaces the vision call. */
   review?: (imagePath: string, message: string, reading: number) => Promise<CreativeReview>;
   /** How many independent readings a poster gets first (two); a third is made only to settle a disagreement. */
   readings?: number;
+  /** For tests: replaces the editorial check of the headlines (one score per post). */
+  headlines?: (items: ReadonlyArray<{ id: string; headline: string; fact: string }>) => Promise<HeadlineScore[]>;
+  /** For tests: the editorial gate's settings; otherwise they come from the environment. */
+  headlineGate?: { enabled: boolean; config: HeadlineGateConfig };
   /** For tests: replaces the third reading. */
   third?: (dispute: Dispute, imageFile: string) => Promise<{ reading: CreativeReview; cropped: boolean }>;
   /** For tests: replaces the creative director (concepts for the batch). */
@@ -99,6 +107,13 @@ export interface CreativeRunInput {
   brandDir?: string;
   /** The most posters of a batch that may show people prominently. */
   peopleCap?: number;
+  /**
+   * Whether the creative director plans the batch (concepts, similarity checks, a replan, a side-by-side check and the concept memory). Off unless set:
+   * with it off every poster is drawn on its own from the prompt contract, and no director call, embedding, comparison or side-by-side check is made.
+   */
+  directorEnabled?: boolean;
+  /** The shape every poster of this run is drawn in; square when not given. A run is of one shape: a post that needs two shapes is drawn by two runs. */
+  shape?: PictureShape;
   /** The brand's real logo, when the posters are to carry it: the file (checked and frozen), its shape and the hash it must still have. */
   logo?: { path: string; kind: 'wordmark' | 'symbol'; sha256: string };
   log?: (message: string) => void;
@@ -156,21 +171,51 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   await mkdir(outDir, { recursive: true });
   const report: CreativeReport = { brand: input.brandSlug, generatedAt: (deps.now?.() ?? new Date()).toISOString(), results: [] };
 
-  const scene = deps.scene ?? (async (prompt: string, outPath: string): Promise<void> => {
-    await generateScene(ai, { prompt, outPath, width: 1024, height: 1024, seed: 1 }, { openaiImages: 0 });
+  const shape = input.shape ?? SQUARE_SHAPE;
+  const scene = deps.scene ?? (async (prompt: string, outPath: string, drawShape: PictureShape): Promise<void> => {
+    await generateScene(ai, { prompt, outPath, width: drawShape.width, height: drawShape.height, seed: 1 }, { openaiImages: 0 });
   });
   const look = deps.review ?? ((imagePath: string, message: string, reading: number): Promise<CreativeReview> => reviewCreative(ai, imagePath, message, undefined, reading, allowedTexts));
   const readings = deps.readings ?? 2;
   let allowedTexts: string[] = [];
   const spent = (postId: string): number => ai.ledger?.spend(postId).poster ?? 0;
 
-  // The creative director plans every post of the batch together, and the plan is checked, before any picture is bought.
-  const past = input.brandDir ? await loadConceptHistory(input.brandDir) : [];
-  const batch = posts.map((post) => ({ id: post.id, headline: plainHeadline(post.headline), fact: input.factOf(post) }));
-  let direction: DirectorResult;
+  // The editorial gate: a headline that gives the reader nothing, or does not read as natural copy, is dropped before any picture is paid for.
+  const gate = deps.headlineGate ?? headlineGateFromEnv(process.env);
+  const dropped = new Map<string, { reason: string; score: HeadlineScore }>();
+  const scored = new Map<string, HeadlineScore>();
+  if (gate.enabled && posts.length > 0) {
+    ai.usage.post = null;
+    ai.usage.purpose = 'review';
+    try {
+      const items = posts.map((post) => ({ id: post.id, headline: plainHeadline(post.headline), fact: input.factOf(post) }));
+      const scores = await (deps.headlines ?? ((list) => scoreHeadlines(ai, list)))(items);
+      for (const verdict of judgeHeadlines(scores, gate.config)) {
+        scored.set(verdict.id, verdict.score);
+        if (!verdict.keep) dropped.set(verdict.id, { reason: verdict.reason ?? 'weak headline', score: verdict.score });
+      }
+    } catch (error) {
+      if (error instanceof BudgetError) {
+        report.stoppedBy = `${error.code}: ${error.message}`;
+        for (const post of posts) report.results.push({ postId: post.id, manifest: manifestOf(post, brand), status: 'budget_stopped', attempts: [], reason: error.message, costUsd: 0 });
+        await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
+        return report;
+      }
+      // The check could not be made: the posts go on, as they did before the gate existed, with a note in the log. A gate that fails must not stop the engine.
+      log(`the headline check could not be made (${error instanceof Error ? error.message : String(error)}); the headlines were not checked`);
+    } finally {
+      ai.usage.purpose = 'writing';
+    }
+  }
+
+  // The creative director (when it is switched on) plans every post of the batch together, and the plan is checked, before any picture is bought.
+  const director = input.directorEnabled === true;
+  const past = director && input.brandDir ? await loadConceptHistory(input.brandDir) : [];
+  const batch = posts.filter((post) => !dropped.has(post.id)).map((post) => ({ id: post.id, headline: plainHeadline(post.headline), fact: input.factOf(post) }));
+  let direction: DirectorResult = { concepts: [], dropped: [], flags: [] };
   ai.usage.post = null;
   ai.usage.purpose = 'writing';
-  try {
+  if (director) try {
     direction = deps.direct
       ? await deps.direct(batch, past.map((r) => r.concept))
       : await directBatch(
@@ -190,7 +235,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
     return report;
   }
-  report.direction = { flags: direction.flags, dropped: direction.dropped };
+  if (director) report.direction = { flags: direction.flags, dropped: direction.dropped };
   const conceptOf = new Map(direction.concepts.map((c) => [c.postId, c]));
 
   for (const post of posts) {
@@ -199,27 +244,40 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     allowedTexts = [manifest.headline, ...(manifest.subline ? [manifest.subline] : []), ...(manifest.brandSignoff === 'logo' ? [] : [manifest.brandName]), manifest.domain];
     const result: CreativeResult = { postId: post.id, manifest, status: 'rejected', attempts: [], costUsd: 0 };
     report.results.push(result);
+    if (scored.has(post.id)) result.headline = scored.get(post.id) as HeadlineScore;
+    const weak = dropped.get(post.id);
+    if (weak) {
+      result.status = 'dropped';
+      result.reason = weak.reason;
+      log(`${post.id}: dropped before any picture was bought (${weak.reason})`);
+      continue;
+    }
     const concept = conceptOf.get(post.id);
-    if (!concept) {
+    // With the director off there is no concept, so people are planned by what the batch already has: while it is under its limit of posters showing people prominently
+    // they are allowed, and once it is at the limit the next poster is asked to be drawn without them (a retry), instead of being thrown away after it was paid for.
+    const prominentSoFar = report.results.filter((r) => r.status === 'accepted' && r.people?.observed === 'prominent').length;
+    const plannedPeople = concept?.people ?? prominentSoFar < (input.peopleCap ?? 1);
+    if (director && !concept) {
       result.status = 'dropped';
       result.reason = direction.dropped.find((d) => d.postId === post.id)?.reason ?? 'the creative director gave this post no concept';
       log(`${post.id}: dropped (${result.reason})`);
       continue;
     }
-    result.concept = concept;
-    ai.usage.post = `${input.brandSlug}-${post.id}`;
+    if (concept) result.concept = concept;
+    // A wide poster of a post is its own poster to the ledger, so its picture allowance and cap are its own.
+    ai.usage.post = `${input.brandSlug}-${post.id}${shape.shape === 'square' ? '' : `-${shape.shape}`}`;
     // The ledger counts a poster's calls under the same id.
     const ledgerId = ai.usage.post;
     let note: string | undefined;
     try {
       for (let n = 1; n <= maxAttempts; n++) {
         const imageFile = join(outDir, `${post.id}.attempt${n}.jpg`);
-        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography }, ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
+        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
         const attempt: CreativeAttempt = { n, prompt, imageFile, readings: [], accepted: false, defects: [] };
         result.attempts.push(attempt);
         log(`${post.id}: attempt ${n}, drawing the poster…`);
         try {
-          await scene(prompt, imageFile);
+          await scene(prompt, imageFile, shape);
         } catch (error) {
           if (error instanceof BudgetError) throw error;
           attempt.error = `the picture could not be made: ${error instanceof Error ? error.message : String(error)}`;
@@ -243,7 +301,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
         ai.usage.purpose = 'review';
         let verdict: { accepted: boolean; defects: CreativeDefect[] };
         try {
-          const settled = await decideReadings(manifest, attempt.readings, (dispute) => (deps.third ? deps.third(dispute, imageFile) : thirdReading(ai, imageFile, fact, allowedTexts, dispute)), { people: concept.people });
+          const settled = await decideReadings(manifest, attempt.readings, (dispute) => (deps.third ? deps.third(dispute, imageFile) : thirdReading(ai, imageFile, fact, allowedTexts, dispute)), { people: plannedPeople });
           if (settled.third) attempt.readings.push(settled.third.reading);
           attempt.warnings = settled.warnings;
           if (settled.third) attempt.adjudication = { gates: settled.third.gates, cropped: settled.third.cropped, confirmed: settled.third.confirmed, cleared: settled.third.cleared, boxes: settled.third.boxes };
@@ -257,15 +315,15 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
           ai.usage.purpose = 'writing';
         }
         const seen = observedPeople(attempt.readings);
-        result.people = { planned: concept.people, observed: seen.observed, description: seen.description };
+        result.people = { planned: plannedPeople, observed: seen.observed, description: seen.description };
         // People the plan did not mention, small enough not to change the poster: noted for the owner and for the batch, not a rejection.
-        if (!concept.people && seen.observed === 'background') attempt.warnings = [...(attempt.warnings ?? []), `PEOPLE_PLAN_MISMATCH: the concept has no people, but the poster shows ${seen.description || 'small figures'}`];
+        if (!plannedPeople && seen.observed === 'background') attempt.warnings = [...(attempt.warnings ?? []), `PEOPLE_PLAN_MISMATCH: the concept has no people, but the poster shows ${seen.description || 'small figures'}`];
         // A poster that passed every check still needs somewhere calm for the real logo: when there is none, it is drawn once more with that asked for.
         const file = join(outDir, `${post.id}.jpg`);
         let logoRecord: LogoPlacementRecord | undefined;
         if (verdict.accepted && input.logo) {
-          // The model draws 1024 pixel squares; a picture that cannot be measured is taken to be one.
-          const size = (() => { try { return inspectLogoFile(imageFile); } catch { return { width: 1024, height: 1024 }; } })();
+          // The picture is measured as drawn; one that cannot be measured is taken to be the shape that was asked for.
+          const size = (() => { try { return inspectLogoFile(imageFile); } catch { return { width: shape.width, height: shape.height }; } })();
           const boxes = textBoxesIn(attempt.readings, size.width, size.height);
           const placed = boxes === null
             ? ({ placed: false, reason: 'NO_SAFE_PLACEMENT', detail: 'a piece of text on the poster could not be located, so no place can be called clear of it' } as PlacementFailure)
@@ -320,7 +378,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   ai.usage.post = null;
   // The finished posters side by side: a poster that repeats an earlier one of the batch is rejected (no second picture is bought for it in this first version).
   const kept = report.results.filter((r) => r.status === 'accepted' && r.file);
-  if (kept.length >= 2 && !report.stoppedBy) {
+  if (director && kept.length >= 2 && !report.stoppedBy) {
     ai.usage.purpose = 'review';
     try {
       const pairs = await (deps.lookAlikes ?? ((posters) => batchLookAlikes(ai, posters)))(kept.map((r) => ({ id: r.postId, file: r.file as string })));
@@ -356,7 +414,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     log(`${result.postId}: rejected, ${result.reason}`);
   }
   // Every concept is remembered, the rejected ones too, so that next week does not repeat them.
-  if (input.brandDir) {
+  if (director && input.brandDir) {
     await saveConceptHistory(input.brandDir, past, report.results.flatMap((r) => (r.concept ? [{ at: report.generatedAt, postId: `${input.brandSlug}-${r.postId}`, concept: r.concept.concept, typography: r.concept.typography, people: r.concept.people, accepted: r.status === 'accepted' }] : [])));
   }
   await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);

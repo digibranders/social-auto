@@ -6,6 +6,7 @@
  * secret the browser never sees.
  */
 import { describeError, json } from '../lib/http.js';
+import { PUBLISHING_OFF_MESSAGE, publishingEnabled } from '../lib/publishing.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
 const ACTIONS = ['image', 'create', 'delete'] as const;
@@ -27,6 +28,8 @@ export async function POST(request: Request): Promise<Response> {
   const action = ACTIONS.find((candidate) => candidate === url.searchParams.get('action'));
   const post = url.searchParams.get('post') ?? '';
   if (!action || (action === 'delete' && !POST_ID.test(post))) return json(400, { error: 'Invalid request' });
+  // Making a post is publishing: refused while the switch is off. Taking a hand-made post away is always allowed.
+  if (action !== 'delete' && !publishingEnabled()) return json(503, { error: PUBLISHING_OFF_MESSAGE });
 
   const limit = MAX_BODY_BYTES[action];
   if (Number(request.headers.get('content-length') ?? 0) > limit) return json(413, { error: 'That is too large' });

@@ -14,6 +14,10 @@
  * --art adds art direction (a separate model call per plan, measured rendering, review before scheduling). It only runs
  * when the brand's art.json enables it, is switched off by ART_DIRECTION_DISABLED=1, and needs --allow-paid-ai with --dry-run.
  * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
+ * --copy-first (AI route) stops after the posts are written and lists them for the owner to keep or drop; nothing is drawn or paid for.
+ * --networks instagram,linkedin (AI route) also writes each post a caption for each of those networks (stored as the post's `variants`).
+ * --page reads only the address given (one page, no links followed); for a website that has no saved profile yet.
+ * --draw-kept week-NN.json then draws only the posts the owner kept in that batch, and queues the results for poster review.
  * --plan-only stops after the posts are written (no art direction, pictures or rendering), for a renderer that works from the plan on its own.
  * --review (needs --art) has a vision model look at each finished poster, repairs what can be repaired without a new picture, and rejects the rest
  * (see review-loop.ts). It never approves anything. --review-budget caps what review and repair may spend per batch, in dollars.
@@ -30,6 +34,7 @@ import { parseArgs } from 'node:util';
 import { aiConfigFromEnv } from './ai.ts';
 import { appendUsageLog } from './usage.ts';
 import { CrawlError } from './crawl.ts';
+import { assertPublishingEnabled, PublishingDisabledError } from './publishing-switch.ts';
 import { makeCreatives } from './ai-creative-pipeline.ts';
 import { modelReviewDeps, ordinaryChecks } from './copy-review.ts';
 import { COMPOSITOR_READY, assertMayDraw, freezeLogo, logoPathFor, resolveBranding, type BrandingDecision } from './branding.ts';
@@ -39,7 +44,11 @@ import { checkBrandIdentity, checkEvidence, checkLanguage, PreflightError } from
 import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { parseWeekdays } from './cadence.ts';
-import { parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
+import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
+import { CopyStage } from './copy-stage.ts';
+import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
+import { writeNetworkCaptions } from './network-captions.ts';
+import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines } from './headline-gate.ts';
 import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
 import { recordRenderedArt } from './art-review.ts';
 import { reviewAndRepair } from './review-loop.ts';
@@ -120,6 +129,8 @@ function requireEnv(name: string, envPath: string): string {
   return value;
 }
 
+class PageModeError extends Error {}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -140,6 +151,10 @@ async function main(): Promise<void> {
       'semantic-check': { type: 'boolean', default: false },
       review: { type: 'boolean', default: false },
       'plan-only': { type: 'boolean', default: false },
+      'copy-first': { type: 'boolean', default: false },
+      page: { type: 'boolean', default: false },
+      'draw-kept': { type: 'string' },
+      networks: { type: 'string' },
       'review-budget': { type: 'string', default: '0.015' },
       'allow-paid-ai': { type: 'boolean', default: false },
       'require-logo': { type: 'boolean', default: false },
@@ -150,18 +165,29 @@ async function main(): Promise<void> {
   if (!values.site) throw new Error('Usage: --site <website> --channel <instagram username> [--days 7] [--dry-run]');
   const route = values.route;
   if (route !== 'ai' && route !== 'template') throw new Error('--route must be "ai" (the model draws the whole poster) or "template" (our own layout with an AI picture)');
+  const networks = values.networks ? values.networks.split(',').map((n) => n.trim()).filter((n) => n !== '') : [];
+  for (const n of networks) if (!isNetwork(n)) throw new Error(`--networks names ${NETWORKS.join(', ')}; "${n}" is not one of them`);
+  if (networks.length > 0 && route !== 'ai') throw new Error('--networks belongs to the fully AI route');
   const target = values.target;
   const reviewBudget = Number(values['review-budget']);
   if (!Number.isFinite(reviewBudget) || reviewBudget <= 0) throw new Error('--review-budget must be a positive number of dollars');
   if (values.review && !values.art) throw new Error('--review looks at art-directed posters, so it needs --art');
   if (values.review && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--review makes a vision request per poster: with --dry-run it needs --allow-paid-ai');
   if (target !== 'scheduler' && target !== 'publisher') throw new Error('--target must be "scheduler" or "publisher"');
-  if (target === 'scheduler' && !values.channel && !values['dry-run']) {
+  if (route === 'template' && target === 'scheduler' && !values.channel && !values['dry-run']) {
     throw new Error('--channel is required for --target scheduler unless --dry-run is set');
   }
+  // The template route schedules or exports for real unless it is a dry run: refused up front (the AI route never does either; its posters wait for approval), before any paid work, unless publishing is switched on for this server.
+  if (route === 'template' && !values['dry-run']) assertPublishingEnabled(target === 'publisher' ? 'exporting to the publisher' : 'scheduling');
   const weekdays = values.weekdays ? parseWeekdays(values.weekdays.split(',')) : undefined;
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
+
+  // One page, not the whole site: only the address given is read. It is for a website that has no saved profile yet; one that has is already read, and its facts are used.
+  if (values.page) {
+    if (await fileExists(join(BRANDS_ROOT, slugFromSite(values.site), 'brand.json'))) throw new PageModeError('this website already has a saved profile, so it is not read again from a single page');
+    process.env['CRAWL_ONLY_THIS_PAGE'] = 'true';
+  }
 
   const envPath = envFilePath(values.env, process.env);
   loadEnvIfPresent(envPath);
@@ -210,7 +236,7 @@ async function main(): Promise<void> {
       values.start ?? chooseStartDate(await lastPlannedDate(brandDir), tomorrowAt(values['utc-offset']));
     const pattern = weekdays ? ` on ${weekdays.join('/')}` : '';
     ai.usage.purpose = 'writing';
-    console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
+    if (!values['draw-kept']) console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
     const loaded = await loadFacts(brandDir);
     const reviewed = loaded ? applyReview(loaded.facts.filter((f) => f.status === 'usable'), await loadReview(brandDir)) : undefined;
     if (loaded && reviewed) console.log(`    Evidence facts: ${loaded.facts.filter((f) => f.status === 'usable').length} usable of ${loaded.facts.length} (built ${loaded.file.builtAt.slice(0, 10)}); ${reviewed.mode === 'approved_only' ? `${reviewed.approved} approved by the owner are used` : 'none approved yet, all usable are eligible'}.`);
@@ -229,6 +255,64 @@ async function main(): Promise<void> {
       for (const warning of findings) console.log(`    WARNING ${warning.code}: ${warning.reason}`);
       // A business that could not be confirmed gets no purchased picture; the poster still renders with the verified name and its own text.
       if (findings.some((f) => f.code === 'BRAND_UNVERIFIED')) ai.ledger?.disablePictures();
+    }
+    // Draws the given posts with the picture model and queues what is accepted for the owner's poster review. Nothing is scheduled or published.
+    const drawPosters = async (finalPlan: WeekPlan, planFile: string): Promise<void> => {
+      if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
+      // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
+      const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
+      console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
+      const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+      ai.usage.purpose = 'writing';
+      // Networks of the same shape share one picture: a square one for Instagram, Facebook and Google, a wide one for LinkedIn. Each shape is its own run; the editorial
+      // check of the headlines is made once (in the first run), and a post it dropped is not drawn again in another shape.
+      const dropped = new Set<string>();
+      let first = true;
+      let queuedTotal = 0;
+      const usageIds: string[] = [];
+      for (const group of pictureGroups(finalPlan.posts)) {
+        const posts = finalPlan.posts.filter((p) => group.postIds.includes(p.id) && !dropped.has(p.id));
+        if (posts.length === 0) continue;
+        const suffix = group.shape.shape === 'square' ? '' : `-${group.shape.shape}`;
+        const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai${suffix}`);
+        if (group.networks.length > 0) console.log(`    Drawing the ${group.shape.shape} picture for ${group.networks.join(', ')}…`);
+        const made = await makeCreatives({
+          ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape,
+          ...(first ? {} : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
+          // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
+          ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
+          factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
+        });
+        first = false;
+        for (const r of made.results) if (r.status === 'dropped') dropped.add(r.postId);
+        const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
+        console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
+        if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
+        usageIds.push(...posts.map((p) => `${slug}-${p.id}${suffix}`));
+        const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(group.networks.length > 0 ? { networks: group.networks } : {}), ...(branding ? { branding } : {}) });
+        queuedTotal += queued.length;
+        if (made.stoppedBy) break;
+      }
+      console.log(ai.usage.format());
+      const log = process.env['USAGE_LOG_FILE'];
+      if (log) await appendUsageLog(log, ai.usage.records(slug, usageIds));
+      console.log(`    ${queuedTotal} poster version${queuedTotal === 1 ? '' : 's'} added to the owner's review queue.`);
+      console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
+    };
+    if (values['draw-kept']) {
+      const keptFile = values['draw-kept'];
+      if (route !== 'ai') throw new Error('--draw-kept belongs to the fully AI route');
+      if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
+      const copy = new CopyStage(brandDir, slug);
+      const stored = parseWeekPlan(await readJson(join(brandDir, keptFile)), keptFile);
+      const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })));
+      for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
+      if (postIds.length === 0) throw new Error(`${keptFile} has no kept posts to draw: keep at least one in the dashboard first`);
+      // The batch is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
+      copy.markDrawn(keptFile);
+      console.log(`3/4 Drawing ${postIds.length} kept post${postIds.length === 1 ? '' : 's'} of ${keptFile}…`);
+      await drawPosters({ ...stored, renderMode: 'ai_v1', posts: stored.posts.filter((p) => postIds.includes(p.id)) }, keptFile);
+      return;
     }
     if (values['semantic-check'] && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--semantic-check makes one model request per batch of posts: with --dry-run it needs --allow-paid-ai');
     const verdicts = values['semantic-check'] ? await fileCache(join(brandDir, 'semantic-verdicts.json')) : undefined;
@@ -289,31 +373,36 @@ async function main(): Promise<void> {
       for (const flag of flags) console.log(`    FLAG: ${flag}`);
       await writeFileAtomic(join(brandDir, `art-report-${planFile}`), `${JSON.stringify(directed.report, null, 2)}\n`);
     }
+    if (networks.length > 0 && finalPlan.posts.length > 0) {
+      console.log(`    Writing a caption for each of ${networks.join(', ')}…`);
+      ai.usage.purpose = 'writing';
+      const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+      const written = await writeNetworkCaptions({ ai, networks: networks as Network[], posts: finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), caption: p.caption, hashtags: p.hashtags, facts: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) })) });
+      finalPlan = { ...finalPlan, posts: finalPlan.posts.map((p) => (written.variants[p.id] ? { ...p, variants: written.variants[p.id] as PostVariants } : p)) };
+      console.log(`    Captions: ${written.report.written} of ${written.report.requested} written${written.report.retried ? `, ${written.report.retried} asked for again` : ''}${written.report.fallback.length ? `, ${written.report.fallback.length} use the main caption (${written.report.fallback.map((f) => `${f.postId}/${f.network}`).join(', ')})` : ''}.`);
+    }
     await writeFileAtomic(join(brandDir, planFile), `${JSON.stringify(finalPlan, null, 2)}\n`);
     history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(plan.posts.some((p) => p.factIds) ? { factIds: plan.posts.flatMap((p) => p.factIds ?? []) } : {}) });
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
+    if (route === 'ai' && values['copy-first'] && !values['plan-only']) {
+      // The editorial gate reads each headline with its fact (one cheap request for the batch) and the owner is told which ones it would drop. It only advises here: the owner decides.
+      const advice = new Map<string, string>();
+      if (headlineGateFromEnv(process.env).enabled) {
+        try {
+          const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+          const items = finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), fact: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined).join(' ') || p.anchor || p.painPoint }));
+          for (const verdict of judgeHeadlines(await scoreHeadlines(ai, items), headlineGateFromEnv(process.env).config)) if (!verdict.keep && verdict.reason) advice.set(verdict.id, verdict.reason);
+        } catch (error) {
+          console.log(`    The headline check could not run (${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}); no advice is shown.`);
+        }
+      }
+      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })));
+      console.log(`3/4 Copy first: ${finalPlan.posts.length} posts are waiting for the owner to keep or drop them. No picture was bought. Then: --draw-kept ${planFile}`);
+      return;
+    }
     if (route === 'ai' && !values['plan-only']) {
-      if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
-      console.log('3/4 Drawing the posters with the picture model (no template)…');
-      const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai`);
-      const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
-      ai.usage.purpose = 'writing';
-      const made = await makeCreatives({
-        ai, brand, brandSlug: slug, brandDir, posts: finalPlan.posts, outDir, log: (m) => console.log(`    ${m}`),
-        // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
-        ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
-        factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
-      });
-      const counts = made.results.reduce<Record<string, number>>((sum, r) => ({ ...sum, [r.status]: (sum[r.status] ?? 0) + 1 }), {});
-      console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${finalPlan.posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
-      if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
-      console.log(ai.usage.format());
-      const log = process.env['USAGE_LOG_FILE'];
-      if (log) await appendUsageLog(log, ai.usage.records(slug, finalPlan.posts.map((p) => `${slug}-${p.id}`)));
-      const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts: finalPlan.posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(branding ? { branding } : {}) });
-      console.log(`    ${queued.length} poster${queued.length === 1 ? '' : 's'} added to the owner's review queue.`);
-      console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
+      await drawPosters(finalPlan, planFile);
       return;
     }
     if (values['plan-only']) {
@@ -387,7 +476,9 @@ async function main(): Promise<void> {
 
 if (import.meta.main) {
   main().catch((error: unknown) => {
-    if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    if (error instanceof PublishingDisabledError) console.error(`PUBLISHING_DISABLED: ${error.message}`);
+    else if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    else if (error instanceof PageModeError) console.error(`PAGE_MODE_UNAVAILABLE: ${error.message}`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof PreflightError) console.error(`${error.code}: ${error.message}. No posters were made.`);
     else console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);

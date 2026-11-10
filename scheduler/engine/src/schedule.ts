@@ -8,6 +8,7 @@ import { access, readFile, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { composeCaption, isPublishable, parseWeekPlan, readJson } from './content.ts';
+import { assertPublishingEnabled } from './publishing-switch.ts';
 import { ReviewStore } from './review-store.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { SchedulerClient } from './scheduler-client.ts';
@@ -38,6 +39,8 @@ export interface ScheduleOptions {
 
 /** Schedules each future, not-yet-scheduled post. Returns how many were scheduled. */
 export async function schedulePlan(options: ScheduleOptions): Promise<number> {
+  // Before the plan is even read: with publishing switched off nothing is scheduled, whatever the plan says (a dry run sends nothing and is allowed).
+  if (!options.dryRun) assertPublishingEnabled('scheduling');
   const log = options.log ?? console.log;
   const plan = parseWeekPlan(await readJson(join(options.brandDir, options.planFile)), options.planFile);
   const outDir = resolve('out', basename(options.brandDir), basename(options.planFile, '.json'));

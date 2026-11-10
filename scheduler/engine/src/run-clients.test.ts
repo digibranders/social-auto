@@ -26,3 +26,8 @@ test('autopilotArgs passes the target and only includes a channel when set', () 
   assert.deepEqual(args.slice(-2), ['--target', 'publisher']);
   assert.ok(!args.includes('--channel'));
 });
+
+test('the weekly client run asks for the template route explicitly, so it cannot silently become the approval-queue route', () => {
+  const args = autopilotArgs({ site: 'a.com', days: 7, time: '10:00', utcOffset: '+05:30', target: 'publisher' });
+  assert.equal(args[args.indexOf('--route') + 1], 'template');
+});

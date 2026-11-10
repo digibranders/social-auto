@@ -7,6 +7,7 @@ User=social
 Group=social
 WorkingDirectory=/home/social/social-auto/scheduler/engine
 EnvironmentFile=/etc/social-auto/review.env
+Environment=HOST=127.0.0.1
 ExecStart=/home/social/.local/node/bin/node src/review-server.ts
 Restart=always
 RestartSec=3
@@ -14,7 +15,7 @@ MemoryMax=256M
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/home/social/social-auto/scheduler/engine/brands
+ReadWritePaths=/home/social/social-auto/scheduler/engine/brands -/home/social/social-auto/scheduler/engine/jobs
 
 [Install]
 WantedBy=multi-user.target
