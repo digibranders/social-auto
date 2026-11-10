@@ -3,7 +3,7 @@
  *
  * POST /api/clients?action=add       body: {"name": "Brand Basket", "website": "brandbasket.in"}   answers {"brand": "brand-basket"}  (website is optional)
  * POST /api/clients?action=set-website  body: {"brand": "brand-basket", "website": "brandbasket.in"}  (an empty website clears it)
- * POST /api/clients?action=add-plan     body: {"brand": "brand-basket", "plan": {...}}  (one more plan: what to post, where and for how long)
+ * POST /api/clients?action=add-plan     body: {"brand": "brand-basket", "plan": {...}}  (one more plan: what to post, where and for how long; "plan.channelIds" names the exact account for each platform, and is filled in when the client has only one account on a platform)
  * POST /api/clients?action=set-limit    body: {"brand": "brand-basket", "limit": 3}  (posters a week the website may make for each channel)
  * POST /api/clients?action=set-logo-required  body: {"brand": "brand-basket", "required": true}  (every poster must carry the website's real logo)
  * POST /api/clients?action=remove-plan  body: {"brand": "brand-basket", "index": 0}  (stops making posters for that plan)
@@ -40,8 +40,8 @@ async function website(body: Record<string, unknown>): Promise<Response> {
 async function plan(body: Record<string, unknown>, change: 'add' | 'remove'): Promise<Response> {
   const brand = body['brand'];
   if (!isBrandSlug(brand)) throw new EditError('unknown client');
-  const { file, etag } = await loadClients();
-  await saveClients(change === 'add' ? addPlan(file, brand, body['plan'], Date.now()) : removePlan(file, brand, body['index']), etag);
+  const [{ file, etag }, { file: channels }] = await Promise.all([loadClients(), loadChannels()]);
+  await saveClients(change === 'add' ? addPlan(file, brand, body['plan'], Date.now(), channels.channels) : removePlan(file, brand, body['index']), etag);
   return json(200, { ok: true });
 }
 

@@ -82,7 +82,7 @@ export async function postToFacebook(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'facebook').filter((c) => isWantedOn(post, c.id, 'facebook'))) {
+  for (const channel of targetChannels(options.channels, post, 'facebook')) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -131,7 +131,7 @@ export async function postToLinkedIn(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'linkedin').filter((c) => isWantedOn(post, c.id, 'linkedin'))) {
+  for (const channel of targetChannels(options.channels, post, 'linkedin')) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -184,7 +184,7 @@ export async function postToGoogle(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'google').filter((c) => isWantedOn(post, c.id, 'google'))) {
+  for (const channel of targetChannels(options.channels, post, 'google')) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -232,7 +232,7 @@ export async function postToInstagram(options: {
 }): Promise<CrosspostResult[]> {
   const { post, key, api } = options;
   const results: CrosspostResult[] = [];
-  for (const channel of channelsFor(options.channels, post.brand ?? 'default', 'instagram').filter((c) => isWantedOn(post, c.id, 'instagram'))) {
+  for (const channel of targetChannels(options.channels, post, 'instagram')) {
     const base = { channel: channel.id, account: channelLabel(channel) };
     const logKey = postedKey(post.id, channel.id);
     try {
@@ -266,6 +266,16 @@ export async function postToInstagram(options: {
     }
   }
   return results;
+}
+
+/**
+ * The channels of a post's client that it is meant for on one platform. A post from a posting plan that names the platform alone (not an account) is sent
+ * only when the client has exactly one account there: with two or more it is held, because the choice cannot be guessed and a wrong post is public.
+ */
+export function targetChannels<P extends Channel['platform']>(channels: ChannelFile, post: { brand?: string; channels?: string[]; fromPlan?: boolean }, platform: P): Array<Extract<Channel, { platform: P }>> {
+  const wanted = channelsFor(channels, post.brand ?? 'default', platform).filter((c) => isWantedOn(post, c.id, platform));
+  if (post.fromPlan === true && wanted.length > 1 && post.channels?.includes(platform)) return [];
+  return wanted;
 }
 
 export interface CrosspostStatus {

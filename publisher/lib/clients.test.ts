@@ -66,8 +66,8 @@ const NOW_MS = Date.parse('2026-11-05T12:00:00Z');
 const planOf = (over: Record<string, unknown> = {}) => ({ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 1, ...over });
 
 test('a client can be added with a posting plan, which is checked and saved with it', () => {
-  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com', planOf({ durationDays: 31, postsPerWeek: 3, platforms: ['facebook', 'instagram'] }));
-  assert.deepEqual(made.file.clients[0]?.plans, [{ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 31, time: '10:00', utcOffset: '+05:30', postsPerWeek: 3 }]);
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com', planOf({ durationDays: 31, postsPerWeek: 2, platforms: ['facebook', 'instagram'] }));
+  assert.deepEqual(made.file.clients[0]?.plans, [{ platforms: ['instagram', 'facebook'], startDate: '2026-11-06', durationDays: 31, time: '10:00', utcOffset: '+05:30', postsPerWeek: 2 }]);
   assert.equal(made.file.clients[0]?.website, 'https://oyechats.com');
   assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(made.file))), made.file, 'it survives a save and a load');
 });
@@ -101,9 +101,9 @@ test('a saved plan may have a start date that has passed, but is not accepted as
 
 test('plans can be added and removed later, for an added client with a website only, and each keeps its own platforms', () => {
   const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
-  const one = addPlan(made, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 31, postsPerWeek: 3 }), NOW_MS);
+  const one = addPlan(made, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 31, postsPerWeek: 2 }), NOW_MS);
   const two = addPlan(one, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 31, postsPerWeek: 1 }), NOW_MS);
-  assert.deepEqual(two.clients[0]?.plans?.map((p) => [p.platforms, p.postsPerWeek]), [[['instagram'], 3], [['linkedin'], 1]]);
+  assert.deepEqual(two.clients[0]?.plans?.map((p) => [p.platforms, p.postsPerWeek]), [[['instagram'], 2], [['linkedin'], 1]]);
   assert.throws(() => addPlan(two, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 31, postsPerWeek: 1 }), NOW_MS), /already there/);
   const left = removePlan(two, 'oye-chats', 0);
   assert.deepEqual(left.clients[0]?.plans?.map((p) => p.platforms), [['linkedin']]);
@@ -128,13 +128,14 @@ test('a client saved with the first version\'s single plan reads as a list of on
 test('a client\'s weekly limit can be changed, only governs plans added afterwards, and the default is not stored', () => {
   const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
   const four = (file: typeof made) => addPlan(file, 'oye-chats', planOf({ platforms: ['instagram'], durationDays: 7, postsPerWeek: 4, startDate: '2026-11-09' }), NOW_MS);
-  assert.throws(() => four(made), /can have 3 posts a week/);
+  assert.throws(() => four(made), /can have 2 posts a week/);
   const raised = setWeeklyLimit(made, 'oye-chats', 5);
   assert.equal(raised.clients[0]?.weeklyLimit, 5);
   assert.equal(four(raised).clients[0]?.plans?.length, 1);
   const lowered = setWeeklyLimit(four(raised), 'oye-chats', 1);
   assert.equal(lowered.clients[0]?.plans?.length, 1, 'a plan already there stays when the limit is lowered');
-  assert.equal(setWeeklyLimit(raised, 'oye-chats', 3).clients[0]?.weeklyLimit, undefined, 'the default is not stored');
+  assert.equal(setWeeklyLimit(raised, 'oye-chats', 2).clients[0]?.weeklyLimit, undefined, 'the default is not stored');
+  assert.equal(setWeeklyLimit(made, 'oye-chats', 3).clients[0]?.weeklyLimit, 3, 'a limit other than the default is stored');
   assert.throws(() => setWeeklyLimit(made, 'oye-chats', 0), /whole number from 1 to 7/);
   assert.throws(() => setWeeklyLimit(made, 'oye-chats', 2.5), /whole number from 1 to 7/);
   assert.throws(() => setWeeklyLimit(made, 'nobody', 2), /only a client added in the dashboard/);
@@ -165,3 +166,47 @@ test('a plan keeps the time of day it was given, and a time that has already pas
   assert.doesNotThrow(() => parseClientPlan(planOf({ time: '09:00', startDate: '2026-11-05' }), NOW_MS, { allowPast: true }), 'a saved plan is read back whatever the hour');
 });
 
+
+import { bindPlanChannels, clientFeedDetails } from './clients.ts';
+
+const chan = (id: string, brand = 'oye-chats') => ({ id, platform: id.slice(0, id.indexOf(':')) as 'facebook' | 'linkedin' | 'google' | 'instagram', brand });
+
+test('a plan can name the exact account for each platform, one per platform, and only an account of its own platforms', () => {
+  const ok = parseClientPlan(planOf({ platforms: ['linkedin', 'facebook'], channelIds: ['facebook:77', 'linkedin:abc'] }), NOW_MS);
+  assert.deepEqual(ok.channelIds, ['facebook:77', 'linkedin:abc'], 'kept in the platform order');
+  assert.throws(() => parseClientPlan(planOf({ platforms: ['linkedin'], channelIds: ['linkedin:a', 'linkedin:b'] }), NOW_MS), /one account for linkedin/);
+  assert.throws(() => parseClientPlan(planOf({ platforms: ['linkedin'], channelIds: ['facebook:77'] }), NOW_MS), /not one of this plan's platforms/);
+  assert.throws(() => parseClientPlan(planOf({ channelIds: ['tiktok:1'] }), NOW_MS), /not a valid account id/);
+  assert.throws(() => parseClientPlan(planOf({ channelIds: [] }), NOW_MS), /short list/);
+  assert.equal(parseClientPlan(planOf(), NOW_MS).channelIds, undefined, 'a plan with no accounts named is still valid');
+});
+
+test('binding a plan uses the only account on a platform, refuses to guess between two, and refuses an account that is not the client\'s', () => {
+  const plan = parseClientPlan(planOf({ platforms: ['instagram', 'facebook', 'linkedin'] }), NOW_MS);
+  const one = bindPlanChannels(plan, [chan('facebook:77'), chan('linkedin:abc'), chan('linkedin:zzz', 'someone-else')], 'oye-chats');
+  assert.deepEqual(one.channelIds, ['facebook:77', 'linkedin:abc'], 'the only account of each platform is chosen, and nothing is chosen for a platform with none connected (instagram)');
+  assert.throws(() => bindPlanChannels(plan, [chan('facebook:77'), chan('facebook:78')], 'oye-chats'), /2 facebook accounts connected: choose which one/);
+  const named = parseClientPlan(planOf({ platforms: ['facebook'], channelIds: ['facebook:78'] }), NOW_MS);
+  assert.deepEqual(bindPlanChannels(named, [chan('facebook:77'), chan('facebook:78')], 'oye-chats').channelIds, ['facebook:78'], 'a named account settles the choice');
+  assert.throws(() => bindPlanChannels(named, [chan('facebook:78', 'someone-else')], 'oye-chats'), /not connected to this client/);
+  assert.equal(bindPlanChannels(planOf() as never, [], 'oye-chats').channelIds, undefined, 'with nothing connected the plan stays unbound');
+});
+
+test('adding a plan binds it when the connected accounts are known, and a plan with two accounts on a platform must say which', () => {
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
+  const bound = addPlan(made, 'oye-chats', planOf({ platforms: ['linkedin'], durationDays: 7, postsPerWeek: 2, startDate: '2026-11-09' }), NOW_MS, [chan('linkedin:abc')]);
+  assert.deepEqual(bound.clients[0]?.plans?.[0]?.channelIds, ['linkedin:abc']);
+  assert.throws(() => addPlan(made, 'oye-chats', planOf({ platforms: ['linkedin'], startDate: '2026-11-09' }), NOW_MS, [chan('linkedin:abc'), chan('linkedin:def')]), /choose which one/);
+  const chosen = addPlan(made, 'oye-chats', planOf({ platforms: ['linkedin'], startDate: '2026-11-09', channelIds: ['linkedin:def'] }), NOW_MS, [chan('linkedin:abc'), chan('linkedin:def')]);
+  assert.deepEqual(chosen.clients[0]?.plans?.[0]?.channelIds, ['linkedin:def']);
+  assert.equal(parseClientsFile(JSON.parse(JSON.stringify(chosen))).clients[0]?.plans?.[0]?.channelIds?.[0], 'linkedin:def', 'it survives a save and a load');
+});
+
+test('the feed describes an added client with its effective weekly limit, its plans and its settings, only the parts it has', () => {
+  const bare = { brand: 'a', createdAt: 'x' };
+  assert.deepEqual(clientFeedDetails(bare), { weeklyLimit: 2 }, 'a client with nothing set still gets the default limit');
+  const full = { brand: 'oye-chats', createdAt: 'x', name: 'Oye Chats', product: 'brandbasket', website: 'https://oyechats.com', weeklyLimit: 4, requireAuthenticLogo: true, plans: [parseClientPlan(planOf(), NOW_MS)] };
+  assert.deepEqual(Object.keys(clientFeedDetails(full)).sort(), ['name', 'plans', 'product', 'requireAuthenticLogo', 'website', 'weeklyLimit']);
+  assert.equal(clientFeedDetails(full).weeklyLimit, 4);
+  assert.equal(clientFeedDetails({ ...full, plans: [] }).plans, undefined, 'no plans are listed when there are none');
+});

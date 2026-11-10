@@ -75,7 +75,8 @@ async function readSchedule(path: string): Promise<ExportedPost[]> {
 }
 
 /**
- * The platforms of the plan a week file was made for, from the campaign runner's records (brands/<site>/campaigns/*.json);
+ * Where the plan a week file was made for posts, from the campaign runner's records (brands/<site>/campaigns/*.json): the exact account for each platform
+ * the plan was bound to, and the bare platform for one it was not (the publisher then sends only if the client has a single account there).
  * undefined for a week file no campaign made (it then goes to every connected channel, as before plans existed).
  */
 async function platformsForWeek(brandDir: string, weekFile: string): Promise<string[] | undefined> {
@@ -87,9 +88,12 @@ async function platformsForWeek(brandDir: string, weekFile: string): Promise<str
   }
   for (const name of names) {
     try {
-      const state = JSON.parse(await readFile(join(brandDir, 'campaigns', name), 'utf8')) as { plan?: { platforms?: unknown }; batches?: Array<{ weekFile?: unknown }> };
+      const state = JSON.parse(await readFile(join(brandDir, 'campaigns', name), 'utf8')) as { plan?: { platforms?: unknown; channelIds?: unknown }; batches?: Array<{ weekFile?: unknown }> };
       const platforms = state.plan?.platforms;
-      if (state.batches?.some((b) => b.weekFile === weekFile) && Array.isArray(platforms) && platforms.length > 0 && platforms.every((p) => typeof p === 'string')) return platforms as string[];
+      if (state.batches?.some((b) => b.weekFile === weekFile) && Array.isArray(platforms) && platforms.length > 0 && platforms.every((p) => typeof p === 'string')) {
+        const ids = Array.isArray(state.plan?.channelIds) ? (state.plan?.channelIds as unknown[]).filter((id): id is string => typeof id === 'string') : [];
+        return (platforms as string[]).map((platform) => ids.find((id) => id.startsWith(`${platform}:`)) ?? platform);
+      }
     } catch {
       // An unreadable record is skipped; the post then follows the default rather than a guess.
     }
@@ -110,7 +114,8 @@ function approvedPerNetwork(store: ReviewStore, postId: string, platforms: strin
   const byNetwork = new Map<string, ApprovedVersion>();
   for (const item of [...store.approvedForNetworks(postId)].sort((a, b) => a.version.versionNumber - b.version.versionNumber)) {
     const network = item.version.network;
-    if (network !== undefined && (!platforms || platforms.includes(network))) byNetwork.set(network, item);
+    // The plan's entries are the platform alone or, once bound, "platform:account"; either way the network is the part before the colon.
+    if (network !== undefined && (!platforms || platforms.some((p) => p.split(':')[0] === network))) byNetwork.set(network, item);
   }
   return byNetwork;
 }
@@ -175,7 +180,8 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
           variants[network] = { ...(sameCaption ? {} : { caption: item.version.caption }), ...(image ? { image } : {}) };
         }
       }
-      const channels = perNetwork.size > 0 ? [...perNetwork.keys()] : platforms;
+      // Where each approved network goes: the exact account the plan was bound to, or the bare network when it was not.
+      const channels = perNetwork.size > 0 ? [...perNetwork.keys()].map((n) => platforms?.find((p) => p.startsWith(`${n}:`)) ?? n) : platforms;
       exported.push({
         brand,
         id: `${brand}-${post.id}`,

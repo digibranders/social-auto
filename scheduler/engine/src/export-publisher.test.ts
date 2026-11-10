@@ -228,10 +228,33 @@ test('only the networks whose own version was approved, and that the plan allows
   }
 });
 
+test('a poster made per network goes to the exact account a plan was bound to, and to the bare network for one that was not', async () => {
+  const b = perNetworkBrand(['instagram', 'linkedin'], ['instagram', 'linkedin']);
+  try {
+    writeFileSync(join(b.brandDir, 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', plan: { platforms: ['instagram', 'linkedin'], channelIds: ['linkedin:abc'] }, batches: [{ index: 0, dates: ['2099-11-10'], status: 'done', weekFile: 'week-01.json' }] }));
+    const [post] = await exportToPublisher(b.brandDir, b.publisher);
+    assert.deepEqual(post?.channels, ['instagram', 'linkedin:abc']);
+    assert.deepEqual(Object.keys(post?.variants ?? {}), ['linkedin'], 'the picture and caption of a network stay under the network name');
+  } finally {
+    b.done();
+  }
+});
+
 test('a plan that allows none of the approved networks releases nothing', async () => {
   const b = perNetworkBrand(['google'], ['instagram', 'linkedin']);
   try {
     assert.deepEqual(await exportToPublisher(b.brandDir, b.publisher), []);
+  } finally {
+    b.done();
+  }
+});
+
+test('a plan bound to exact accounts exports its posters to those accounts, and a platform left unbound goes by name', async () => {
+  const b = aiBrand(['linkedin', 'facebook']);
+  try {
+    writeFileSync(join(b.brandDir, 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', plan: { platforms: ['linkedin', 'facebook'], channelIds: ['linkedin:abc'] }, batches: [{ index: 0, dates: ['2099-11-10'], status: 'done', weekFile: 'week-01.json' }] }));
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.deepEqual(posts.map((p) => (p as { channels?: string[] }).channels), [['linkedin:abc', 'facebook']]);
   } finally {
     b.done();
   }

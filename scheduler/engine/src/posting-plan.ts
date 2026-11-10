@@ -19,6 +19,8 @@ export const POSTER_COST_USD = { low: 0.02, high: 0.06 } as const;
 
 export interface PostingPlan {
   platforms: PlanPlatform[];
+  /** The exact connected account each platform posts to ("linkedin:<member id>"), one per platform; missing means the client's only account on a platform. */
+  channelIds?: string[];
   /** The first day that may be posted on, YYYY-MM-DD. */
   startDate: string;
   /** How many days the plan covers, from the start date: 1 is a single day. */
@@ -74,6 +76,19 @@ export function parsePostingPlan(raw: unknown, options: { now?: Date } = {}): Po
   const durationDays = r['durationDays'];
   if (typeof durationDays !== 'number' || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > MAX_PLAN_DAYS) throw new PlanError(`the length must be a whole number of days from 1 to ${MAX_PLAN_DAYS}`);
   const plan: PostingPlan = { platforms: PLAN_PLATFORMS.filter((p) => chosen.has(p)), startDate, durationDays, time, utcOffset };
+  if (r['channelIds'] !== undefined) {
+    const ids = r['channelIds'];
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > PLAN_PLATFORMS.length) throw new PlanError('the accounts to post to must be a short list of account ids');
+    const byPlatform = new Map<string, string>();
+    for (const id of ids) {
+      if (typeof id !== 'string' || !/^(facebook|linkedin|google|instagram):[A-Za-z0-9_.:@-]{1,120}$/.test(id)) throw new PlanError('one of the accounts to post to is not a valid account id');
+      const platform = id.slice(0, id.indexOf(':'));
+      if (!chosen.has(platform as PlanPlatform)) throw new PlanError(`the account ${id} is for ${platform}, which is not one of this plan's platforms`);
+      if (byPlatform.has(platform)) throw new PlanError(`choose one account for ${platform}, not two`);
+      byPlatform.set(platform, id);
+    }
+    plan.channelIds = PLAN_PLATFORMS.flatMap((p) => (byPlatform.has(p) ? [byPlatform.get(p) as string] : []));
+  }
   if (r['weekdays'] !== undefined) {
     try {
       plan.weekdays = parseWeekdays(r['weekdays']);

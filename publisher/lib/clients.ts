@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { EditError } from './overrides.js';
+import type { Channel } from './channels.js';
 import { DEFAULT_WEEKLY_LIMIT, MAX_WEEKLY_LIMIT, assertWithinLimit } from './quota.js';
 
 /** A client added in the dashboard, kept apart from the clients the content job plans posts for. */
@@ -28,8 +29,13 @@ export const PLAN_WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] a
 export const MAX_PLAN_DAYS = 31;
 export const MAX_PLANS_PER_CLIENT = 8;
 
+/** The id of one connected channel, as posts name it: "facebook:<page id>", "linkedin:<member id>", "google:<location id>", "instagram:<account id>". */
+const CHANNEL_ID = /^(facebook|linkedin|google|instagram):[A-Za-z0-9_.:@-]{1,120}$/;
+
 export interface ClientPlan {
   platforms: string[];
+  /** The exact connected account each platform of the plan posts to, one id per platform. A platform without one posts to the client's only account on it, and to none when there are several. */
+  channelIds?: string[];
   /** YYYY-MM-DD, the first day that may be posted on. */
   startDate: string;
   /** 1 is a single day. */
@@ -78,6 +84,19 @@ export function parseClientPlan(raw: unknown, now: number, options: { allowPast?
   const durationDays = r['durationDays'];
   if (typeof durationDays !== 'number' || !Number.isInteger(durationDays) || durationDays < 1 || durationDays > MAX_PLAN_DAYS) throw new EditError(`the length must be from 1 to ${MAX_PLAN_DAYS} days`);
   const plan: ClientPlan = { platforms: PLAN_PLATFORMS.filter((p) => chosen.has(p)), startDate, durationDays, time, utcOffset };
+  if (r['channelIds'] !== undefined) {
+    const ids = r['channelIds'];
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > PLAN_PLATFORMS.length) throw new EditError('the accounts to post to must be a short list of account ids');
+    const byPlatform = new Map<string, string>();
+    for (const id of ids) {
+      if (typeof id !== 'string' || !CHANNEL_ID.test(id)) throw new EditError('one of the accounts to post to is not a valid account id');
+      const platform = id.slice(0, id.indexOf(':'));
+      if (!chosen.has(platform)) throw new EditError(`the account ${id} is for ${platform}, which is not one of this plan's platforms`);
+      if (byPlatform.has(platform)) throw new EditError(`choose one account for ${platform}, not two`);
+      byPlatform.set(platform, id);
+    }
+    plan.channelIds = PLAN_PLATFORMS.flatMap((p) => (byPlatform.has(p) ? [byPlatform.get(p) as string] : []));
+  }
   if (r['weekdays'] !== undefined) {
     const days = r['weekdays'];
     if (!Array.isArray(days) || days.length === 0 || !days.every((d) => typeof d === 'string' && (PLAN_WEEKDAYS as readonly string[]).includes(d.trim().toLowerCase().slice(0, 3)))) throw new EditError('the weekdays must be a list like mon, wed, fri');
@@ -202,13 +221,38 @@ export function setWebsite(file: ClientsFile, brand: string, website: unknown): 
   return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(site ? { website: site } : {}) } : c)) };
 }
 
+/**
+ * Binds a plan to exact accounts. An account named in the plan must be connected to this client. A platform with no account named uses the client's only
+ * account on it; with two or more the owner must choose, because a poster sent to a guessed account cannot be taken back. A platform with none connected
+ * yet is left unbound (nothing is sent to it until one is).
+ */
+export function bindPlanChannels(plan: ClientPlan, connected: readonly Pick<Channel, 'id' | 'platform' | 'brand'>[], brand: string): ClientPlan {
+  const mine = connected.filter((c) => c.brand === brand);
+  const ids: string[] = [];
+  for (const platform of plan.platforms) {
+    const named = plan.channelIds?.find((id) => id.startsWith(`${platform}:`));
+    const onPlatform = mine.filter((c) => c.platform === platform);
+    if (named) {
+      if (!onPlatform.some((c) => c.id === named)) throw new EditError(`the account ${named} is not connected to this client`);
+      ids.push(named);
+    } else if (onPlatform.length === 1) {
+      ids.push((onPlatform[0] as { id: string }).id);
+    } else if (onPlatform.length > 1) {
+      throw new EditError(`this client has ${onPlatform.length} ${platform} accounts connected: choose which one the plan posts to`);
+    }
+  }
+  const { channelIds: _named, ...rest } = plan;
+  return ids.length > 0 ? { ...rest, channelIds: ids } : rest;
+}
+
 /** Adds one more posting plan to a client added in the dashboard (it needs the client's website). The plans already there, and the posters already made for them, are left alone. */
-export function addPlan(file: ClientsFile, brand: string, plan: unknown, now: number): ClientsFile {
+export function addPlan(file: ClientsFile, brand: string, plan: unknown, now: number, connected?: readonly Pick<Channel, 'id' | 'platform' | 'brand'>[]): ClientsFile {
   const index = file.clients.findIndex((c) => c.brand === brand);
   if (index === -1) throw new EditError('only a client added in the dashboard has a posting plan here', 404);
   const current = file.clients[index] as AddedClient;
   if (!current.website) throw new EditError('add the client\'s website first: the posts are made from it');
-  const added = parseClientPlan(plan, now);
+  const parsed = parseClientPlan(plan, now);
+  const added = connected ? bindPlanChannels(parsed, connected, brand) : parsed;
   const plans = current.plans ?? [];
   if (plans.length >= MAX_PLANS_PER_CLIENT) throw new EditError(`a client can have at most ${MAX_PLANS_PER_CLIENT} plans; remove one first`);
   if (plans.some((p) => JSON.stringify(p) === JSON.stringify(added))) throw new EditError('that plan is already there');
@@ -283,4 +327,12 @@ export function ensureWorkspace(
   const brand = workspaceBrand(product, externalId);
   const client: AddedClient = { brand, createdAt: new Date(now).toISOString(), product, externalId, ...(shown ? { name: shown } : {}) };
   return { file: { clients: [...file.clients, client] }, client, created: true };
+}
+
+/** What the status feed says of a client the dashboard added: name, product, website, plans, the effective weekly limit and the real-logo setting. */
+export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true } {
+  return {
+    ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}),
+    ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}),
+  };
 }
