@@ -53,7 +53,7 @@ export interface PostToSend {
 export interface CrosspostResult {
   channel: string;
   account: string;
-  status: 'posted' | 'already-posted' | 'skipped-before-connection' | 'dry-run-ready' | 'failed' | 'held';
+  status: 'posted' | 'already-posted' | 'skipped-before-connection' | 'dry-run-ready' | 'failed' | 'held' | 'duplicate';
   remoteId?: string;
   permalink?: string | null;
   error?: string;

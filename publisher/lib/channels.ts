@@ -74,8 +74,14 @@ export interface PostedEntry {
   remoteId: string;
   permalink: string | null;
   postedAt: string;
-  /** Not sent: the channel was paused when the post came due. Kept so the post is never sent late, after the pause ends. */
+  /** Not sent: the channel was paused when the post came due, or the same words had just been sent. Kept so the post is never sent late. */
   skipped?: true;
+  /** What the post's words are remembered by (lib/duplicates.ts), so the same words are not sent to the channel twice under another post id. */
+  fingerprint?: string;
+  /** For a post not sent because it repeated an earlier one: the log key of that earlier post. */
+  duplicateOf?: string;
+  /** For a post not sent because its account is gone or changed: why, as a short code. */
+  reason?: string;
 }
 export type PostedLog = Record<string, PostedEntry>;
 
