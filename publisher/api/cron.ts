@@ -19,7 +19,9 @@ import { brandIsPaused, isPaused, type PauseFile } from '../lib/pauses.js';
 import { dueManualPosts, duePlannedPost, lowQueueWarnings, parseSchedule } from '../lib/schedule.js';
 import { sendPost } from '../lib/send-post.js';
 import { toScheduled } from '../lib/manual.js';
-import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses } from '../lib/store.js';
+import { loadAlerts, loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted, saveAlerts } from '../lib/store.js';
+import { findMissed, missedMessage, unannounced, withAnnounced } from '../lib/missed.js';
+import type { ScheduledPost } from '../lib/schedule.js';
 
 /**
  * A connection with an end date (LinkedIn gives no refresh; an Instagram token is renewed weekly, so this means the
@@ -53,6 +55,28 @@ async function warnAboutExpiringConnections(pauses: PauseFile): Promise<void> {
         priority: days <= 1 ? 'high' : 'default',
       });
     }
+  } catch (error) {
+    console.error(describeError(error));
+  }
+}
+
+/**
+ * Tells the team, once each, about posts whose time window passed without them going out (lib/missed.ts). A client's missed posts go in one message. A post is
+ * written down as announced only when the message was delivered, so a phone service that is down is retried at the next run. It never stops posting.
+ */
+async function announceMissedPosts(posts: readonly ScheduledPost[], pauses: PauseFile): Promise<void> {
+  try {
+    const now = Date.now();
+    const [{ file: channels }, { log: posted }, { log: sent, etag }] = await Promise.all([loadChannels(), loadPosted(), loadAlerts()]);
+    const fresh = unannounced(findMissed(posts, channels, posted, pauses, now), sent);
+    if (fresh.length === 0) return;
+    const delivered = [];
+    for (const brand of new Set(fresh.map((m) => m.brand))) {
+      const group = fresh.filter((m) => m.brand === brand);
+      const { title, message } = missedMessage(brand, group);
+      if (await notify({ title, message, priority: 'high', tags: 'rotating_light' })) delivered.push(...group);
+    }
+    if (delivered.length > 0) await saveAlerts(withAnnounced(sent, delivered, now), etag);
   } catch (error) {
     console.error(describeError(error));
   }
@@ -93,6 +117,8 @@ export async function GET(request: Request): Promise<Response> {
       }
       await warnAboutExpiringConnections(pauses);
     }
+    // Both runs look for posts that missed their window: the frequent run catches a hand-made post within minutes, the daily run the rest.
+    if (!dryRun) await announceMissedPosts(everything, pauses);
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
     const testPostId = dryRun ? url.searchParams.get('post') : null;
