@@ -165,3 +165,74 @@ test('only the week files a client\'s plans made are exported when they are name
   }
 });
 
+
+function perNetworkBrand(platforms: string[], approve: string[]): { brandDir: string; publisher: string; store: ReviewStore; done: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'export-nets-'));
+  const brandDir = join(root, 'brands', 'oyechats');
+  const publisher = join(root, 'publisher');
+  mkdirSync(join(brandDir, 'campaigns'), { recursive: true });
+  const post = { id: 'w01-d1', date: '2099-11-10T10:00:00+05:30', painPoint: 'p', mode: 'ai', headline: 'Answers from your own docs', subline: '', caption: 'Hook.\n\nFacts.', hashtags: ['#a'], imagePrompt: 'a picture' };
+  writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify({ brand: 'oyechats', timezone: '+05:30', renderMode: 'ai_v1', posts: [post] }));
+  writeFileSync(join(brandDir, 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', plan: { platforms }, batches: [{ index: 0, dates: ['2099-11-10'], status: 'done', weekFile: 'week-01.json' }] }));
+  const square = join(root, 'square.jpg');
+  const wide = join(root, 'wide.jpg');
+  writeFileSync(square, 'square picture');
+  writeFileSync(wide, 'wide picture');
+  const store = new ReviewStore(brandDir, 'oyechats');
+  for (const [network, image] of [['instagram', square], ['facebook', square], ['linkedin', wide]] as const) {
+    const v = store.addVersion({ postId: 'w01-d1', planFile: 'week-01.json', network, headline: 'Answers from your own docs', caption: `${network} caption`, ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], imagePath: image, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.02 });
+    if (approve.includes(network)) store.approve(v.versionId, 'owner');
+  }
+  return { brandDir, publisher, store, done: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+test('a poster made per network is released as one post: the square picture and Instagram caption as the main ones, each other network with its own caption, the wide one with its own picture', async () => {
+  const b = perNetworkBrand(['instagram', 'facebook', 'linkedin'], ['instagram', 'facebook', 'linkedin']);
+  try {
+    const [post] = await exportToPublisher(b.brandDir, b.publisher);
+    assert.deepEqual(post?.channels, ['instagram', 'facebook', 'linkedin']);
+    assert.equal(post?.caption, 'instagram caption');
+    assert.equal(post?.fromPlan, true);
+    assert.deepEqual(Object.keys(post?.variants ?? {}).sort(), ['facebook', 'linkedin']);
+    assert.deepEqual(post?.variants?.['facebook'], { caption: 'facebook caption' }, 'same square picture: only the caption differs');
+    assert.match(post?.variants?.['linkedin']?.image ?? '', /^\/posts\/oyechats\/[0-9a-f]{32}\.jpg$/);
+    assert.notEqual(post?.variants?.['linkedin']?.image, post?.image);
+    assert.equal(readdirSync(join(b.publisher, 'public', 'posts', 'oyechats')).length, 2, 'two pictures: the square one shared by two networks, and the wide one');
+  } finally {
+    b.done();
+  }
+});
+
+test('only the networks whose own version was approved, and that the plan allows, receive the post', async () => {
+  const onlyInstagramAndLinkedin = perNetworkBrand(['instagram', 'linkedin'], ['instagram', 'facebook', 'linkedin']);
+  try {
+    const [post] = await exportToPublisher(onlyInstagramAndLinkedin.brandDir, onlyInstagramAndLinkedin.publisher);
+    assert.deepEqual(post?.channels, ['instagram', 'linkedin'], 'facebook was approved but the plan does not include it');
+  } finally {
+    onlyInstagramAndLinkedin.done();
+  }
+  const linkedinOnly = perNetworkBrand(['instagram', 'linkedin'], ['linkedin']);
+  try {
+    const [post] = await exportToPublisher(linkedinOnly.brandDir, linkedinOnly.publisher);
+    assert.deepEqual(post?.channels, ['linkedin'], 'instagram was not approved, so it does not get it');
+    assert.equal(post?.caption, 'linkedin caption', 'the approved network\'s version is the main one');
+    assert.deepEqual(post?.variants, undefined);
+  } finally {
+    linkedinOnly.done();
+  }
+  const nothing = perNetworkBrand(['instagram', 'linkedin'], []);
+  try {
+    assert.deepEqual(await exportToPublisher(nothing.brandDir, nothing.publisher), []);
+  } finally {
+    nothing.done();
+  }
+});
+
+test('a plan that allows none of the approved networks releases nothing', async () => {
+  const b = perNetworkBrand(['google'], ['instagram', 'linkedin']);
+  try {
+    assert.deepEqual(await exportToPublisher(b.brandDir, b.publisher), []);
+  } finally {
+    b.done();
+  }
+});

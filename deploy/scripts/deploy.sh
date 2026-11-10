@@ -40,11 +40,24 @@ restart_review() {
   sudo -n /bin/systemctl restart social-review.service || echo "could not restart social-review: add it to /etc/sudoers.d/social-auto (see deploy/sudoers-social-auto)" >&2
 }
 
+# The job runner (reads websites, draws kept posters) also runs engine code. A restart would cut a run that is in progress, so it is
+# restarted only when no job is running; otherwise it keeps the old code until the next deploy and says so.
+restart_jobs() {
+  [[ "${ENGINE_CHANGED:-0}" == "1" ]] || return 0
+  systemctl cat social-jobs.service > /dev/null 2>&1 || return 0
+  if grep -qs '"state": "running"' scheduler/engine/jobs/job-*.json; then
+    echo "social-jobs not restarted: a job is running, so it keeps the old code until the next deploy" >&2
+    return 0
+  fi
+  sudo -n /bin/systemctl restart social-jobs.service || echo "could not restart social-jobs: add it to /etc/sudoers.d/social-auto (see deploy/sudoers-social-auto)" >&2
+}
+
 install_and_restart() {
   (cd publisher && npm ci --omit=dev --silent --no-audit --no-fund) || return 1
   (cd dashboard && npm ci --silent --no-audit --no-fund && npm run build --silent) || return 1
   sudo -n /bin/systemctl restart social-publisher.service social-dashboard.service || return 1
   restart_review
+  restart_jobs
   local attempt
   for attempt in $(seq 1 20); do
     healthy && return 0

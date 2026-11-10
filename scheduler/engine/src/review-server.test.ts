@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -294,6 +294,95 @@ test('a topic made for two networks shows each network with its shape, and one s
     assert.equal(s.stores.acme.get(ig.versionId).status, 'approved');
     assert.equal(s.stores.acme.get(li.versionId).status, 'approved');
     assert.equal((await s.call('/review/topics/acme/week-01.json/w01-d1/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404, 'nothing is left waiting');
+  } finally {
+    await s.done();
+  }
+});
+
+test('jobs: a website asked for twice is one job, bad sites and networks are refused, and the job can be followed', async () => {
+  const s = await start();
+  try {
+    const post = (body: unknown) => s.call('/review/jobs', { method: 'POST', body: JSON.stringify(body) });
+    for (const bad of [{ kind: 'copy', site: 'http://127.0.0.1' }, { kind: 'copy', site: 'https://user:pw@acme.example.com' }, { kind: 'copy', site: 'localhost' }, { kind: 'copy', site: 'acme.example.com', networks: ['tiktok'] }, { kind: 'copy', site: 'acme.example.com', days: 99 }, { kind: 'draw', site: 'acme.example.com' }]) {
+      assert.equal((await post({ ...bad, by: 'owner' })).status, 400, JSON.stringify(bad));
+    }
+    assert.equal((await post({ kind: 'copy', site: 'acme.example.com', by: ' ' })).status, 400, 'who is asking must be given');
+    const first = await post({ kind: 'copy', site: 'https://www.Acme-Foods.example.com/about', networks: ['instagram', 'instagram', 'linkedin'], days: 6, by: 'owner' });
+    assert.equal(first.status, 202);
+    const { job } = (await first.json()) as { job: { id: string; brand: string; site: string; state: string; networks: string[] } };
+    assert.deepEqual([job.brand, job.site, job.state, job.networks], ['acme-foods', 'https://www.acme-foods.example.com', 'queued', ['instagram', 'linkedin']]);
+    const again = await post({ kind: 'copy', site: 'www.acme-foods.example.com', by: 'owner' });
+    assert.equal(again.status, 200);
+    assert.equal(((await again.json()) as { job: { id: string } }).job.id, job.id);
+    const one = (await (await s.call(`/review/jobs/${job.id}`)).json()) as { job: { id: string } };
+    assert.equal(one.job.id, job.id);
+    assert.equal((await s.call('/review/jobs/job-zzzzzz-12345678')).status, 404);
+    assert.equal((await s.call('/review/jobs/..%2Fx')).status, 400);
+    assert.equal(((await (await s.call('/review/jobs?state=queued')).json()) as { jobs: unknown[] }).jobs.length, 1);
+    assert.equal(((await (await s.call('/review/jobs?state=running')).json()) as { jobs: unknown[] }).jobs.length, 0);
+    assert.equal((await s.call('/review/jobs?state=nope')).status, 400);
+    assert.equal((await s.call('/review/jobs', { auth: false })).status, 401);
+  } finally {
+    await s.done();
+  }
+});
+
+test('jobs: with no length given a client is written two posts for a week on two spread days; weeks and posts a week change it, bad values are refused', async () => {
+  const s = await start();
+  try {
+    const post = (body: unknown) => s.call('/review/jobs', { method: 'POST', body: JSON.stringify(body) });
+    const made = (await (await post({ kind: 'copy', site: 'rhythm-one.example.com', by: 'owner' })).json()) as { job: { days: number; weekdays: string[] } };
+    assert.equal(made.job.days, 2);
+    assert.equal(made.job.weekdays.length, 2);
+    const month = (await (await post({ kind: 'copy', site: 'rhythm-two.example.com', weeks: 4, postsPerWeek: 3, by: 'owner' })).json()) as { job: { days: number; weekdays: string[] } };
+    assert.deepEqual([month.job.days, month.job.weekdays.length], [12, 3]);
+    assert.equal((await post({ kind: 'copy', site: 'rhythm-three.example.com', weeks: 9, by: 'owner' })).status, 400);
+    assert.equal((await post({ kind: 'copy', site: 'rhythm-three.example.com', postsPerWeek: 0, by: 'owner' })).status, 400);
+  } finally {
+    await s.done();
+  }
+});
+
+test('jobs: one page of a website is kept as that page, and the whole site without a page flag', async () => {
+  const s = await start();
+  try {
+    const post = (body: unknown) => s.call('/review/jobs', { method: 'POST', body: JSON.stringify(body) });
+    const one = (await (await post({ kind: 'copy', site: 'https://pages.example.com/pricing/?utm=x#top', page: true, by: 'owner' })).json()) as { job: { site: string; page?: boolean } };
+    assert.deepEqual([one.job.site, one.job.page], ['https://pages.example.com/pricing', true]);
+    const whole = (await (await post({ kind: 'copy', site: 'https://whole.example.com/pricing', by: 'owner' })).json()) as { job: { site: string; page?: boolean } };
+    assert.deepEqual([whole.job.site, whole.job.page], ['https://whole.example.com', undefined]);
+    assert.equal((await post({ kind: 'copy', site: 'pages2.example.com', page: 'yes', by: 'owner' })).status, 400);
+  } finally {
+    await s.done();
+  }
+});
+
+test('jobs: drawing needs a written batch with at least one kept post, is asked for once, and answers with the same job after that', async () => {
+  const s = await start();
+  try {
+    const draw = (brand: string, plan: string) => s.call(`/review/copy/${brand}/${plan}/draw`, { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal((await draw('acme', 'week-01.json')).status, 404);
+    new CopyStage(join(s.root, 'brands', 'acme'), 'acme').open('week-01.json', [{ postId: 'p1', headline: 'H one', caption: 'C one' }, { postId: 'p2', headline: 'H two', caption: 'C two' }]);
+    assert.equal((await draw('acme', 'week-01.json')).status, 422);
+    writeFileSync(join(s.root, 'brands', 'acme', 'brand.json'), JSON.stringify({ website: 'https://acme.example.com' }));
+    const weekPost = (id: string) => ({ id, date: '2099-11-10T10:00:00+05:30', painPoint: 'p', mode: 'ai', headline: 'H', subline: '', caption: 'C', hashtags: [], imagePrompt: 'a picture' });
+    writeFileSync(join(s.root, 'brands', 'acme', 'week-01.json'), JSON.stringify({ brand: 'acme', timezone: '+05:30', renderMode: 'ai_v1', posts: [weekPost('p1'), weekPost('p2')] }));
+    assert.equal((await s.call('/review/copy/acme/week-01.json/draw', { method: 'POST', body: JSON.stringify({ by: 'owner', client: '../x' }) })).status, 400, 'a client name must be plain');
+    await s.call('/review/copy/acme/week-01.json/p1/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    const first = await draw('acme', 'week-01.json');
+    assert.equal(first.status, 202);
+    const { job } = (await first.json()) as { job: { id: string; kind: string; planFile: string } };
+    assert.deepEqual([job.kind, job.planFile], ['draw', 'week-01.json']);
+    const record = JSON.parse(readFileSync(join(s.root, 'brands', 'acme', 'campaigns', 'manual-week-01.json'), 'utf8')) as { brand: string; plan: { platforms: string[] } };
+    assert.deepEqual([record.brand, record.plan.platforms], ['acme', ['instagram']], 'the batch is recorded for the calendar under the site name when no client is given');
+    const second = await draw('acme', 'week-01.json');
+    assert.equal(second.status, 200);
+    assert.equal(((await second.json()) as { job: { id: string } }).job.id, job.id);
+    new CopyStage(join(s.root, 'brands', 'globex'), 'globex').open('week-01.json', [{ postId: 'p1', headline: 'H', caption: 'C' }]);
+    await s.call('/review/copy/globex/week-01.json/p1/keep', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal((await draw('globex', 'week-01.json')).status, 422, 'a brand with no saved website cannot be drawn');
+    await s.call('/review/copy/globex/week-01.json/close', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal((await draw('globex', 'week-01.json')).status, 409);
   } finally {
     await s.done();
   }

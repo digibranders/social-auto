@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { composeCaption, ContentValidationError, escapeHtml, parseHeadline, parseWeekPlan } from './content.ts';
+import { composeCaption, ContentValidationError, escapeHtml, parseHeadline, parseWeekPlan, tidyPunctuation } from './content.ts';
 import { headlineFontSize } from './layout.ts';
 import { seedFromId } from './pollinations.ts';
 
@@ -46,6 +46,12 @@ test('parseWeekPlan rejects duplicate ids and bad hashtags', () => {
 
 test('parseWeekPlan enforces the Instagram caption limit', () => {
   assert.throws(() => parseWeekPlan(plan([{ ...validPost, caption: 'x'.repeat(2200) }]), 'test'), /2200/);
+});
+
+test('a caption that ends in two full stops ends in one; an ellipsis is kept', () => {
+  assert.equal(tidyPunctuation('Always there when needed..'), 'Always there when needed.');
+  assert.equal(tidyPunctuation('Wait for it... then go.. now'), 'Wait for it... then go. now');
+  assert.equal(composeCaption({ caption: 'Reliable partners..', hashtags: ['#a'] }), 'Reliable partners.\n\n#a');
 });
 
 test('composeCaption appends hashtags after a blank line', () => {

@@ -7,6 +7,7 @@
 import type { AiConfig } from './ai.ts';
 import { checkCopy } from './copy-gate.ts';
 import { checkCopyQuality } from './copy-quality.ts';
+import { tidyPunctuation } from './content.ts';
 import { chatJson } from './llm.ts';
 import { NETWORK_RULES, type Network, type PostVariant, type PostVariants } from './networks.ts';
 
@@ -39,7 +40,7 @@ function closingLine(caption: string): string {
 const bodyOf = (caption: string): string => caption.split(/\n+/).map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#')).slice(0, -1).join('\n\n');
 const withCta = (network: Network, body: string, cta: string): string => {
   const line = NETWORK_RULES[network].linkInBio ? cta : cta.replace(/\s*\(link in bio\)\s*/i, '').trim();
-  return [body.trim(), line].filter((p) => p !== '').join('\n\n');
+  return [tidyPunctuation(body.trim()), line].filter((p) => p !== '').join('\n\n');
 };
 
 function tags(raw: unknown, max: number): string[] | undefined {

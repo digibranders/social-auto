@@ -16,6 +16,7 @@
  * Art-directed posters wait for `node src/art-review.ts ... --approve` before they are scheduled or exported.
  * --copy-first (AI route) stops after the posts are written and lists them for the owner to keep or drop; nothing is drawn or paid for.
  * --networks instagram,linkedin (AI route) also writes each post a caption for each of those networks (stored as the post's `variants`).
+ * --page reads only the address given (one page, no links followed); for a website that has no saved profile yet.
  * --draw-kept week-NN.json then draws only the posts the owner kept in that batch, and queues the results for poster review.
  * --plan-only stops after the posts are written (no art direction, pictures or rendering), for a renderer that works from the plan on its own.
  * --review (needs --art) has a vision model look at each finished poster, repairs what can be repaired without a new picture, and rejects the rest
@@ -128,6 +129,8 @@ function requireEnv(name: string, envPath: string): string {
   return value;
 }
 
+class PageModeError extends Error {}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -149,6 +152,7 @@ async function main(): Promise<void> {
       review: { type: 'boolean', default: false },
       'plan-only': { type: 'boolean', default: false },
       'copy-first': { type: 'boolean', default: false },
+      page: { type: 'boolean', default: false },
       'draw-kept': { type: 'string' },
       networks: { type: 'string' },
       'review-budget': { type: 'string', default: '0.015' },
@@ -178,6 +182,12 @@ async function main(): Promise<void> {
   const weekdays = values.weekdays ? parseWeekdays(values.weekdays.split(',')) : undefined;
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
+
+  // One page, not the whole site: only the address given is read. It is for a website that has no saved profile yet; one that has is already read, and its facts are used.
+  if (values.page) {
+    if (await fileExists(join(BRANDS_ROOT, slugFromSite(values.site), 'brand.json'))) throw new PageModeError('this website already has a saved profile, so it is not read again from a single page');
+    process.env['CRAWL_ONLY_THIS_PAGE'] = 'true';
+  }
 
   const envPath = envFilePath(values.env, process.env);
   loadEnvIfPresent(envPath);
@@ -468,6 +478,7 @@ if (import.meta.main) {
   main().catch((error: unknown) => {
     if (error instanceof PublishingDisabledError) console.error(`PUBLISHING_DISABLED: ${error.message}`);
     else if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    else if (error instanceof PageModeError) console.error(`PAGE_MODE_UNAVAILABLE: ${error.message}`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof PreflightError) console.error(`${error.code}: ${error.message}. No posters were made.`);
     else console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);

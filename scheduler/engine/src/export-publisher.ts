@@ -34,6 +34,8 @@ export interface ExportedPost {
   channels?: string[];
   /** Made from a client's posting plan: the publisher sends it only to that client's own connected channels, never to the team's one shared Instagram account. */
   fromPlan?: true;
+  /** A caption and/or picture of its own for single networks (the publisher's "variants"): the main caption and picture stand for the rest. */
+  variants?: Record<string, { caption?: string; image?: string }>;
   /** Sent at its own time by the frequent run (every few minutes), not left to the once-a-day run, so a time other than 10:00 is honoured. */
   ownTime?: true;
 }
@@ -95,6 +97,24 @@ async function platformsForWeek(brandDir: string, weekFile: string): Promise<str
   return undefined;
 }
 
+/** The network whose version is the post's main caption and picture when it was made per network (the square picture most networks share comes first). */
+const MAIN_NETWORK_ORDER = ['instagram', 'facebook', 'google', 'linkedin'];
+
+type ApprovedVersion = ReturnType<ReviewStore['approvedFor']> & object;
+
+/**
+ * The approved versions of a post made per network, one per network (the latest if there were several), limited to the networks the plan may go to.
+ * Empty when the post was not made per network (an older poster approved as a whole).
+ */
+function approvedPerNetwork(store: ReviewStore, postId: string, platforms: string[] | undefined): Map<string, ApprovedVersion> {
+  const byNetwork = new Map<string, ApprovedVersion>();
+  for (const item of [...store.approvedForNetworks(postId)].sort((a, b) => a.version.versionNumber - b.version.versionNumber)) {
+    const network = item.version.network;
+    if (network !== undefined && (!platforms || platforms.includes(network))) byNetwork.set(network, item);
+  }
+  return byNetwork;
+}
+
 export interface ExportOptions {
   /**
    * The client's own name, when it is not the site folder's (a client "fynix-digital" whose site folder is "fynix"). The posts are filed under it, because a
@@ -129,25 +149,42 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
       continue;
     }
     const outDir = resolve('out', site, basename(file, '.json'));
+    const store = new ReviewStore(brandDir, site);
     for (const post of plan.posts) {
       // Fully AI posters are exported only as the exact approved version (its picture and its caption); every other plan by its own approval.
-      const approved = plan.renderMode === 'ai_v1' ? new ReviewStore(brandDir, site).approvedFor(post.id) : undefined;
+      const perNetwork = plan.renderMode === 'ai_v1' ? approvedPerNetwork(store, post.id, platforms) : new Map<string, ApprovedVersion>();
+      const approved = plan.renderMode === 'ai_v1' ? (perNetwork.size > 0 ? perNetwork.get(MAIN_NETWORK_ORDER.find((n) => perNetwork.has(n)) ?? '') : store.approvedFor(post.id)) : undefined;
       if (plan.renderMode === 'ai_v1' ? !approved : !isPublishable(plan, post)) continue;
-      let poster: string | null = null;
-      if (Date.parse(post.date) >= now - KEEP_RECENT_MS) {
-        const image = approved ? approved.bytes : await readFile(join(outDir, `${post.id}.jpg`));
+      const recent = Date.parse(post.date) >= now - KEEP_RECENT_MS;
+      const place = async (image: Buffer): Promise<string | null> => {
+        if (!recent) return null;
         const fileName = posterFileName(image);
         await writeFile(join(postsDir, fileName), image);
-        poster = `/posts/${brand}/${fileName}`;
+        return `/posts/${brand}/${fileName}`;
+      };
+      const mainBytes = approved ? approved.bytes : await readFile(join(outDir, `${post.id}.jpg`));
+      const poster = await place(mainBytes);
+      // A post made per network goes only to the networks whose own picture and caption were approved; each keeps its own caption, and its own picture when it differs.
+      const variants: NonNullable<ExportedPost['variants']> = {};
+      if (approved && perNetwork.size > 0) {
+        for (const [network, item] of perNetwork) {
+          const sameImage = item.bytes.equals(approved.bytes);
+          const sameCaption = item.version.caption === approved.version.caption;
+          if (sameImage && sameCaption) continue;
+          const image = sameImage ? null : await place(item.bytes);
+          variants[network] = { ...(sameCaption ? {} : { caption: item.version.caption }), ...(image ? { image } : {}) };
+        }
       }
+      const channels = perNetwork.size > 0 ? [...perNetwork.keys()] : platforms;
       exported.push({
         brand,
         id: `${brand}-${post.id}`,
         date: post.date,
         caption: approved ? approved.version.caption : composeCaption(post),
         image: poster,
-        // A fully AI poster goes only to the platforms the owner chose; every other plan keeps going to every connected channel.
-        ...(approved && platforms ? { channels: platforms, fromPlan: true as const } : {}),
+        // A fully AI poster goes only to the platforms the owner chose (and, when it was made per network, only those approved); every other plan keeps going to every connected channel.
+        ...(approved && channels ? { channels, ...(platforms ? { fromPlan: true as const } : {}) } : {}),
+        ...(Object.keys(variants).length > 0 ? { variants } : {}),
         // A fully AI poster has the time its plan chose; the frequent run sends it then (the daily run would send one set for the afternoon the next morning).
         ...(approved ? { ownTime: true as const } : {}),
       });

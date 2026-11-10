@@ -15,6 +15,9 @@
  *   POST /review/copy/<brand>/<week-NN.json>/<postId>/keep|drop   {"by":"..."}
  *   PUT  /review/copy/<brand>/<week-NN.json>/<postId>/edit   {"by":"...","headline":"...","caption":"...","network":"linkedin"}   (network optional: the caption of that network; checked like the writer's own words; 422 when refused)
  *   POST /review/copy/<brand>/<week-NN.json>/close   {"by":"..."}   put a batch away without drawing it
+ *   POST /review/copy/<brand>/<week-NN.json>/draw   {"by":"...","client":"name its channels are connected under (default: the site's name)"}   ask for the kept posts to be drawn (202 with a job; the same batch is only ever drawn once)
+ *   POST /review/jobs   {"kind":"copy","site":"https://...","networks":["instagram","linkedin"],"weeks":1,"postsPerWeek":2,"by":"..."} ("days" instead gives that many posts on consecutive days)   read a website and write its posts (202 with a job)
+ *   GET  /review/jobs?brand=&state=      the jobs, newest first;  GET /review/jobs/<jobId>   one job: state, step 1-4, the plan file, the error, the last lines
  *
  * Everything is decided here, on the server, by the review store: the browser never says what is approvable. A version id names its brand
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
@@ -30,6 +33,11 @@ import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { editCopy } from './copy-edit.ts';
 import { loadFacts } from './evidence-pipeline.ts';
 import { decideFact, FactsError, factsView } from './facts-view.ts';
+import { JobError, JobStore, type JobState } from './job-store.ts';
+import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
+import { slugFromSite } from './analyze.ts';
+import { isNetwork, NETWORKS } from './networks.ts';
+import { RhythmError, weeklyRhythm } from './rhythm.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
@@ -40,6 +48,27 @@ export interface ReviewServerOptions {
   secret: string;
   /** How long a change waits for another process's lock before the request is answered "busy" (tests shorten it). */
   lockTimeoutMs?: number;
+  /** Where the job files live; the job runner reads the same folder. Defaults to "jobs" beside the brands folder. */
+  jobsRoot?: string;
+}
+
+const JOB_STATES: readonly JobState[] = ['queued', 'running', 'succeeded', 'failed'];
+
+/** A website the engine may be started with: an http(s) address with a real host name (no address in numbers, no credentials, no port tricks). */
+export function cleanSite(value: unknown, options: { keepPath?: boolean } = {}): string {
+  if (typeof value !== 'string' || value.trim() === '' || value.length > 200) throw new ReviewError('INVALID', 'site must be a website address');
+  let url: URL;
+  try {
+    url = new URL(/^https?:\/\//i.test(value.trim()) ? value.trim() : `https://${value.trim()}`);
+  } catch {
+    throw new ReviewError('INVALID', 'site must be a website address');
+  }
+  const host = url.hostname;
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(host) || /^\d+(\.\d+)*$/.test(host) || url.username !== '' || url.password !== '' || url.port !== '') {
+    throw new ReviewError('INVALID', 'site must be a website address with a real domain name');
+  }
+  // One page of a site (not the whole site) keeps its path; the query and anchor are never kept.
+  return options.keepPath ? `${url.origin}${url.pathname.replace(/\/+$/, '')}` : url.origin;
 }
 
 function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
@@ -48,9 +77,11 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
   res.end(text);
 }
 
+const JOB_STATUS: Record<JobError['code'], number> = { NOT_FOUND: 404, INVALID: 400, LOCKED: 503 };
 const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503 };
 
 function fail(res: ServerResponse, error: unknown): void {
+  if (error instanceof JobError) return send(res, JOB_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof FactsError) return send(res, FACTS_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof CopyStageError) return send(res, COPY_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof ReviewError) {
@@ -104,6 +135,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     if (!isDir) throw new ReviewError('NOT_FOUND', 'no such brand');
     return new ReviewStore(dir, brand, undefined, options.lockTimeoutMs);
   };
+  const jobs = new JobStore(resolve(options.jobsRoot ?? join(root, '..', 'jobs')));
+  const siteOf = (brand: string): string => {
+    try {
+      const website = (JSON.parse(readFileSync(join(root, brand, 'brand.json'), 'utf8')) as { website?: unknown }).website;
+      return cleanSite(website);
+    } catch {
+      throw new CopyStageError('REJECTED', 'this brand has no website saved, so its pictures cannot be drawn');
+    }
+  };
   const storeOf = (versionId: string): ReviewStore => storeFor(versionId.split('.')[0] ?? '');
   const brands = (): string[] => readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && BRAND.test(d.name)).map((d) => d.name);
 
@@ -134,6 +174,43 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         }
         return send(res, 404, { error: 'Not found' });
       }
+      if (parts[0] === 'review' && parts[1] === 'jobs') {
+        if (parts.length === 2 && req.method === 'GET') {
+          const state = url.searchParams.get('state') ?? undefined;
+          const brand = url.searchParams.get('brand') ?? undefined;
+          if (state !== undefined && !(JOB_STATES as readonly string[]).includes(state)) return send(res, 400, { error: `state must be one of ${JOB_STATES.join(', ')}` });
+          if (brand !== undefined && !BRAND.test(brand)) return send(res, 400, { error: 'brand is not a brand name' });
+          return send(res, 200, { jobs: jobs.list({ ...(brand ? { brand } : {}), ...(state ? { state: state as JobState } : {}) }) });
+        }
+        if (parts.length === 3 && req.method === 'GET') return send(res, 200, { job: jobs.get(decodeURIComponent(parts[2] ?? '')) });
+        if (parts.length === 2 && req.method === 'POST') {
+          const body = await readJson(req);
+          if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" (drawing is asked for on the written batch)');
+          if (body['page'] !== undefined && typeof body['page'] !== 'boolean') throw new ReviewError('INVALID', 'page must be true or false');
+          const page = body['page'] === true;
+          const site = cleanSite(body['site'], { keepPath: page });
+          const networks = body['networks'] === undefined ? [] : Array.isArray(body['networks']) ? body['networks'] : null;
+          if (networks === null || networks.some((n) => typeof n !== 'string' || !isNetwork(n))) throw new ReviewError('INVALID', `networks must be a list of ${NETWORKS.join(', ')}`);
+          // How much to write: an exact number of posts ("days", on consecutive days), or a rhythm ("weeks" at "postsPerWeek" a week, two a week by default).
+          let spread: { days: number; weekdays?: string[] };
+          if (body['days'] !== undefined) {
+            const days = Number(body['days']);
+            if (!Number.isInteger(days) || days < 1 || days > 31) throw new ReviewError('INVALID', 'days must be a whole number from 1 to 31');
+            spread = { days };
+          } else {
+            try {
+              const rhythm = weeklyRhythm({ weeks: body['weeks'], postsPerWeek: body['postsPerWeek'] });
+              spread = { days: rhythm.days, weekdays: [...rhythm.weekdays] };
+            } catch (error) {
+              if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
+              throw error;
+            }
+          }
+          const { job, created } = jobs.enqueue({ kind: 'copy', brand: slugFromSite(site), site, by: text(body['by'], 80), networks: [...new Set(networks as string[])], days: spread.days, ...(page ? { page } : {}), ...(spread.weekdays ? { weekdays: spread.weekdays } : {}) });
+          return send(res, created ? 202 : 200, { job, created });
+        }
+        return send(res, 404, { error: 'Not found' });
+      }
       if (parts[0] === 'review' && parts[1] === 'copy') {
         if (parts.length === 2 && req.method === 'GET') {
           const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list()).filter((b) => !b.drawnAt && !b.closedAt);
@@ -154,6 +231,28 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (!BRAND.test(closeBrand) || !brands().includes(closeBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const by = text((await readJson(req))['by'], 80);
           return send(res, 200, { batch: new CopyStage(join(root, closeBrand), closeBrand).close(closePlan, by) });
+        }
+        if (parts.length === 5 && req.method === 'POST' && parts[4] === 'draw') {
+          const [, , drawBrand = '', drawPlan = ''] = parts.map(decodeURIComponent);
+          if (!BRAND.test(drawBrand) || !brands().includes(drawBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const drawBody = await readJson(req);
+          const by = text(drawBody['by'], 80);
+          // The client the posters belong to (the name its channels are connected under); the website's own name when none is given.
+          const client = drawBody['client'] === undefined ? drawBrand : text(drawBody['client'], 63);
+          if (!CLIENT_NAME.test(client)) throw new ReviewError('INVALID', 'client must be lowercase letters, digits and dashes');
+          const batch = new CopyStage(join(root, drawBrand), drawBrand).get(drawPlan);
+          if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
+          // A batch already asked for (or drawn) answers with its job; a draw buys pictures, so it is only ever started once.
+          const existing = jobs.list({ brand: drawBrand }).find((j) => j.kind === 'draw' && j.planFile === drawPlan);
+          if (existing) return send(res, 200, { job: existing, created: false });
+          if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn');
+          if (!batch.posts.some((p) => p.state === 'kept')) throw new CopyStageError('REJECTED', 'keep at least one post before drawing');
+          const drawSite = siteOf(drawBrand);
+          // Approved posters of this batch reach the calendar through the campaign runner's release pass, for this client and only the networks written for.
+          // The record is made first: a draw that is queued without it would buy pictures that could never be released.
+          registerManualRelease({ brandDir: join(root, drawBrand), siteBrand: drawBrand, client, site: drawSite, planFile: drawPlan });
+          const { job, created } = jobs.enqueue({ kind: 'draw', brand: drawBrand, site: drawSite, by, planFile: drawPlan });
+          return send(res, created ? 202 : 200, { job, created });
         }
         if (parts.length === 6 && req.method === 'PUT' && verb === 'edit') {
           if (!BRAND.test(brand) || !brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');

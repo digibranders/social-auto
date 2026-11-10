@@ -382,8 +382,11 @@ function parseFeatures(raw: unknown, source: string): BrandFeature[] {
 }
 
 /** Full Instagram caption: body, blank line, hashtags. */
+/** A sentence that ends in two full stops (the writer's full stop plus one added when the closing line was joined on) ends in one; an ellipsis ("...") is left alone. */
+export const tidyPunctuation = (text: string): string => text.replace(/(?<![.\u2026])\.{2}(?![.\u2026])/g, '.');
+
 export function composeCaption(post: Pick<PlannedPost, 'caption' | 'hashtags'>): string {
-  return `${post.caption.trim()}\n\n${post.hashtags.join(' ')}`;
+  return `${tidyPunctuation(post.caption.trim())}\n\n${post.hashtags.join(' ')}`;
 }
 
 function parsePost(raw: unknown, source: string): PlannedPost {

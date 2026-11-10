@@ -15,7 +15,7 @@ MemoryMax=256M
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ReadWritePaths=/home/social/social-auto/scheduler/engine/brands
+ReadWritePaths=/home/social/social-auto/scheduler/engine/brands -/home/social/social-auto/scheduler/engine/jobs
 
 [Install]
 WantedBy=multi-user.target

@@ -80,6 +80,8 @@ export interface CrawlDeps {
   maxPages?: number;
   /** A page with less text than this is not worth a place. */
   minPageChars?: number;
+  /** Read only the address given, and follow no link from it (CRAWL_ONLY_THIS_PAGE=true does the same from the environment). */
+  onlyThisPage?: boolean;
 }
 
 /** Opens a public page in headless Chrome and returns the page as it looks after its scripts ran. */
@@ -384,7 +386,8 @@ export async function crawlSite(siteUrl: string, deps: CrawlDeps = {}): Promise<
   const minChars = deps.minPageChars ?? MIN_PAGE_CHARS;
   // The whole read has a time limit: a slow site yields the pages read so far, and an almost empty result is refused further down, never padded.
   const deadline = Date.now() + crawlMaxSeconds(process.env) * 1000;
-  const decisions = rankPages(homeBody, base, (maxPages - 1) * 2, { allowed: (path) => robotsAllows(robots, path), ...(deps.ranking ? { config: deps.ranking } : {}) });
+  const onlyThisPage = deps.onlyThisPage ?? process.env['CRAWL_ONLY_THIS_PAGE'] === 'true';
+  const decisions = onlyThisPage ? [] : rankPages(homeBody, base, (maxPages - 1) * 2, { allowed: (path) => robotsAllows(robots, path), ...(deps.ranking ? { config: deps.ranking } : {}) });
   for (const decision of decisions.filter((d) => d.selected)) {
     if (pages.length >= maxPages) {
       decision.selected = false;
