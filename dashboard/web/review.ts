@@ -174,3 +174,62 @@ export function brandingView(b: BrandingRecord): BrandingView {
   return { tone: 'plain', headline: 'Text sign-off used: no usable logo', explanation: b.reason ? `No real logo was used. ${b.reason}` : 'No real logo was used on this poster.', rows };
 }
 
+
+/** The networks a client can be written for, in the order they are offered. */
+export const NETWORK_CHOICES: readonly { key: string; label: string }[] = [
+  { key: 'instagram', label: 'Instagram' },
+  { key: 'facebook', label: 'Facebook' },
+  { key: 'linkedin', label: 'LinkedIn' },
+  { key: 'google', label: 'Google Business' },
+];
+
+export type JobState = 'queued' | 'running' | 'succeeded' | 'failed';
+
+export interface JobView {
+  id: string;
+  kind: 'copy' | 'draw';
+  brand: string;
+  site: string;
+  state: JobState;
+  step?: number;
+  planFile?: string;
+  error?: string;
+}
+
+/** The jobs the service sends, kept only where well formed. */
+export function parseJobs(value: unknown): JobView[] {
+  const list = (value as { jobs?: unknown } | null)?.jobs;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry): JobView[] => {
+    const j = entry as Record<string, unknown> | null;
+    if (!j || typeof j['id'] !== 'string' || (j['kind'] !== 'copy' && j['kind'] !== 'draw') || typeof j['brand'] !== 'string' || typeof j['site'] !== 'string' || !['queued', 'running', 'succeeded', 'failed'].includes(String(j['state']))) return [];
+    const error = (j['error'] as { message?: unknown } | undefined)?.message;
+    const planFile = typeof j['planFileMade'] === 'string' ? j['planFileMade'] : typeof j['planFile'] === 'string' ? j['planFile'] : undefined;
+    return [{ id: j['id'], kind: j['kind'], brand: j['brand'], site: j['site'], state: j['state'] as JobState, ...(typeof j['step'] === 'number' ? { step: j['step'] } : {}), ...(planFile ? { planFile } : {}), ...(typeof error === 'string' ? { error } : {}) }];
+  });
+}
+
+export const jobActive = (job: JobView): boolean => job.state === 'queued' || job.state === 'running';
+
+const STEP_WORDS: Readonly<Record<number, string>> = { 1: 'reading the website', 2: 'writing the posts', 3: 'drawing the pictures', 4: 'putting them in the review list' };
+
+/** What a job is doing, in plain words. */
+export function jobText(job: JobView): string {
+  const what = job.kind === 'copy' ? `Writing posts for ${job.site}` : `Drawing the kept posts of ${job.brand}${job.planFile ? ` (${job.planFile.replace(/\.json$/, '')})` : ''}`;
+  if (job.state === 'queued') return `${what}: waiting for its turn`;
+  if (job.state === 'running') return `${what}: ${job.step ? STEP_WORDS[job.step] ?? 'working' : 'starting'}`;
+  if (job.state === 'succeeded') return job.kind === 'copy' ? `${what}: done, the posts are waiting for you below` : `${what}: done, the pictures are waiting for you to approve`;
+  return `${what}: stopped. ${job.error ?? 'It did not finish.'} Nothing was published.`;
+}
+
+/** Whether a website address looks like something the service will accept: a real domain, with or without https://. */
+export function looksLikeSite(value: string): boolean {
+  const text = value.trim();
+  if (text === '' || text.length > 200 || /\s/.test(text)) return false;
+  try {
+    const url = new URL(/^https?:\/\//i.test(text) ? text : `https://${text}`);
+    return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i.test(url.hostname) && !/^\d+(\.\d+)*$/.test(url.hostname);
+  } catch {
+    return false;
+  }
+}

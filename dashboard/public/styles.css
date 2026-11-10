@@ -560,6 +560,15 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-copy-dropped { opacity: 0.55; }
 .rv-copy-post .rv-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .rv-copy-post .rv-actions span { flex: 1; font-size: 0.9em; }
+.rv-check { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+.rv-textarea { padding: 10px; min-height: 120px; width: 100%; resize: vertical; }
+.rv-copy-caption { margin: 6px 0; }
+.rv-copy-caption p { white-space: pre-wrap; }
+.rv-copy-caption .rv-input { display: block; width: 100%; margin: 6px 0; }
+.rv-draw .rv-check { flex: 1 1 220px; }
+.rv-draw { border-top: 1px solid var(--line, #e4e4e4); margin-top: 10px; padding-top: 10px; }
+.rv-job { margin: 4px 0; }
+.rv-job-failed { color: var(--danger, #b42318); }
 .rv-copy-advice { color: var(--warn, #b45309); font-size: 0.9em; }
 .rv-edit { width: 100%; min-height: 9rem; resize: vertical; font: inherit; line-height: 1.45; }
 .rv-editor { display: grid; gap: .6rem; }

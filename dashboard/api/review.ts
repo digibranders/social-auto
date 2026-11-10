@@ -9,6 +9,11 @@
  *   POST /api/review   { "id": "<versionId>", "action": "approve" }  or  { "id": "...", "action": "reject", "reason": "...", "comment": "..." }
  *   GET  /api/review?view=copy                                  the written posts waiting to be kept or dropped (before any picture is bought)
  *   POST /api/review   { "copy": { "brand": "...", "planFile": "week-01.json", "postId": "...", "action": "keep" | "drop" } }
+ *   POST /api/review   { "edit": { "brand", "planFile", "postId", "headline", "caption", "network"? } }   change the words of a written post (checked by the service)
+ *   POST /api/review   { "close": { "brand", "planFile" } }           put a written batch away without drawing it
+ *   POST /api/review   { "draw": { "brand", "planFile", "client"? } }   draw the kept posts of a batch (once only; answers with the job)
+ *   POST /api/review   { "job": { "site", "page"?, "networks", "weeks"?, "postsPerWeek"? } }   read a website (or one page) and write its posts (answers with the job)
+ *   GET  /api/review?view=jobs                                         the jobs, newest first;  GET /api/review?view=job&id=<jobId>   one job
  */
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
@@ -19,7 +24,9 @@ const PLAN_FILE = /^week-\d{2,4}\.json$/;
 const POST_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;
 const STATUS = /^(open|pending|held|approved|rejected|blocked|superseded|all)$/;
 const TIMEOUT_MS = 25_000;
-const MAX_BODY_BYTES = 4 * 1024;
+const MAX_BODY_BYTES = 16 * 1024;
+const JOB_ID = /^job-[a-z0-9]{6,12}-[a-f0-9]{8}$/;
+const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'];
 /** Who is recorded as having decided: the dashboard has one password, so there is one reviewer. */
 const REVIEWER = 'owner';
 
@@ -53,6 +60,11 @@ export async function GET(request: Request): Promise<Response> {
   let path: string;
   if (view === 'copy') {
     path = '/review/copy';
+  } else if (view === 'jobs') {
+    path = '/review/jobs';
+  } else if (view === 'job') {
+    if (!JOB_ID.test(id)) return json(400, { error: 'Invalid request' });
+    path = `/review/jobs/${id}`;
   } else if (view === 'list') {
     const status = query.get('status') ?? 'pending';
     if (!STATUS.test(status)) return json(400, { error: 'Invalid request' });
@@ -81,21 +93,58 @@ export async function POST(request: Request): Promise<Response> {
   if (!secret || !process.env['REVIEW_URL']) return json(503, { error: 'The review queue is not configured' });
   if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'That is too large' });
 
-  let body: { id?: unknown; action?: unknown; reason?: unknown; comment?: unknown; copy?: { brand?: unknown; planFile?: unknown; postId?: unknown; action?: unknown } };
+  let body: { id?: unknown; action?: unknown; reason?: unknown; comment?: unknown; copy?: Record<string, unknown>; edit?: Record<string, unknown>; close?: Record<string, unknown>; draw?: Record<string, unknown>; job?: Record<string, unknown> };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return json(400, { error: 'Invalid request' });
   }
-  if (body.copy !== undefined) {
-    const { brand, planFile, postId, action } = body.copy ?? {};
-    if (typeof brand !== 'string' || !BRAND.test(brand) || typeof planFile !== 'string' || !PLAN_FILE.test(planFile) || typeof postId !== 'string' || !POST_ID.test(postId) || (action !== 'keep' && action !== 'drop')) return json(400, { error: 'Invalid request' });
+  const send = async (path: string, method: 'POST' | 'PUT', payload: Record<string, unknown>): Promise<Response> => {
     try {
-      const url = target(`/review/copy/${brand}/${planFile}/${encodeURIComponent(postId)}/${action}`);
-      return url ? await relay(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by: REVIEWER }) }, secret) : json(503, { error: 'The review queue is not configured' });
+      const url = target(path);
+      return url ? await relay(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ by: REVIEWER, ...payload }) }, secret) : json(503, { error: 'The review queue is not configured' });
     } catch (error) {
       return json(502, { error: describeError(error) });
     }
+  };
+  const batchOf = (value: Record<string, unknown> | undefined): { brand: string; planFile: string } | null => {
+    const brand = value?.['brand'];
+    const planFile = value?.['planFile'];
+    return typeof brand === 'string' && BRAND.test(brand) && typeof planFile === 'string' && PLAN_FILE.test(planFile) ? { brand, planFile } : null;
+  };
+  const words = (value: unknown, max: number): string | null => (typeof value === 'string' && value.trim() !== '' && value.length <= max ? value : null);
+  if (body.copy !== undefined) {
+    const batch = batchOf(body.copy);
+    const { postId, action } = body.copy ?? {};
+    if (!batch || typeof postId !== 'string' || !POST_ID.test(postId) || (action !== 'keep' && action !== 'drop')) return json(400, { error: 'Invalid request' });
+    return send(`/review/copy/${batch.brand}/${batch.planFile}/${encodeURIComponent(postId)}/${action}`, 'POST', {});
+  }
+  if (body.edit !== undefined) {
+    const batch = batchOf(body.edit);
+    const { postId, network } = body.edit ?? {};
+    const headline = words(body.edit?.['headline'], 300);
+    const caption = words(body.edit?.['caption'], 4000);
+    if (!batch || typeof postId !== 'string' || !POST_ID.test(postId) || !headline || !caption || (network !== undefined && (typeof network !== 'string' || !NETWORKS.includes(network)))) return json(400, { error: 'Invalid request' });
+    return send(`/review/copy/${batch.brand}/${batch.planFile}/${encodeURIComponent(postId)}/edit`, 'PUT', { headline, caption, ...(network ? { network } : {}) });
+  }
+  if (body.close !== undefined) {
+    const batch = batchOf(body.close);
+    if (!batch) return json(400, { error: 'Invalid request' });
+    return send(`/review/copy/${batch.brand}/${batch.planFile}/close`, 'POST', {});
+  }
+  if (body.draw !== undefined) {
+    const batch = batchOf(body.draw);
+    const client = body.draw?.['client'];
+    if (!batch || (client !== undefined && (typeof client !== 'string' || !BRAND.test(client)))) return json(400, { error: 'Invalid request' });
+    return send(`/review/copy/${batch.brand}/${batch.planFile}/draw`, 'POST', client ? { client } : {});
+  }
+  if (body.job !== undefined) {
+    const site = words(body.job?.['site'], 200);
+    const networks = body.job?.['networks'];
+    if (!site || !Array.isArray(networks) || !networks.every((n) => typeof n === 'string' && NETWORKS.includes(n))) return json(400, { error: 'Invalid request' });
+    const { page, weeks, postsPerWeek } = body.job ?? {};
+    if ((page !== undefined && typeof page !== 'boolean') || (weeks !== undefined && typeof weeks !== 'number') || (postsPerWeek !== undefined && typeof postsPerWeek !== 'number')) return json(400, { error: 'Invalid request' });
+    return send('/review/jobs', 'POST', { kind: 'copy', site, networks, ...(page ? { page } : {}), ...(weeks !== undefined ? { weeks } : {}), ...(postsPerWeek !== undefined ? { postsPerWeek } : {}) });
   }
   const id = typeof body.id === 'string' ? body.id : '';
   if (!VERSION_ID.test(id) || (body.action !== 'approve' && body.action !== 'reject')) return json(400, { error: 'Invalid request' });
