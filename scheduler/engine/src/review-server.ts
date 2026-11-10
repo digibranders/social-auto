@@ -136,6 +136,10 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     return new ReviewStore(dir, brand, undefined, options.lockTimeoutMs);
   };
   const jobs = new JobStore(resolve(options.jobsRoot ?? join(root, '..', 'jobs')));
+  /** Once drawing has been asked for, the batch's choices and words are final: the runner may start at any moment, and a change in between would be lost or fail the draw. */
+  const refuseIfDrawAsked = (brand: string, planFile: string): void => {
+    if (jobs.list({ brand }).some((j) => j.kind === 'draw' && j.planFile === planFile)) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch\'s choices and words are final');
+  };
   const siteOf = (brand: string): string => {
     try {
       const website = (JSON.parse(readFileSync(join(root, brand, 'brand.json'), 'utf8')) as { website?: unknown }).website;
@@ -224,6 +228,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (parts.length === 6 && req.method === 'POST' && (verb === 'keep' || verb === 'drop')) {
           if (!BRAND.test(brand) || !brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const by = text((await readJson(req))['by'], 80);
+          refuseIfDrawAsked(brand, planFile);
           const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
           return send(res, 200, { batch });
         }
@@ -232,6 +237,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const [, , closeBrand = '', closePlan = ''] = parts.map(decodeURIComponent);
           if (!BRAND.test(closeBrand) || !brands().includes(closeBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const by = text((await readJson(req))['by'], 80);
+          refuseIfDrawAsked(closeBrand, closePlan);
           return send(res, 200, { batch: new CopyStage(join(root, closeBrand), closeBrand).close(closePlan, by) });
         }
         if (parts.length === 5 && req.method === 'POST' && parts[4] === 'draw') {
@@ -261,6 +267,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (parts.length === 6 && req.method === 'PUT' && verb === 'edit') {
           if (!BRAND.test(brand) || !brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const body = await readJson(req);
+          refuseIfDrawAsked(brand, planFile);
           const brandDir = join(root, brand);
           const facts = (await loadFacts(brandDir))?.facts ?? [];
           const headline = typeof body['headline'] === 'string' ? body['headline'] : undefined;

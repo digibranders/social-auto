@@ -97,7 +97,7 @@ test('jobs are read only where well formed and told in plain words', () => {
   ] });
   assert.equal(jobs.length, 2);
   assert.equal(jobText(jobs[0] as JobView), 'Writing posts for https://acme.example.com: writing the posts');
-  assert.match(jobText(jobs[1] as JobView), /Drawing the kept posts of acme \(week-03\): stopped\. the day is spent Nothing was published\./);
+  assert.match(jobText(jobs[1] as JobView), /Drawing the kept posts of acme \(week-03\): stopped\. the day is spent\. Nothing was published\./);
   assert.deepEqual(jobs.map(jobActive), [true, false]);
   assert.deepEqual(parseJobs(null), []);
 });
