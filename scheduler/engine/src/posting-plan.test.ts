@@ -110,6 +110,13 @@ test('a client that requires the website\'s real logo has the autopilot told so,
   assert.ok(!autopilotArgsFor(plan(), 'https://oyechats.com', batch, { requireAuthenticLogo: false }).includes('--require-logo'));
 });
 
+test('a client with its own monthly spend limit has the autopilot told so, and one without is not', () => {
+  const batch = planBatches(plan())[0] as never;
+  const args = autopilotArgsFor(plan(), 'https://oyechats.com', batch, { monthCapUsd: 3.5 });
+  assert.equal(args[args.indexOf('--month-cap-usd') + 1], '3.5');
+  assert.ok(!autopilotArgsFor(plan(), 'https://oyechats.com', batch).includes('--month-cap-usd'));
+});
+
 
 test('a plan may name the exact account for each platform; anything else about accounts is refused', () => {
   const base = { platforms: ['linkedin', 'facebook'], startDate: '2099-11-10', durationDays: 1 };

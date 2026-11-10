@@ -113,3 +113,8 @@ test('the approval mode is read when it is manual or auto, and anything else is 
   const parsed = parseStatus({ ...valid, runway: [{ brand: 'a', postsLeft: 0, approvalMode: 'auto' }, { brand: 'b', postsLeft: 0, approvalMode: 'manual' }, { brand: 'c', postsLeft: 0, approvalMode: 'maybe' }, { brand: 'd', postsLeft: 0 }] });
   assert.deepEqual(parsed.runway.map((r) => r.approvalMode), ['auto', 'manual', undefined, undefined]);
 });
+
+test('a monthly spend limit is read when it is a positive number, and anything else is left out', () => {
+  const parsed = parseStatus({ ...valid, runway: [{ brand: 'a', postsLeft: 0, spendCapUsd: 3.5 }, { brand: 'b', postsLeft: 0, spendCapUsd: 0 }, { brand: 'c', postsLeft: 0, spendCapUsd: '5' }, { brand: 'd', postsLeft: 0 }] });
+  assert.deepEqual(parsed.runway.map((r) => r.spendCapUsd), [3.5, undefined, undefined, undefined]);
+});

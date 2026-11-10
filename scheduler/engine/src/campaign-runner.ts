@@ -73,6 +73,8 @@ export interface PlannedClient {
   requireAuthenticLogo?: boolean;
   /** Who approves the client's posters: a person (`manual`, the default) or the system after its automatic checks (`auto`). */
   approvalMode?: 'manual' | 'auto';
+  /** What the AI may cost for this client in a calendar month, in dollars; the engine's default applies when missing. */
+  spendCapUsd?: number;
 }
 
 export interface RunnerDeps {
@@ -205,7 +207,7 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
         writing = writing.then(() => writeState(file, state)).catch(() => undefined);
       };
       try {
-        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true }), onLine);
+        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true, ...(client.spendCapUsd !== undefined ? { monthCapUsd: client.spendCapUsd } : {}) }), onLine);
         await writing;
       } catch (error) {
         await writing;
@@ -468,7 +470,7 @@ async function main(): Promise<void> {
   let clients: PlannedClient[] = [];
   try {
     const raw = JSON.parse(await readFile(resolve(values.clients), 'utf8')) as { clients?: Array<Record<string, unknown>> };
-    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']], ...(c['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true } : {}), ...(c['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : {}) }] : []));
+    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']], ...(c['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true } : {}), ...(c['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : {}), ...(typeof c['spendCapUsd'] === 'number' && Number.isFinite(c['spendCapUsd']) && c['spendCapUsd'] > 0 ? { spendCapUsd: c['spendCapUsd'] } : {}) }] : []));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
