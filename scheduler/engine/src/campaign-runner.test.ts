@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ReviewStore } from './review-store.ts';
-import { acquireLease, listCampaigns, makeCampaigns, parseProgressLine, releaseCampaigns, statusOf, type PlannedClient, type RunnerDeps } from './campaign-runner.ts';
+import { acquireLease, autoApprove, listCampaigns, makeCampaigns, parseProgressLine, releaseCampaigns, statusOf, type PlannedClient, type RunnerDeps } from './campaign-runner.ts';
 
 const NOW = new Date('2026-11-05T12:00:00Z');
 const root = (): { dir: string; done: () => void } => { const dir = mkdtempSync(join(tmpdir(), 'campaign-')); return { dir, done: () => rmSync(dir, { recursive: true, force: true }) }; };
@@ -403,6 +403,56 @@ test('the campaign list counts the plan\'s posters by what the owner decided, an
     assert.deepEqual((await listCampaigns(r.dir))[0]?.release, { state: 'failed', reason: 'the schedule file could not be written' });
     await releaseCampaigns(r.dir, deps({ release: async () => 1 }));
     assert.deepEqual((await listCampaigns(r.dir))[0]?.release, { state: 'on', posts: 1 }, 'a later release that works replaces the failure');
+  } finally {
+    r.done();
+  }
+});
+
+test('a client on automatic approval has its pending posters approved by the system just before release; a client on manual approval does not', async () => {
+  const run = async (mode: 'manual' | 'auto'): Promise<{ statuses: Record<string, string>; by: Array<string | undefined>; released: number }> => {
+    const r = root();
+    try {
+      const exec: RunnerDeps['exec'] = async () => {
+        mkdirSync(join(r.dir, 'oyechats'), { recursive: true });
+        writeFileSync(join(r.dir, 'oyechats', 'week-01.json'), JSON.stringify({ posts: [{ id: 'future', date: '2026-11-09T10:00:00+05:30' }, { id: 'past', date: '2026-11-04T10:00:00+05:30' }, { id: 'blocked', date: '2026-11-09T10:00:00+05:30' }, { id: 'other', date: '2026-11-09T10:00:00+05:30' }] }));
+        return { code: 0, tail: 'done' };
+      };
+      await makeCampaigns([client()], r.dir, deps({ exec }));
+      const store = new ReviewStore(join(r.dir, 'oyechats'), 'oyechats');
+      const add = (postId: string, planFile: string, accepted = true) => store.addVersion({
+        postId, planFile, headline: 'A headline', caption: 'A caption', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [],
+        imagePath: (() => { const p = join(r.dir, `${postId}.jpg`); writeFileSync(p, postId); return p; })(),
+        validation: { accepted, readings: 1, defects: accepted ? [] : ['extra_text: x'], reportFile: 'report.json' }, attempts: 1, costUsd: 0,
+      });
+      add('future', 'week-01.json'); add('past', 'week-01.json'); add('blocked', 'week-01.json', false); add('other', 'week-09.json');
+      let released = 0;
+      await releaseCampaigns(r.dir, deps({ approvalMode: () => mode, release: async () => { released += 1; return 1; } }));
+      const items = store.list();
+      return { statuses: Object.fromEntries(items.map((i) => [i.version.postId, i.status])), by: items.map((i) => i.decision?.by), released };
+    } finally {
+      r.done();
+    }
+  };
+  const manual = await run('manual');
+  assert.deepEqual(manual.statuses, { future: 'pending', past: 'pending', blocked: 'blocked', other: 'pending' }, 'a person approves on manual');
+  const auto = await run('auto');
+  assert.deepEqual(auto.statuses, { future: 'approved', past: 'pending', blocked: 'blocked', other: 'pending' }, 'only a pending poster of this plan whose time is still ahead is approved; one the checks blocked, one that is already late and another plan\'s poster are left');
+  assert.deepEqual(auto.by.filter(Boolean), ['auto-checks'], 'the history says the system approved it');
+  assert.equal(auto.released, 1, 'it is released in the same pass');
+});
+
+test('automatic approval never touches a version that a person rejected, and approving the same version twice gives the same decision', async () => {
+  const r = root();
+  try {
+    const exec: RunnerDeps['exec'] = async () => { mkdirSync(join(r.dir, 'oyechats'), { recursive: true }); writeFileSync(join(r.dir, 'oyechats', 'week-01.json'), JSON.stringify({ posts: [{ id: 'p1', date: '2026-11-09T10:00:00+05:30' }] })); return { code: 0, tail: 'done' }; };
+    await makeCampaigns([client()], r.dir, deps({ exec }));
+    const store = new ReviewStore(join(r.dir, 'oyechats'), 'oyechats');
+    const v = store.addVersion({ postId: 'p1', planFile: 'week-01.json', headline: 'H', caption: 'C', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], imagePath: (() => { const p = join(r.dir, 'p1.jpg'); writeFileSync(p, 'p1'); return p; })(), validation: { accepted: true, readings: 1, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0 });
+    store.reject(v.versionId, 'owner', 'style');
+    await releaseCampaigns(r.dir, deps({ approvalMode: () => 'auto', release: async () => 0 }));
+    assert.equal(store.get(v.versionId).status, 'rejected', 'a rejection by a person stands');
+    const again = autoApprove(join(r.dir, 'oyechats'), 'oyechats', ['week-01.json'], NOW);
+    assert.deepEqual(again, { approved: 0, left: 0 });
   } finally {
     r.done();
   }

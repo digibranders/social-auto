@@ -22,6 +22,8 @@ export interface AddedClient {
   weeklyLimit?: number;
   /** True when every poster made from the website must carry the website's real logo; otherwise a poster may use the brand name as text when no usable logo exists. Missing means false. */
   requireAuthenticLogo?: boolean;
+  /** Who approves the posters made from the website: `manual` (the default, not stored) means a person approves each one in Review; `auto` means a poster that passes every automatic check is approved by the system and released. */
+  approvalMode?: 'manual' | 'auto';
 }
 
 export const PLAN_PLATFORMS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
@@ -131,6 +133,7 @@ export function parseClientsFile(raw: unknown): ClientsFile {
       }
       if (c['weeklyLimit'] !== undefined && (typeof c['weeklyLimit'] !== 'number' || !Number.isInteger(c['weeklyLimit']) || c['weeklyLimit'] < 1 || c['weeklyLimit'] > MAX_WEEKLY_LIMIT)) throw new Error(`clients[${i}].weeklyLimit must be a whole number from 1 to ${MAX_WEEKLY_LIMIT}`);
       if (c['requireAuthenticLogo'] !== undefined && typeof c['requireAuthenticLogo'] !== 'boolean') throw new Error(`clients[${i}].requireAuthenticLogo must be true or false`);
+      if (c['approvalMode'] !== undefined && c['approvalMode'] !== 'manual' && c['approvalMode'] !== 'auto') throw new Error(`clients[${i}].approvalMode must be "manual" or "auto"`);
       // A client saved by the first version has one `plan`; it is read as a list of one.
       const { plan: single, ...rest } = c as Record<string, unknown>;
       const listed = rest['plans'] !== undefined ? rest['plans'] : single !== undefined ? [single] : undefined;
@@ -329,10 +332,19 @@ export function ensureWorkspace(
   return { file: { clients: [...file.clients, client] }, client, created: true };
 }
 
+/** Sets who approves a client's posters: a person ("manual", the default, not stored) or the system after its automatic checks ("auto"). It governs posters made from now on and the ones still waiting. */
+export function setApprovalMode(file: ClientsFile, brand: string, mode: unknown): ClientsFile {
+  if (mode !== 'manual' && mode !== 'auto') throw new EditError('the approval mode must be "manual" or "auto"');
+  const index = file.clients.findIndex((c) => c.brand === brand);
+  if (index === -1) throw new EditError('only a client added in the dashboard has an approval mode here', 404);
+  const { approvalMode: _old, ...rest } = file.clients[index] as AddedClient;
+  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(mode === 'auto' ? { approvalMode: 'auto' as const } : {}) } : c)) };
+}
+
 /** What the status feed says of a client the dashboard added: name, product, website, plans, the effective weekly limit and the real-logo setting. */
-export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true } {
+export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true; approvalMode: 'manual' | 'auto' } {
   return {
     ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}),
-    ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}),
+    ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}), approvalMode: c.approvalMode ?? 'manual',
   };
 }

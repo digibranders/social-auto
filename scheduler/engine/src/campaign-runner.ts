@@ -13,13 +13,13 @@
  */
 import { execFile } from 'node:child_process';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { slugFromSite } from './analyze.ts';
 import { autopilotArgsFor, parsePostingPlan, planBatches, planId, todayAt, type PostingPlan } from './posting-plan.ts';
 import { exportToPublisher } from './export-publisher.ts';
-import { ReviewStore } from './review-store.ts';
+import { ReviewError, ReviewStore } from './review-store.ts';
 
 export type BatchStatus = 'pending' | 'running' | 'done' | 'failed' | 'interrupted';
 /** What a running batch is doing, as far as the autopilot's own progress lines say. */
@@ -71,6 +71,8 @@ export interface PlannedClient {
   plans: unknown[];
   /** The client's setting: every poster must carry the website's real logo. */
   requireAuthenticLogo?: boolean;
+  /** Who approves the client's posters: a person (`manual`, the default) or the system after its automatic checks (`auto`). */
+  approvalMode?: 'manual' | 'auto';
 }
 
 export interface RunnerDeps {
@@ -78,6 +80,8 @@ export interface RunnerDeps {
   exec: (args: string[], onLine?: (line: string) => void) => Promise<{ code: number; tail: string }>;
   /** Hands the brand's approved posters to the publisher. */
   release: (brandDir: string, options: { brand: string; weekFiles: string[] }) => Promise<number>;
+  /** How a client's posters are approved right now, asked at each release so a change of setting takes effect at the next tick. Missing means a person approves. */
+  approvalMode?: (brand: string) => 'manual' | 'auto';
   now?: () => Date;
   /** Whether publishing is switched on; release is skipped, and says so, when it is not. */
   publishingEnabled: () => boolean;
@@ -315,6 +319,48 @@ export async function listCampaigns(brandsRoot: string): Promise<CampaignSummary
 }
 
 /** Hands approved posters to the publisher for every campaign that has made some. Returns the campaigns that were released. */
+/** The name every automatic approval is recorded under: the review history then shows plainly that the system, not a person, approved the version. */
+export const AUTO_APPROVER = 'auto-checks';
+
+/**
+ * Approves the waiting posters of a client that is on automatic approval. Only a version that is still pending is approved: one the checks blocked, a person
+ * rejected or a newer version replaced is left alone, and so is a poster whose time has already passed (it would only be missed). The version approved is
+ * the exact one the checks passed; the approval is hash-bound like a person's. Returns how many were approved and how many were left.
+ */
+export function autoApprove(brandDir: string, site: string, weekFiles: readonly string[], now: Date, log: (m: string) => void = () => undefined): { approved: number; left: number } {
+  const wanted = new Set(weekFiles);
+  const dates = new Map<string, number>();
+  const dateOf = (planFile: string, postId: string): number | undefined => {
+    const name = basename(planFile);
+    if (!dates.has(`${name}|`)) {
+      dates.set(`${name}|`, 0);
+      try {
+        const plan = JSON.parse(readFileSync(join(brandDir, name), 'utf8')) as { posts?: Array<{ id?: unknown; date?: unknown }> };
+        for (const p of plan.posts ?? []) if (typeof p.id === 'string' && typeof p.date === 'string') dates.set(`${name}|${p.id}`, Date.parse(p.date));
+      } catch {
+        // an unreadable plan file means no date is known, and nothing is approved on a guess
+      }
+    }
+    return dates.get(`${name}|${postId}`);
+  };
+  const store = new ReviewStore(brandDir, site, () => now);
+  let approved = 0;
+  let left = 0;
+  for (const item of store.list({ status: 'pending' })) {
+    if (!wanted.has(basename(item.version.planFile))) continue;
+    const at = dateOf(item.version.planFile, item.version.postId);
+    if (at === undefined || !Number.isFinite(at) || at <= now.getTime()) { left += 1; continue; }
+    try {
+      store.approve(item.version.versionId, AUTO_APPROVER);
+      approved += 1;
+    } catch (error) {
+      left += 1;
+      log(`${site}: ${item.version.versionId} was not approved automatically: ${error instanceof ReviewError ? error.message : String(error)}`);
+    }
+  }
+  return { approved, left };
+}
+
 export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Promise<CampaignState[]> {
   const log = deps.log ?? (() => undefined);
   const released: CampaignState[] = [];
@@ -347,6 +393,11 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
     for (const [client, members] of groups) {
       const weekFiles = [...new Set(members.flatMap(({ state }) => state.batches.flatMap((b) => (b.weekFile ? [b.weekFile] : []))))];
       try {
+        // A client on automatic approval has the posters that passed every check approved here, just before they are handed over.
+        if ((deps.approvalMode?.(client) ?? 'manual') === 'auto') {
+          const result = autoApprove(join(brandsRoot, siteBrand), siteBrand, weekFiles, deps.now?.() ?? new Date(), log);
+          if (result.approved > 0) log(`${client}: ${result.approved} poster${result.approved === 1 ? '' : 's'} approved automatically after the checks`);
+        }
         const posts = await deps.release(join(brandsRoot, siteBrand), { brand: client, weekFiles });
         let changed = false;
         for (const { file, state } of members) {
@@ -417,7 +468,7 @@ async function main(): Promise<void> {
   let clients: PlannedClient[] = [];
   try {
     const raw = JSON.parse(await readFile(resolve(values.clients), 'utf8')) as { clients?: Array<Record<string, unknown>> };
-    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']], ...(c['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true } : {}) }] : []));
+    clients = (raw.clients ?? []).flatMap((c) => (typeof c['brand'] === 'string' && typeof c['website'] === 'string' && (Array.isArray(c['plans']) ? c['plans'].length > 0 : c['plan'] !== undefined) ? [{ brand: c['brand'], website: c['website'], plans: Array.isArray(c['plans']) ? (c['plans'] as unknown[]) : [c['plan']], ...(c['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true } : {}), ...(c['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : {}) }] : []));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
@@ -442,6 +493,7 @@ async function main(): Promise<void> {
     }),
     release: async (brandDir, options) => (await exportToPublisher(brandDir, publisherDir, Date.now(), options)).length,
     publishingEnabled: () => process.env['SOCIAL_PUBLISHING_ENABLED'] === 'true',
+    approvalMode: (brand) => clients.find((c) => c.brand === brand)?.approvalMode ?? 'manual',
     log: (m) => console.log(m),
   };
   await mkdir(brandsRoot, { recursive: true });
