@@ -225,3 +225,20 @@ test('who approves a client\'s posters is a setting: manual by default and not s
   assert.throws(() => setApprovalMode(made, 'nobody', 'auto'), /only a client added in the dashboard/);
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', approvalMode: 'yes' }] }), /approvalMode/);
 });
+
+import { MAX_SPEND_CAP_USD, setSpendCap } from './clients.ts';
+
+test('a client\'s monthly AI spend limit is stored in whole cents, shown in the feed only when set, cleared with null, and refused when it makes no sense', () => {
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
+  assert.equal(clientFeedDetails(made.clients[0] as never).spendCapUsd, undefined);
+  const capped = setSpendCap(made, 'oye-chats', 3.5);
+  assert.equal(capped.clients[0]?.spendCapUsd, 3.5);
+  assert.equal(clientFeedDetails(capped.clients[0] as never).spendCapUsd, 3.5);
+  assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(capped))), capped, 'it survives a save and a load');
+  assert.equal(setSpendCap(capped, 'oye-chats', null).clients[0]?.spendCapUsd, undefined, 'null goes back to the default limit');
+  for (const bad of [0, -2, 1.234, MAX_SPEND_CAP_USD + 1, '5', Number.NaN, Number.POSITIVE_INFINITY, undefined]) {
+    assert.throws(() => setSpendCap(made, 'oye-chats', bad), /monthly limit must be/, String(bad));
+  }
+  assert.throws(() => setSpendCap(made, 'nobody', 3), /only a client added in the dashboard/);
+  assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', spendCapUsd: 0 }] }), /spendCapUsd/);
+});

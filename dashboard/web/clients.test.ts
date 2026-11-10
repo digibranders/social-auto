@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { StatusPost, StatusResponse } from '../shared/status.ts';
-import { describeDays, schedulePattern, summarizeClients, websiteHost } from './clients.ts';
+import { describeDays, schedulePattern, spentThisMonth, summarizeClients, websiteHost } from './clients.ts';
 
 const NOW = Date.parse('2026-11-02T00:00:00Z');
 const post = (brand: string, date: string, state: StatusPost['state'] = 'scheduled'): StatusPost => ({
@@ -93,6 +93,26 @@ test('a client is manual unless the feed says it is automatic', () => {
     runway: [{ brand: 'auto', postsLeft: 0, approvalMode: 'auto' }, { brand: 'man', postsLeft: 0, approvalMode: 'manual' }, { brand: 'old', postsLeft: 0 }],
   };
   assert.deepEqual(summarizeClients(data, NOW).map((c) => [c.brand, c.approvalMode]), [['auto', 'auto'], ['man', 'manual'], ['old', 'manual']]);
+});
+
+test('a client has its own monthly AI limit only when the feed says so, and the month so far is added up from its costs', () => {
+  const data: StatusResponse = {
+    generatedAt: '2026-11-02T00:00:00Z',
+    pauses: { all: false, brands: [], channels: [] },
+    channels: [],
+    posts: [],
+    costs: [],
+    runway: [{ brand: 'capped', postsLeft: 0, spendCapUsd: 3.5 }, { brand: 'plain', postsLeft: 0 }],
+  };
+  assert.deepEqual(summarizeClients(data, NOW).map((c) => [c.brand, c.spendCapUsd]), [['capped', 3.5], ['plain', null]]);
+  const costs = [
+    { brand: 'a', post: 'p1', purpose: 'picture' as const, at: '2026-11-03T10:00:00.000Z', usd: 0.03 },
+    { brand: 'a', post: 'p1', purpose: 'writing' as const, at: '2026-11-30T23:59:59.000Z', usd: 0.01 },
+    { brand: 'a', post: 'p0', purpose: 'picture' as const, at: '2026-10-31T23:59:59.000Z', usd: 0.5 },
+    { brand: 'a', post: null, purpose: 'profile' as const, at: '2026-12-01T00:00:00.000Z', usd: 0.2 },
+  ];
+  assert.equal(spentThisMonth(costs, Date.parse('2026-11-15T00:00:00Z')), 0.04, 'only this UTC month counts');
+  assert.equal(spentThisMonth([], Date.parse('2026-11-15T00:00:00Z')), 0);
 });
 
 test('websiteHost shows the address without the scheme', () => {

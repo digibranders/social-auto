@@ -101,6 +101,35 @@ test('the brand-day cap holds across jobs and resets with the UTC day; the deplo
   }
 });
 
+test('the brand-month cap holds across days and jobs, not across brands, and resets with the UTC month', () => {
+  const { file, done } = workspace();
+  try {
+    const limits = { perBrandMonthUsd: 0.1, perBrandDayUsd: 1, globalDayUsd: 5, perRunUsd: 1, perPosterUsd: 1 };
+    const first = open(file, limits, { jobId: 'job-1', now: new Date('2026-11-03T09:00:00Z') });
+    first.complete(first.reserve({ operation: 'text', model: 'm', requestKey: '1', maxCostUsd: 0.08 }), { actualCostUsd: 0.08 });
+    // A later day of the same month, another job: the month is still counted.
+    const later = open(file, limits, { jobId: 'job-2', now: new Date('2026-11-20T09:00:00Z') });
+    assert.equal(later.spend().brandMonth, 0.08);
+    assert.equal(refusal(() => later.reserve({ operation: 'text', model: 'm', requestKey: '2', maxCostUsd: 0.03 })), 'BRAND_MONTH_BUDGET');
+    assert.ok(later.reserve({ operation: 'text', model: 'm', requestKey: '3', maxCostUsd: 0.02 }), 'what still fits is allowed');
+    // Another brand has its own month.
+    const other = open(file, limits, { jobId: 'job-3', brandId: 'other', now: new Date('2026-11-20T09:00:00Z') });
+    assert.ok(other.reserve({ operation: 'text', model: 'm', requestKey: '4', maxCostUsd: 0.09 }));
+    // The next month starts empty.
+    const december = open(file, limits, { jobId: 'job-4', now: new Date('2026-12-01T00:00:01Z') });
+    assert.equal(december.spend().brandMonth, 0);
+    assert.ok(december.reserve({ operation: 'text', model: 'm', requestKey: '5', maxCostUsd: 0.1 }));
+  } finally {
+    done();
+  }
+});
+
+test('the monthly limit can be set from the environment, and a value that is not a positive number is an error', () => {
+  assert.equal(budgetLimitsFromEnv({}).perBrandMonthUsd, defaultBudgetLimits.perBrandMonthUsd);
+  assert.equal(budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_USD: '3.5' }).perBrandMonthUsd, 3.5);
+  assert.throws(() => budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_USD: '-1' }), BudgetError);
+});
+
 test('a completed call is charged what it really cost, not what was reserved', () => {
   const { file, done } = workspace();
   try {

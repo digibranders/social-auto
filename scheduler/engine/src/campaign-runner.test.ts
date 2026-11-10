@@ -67,6 +67,21 @@ test('the same plan is never made twice, and a changed plan is a new campaign', 
   }
 });
 
+test('a client with its own monthly spend limit passes it to every run; the month limit stopping a run is recorded and later batches are not tried', async () => {
+  const r = root();
+  try {
+    const calls: string[][] = [];
+    const plan = { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 31 };
+    const [made] = await makeCampaigns([client({ plan, spendCapUsd: 2.5 })], r.dir, deps({ calls, exec: async (a) => { calls.push(a); return { code: 1, tail: 'BUDGET_EXHAUSTED (BRAND_MONTH_BUDGET): this brand would spend $2.6 this month\n' }; } }));
+    assert.equal(calls.length, 1, 'the later batches were not tried');
+    assert.equal(calls[0]?.[calls[0].indexOf('--month-cap-usd') + 1], '2.5');
+    assert.equal(made?.status, 'failed');
+    assert.match(made?.batches[0]?.tail ?? '', /BRAND_MONTH_BUDGET/);
+  } finally {
+    r.done();
+  }
+});
+
 test('a failed run is recorded with the end of its output and is not retried by itself; later batches of a plan that cannot work are not tried', async () => {
   const r = root();
   try {

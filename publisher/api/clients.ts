@@ -7,12 +7,13 @@
  * POST /api/clients?action=set-limit    body: {"brand": "brand-basket", "limit": 3}  (posters a week the website may make for each channel)
  * POST /api/clients?action=set-logo-required  body: {"brand": "brand-basket", "required": true}  (every poster must carry the website's real logo)
  * POST /api/clients?action=set-approval-mode  body: {"brand": "brand-basket", "mode": "auto"}  ("manual": a person approves each poster; "auto": a poster that passes the automatic checks is approved by the system)
+ * POST /api/clients?action=set-spend-cap  body: {"brand": "brand-basket", "cap": 5}  (what the AI may cost for the client in a calendar month, in dollars; null goes back to the default limit)
  * POST /api/clients?action=remove-plan  body: {"brand": "brand-basket", "index": 0}  (stops making posters for that plan)
  * POST /api/clients?action=remove    body: {"brand": "brand-basket"}  (only an added client with no channels or extra posts)
  */
 import { scheduleData } from '../lib/schedule-source.js';
 import { channelsFor } from '../lib/channels.js';
-import { addClient, addPlan, isBrandSlug, removePlan, setApprovalMode, setRequireAuthenticLogo, setWebsite, setWeeklyLimit } from '../lib/clients.js';
+import { addClient, addPlan, isBrandSlug, removePlan, setApprovalMode, setRequireAuthenticLogo, setSpendCap, setWebsite, setWeeklyLimit } from '../lib/clients.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
@@ -62,6 +63,14 @@ async function logoRequired(body: Record<string, unknown>): Promise<Response> {
   return json(200, { ok: true });
 }
 
+async function spendCap(body: Record<string, unknown>): Promise<Response> {
+  const brand = body['brand'];
+  if (!isBrandSlug(brand)) throw new EditError('unknown client');
+  const { file, etag } = await loadClients();
+  await saveClients(setSpendCap(file, brand, body['cap'] ?? null), etag);
+  return json(200, { ok: true });
+}
+
 async function approvalMode(body: Record<string, unknown>): Promise<Response> {
   const brand = body['brand'];
   if (!isBrandSlug(brand)) throw new EditError('unknown client');
@@ -97,6 +106,7 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'set-limit') return await limit(body);
     if (action === 'set-logo-required') return await logoRequired(body);
     if (action === 'set-approval-mode') return await approvalMode(body);
+    if (action === 'set-spend-cap') return await spendCap(body);
     if (action === 'remove') return await remove(body);
     return json(400, { error: 'unknown action' });
   } catch (error) {

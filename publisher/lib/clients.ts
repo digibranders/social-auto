@@ -24,7 +24,12 @@ export interface AddedClient {
   requireAuthenticLogo?: boolean;
   /** Who approves the posters made from the website: `manual` (the default, not stored) means a person approves each one in Review; `auto` means a poster that passes every automatic check is approved by the system and released. */
   approvalMode?: 'manual' | 'auto';
+  /** What the AI may cost for this client in a calendar month, in dollars. Missing means the engine's default limit (about $8); the engine refuses to buy anything past it. */
+  spendCapUsd?: number;
 }
+
+/** The largest monthly AI spend limit that may be set for a client, in dollars; a larger figure is almost certainly a typing mistake. */
+export const MAX_SPEND_CAP_USD = 500;
 
 export const PLAN_PLATFORMS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 export const PLAN_WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
@@ -134,6 +139,7 @@ export function parseClientsFile(raw: unknown): ClientsFile {
       if (c['weeklyLimit'] !== undefined && (typeof c['weeklyLimit'] !== 'number' || !Number.isInteger(c['weeklyLimit']) || c['weeklyLimit'] < 1 || c['weeklyLimit'] > MAX_WEEKLY_LIMIT)) throw new Error(`clients[${i}].weeklyLimit must be a whole number from 1 to ${MAX_WEEKLY_LIMIT}`);
       if (c['requireAuthenticLogo'] !== undefined && typeof c['requireAuthenticLogo'] !== 'boolean') throw new Error(`clients[${i}].requireAuthenticLogo must be true or false`);
       if (c['approvalMode'] !== undefined && c['approvalMode'] !== 'manual' && c['approvalMode'] !== 'auto') throw new Error(`clients[${i}].approvalMode must be "manual" or "auto"`);
+      if (c['spendCapUsd'] !== undefined && !isSpendCap(c['spendCapUsd'])) throw new Error(`clients[${i}].spendCapUsd must be a positive amount in dollars, at most ${MAX_SPEND_CAP_USD}`);
       // A client saved by the first version has one `plan`; it is read as a list of one.
       const { plan: single, ...rest } = c as Record<string, unknown>;
       const listed = rest['plans'] !== undefined ? rest['plans'] : single !== undefined ? [single] : undefined;
@@ -341,9 +347,24 @@ export function setApprovalMode(file: ClientsFile, brand: string, mode: unknown)
   return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(mode === 'auto' ? { approvalMode: 'auto' as const } : {}) } : c)) };
 }
 
-/** What the status feed says of a client the dashboard added: name, product, website, plans, the effective weekly limit and the real-logo setting. */
-export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true; approvalMode: 'manual' | 'auto' } {
+/** A usable monthly spend limit: a positive number of dollars, at most MAX_SPEND_CAP_USD, in whole cents. */
+function isSpendCap(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= MAX_SPEND_CAP_USD && Math.round(value * 100) / 100 === value;
+}
+
+/** Sets what the AI may cost for a client in a calendar month; `null` takes the client back to the engine's default limit. */
+export function setSpendCap(file: ClientsFile, brand: string, cap: unknown): ClientsFile {
+  if (cap !== null && !isSpendCap(cap)) throw new EditError(`the monthly limit must be an amount in dollars above 0 and at most ${MAX_SPEND_CAP_USD}, in whole cents`);
+  const index = file.clients.findIndex((c) => c.brand === brand);
+  if (index === -1) throw new EditError('only a client added in the dashboard has a monthly limit here', 404);
+  const { spendCapUsd: _old, ...rest } = file.clients[index] as AddedClient;
+  return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(cap !== null ? { spendCapUsd: cap } : {}) } : c)) };
+}
+
+/** What the status feed says of a client the dashboard added: name, product, website, plans, the effective weekly limit, the real-logo setting, the approval mode and the monthly spend limit when one was set. */
+export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true; approvalMode: 'manual' | 'auto'; spendCapUsd?: number } {
   return {
+    ...(c.spendCapUsd !== undefined ? { spendCapUsd: c.spendCapUsd } : {}),
     ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}),
     ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}), approvalMode: c.approvalMode ?? 'manual',
   };

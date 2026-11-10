@@ -3,7 +3,7 @@ import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import { connectedPlatforms, planPayload, planSentence } from '../shared/posting-plan.ts';
 import { planFields } from './add-client.ts';
 import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
-import { websiteHost, type ClientSummary } from './clients.ts';
+import { SPEND_CAP_DEFAULT_USD, spentThisMonth, websiteHost, type ClientSummary } from './clients.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { postChannelId } from './new-post.ts';
@@ -35,6 +35,8 @@ export interface ClientsContext {
   setLogoRequired(client: ClientSummary, required: boolean): Promise<string | null>;
   /** Chooses who approves the posters: a person in Review (manual) or the system after the automatic checks (auto). */
   setApprovalMode(client: ClientSummary, mode: 'manual' | 'auto'): Promise<string | null>;
+  /** Sets what the AI may cost for the client in a calendar month, in dollars; null goes back to the default limit. */
+  setSpendCap(client: ClientSummary, cap: number | null): Promise<string | null>;
   /** True once when the New post window sent the owner here to make posters from the website: the plan form then opens by itself. */
   wantsPlanForm(brand: string): boolean;
   disconnect(channel: ChannelHealth): void;
@@ -289,6 +291,26 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
       }
     });
   });
+  const capNow = client.spendCapUsd ?? SPEND_CAP_DEFAULT_USD;
+  const capInput = h('input', { id: `cap-${client.brand}`, type: 'number', class: 'text-input cap-input', min: '0.01', max: '500', step: '0.01', value: String(capNow), 'aria-label': 'Most the AI may cost for this client in a month, in dollars' });
+  const saveCap = (cap: number | null): void => {
+    capInput.disabled = true;
+    say('Saving…', false);
+    void ctx.setSpendCap(client, cap).then((problem) => {
+      capInput.disabled = false;
+      if (problem) say(problem, true);
+    });
+  };
+  const capSave = button('Save limit', 'btn', () => {
+    const cap = Number(capInput.value);
+    if (capInput.value.trim() === '' || !Number.isFinite(cap) || cap <= 0 || cap > 500 || Math.round(cap * 100) / 100 !== cap) {
+      say('Enter an amount in dollars above 0 and at most 500, with at most two decimals.', true);
+      return;
+    }
+    saveCap(cap);
+  });
+  const capReset = client.spendCapUsd === null ? null : button('Use the default', 'btn btn-quiet', () => saveCap(null));
+  const spent = spentThisMonth(client.costs, Date.now());
   const open = button('Add a plan', 'btn', () => {
     form.hidden = false;
     fields.refresh(true);
@@ -311,6 +333,13 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
       modeSelect,
     ),
     modeWarning,
+    h('div', { class: 'limit-row' },
+      h('label', { class: 'label', for: `cap-${client.brand}` }, 'Most the AI may cost in a month ($)'),
+      capInput,
+      capSave,
+      ...(capReset ? [capReset] : []),
+    ),
+    h('p', { class: 'muted' }, `Used so far this month: $${spent.toFixed(2)} of $${capNow.toFixed(2)}${client.spendCapUsd === null ? ' (the default limit)' : ''}. When the limit is reached no more posters are made for this client until next month; posters already made stay as they are.`),
     h('p', { class: 'muted' }, 'Each plan has its own platforms, days and rhythm. The posters are made from the website. With manual approval they wait in Review and nothing is posted until you approve them; with automatic approval the ones that pass the checks go out on their day.'),
     client.plans.length === 0
       ? h('p', { class: 'muted' }, 'No plan yet. Add one to have posters made.')
