@@ -204,9 +204,24 @@ test('adding a plan binds it when the connected accounts are known, and a plan w
 
 test('the feed describes an added client with its effective weekly limit, its plans and its settings, only the parts it has', () => {
   const bare = { brand: 'a', createdAt: 'x' };
-  assert.deepEqual(clientFeedDetails(bare), { weeklyLimit: 2 }, 'a client with nothing set still gets the default limit');
+  assert.deepEqual(clientFeedDetails(bare), { weeklyLimit: 2, approvalMode: 'manual' }, 'a client with nothing set still gets the default limit and manual approval');
   const full = { brand: 'oye-chats', createdAt: 'x', name: 'Oye Chats', product: 'brandbasket', website: 'https://oyechats.com', weeklyLimit: 4, requireAuthenticLogo: true, plans: [parseClientPlan(planOf(), NOW_MS)] };
-  assert.deepEqual(Object.keys(clientFeedDetails(full)).sort(), ['name', 'plans', 'product', 'requireAuthenticLogo', 'website', 'weeklyLimit']);
+  assert.deepEqual(Object.keys(clientFeedDetails(full)).sort(), ['approvalMode', 'name', 'plans', 'product', 'requireAuthenticLogo', 'website', 'weeklyLimit']);
   assert.equal(clientFeedDetails(full).weeklyLimit, 4);
   assert.equal(clientFeedDetails({ ...full, plans: [] }).plans, undefined, 'no plans are listed when there are none');
+});
+
+import { setApprovalMode } from './clients.ts';
+
+test('who approves a client\'s posters is a setting: manual by default and not stored, automatic is stored, anything else is refused', () => {
+  const made = addClient({ clients: [] }, 'Oye Chats', new Set(), NOW_MS, 'oyechats.com').file;
+  assert.equal(clientFeedDetails(made.clients[0] as never).approvalMode, 'manual');
+  const auto = setApprovalMode(made, 'oye-chats', 'auto');
+  assert.equal(auto.clients[0]?.approvalMode, 'auto');
+  assert.equal(clientFeedDetails(auto.clients[0] as never).approvalMode, 'auto');
+  assert.deepEqual(parseClientsFile(JSON.parse(JSON.stringify(auto))), auto, 'it survives a save and a load');
+  assert.equal(setApprovalMode(auto, 'oye-chats', 'manual').clients[0]?.approvalMode, undefined, 'the default is not stored');
+  assert.throws(() => setApprovalMode(made, 'oye-chats', 'sometimes'), /must be "manual" or "auto"/);
+  assert.throws(() => setApprovalMode(made, 'nobody', 'auto'), /only a client added in the dashboard/);
+  assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', approvalMode: 'yes' }] }), /approvalMode/);
 });
