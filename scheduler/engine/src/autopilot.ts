@@ -17,6 +17,7 @@
  * --copy-first (AI route) stops after the posts are written and lists them for the owner to keep or drop; nothing is drawn or paid for.
  * --networks instagram,linkedin (AI route) also writes each post a caption for each of those networks (stored as the post's `variants`).
  * --page reads only the address given (one page, no links followed); for a website that has no saved profile yet.
+ * --redraw-missing (with --draw-kept) draws again only the kept posts that have no picture yet, after a run that stopped part-way.
  * --draw-kept week-NN.json then draws only the posts the owner kept in that batch, and queues the results for poster review.
  * --plan-only stops after the posts are written (no art direction, pictures or rendering), for a renderer that works from the plan on its own.
  * --review (needs --art) has a vision model look at each finished poster, repairs what can be repaired without a new picture, and rejects the rest
@@ -43,6 +44,7 @@ import { displayFact } from './evidence.ts';
 import { checkBrandIdentity, checkEvidence, checkLanguage, PreflightError } from './site-preflight.ts';
 import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
+import { ReviewStore } from './review-store.ts';
 import { parseWeekdays } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
 import { CopyStage } from './copy-stage.ts';
@@ -130,6 +132,7 @@ function requireEnv(name: string, envPath: string): string {
 }
 
 class PageModeError extends Error {}
+class NothingDrawnError extends Error {}
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -154,6 +157,7 @@ async function main(): Promise<void> {
       'copy-first': { type: 'boolean', default: false },
       page: { type: 'boolean', default: false },
       'draw-kept': { type: 'string' },
+      'redraw-missing': { type: 'boolean', default: false },
       networks: { type: 'string' },
       'review-budget': { type: 'string', default: '0.015' },
       'allow-paid-ai': { type: 'boolean', default: false },
@@ -265,7 +269,7 @@ async function main(): Promise<void> {
       if (findings.some((f) => f.code === 'BRAND_UNVERIFIED')) ai.ledger?.disablePictures();
     }
     // Draws the given posts with the picture model and queues what is accepted for the owner's poster review. Nothing is scheduled or published.
-    const drawPosters = async (finalPlan: WeekPlan, planFile: string): Promise<void> => {
+    const drawPosters = async (finalPlan: WeekPlan, planFile: string): Promise<{ queued: number; stoppedBy?: string }> => {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
       // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
       const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
@@ -277,6 +281,7 @@ async function main(): Promise<void> {
       const dropped = new Set<string>();
       let first = true;
       let queuedTotal = 0;
+      let stoppedReason: string | undefined;
       const usageIds: string[] = [];
       for (const group of pictureGroups(finalPlan.posts)) {
         const posts = finalPlan.posts.filter((p) => group.postIds.includes(p.id) && !dropped.has(p.id));
@@ -299,13 +304,14 @@ async function main(): Promise<void> {
         usageIds.push(...posts.map((p) => `${slug}-${p.id}${suffix}`));
         const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(group.networks.length > 0 ? { networks: group.networks } : {}), ...(branding ? { branding } : {}) });
         queuedTotal += queued.length;
-        if (made.stoppedBy) break;
+        if (made.stoppedBy) { stoppedReason = String(made.stoppedBy); break; }
       }
       console.log(ai.usage.format());
       const log = process.env['USAGE_LOG_FILE'];
       if (log) await appendUsageLog(log, ai.usage.records(slug, usageIds));
       console.log(`    ${queuedTotal} poster version${queuedTotal === 1 ? '' : 's'} added to the owner's review queue.`);
       console.log('4/4 Nothing was scheduled or published: every poster waits for the owner to approve it.');
+      return { queued: queuedTotal, ...(stoppedReason ? { stoppedBy: stoppedReason } : {}) };
     };
     if (values['draw-kept']) {
       const keptFile = values['draw-kept'];
@@ -316,10 +322,21 @@ async function main(): Promise<void> {
       const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })));
       for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
       if (postIds.length === 0) throw new Error(`${keptFile} has no kept posts to draw: keep at least one in the dashboard first`);
-      // The batch is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
-      copy.markDrawn(keptFile);
-      console.log(`3/4 Drawing ${postIds.length} kept post${postIds.length === 1 ? '' : 's'} of ${keptFile}…`);
-      await drawPosters({ ...stored, renderMode: 'ai_v1', posts: stored.posts.filter((p) => postIds.includes(p.id)) }, keptFile);
+      let drawIds = postIds;
+      if (values['redraw-missing']) {
+        // A run that stopped part-way: only the kept posts that have no picture yet are drawn, so nothing already bought is bought again. The batch was closed by the first run.
+        const made = new Set(new ReviewStore(brandDir, slug).list().filter((i) => i.version.planFile === keptFile).map((i) => i.version.postId));
+        drawIds = postIds.filter((id) => !made.has(id));
+        for (const id of postIds.filter((id) => made.has(id))) console.log(`    ${id}: already has its pictures, so it is not drawn again.`);
+        if (drawIds.length === 0) throw new Error(`every kept post of ${keptFile} already has its pictures: nothing is left to draw`);
+      } else {
+        // The batch is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
+        copy.markDrawn(keptFile);
+      }
+      console.log(`3/4 Drawing ${drawIds.length} kept post${drawIds.length === 1 ? '' : 's'} of ${keptFile}…`);
+      const drawn = await drawPosters({ ...stored, renderMode: 'ai_v1', posts: stored.posts.filter((p) => drawIds.includes(p.id)) }, keptFile);
+      // A draw that left nothing for the owner to review is a failed draw, not a finished one: it is told as such, and what is missing can be asked for again.
+      if (drawn.queued === 0) throw new NothingDrawnError(drawn.stoppedBy ? `it stopped before any picture was accepted: ${drawn.stoppedBy}` : 'no picture passed the checks, so there is nothing to review');
       return;
     }
     if (values['semantic-check'] && values['dry-run'] && !values['allow-paid-ai']) throw new Error('--semantic-check makes one model request per batch of posts: with --dry-run it needs --allow-paid-ai');
@@ -486,6 +503,7 @@ if (import.meta.main) {
   main().catch((error: unknown) => {
     if (error instanceof PublishingDisabledError) console.error(`PUBLISHING_DISABLED: ${error.message}`);
     else if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
+    else if (error instanceof NothingDrawnError) console.error(`NOTHING_DRAWN: ${error.message}`);
     else if (error instanceof PageModeError) console.error(`PAGE_MODE_UNAVAILABLE: ${error.message}`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof PreflightError) console.error(`${error.code}: ${error.message}. No posters were made.`);

@@ -7,6 +7,11 @@ test('two full stops become one, an ellipsis stays', () => {
   assert.equal(tidyPunctuation('Wait... go.. now'), 'Wait... go. now');
 });
 
+test('no full stop follows the closing "(link in bio)"', () => {
+  assert.equal(tidyPunctuation('Hook.\n\nVisit acme.com (link in bio).'), 'Hook.\n\nVisit acme.com (link in bio)');
+  assert.equal(tidyPunctuation('Visit acme.com (link in bio)'), 'Visit acme.com (link in bio)');
+});
+
 test('closing hashtag paragraphs are split from the words, and a caption of only tags keeps its text', () => {
   assert.deepEqual(splitTrailingHashtags('Words here.\n\nVisit acme.com\n\n#One #Two'), { body: 'Words here.\n\nVisit acme.com', hashtags: ['#One', '#Two'] });
   assert.deepEqual(splitTrailingHashtags('Words.\n\n#A\n\n#B #C'), { body: 'Words.', hashtags: ['#A', '#B', '#C'] });

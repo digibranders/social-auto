@@ -23,6 +23,11 @@ test('a copy job stops before any picture is bought, a draw job draws only the k
     assert.deepEqual(engineArgs(copy), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4']);
     const rhythm = s.enqueue(spec({ brand: 'beta', site: 'https://beta.example.com', days: 4, weekdays: ['mon', 'thu'] })).job;
     assert.deepEqual(engineArgs(rhythm), ['src/autopilot.ts', '--site', 'https://beta.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'mon,thu']);
+    const retryDraw = s.enqueue(spec({ kind: 'draw', brand: 'delta', site: 'https://delta.example.com', planFile: 'week-02.json' })).job;
+    s.claim(5, 1);
+    s.update(retryDraw.id, { state: 'failed' });
+    const again = s.enqueue(spec({ kind: 'draw', brand: 'delta', site: 'https://delta.example.com', planFile: 'week-02.json', retry: true })).job;
+    assert.deepEqual(engineArgs(again), ['src/autopilot.ts', '--site', 'https://delta.example.com', '--draw-kept', 'week-02.json', '--redraw-missing']);
     const onePage = s.enqueue(spec({ brand: 'gamma', site: 'https://gamma.example.com/pricing', page: true, networks: [] })).job;
     assert.deepEqual(engineArgs(onePage), ['src/autopilot.ts', '--site', 'https://gamma.example.com/pricing', '--copy-first', '--page', '--days', '4']);
     const draw = s.enqueue(spec({ kind: 'draw', planFile: 'week-03.json' })).job;

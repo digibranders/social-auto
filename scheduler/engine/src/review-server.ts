@@ -15,7 +15,7 @@
  *   POST /review/copy/<brand>/<week-NN.json>/<postId>/keep|drop   {"by":"..."}
  *   PUT  /review/copy/<brand>/<week-NN.json>/<postId>/edit   {"by":"...","headline":"...","caption":"...","network":"linkedin"}   (network optional: the caption of that network; checked like the writer's own words; 422 when refused)
  *   POST /review/copy/<brand>/<week-NN.json>/close   {"by":"..."}   put a batch away without drawing it
- *   POST /review/copy/<brand>/<week-NN.json>/draw   {"by":"...","client":"name its channels are connected under (default: the site's name)"}   ask for the kept posts to be drawn (202 with a job; the same batch is only ever drawn once)
+ *   POST /review/copy/<brand>/<week-NN.json>/draw   {"by":"...","client":"name its channels are connected under (default: the site's name)"}   ask for the kept posts to be drawn (202 with a job; the same batch is only ever drawn once; after a failed draw, "retry":true draws only the kept posts that still have no picture)
  *   POST /review/jobs   {"kind":"copy","site":"https://...","networks":["instagram","linkedin"],"weeks":1,"postsPerWeek":2,"by":"..."} ("days" instead gives that many posts on consecutive days)   read a website and write its posts (202 with a job)
  *   GET  /review/jobs?brand=&state=      the jobs, newest first;  GET /review/jobs/<jobId>   one job: state, step 1-4, the plan file, the error, the last lines
  *
@@ -213,7 +213,9 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       }
       if (parts[0] === 'review' && parts[1] === 'copy') {
         if (parts.length === 2 && req.method === 'GET') {
-          const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list()).filter((b) => !b.drawnAt && !b.closedAt);
+          // A batch that was drawn is no longer waiting for choices, unless its draw stopped before it finished: it stays listed so the draw can be asked for again.
+          const stopped = (brand: string, planFile: string): boolean => jobs.list({ brand }).find((j) => j.kind === 'draw' && j.planFile === planFile)?.state === 'failed';
+          const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
           const plain = batches.map((b) => ({ ...b, posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
@@ -242,16 +244,18 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (!CLIENT_NAME.test(client)) throw new ReviewError('INVALID', 'client must be lowercase letters, digits and dashes');
           const batch = new CopyStage(join(root, drawBrand), drawBrand).get(drawPlan);
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
-          // A batch already asked for (or drawn) answers with its job; a draw buys pictures, so it is only ever started once.
-          const existing = jobs.list({ brand: drawBrand }).find((j) => j.kind === 'draw' && j.planFile === drawPlan);
-          if (existing) return send(res, 200, { job: existing, created: false });
-          if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn');
+          // A batch already asked for (or drawn) answers with its job; a draw buys pictures, so it is only ever started once. After a draw has failed,
+          // "retry" asks for one more that draws only the kept posts that still have no picture.
+          const latest = jobs.list({ brand: drawBrand }).find((j) => j.kind === 'draw' && j.planFile === drawPlan);
+          const retry = drawBody['retry'] === true && latest?.state === 'failed';
+          if (latest && !retry) return send(res, 200, { job: latest, created: false });
+          if (!latest && batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn');
           if (!batch.posts.some((p) => p.state === 'kept')) throw new CopyStageError('REJECTED', 'keep at least one post before drawing');
           const drawSite = siteOf(drawBrand);
           // Approved posters of this batch reach the calendar through the campaign runner's release pass, for this client and only the networks written for.
           // The record is made first: a draw that is queued without it would buy pictures that could never be released.
           registerManualRelease({ brandDir: join(root, drawBrand), siteBrand: drawBrand, client, site: drawSite, planFile: drawPlan });
-          const { job, created } = jobs.enqueue({ kind: 'draw', brand: drawBrand, site: drawSite, by, planFile: drawPlan });
+          const { job, created } = jobs.enqueue({ kind: 'draw', brand: drawBrand, site: drawSite, by, planFile: drawPlan, ...(retry ? { retry: true } : {}) });
           return send(res, created ? 202 : 200, { job, created });
         }
         if (parts.length === 6 && req.method === 'PUT' && verb === 'edit') {

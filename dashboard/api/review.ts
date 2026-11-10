@@ -11,7 +11,7 @@
  *   POST /api/review   { "copy": { "brand": "...", "planFile": "week-01.json", "postId": "...", "action": "keep" | "drop" } }
  *   POST /api/review   { "edit": { "brand", "planFile", "postId", "headline", "caption", "network"? } }   change the words of a written post (checked by the service)
  *   POST /api/review   { "close": { "brand", "planFile" } }           put a written batch away without drawing it
- *   POST /api/review   { "draw": { "brand", "planFile", "client"? } }   draw the kept posts of a batch (once only; answers with the job)
+ *   POST /api/review   { "draw": { "brand", "planFile", "client"?, "retry"? } }   draw the kept posts of a batch (once only; "retry" after a failed draw draws only the posts that still have no picture)
  *   POST /api/review   { "job": { "site", "page"?, "networks", "weeks"?, "postsPerWeek"? } }   read a website (or one page) and write its posts (answers with the job)
  *   GET  /api/review?view=jobs                                         the jobs, newest first;  GET /api/review?view=job&id=<jobId>   one job
  */
@@ -135,8 +135,9 @@ export async function POST(request: Request): Promise<Response> {
   if (body.draw !== undefined) {
     const batch = batchOf(body.draw);
     const client = body.draw?.['client'];
-    if (!batch || (client !== undefined && (typeof client !== 'string' || !BRAND.test(client)))) return json(400, { error: 'Invalid request' });
-    return send(`/review/copy/${batch.brand}/${batch.planFile}/draw`, 'POST', client ? { client } : {});
+    const retry = body.draw?.['retry'];
+    if (!batch || (client !== undefined && (typeof client !== 'string' || !BRAND.test(client))) || (retry !== undefined && typeof retry !== 'boolean')) return json(400, { error: 'Invalid request' });
+    return send(`/review/copy/${batch.brand}/${batch.planFile}/draw`, 'POST', { ...(client ? { client } : {}), ...(retry ? { retry } : {}) });
   }
   if (body.job !== undefined) {
     const site = words(body.job?.['site'], 200);

@@ -106,3 +106,35 @@ test('bad ids and missing people are refused', () => {
     done();
   }
 });
+
+test('a draw is asked for once; only after it has failed may what it did not finish be asked for again', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jobs-retry-'));
+  try {
+    const s = new JobStore(dir);
+    const draw = (over: Partial<JobSpec> = {}): JobSpec => ({ kind: 'draw', brand: 'acme', site: 'https://acme.example.com', by: 'owner', planFile: 'week-01.json', ...over });
+    const first = s.enqueue(draw()).job;
+    assert.equal(s.enqueue(draw({ retry: true })).created, false, 'not while the first is waiting');
+    const claimed = s.claim(1, 1) as NonNullable<ReturnType<typeof s.claim>>;
+    assert.equal(s.enqueue(draw({ retry: true })).created, false, 'not while it runs');
+    s.update(claimed.id, { state: 'succeeded' });
+    assert.equal(s.enqueue(draw({ retry: true })).created, false, 'not after it succeeded');
+    const dir2 = mkdtempSync(join(tmpdir(), 'jobs-retry2-'));
+    try {
+      const t = new JobStore(dir2);
+      const a = t.enqueue(draw()).job;
+      t.claim(1, 1);
+      t.update(a.id, { state: 'failed', error: { code: 'BUDGET_EXHAUSTED', message: 'the day is spent' } });
+      assert.equal(t.enqueue(draw()).created, false, 'a plain repeat still answers with the failed job');
+      const again = t.enqueue(draw({ retry: true }));
+      assert.equal(again.created, true);
+      assert.equal(again.job.retry, true);
+      assert.notEqual(again.job.id, a.id);
+      assert.equal(t.enqueue(draw({ retry: true })).created, false, 'and only once for each failure');
+    } finally {
+      rmSync(dir2, { recursive: true, force: true });
+    }
+    assert.equal(first.retry, undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

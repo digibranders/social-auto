@@ -10,7 +10,7 @@ interface Detail {
 }
 
 interface CopyPost { postId: string; headline: string; caption: string; captions?: Record<string, { text: string; edited?: boolean }>; edited?: boolean; advice?: string; state: 'pending' | 'kept' | 'dropped' }
-interface CopyBatch { brand: string; planFile: string; posts: CopyPost[] }
+interface CopyBatch { brand: string; planFile: string; posts: CopyPost[]; drawnAt?: string }
 
 /** What the owner is typing in the "write posts for a website" form; kept here so a redraw does not wipe it. */
 interface StartForm { site: string; page: boolean; networks: string[]; weeks: number; postsPerWeek: number }
@@ -117,10 +117,10 @@ async function saveEdit(batch: CopyBatch, post_: CopyPost, network: string, head
   await loadCopy(redraw);
 }
 
-async function drawKept(batch: CopyBatch, redraw: () => void): Promise<void> {
+async function drawKept(batch: CopyBatch, redraw: () => void, retry = false): Promise<void> {
   const client = state.clientFor[`${batch.brand}|${batch.planFile}`] ?? batch.brand;
-  const done = await post({ draw: { brand: batch.brand, planFile: batch.planFile, client } }, 'The request could not be sent. Nothing was started.');
-  if (done.ok) state.notice = 'Drawing started for the posts you kept. The pictures appear in the review list when they are ready; nothing is published until you approve them.';
+  const done = await post({ draw: { brand: batch.brand, planFile: batch.planFile, client, ...(retry ? { retry: true } : {}) } }, 'The request could not be sent. Nothing was started.');
+  if (done.ok) state.notice = retry ? 'Drawing the missing posts again. Pictures already made are kept and not bought twice.' : 'Drawing started for the posts you kept. The pictures appear in the review list when they are ready; nothing is published until you approve them.';
   await Promise.all([loadJobs(redraw), loadCopy(redraw)]);
 }
 
@@ -184,7 +184,7 @@ function postCaptions(batch: CopyBatch, p: CopyPost, redraw: () => void): HTMLEl
         h('small', { class: 'muted' }, `${e.label}${e.edited ? ' · edited by you' : ''}`),
         h('p', {}, body),
         hashtags ? h('p', { class: 'muted' }, hashtags) : null,
-        button('Edit', 'btn', () => { state.editing = { batch: batchKey, postId: p.postId, network: e.network }; redraw(); }, `Edit the ${e.label} words of: ${p.headline}`, state.busy));
+        button('Edit', 'btn', () => { state.editing = { batch: batchKey, postId: p.postId, network: e.network }; redraw(); }, `Edit the ${e.label} words of: ${p.headline}`, state.busy || batch.drawnAt !== undefined));
     }
     const editing = state.editing as NonNullable<State['editing']>;
     const headline = h('input', { class: 'rv-input', type: 'text', maxlength: '300', 'aria-label': 'Headline' });
@@ -227,6 +227,7 @@ function copyView(redraw: () => void): HTMLElement | null {
         'div',
         { class: 'rv-copy-batch' },
         h('b', {}, `${batch.brand} · ${batch.planFile}`),
+        batch.drawnAt ? h('p', { class: 'rv-copy-advice' }, 'Drawing stopped before it finished. The choices and words are final now; pictures already made are kept, and the button below draws only the posts that have none yet.') : null,
         ...batch.posts.map((p) => h(
           'div',
           { class: `rv-copy-post rv-copy-${p.state}` },
@@ -235,14 +236,15 @@ function copyView(redraw: () => void): HTMLElement | null {
           p.advice ? h('p', { class: 'rv-copy-advice' }, `Suggested drop: ${p.advice}`) : null,
           h('div', { class: 'rv-actions' },
             h('span', {}, p.state === 'kept' ? 'Kept' : p.state === 'dropped' ? 'Dropped' : 'Waiting for you'),
-            button('Keep', `btn${p.state === 'kept' ? ' btn-primary' : ''}`, () => void chooseCopy(batch, p.postId, 'keep', redraw), `Keep: ${p.headline}`, state.busy),
-            button('Drop', 'btn', () => void chooseCopy(batch, p.postId, 'drop', redraw), `Drop: ${p.headline}`, state.busy),
+            button('Keep', `btn${p.state === 'kept' ? ' btn-primary' : ''}`, () => void chooseCopy(batch, p.postId, 'keep', redraw), `Keep: ${p.headline}`, state.busy || batch.drawnAt !== undefined),
+            button('Drop', 'btn', () => void chooseCopy(batch, p.postId, 'drop', redraw), `Drop: ${p.headline}`, state.busy || batch.drawnAt !== undefined),
           ),
         )),
         h('div', { class: 'rv-actions rv-draw' },
           h('span', {}, `${kept} kept${waiting > 0 ? `, ${waiting} still waiting for your choice (they will not be drawn)` : ''}`),
           h('label', { class: 'rv-check' }, 'Client name ', client),
           button(drawJob ? (jobActive(drawJob) ? 'Drawing…' : drawJob.state === 'failed' ? 'Drawing stopped' : 'Drawn') : `Draw the ${kept} kept post${kept === 1 ? '' : 's'}`, 'btn btn-primary', () => void drawKept(batch, redraw), `Draw the kept posts of ${batch.brand}`, state.busy || kept === 0 || drawJob !== undefined),
+          drawJob?.state === 'failed' ? button('Draw the posts that are missing', 'btn btn-primary', () => void drawKept(batch, redraw, true), `Draw again the kept posts of ${batch.brand} that have no picture`, state.busy) : null,
           button('Put this batch away', 'btn', () => void putAway(batch, redraw), `Put away: ${batch.brand} ${batch.planFile}`, state.busy),
         ),
       );

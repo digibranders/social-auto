@@ -4,7 +4,7 @@
  * The review service only writes a request here; a separate runner (job-runner.ts, which alone holds the picture key) picks it up. One file per job,
  * jobs/<id>.json, changed only under one lock. The same request made twice returns the job that already exists instead of starting a second one:
  *   - copy: one active job per website (a new one can start once the last has finished);
- *   - draw: one job ever per written batch, so a repeated click can never buy the pictures twice.
+ *   - draw: one job per written batch, so a repeated click can never buy the pictures twice; once it has failed, one more may draw only what it did not finish.
  * At most one job per brand runs at a time (two would fight over the same week files); different brands run side by side.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -40,9 +40,11 @@ export interface JobSpec {
   weekdays?: string[];
   /** The written batch to draw (draw only). */
   planFile?: string;
+  /** Draw again only what a failed draw did not finish (draw only; allowed once the last draw of the batch has failed). */
+  retry?: boolean;
 }
 
-export interface Job extends Omit<JobSpec, 'networks' | 'days' | 'weekdays' | 'page'> {
+export interface Job extends Omit<JobSpec, 'networks' | 'days' | 'weekdays' | 'page' | 'retry'> {
   id: string;
   key: string;
   state: JobState;
@@ -50,6 +52,7 @@ export interface Job extends Omit<JobSpec, 'networks' | 'days' | 'weekdays' | 'p
   days?: number;
   weekdays?: string[];
   page?: true;
+  retry?: true;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -118,7 +121,10 @@ export class JobStore {
     return this.locked(() => {
       const key = keyOf(spec);
       const existing = this.readAll().filter((j) => j.key === key);
-      const standing = spec.kind === 'draw' ? existing.at(-1) : existing.find((j) => j.state === 'queued' || j.state === 'running');
+      const last = existing.at(-1);
+      // A draw is asked for once; only after it has failed may what it did not finish be asked for again (never while one is waiting, running or done).
+      const retrying = spec.kind === 'draw' && spec.retry === true && last?.state === 'failed';
+      const standing = retrying ? undefined : spec.kind === 'draw' ? last : existing.find((j) => j.state === 'queued' || j.state === 'running');
       if (standing) return { job: standing, created: false };
       const stamp = this.now();
       const job: Job = {
@@ -131,6 +137,7 @@ export class JobStore {
         networks: spec.networks ?? [],
         ...(spec.days !== undefined ? { days: spec.days } : {}),
         ...(spec.page ? { page: true as const } : {}),
+        ...(retrying ? { retry: true as const } : {}),
         ...(spec.weekdays && spec.weekdays.length > 0 ? { weekdays: spec.weekdays } : {}),
         ...(spec.planFile ? { planFile: spec.planFile } : {}),
         state: 'queued',
