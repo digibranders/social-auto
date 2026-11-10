@@ -83,6 +83,18 @@ test('an added client shows its website, and a client without one has none', () 
   assert.equal(plain?.website, null);
 });
 
+test('a client is manual unless the feed says it is automatic', () => {
+  const data: StatusResponse = {
+    generatedAt: '2026-11-02T00:00:00Z',
+    pauses: { all: false, brands: [], channels: [] },
+    channels: [],
+    posts: [],
+    costs: [],
+    runway: [{ brand: 'auto', postsLeft: 0, approvalMode: 'auto' }, { brand: 'man', postsLeft: 0, approvalMode: 'manual' }, { brand: 'old', postsLeft: 0 }],
+  };
+  assert.deepEqual(summarizeClients(data, NOW).map((c) => [c.brand, c.approvalMode]), [['auto', 'auto'], ['man', 'manual'], ['old', 'manual']]);
+});
+
 test('websiteHost shows the address without the scheme', () => {
   assert.equal(websiteHost('https://www.acme.com'), 'www.acme.com');
   assert.equal(websiteHost(null), '');

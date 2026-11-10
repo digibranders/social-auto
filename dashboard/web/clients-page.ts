@@ -33,6 +33,8 @@ export interface ClientsContext {
   setLimit(client: ClientSummary, limit: number): Promise<string | null>;
   /** Sets whether every poster made from the website must carry its real logo. */
   setLogoRequired(client: ClientSummary, required: boolean): Promise<string | null>;
+  /** Chooses who approves the posters: a person in Review (manual) or the system after the automatic checks (auto). */
+  setApprovalMode(client: ClientSummary, mode: 'manual' | 'auto'): Promise<string | null>;
   /** True once when the New post window sent the owner here to make posters from the website: the plan form then opens by itself. */
   wantsPlanForm(brand: string): boolean;
   disconnect(channel: ChannelHealth): void;
@@ -262,6 +264,31 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
       }
     });
   });
+  const AUTO_WARNING = 'Automatic: posters that pass the automatic checks are approved by the system and posted on their day. Nobody approves them in the Review tab, so you do not see a poster before it goes out. Failed checks, limits and the pause switch still stop a post.';
+  const modeSelect = h('select', { id: `mode-${client.brand}`, class: 'text-input limit-select', 'aria-label': 'Who approves the posters' },
+    h('option', { value: 'manual', ...(client.approvalMode === 'manual' ? { selected: 'selected' } : {}) }, 'Manual: a person approves each poster in Review'),
+    h('option', { value: 'auto', ...(client.approvalMode === 'auto' ? { selected: 'selected' } : {}) }, 'Automatic: approved by the system after the checks'),
+  );
+  const modeWarning = h('p', { class: 'approval-warning', role: 'note', ...(client.approvalMode === 'auto' ? {} : { hidden: 'hidden' }) }, AUTO_WARNING);
+  modeSelect.addEventListener('change', () => {
+    const chosen = modeSelect.value === 'auto' ? 'auto' : 'manual';
+    const previous = chosen === 'auto' ? 'manual' : 'auto';
+    if (chosen === 'auto' && !confirm(`${AUTO_WARNING}\n\nSwitch ${client.label} to automatic?`)) {
+      modeSelect.value = previous;
+      return;
+    }
+    modeSelect.disabled = true;
+    say('Saving…', false);
+    void ctx.setApprovalMode(client, chosen).then((problem) => {
+      modeSelect.disabled = false;
+      if (problem) {
+        modeSelect.value = previous;
+        say(problem, true);
+      } else {
+        modeWarning.hidden = chosen !== 'auto';
+      }
+    });
+  });
   const open = button('Add a plan', 'btn', () => {
     form.hidden = false;
     fields.refresh(true);
@@ -279,7 +306,12 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
       limitSelect,
     ),
     h('label', { class: 'check-row', for: `logo-${client.brand}` }, logoBox, h('span', {}, 'Require the website\'s real logo on every poster. When off, a poster uses the brand name as text if no usable logo is found.')),
-    h('p', { class: 'muted' }, 'Each plan has its own platforms, days and rhythm. The posters are made from the website and wait in Review until you approve them. Nothing is posted before that.'),
+    h('div', { class: 'limit-row' },
+      h('label', { class: 'label', for: `mode-${client.brand}` }, 'Approval'),
+      modeSelect,
+    ),
+    modeWarning,
+    h('p', { class: 'muted' }, 'Each plan has its own platforms, days and rhythm. The posters are made from the website. With manual approval they wait in Review and nothing is posted until you approve them; with automatic approval the ones that pass the checks go out on their day.'),
     client.plans.length === 0
       ? h('p', { class: 'muted' }, 'No plan yet. Add one to have posters made.')
       : h('ul', { class: 'plan-list' }, ...client.plans.map((plan, index) => h('li', { class: 'plan-item' }, h('span', {}, planSentence(plan)), button('Remove', 'btn btn-quiet', () => {

@@ -1046,7 +1046,7 @@ async function saveWebsite(client: ClientSummary, website: string): Promise<stri
 }
 
 /** Sends one plan change for a client added in the dashboard; resolves to an explanation when it did not work. */
-async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required', body: Record<string, unknown>, done: string): Promise<string | null> {
+async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required' | 'set-approval-mode', body: Record<string, unknown>, done: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/clients?action=${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (response.status === 401) {
@@ -1071,6 +1071,11 @@ const setLimit = (client: ClientSummary, limit: number): Promise<string | null> 
 
 const setLogoRequired = (client: ClientSummary, required: boolean): Promise<string | null> =>
   changePlans('set-logo-required', { brand: client.brand, required }, required ? 'Saved: every poster for this client must carry the website\'s real logo.' : 'Saved: when the website has no usable logo, posters use the brand name as text.');
+
+const setApprovalMode = (client: ClientSummary, mode: 'manual' | 'auto'): Promise<string | null> =>
+  changePlans('set-approval-mode', { brand: client.brand, mode }, mode === 'auto'
+    ? 'Saved: posters that pass the automatic checks are approved by the system and posted without waiting in Review.'
+    : 'Saved: every poster waits in Review until a person approves it.');
 
 const removePlan = (client: ClientSummary, index: number): Promise<string | null> =>
   changePlans('remove-plan', { brand: client.brand, index }, 'Plan removed. Posters already made stay in Review; no more are made for it.');
@@ -1123,6 +1128,7 @@ const clientsContext: ClientsContext = {
   removePlan,
   setLimit,
   setLogoRequired,
+  setApprovalMode,
   wantsPlanForm: (brand) => (planFormFor === brand ? ((planFormFor = null), true) : false),
   disconnect: (channel) => void disconnect(channel),
   allPaused: () => state.data?.pauses.all === true,
