@@ -104,3 +104,31 @@ test('the real process runner reads both streams, reports the exit code and stop
   const slow = await exec(['-e', 'setTimeout(() => {}, 60000)'], () => {}, 300);
   assert.equal(slow.timedOut, true);
 });
+
+test('a carousel job starts the carousel command with the site, the channels and the day and time, and its plan file is noted when the engine names it', async () => {
+  const { s, done } = fresh();
+  try {
+    const { job } = s.enqueue(spec({ kind: 'carousel', days: undefined, startDate: '2026-11-18', time: '10:00' }));
+    assert.deepEqual(engineArgs(job), ['src/carousel-cli.ts', '--site', 'https://acme.example.com', '--networks', 'instagram,linkedin', '--start', '2026-11-18', '--time', '10:00']);
+    assert.deepEqual(engineArgs({ ...job, startDate: undefined as never, time: undefined as never }), ['src/carousel-cli.ts', '--site', 'https://acme.example.com', '--networks', 'instagram,linkedin']);
+    const exec: Exec = async (_args, onLine) => {
+      onLine('1/4 Planning a carousel from 6 verified facts…', 'out');
+      onLine("4/4 The carousel is in the owner's review queue (week-03.json); nothing was scheduled or published.", 'out');
+      return { code: 0, timedOut: false };
+    };
+    const claimed = s.claim(2, process.pid);
+    assert.ok(claimed);
+    const finished = await runJob(s, claimed, exec);
+    assert.equal(finished.state, 'succeeded');
+    assert.equal(finished.planFileMade, 'week-03.json');
+    assert.equal(finished.step, 4);
+    const failing: Exec = async (_args, onLine) => { onLine('CAROUSEL_NOT_MADE: slide 2 was rejected', 'err'); return { code: 1, timedOut: false }; };
+    s.enqueue(spec({ kind: 'carousel', days: undefined, startDate: '2026-11-19' }));
+    const next = s.claim(2, process.pid);
+    assert.ok(next);
+    const failed = await runJob(s, next, failing);
+    assert.deepEqual([failed.state, failed.error?.code], ['failed', 'CAROUSEL_NOT_MADE']);
+  } finally {
+    done();
+  }
+});

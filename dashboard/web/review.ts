@@ -201,7 +201,7 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export interface JobView {
   id: string;
-  kind: 'copy' | 'draw';
+  kind: 'copy' | 'draw' | 'carousel';
   brand: string;
   site: string;
   state: JobState;
@@ -218,7 +218,7 @@ export function parseJobs(value: unknown): JobView[] {
   if (!Array.isArray(list)) return [];
   return list.flatMap((entry): JobView[] => {
     const j = entry as Record<string, unknown> | null;
-    if (!j || typeof j['id'] !== 'string' || (j['kind'] !== 'copy' && j['kind'] !== 'draw') || typeof j['brand'] !== 'string' || typeof j['site'] !== 'string' || !['queued', 'running', 'succeeded', 'failed'].includes(String(j['state']))) return [];
+    if (!j || typeof j['id'] !== 'string' || (j['kind'] !== 'copy' && j['kind'] !== 'draw' && j['kind'] !== 'carousel') || typeof j['brand'] !== 'string' || typeof j['site'] !== 'string' || !['queued', 'running', 'succeeded', 'failed'].includes(String(j['state']))) return [];
     const error = (j['error'] as { message?: unknown } | undefined)?.message;
     const planFile = typeof j['planFileMade'] === 'string' ? j['planFileMade'] : typeof j['planFile'] === 'string' ? j['planFile'] : undefined;
     return [{ id: j['id'], kind: j['kind'], brand: j['brand'], site: j['site'], state: j['state'] as JobState, ...(typeof j['step'] === 'number' ? { step: j['step'] } : {}), ...(planFile ? { planFile } : {}), ...(typeof error === 'string' ? { error } : {}), ...(Number.isFinite(Date.parse(String(j['finishedAt']))) ? { finishedAt: Date.parse(String(j['finishedAt'])) } : {}) }];
@@ -246,9 +246,17 @@ export function visibleJobs(jobs: readonly JobView[], now: number): JobView[] {
 }
 
 const STEP_WORDS: Readonly<Record<number, string>> = { 1: 'reading the website', 2: 'writing the posts', 3: 'drawing the pictures', 4: 'putting them in the review list' };
+const CAROUSEL_STEP_WORDS: Readonly<Record<number, string>> = { 1: 'planning the slides', 2: 'writing the captions', 3: 'drawing the slides', 4: 'putting it in the review list' };
 
 /** What a job is doing, in plain words. */
 export function jobText(job: JobView): string {
+  if (job.kind === 'carousel') {
+    const what = `Making a carousel for ${job.site}`;
+    if (job.state === 'queued') return `${what}: waiting for its turn`;
+    if (job.state === 'running') return `${what}: ${job.step ? CAROUSEL_STEP_WORDS[job.step] ?? 'working' : 'starting'}`;
+    if (job.state === 'succeeded') return `${what}: done, the carousel is waiting for you in the list below`;
+    return `${what}: stopped. ${(job.error ?? 'It did not finish').replace(/[.\s]+$/, '')}. Nothing was published.`;
+  }
   const what = job.kind === 'copy' ? `Writing posts for ${job.site}` : `Drawing the kept posts of ${job.brand}${job.planFile ? ` (${job.planFile.replace(/\.json$/, '')})` : ''}`;
   if (job.state === 'queued') return `${what}: waiting for its turn`;
   if (job.state === 'running') return `${what}: ${job.step ? STEP_WORDS[job.step] ?? 'working' : 'starting'}`;

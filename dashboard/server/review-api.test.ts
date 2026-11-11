@@ -203,3 +203,17 @@ test('a carousel is read whole, and approved or rejected in one step, with the r
   assert.equal((await POST(post({ carousel: { brand: 'acme', id: 'car1', action: 'approve' } }, { origin: 'https://evil.example' }))).status, 403);
   assert.equal(calls.length, before);
 });
+
+test('a carousel for a client is asked for through the proxy, with only listed fields, from this site\'s own signed-in pages', async () => {
+  upstream(202, { job: { id: 'job-abc123-12345678' }, created: true });
+  assert.equal((await POST(post({ carousel_job: { site: 'acme.com', networks: ['instagram', 'linkedin'], startDate: '2026-11-25', time: '11:30', kind: 'copy', by: 'someone else' } }))).status, 200);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/jobs');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', kind: 'carousel', site: 'acme.com', networks: ['instagram', 'linkedin'], startDate: '2026-11-25', time: '11:30' });
+  const before = calls.length;
+  for (const bad of [{ site: 'acme.com', networks: [] }, { site: 'acme.com', networks: ['tiktok'] }, { networks: ['instagram'] }, { site: 'acme.com', networks: ['instagram'], startDate: 'tomorrow' }, { site: 'acme.com', networks: ['instagram'], time: '9' }]) {
+    assert.equal((await POST(post({ carousel_job: bad }))).status, 400, JSON.stringify(bad));
+  }
+  assert.equal((await POST(post({ carousel_job: { site: 'acme.com', networks: ['instagram'] } }, { signedIn: false }))).status, 401);
+  assert.equal((await POST(post({ carousel_job: { site: 'acme.com', networks: ['instagram'] } }, { origin: 'https://evil.example' }))).status, 403);
+  assert.equal(calls.length, before);
+});

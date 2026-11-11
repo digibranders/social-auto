@@ -23,7 +23,7 @@
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
@@ -200,7 +200,26 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (parts.length === 3 && req.method === 'GET') return send(res, 200, { job: jobs.get(decodeURIComponent(parts[2] ?? '')) });
         if (parts.length === 2 && req.method === 'POST') {
           const body = await readJson(req);
-          if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" (drawing is asked for on the written batch)');
+          if (body['kind'] === 'carousel') {
+            // One carousel for a client whose website was already read (its profile and facts are what the carousel is made from): the day it is for and the time are optional.
+            const carouselSite = cleanSite(body['site']);
+            const carouselNetworks = Array.isArray(body['networks']) ? body['networks'] : null;
+            if (carouselNetworks === null || carouselNetworks.length === 0 || carouselNetworks.some((n) => typeof n !== 'string' || !isNetwork(n))) throw new ReviewError('INVALID', `networks must be a non-empty list of ${NETWORKS.join(', ')}`);
+            let carouselDay: string | undefined;
+            let carouselTime: string | undefined;
+            try {
+              if (body['startDate'] !== undefined) carouselDay = checkStartDate(body['startDate'], Date.now());
+              if (body['time'] !== undefined) carouselTime = checkTime(body['time']);
+            } catch (error) {
+              if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
+              throw error;
+            }
+            const carouselBrand = slugFromSite(carouselSite);
+            if (!BRAND.test(carouselBrand) || !existsSync(join(root, carouselBrand, 'brand.json'))) throw new ReviewError('INVALID', 'that website has not been read yet: write posts for it first, so a carousel can be made from what it states');
+            const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: text(body['by'], 80), networks: [...new Set(carouselNetworks as string[])], ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
+            return send(res, created ? 202 : 200, { job, created });
+          }
+          if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" or "carousel" (drawing is asked for on the written batch)');
           if (body['page'] !== undefined && typeof body['page'] !== 'boolean') throw new ReviewError('INVALID', 'page must be true or false');
           const page = body['page'] === true;
           const site = cleanSite(body['site'], { keepPath: page });
