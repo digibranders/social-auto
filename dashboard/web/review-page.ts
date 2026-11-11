@@ -11,7 +11,7 @@ interface Detail {
 }
 
 interface CopyPost { postId: string; headline: string; caption: string; captions?: Record<string, { text: string; edited?: boolean }>; edited?: boolean; advice?: string; state: 'pending' | 'kept' | 'dropped'; signoff?: { brandName?: string; domain?: string } }
-interface CopyBatch { brand: string; planFile: string; posts: CopyPost[]; drawnAt?: string; /** The brand's name and the website's address, shown on a poster unless changed. */ signoffDefault?: { brandName: string; domain: string } }
+interface CopyBatch { brand: string; planFile: string; posts: CopyPost[]; drawnAt?: string; /** What a poster's sign-off says unless changed: the website's address and no brand name. */ signoffDefault?: { brandName: string; domain: string } }
 
 /** What the owner is typing in the "write posts for a website" form; kept here so a redraw does not wipe it. */
 interface StartForm { site: string; page: boolean; networks: string[]; weeks: number; postsPerWeek: number; /** The day of the first post (YYYY-MM-DD), or empty for the next free day. */ startDate: string; /** The time of day the posts go out, India time (HH:MM). */ time: string; /** The client the posts are for: a client's name, or NEW_CLIENT for one named after the website. */ client: string }
@@ -268,7 +268,7 @@ function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: ()
     const caption = h('textarea', { class: 'rv-input rv-textarea', rows: '6', maxlength: '4000', 'aria-label': `${e.label} caption` });
     caption.value = editing.draft?.caption ?? body;
     // What is typed is kept in the page's state, so a redraw (the page refreshes itself) does not wipe it.
-    // The sign-off lines of the poster: the brand's name and the website's address, unless changed for this poster.
+    // The sign-off lines of the poster: the website's address and, only when typed, a brand name.
     const sign = signoffView(batch, p);
     const brandName = sign ? h('input', { class: 'rv-input', type: 'text', maxlength: '40', 'aria-label': 'Brand name on the poster' }) : null;
     const domain = sign ? h('input', { class: 'rv-input', type: 'text', maxlength: '60', 'aria-label': 'Web address on the poster' }) : null;
@@ -301,7 +301,7 @@ function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: ()
       brandName && domain ? h('div', { class: 'rv-signoff-edit' },
         h('label', { class: 'rv-field' }, 'Brand name on the poster', brandName),
         h('label', { class: 'rv-field' }, 'Web address on the poster', domain),
-        h('small', { class: 'muted' }, 'The sign-off at the bottom of the poster. Clear a box to leave that line off the poster; type the original again to go back to it. With the client\'s real logo on the poster, the logo carries the name and the name is not drawn. The address must be on the client\'s own website.')) : null,
+        h('small', { class: 'muted' }, 'The sign-off at the bottom of the poster: by default only the web address. Type a brand name to add it to this poster; clear a box to leave that line off; type the original again to go back to it. With the client\'s real logo on the poster, the logo carries the name and the name is not drawn. The address must be on the client\'s own website.')) : null,
       h('div', { class: 'rv-actions' },
         button('Save', 'btn btn-primary', () => void saveEdit(batch, p, e.network, { headline: headline.value, caption: caption.value, ...(brandName && domain ? { brandName: brandName.value, domain: domain.value } : {}) }, redraw), 'Save', state.busy),
         button('Cancel', 'btn', () => { state.editing = null; redraw(); })));

@@ -13,7 +13,7 @@ import { LockError, syncDir, withFileLock } from './file-lock.ts';
 export type CopyState = 'pending' | 'kept' | 'dropped';
 
 export class CopyStageError extends Error {
-  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'CLOSED' | 'REJECTED' | 'LOCKED';
+  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'CLOSED' | 'REJECTED' | 'LOCKED' | 'CONFLICT';
   constructor(code: CopyStageError['code'], message: string) {
     super(message);
     this.name = 'CopyStageError';
@@ -192,6 +192,27 @@ export class CopyStage {
       else if (words.signoff !== undefined) post.signoff = words.signoff;
       post.edited = true;
       delete post.advice;
+      return { batch, result: batch };
+    });
+  }
+
+  /**
+   * Adds a network's caption to posts of the batch (a batch that is waiting or already drawn), under the same lock as the list's own write: `applyToPlan` writes the
+   * same captions into the plan file first, so the plan and the list can never disagree, and if it throws nothing changes. A post's choice stays as it was, with
+   * the hash of its words now including the new caption. A network the batch already has is refused.
+   */
+  addNetwork(planFile: string, network: string, captionsByPost: Readonly<Record<string, Readonly<Record<string, { text: string; fallback?: boolean }>>>>, applyToPlan: () => void): CopyBatch {
+    return this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
+      if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
+      applyToPlan();
+      for (const post of batch.posts) {
+        const added = captionsByPost[post.postId];
+        if (!added) continue;
+        post.captions = { ...(post.captions ?? {}), ...Object.fromEntries(Object.entries(added).map(([n, c]) => [n, { text: c.text, ...(c.fallback ? { fallback: true } : {}) }])) };
+        post.contentHash = copyHash(post.headline, post.caption, textsOf(post.captions));
+      }
       return { batch, result: batch };
     });
   }

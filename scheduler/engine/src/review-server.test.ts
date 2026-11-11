@@ -294,7 +294,10 @@ test('a topic made for two networks shows each network with its shape, and one s
     assert.deepEqual(decisions.map((d) => d.status), ['approved', 'approved']);
     assert.equal(s.stores.acme.get(ig.versionId).status, 'approved');
     assert.equal(s.stores.acme.get(li.versionId).status, 'approved');
-    assert.equal((await s.call('/review/topics/acme/week-01.json/w01-d1/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404, 'nothing is left waiting');
+    const again = await s.call('/review/topics/acme/week-01.json/w01-d1/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal(again.status, 200, 'a repeated request gets the same answer');
+    assert.deepEqual(((await again.json()) as { decisions: Array<{ versionId: string; status: string }>; already: boolean }).decisions.map((d) => [d.versionId, d.status]).sort(), [[ig.versionId, 'approved'], [li.versionId, 'approved']].sort());
+    assert.equal((await s.call('/review/topics/acme/week-01.json/w09-d9/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) })).status, 404, 'a topic that has nothing to approve');
   } finally {
     await s.done();
   }
@@ -436,7 +439,7 @@ test('the sign-off of a written post can be changed over the API: the list shows
     const put = (body: unknown) => s.call('/review/copy/acme/week-01.json/p1/edit', { method: 'PUT', body: JSON.stringify(body) });
     type Listed = { batches: Array<{ signoffDefault?: { brandName: string; domain: string }; posts: Array<{ headline: string; signoff?: { brandName?: string; domain?: string } }> }> };
     const before = (await (await s.call('/review/copy')).json()) as Listed;
-    assert.deepEqual(before.batches[0]?.signoffDefault, { brandName: 'Acme', domain: 'acme.com' });
+    assert.deepEqual(before.batches[0]?.signoffDefault, { brandName: '', domain: 'acme.com' }, 'a poster carries the web address only unless a name is typed for it');
     assert.equal(before.batches[0]?.posts[0]?.signoff, undefined);
 
     const ok = await put({ by: 'owner', brandName: 'Acme Labs', domain: 'acme.com/pricing' });

@@ -18,6 +18,7 @@ export const REASON_LABELS: Readonly<Record<string, string>> = {
   repetitive: 'Too like other posters',
   style: 'Not our style',
   other: 'Something else',
+  expired: 'Not decided in time',
 };
 
 export const STATUS_LABELS: Readonly<Record<ReviewStatus, string>> = {
@@ -160,7 +161,7 @@ export interface BrandingView {
 
 /** What the owner is told. A real logo is never said to be on a poster unless the record says it was applied. */
 export function brandingView(b: BrandingRecord): BrandingView {
-  const onPoster = b.appliedMode === 'authentic_logo' ? 'The website\'s real logo' : b.appliedMode === 'text_only' ? 'The brand name and web address, written as text' : 'Nothing: this poster should not have been made';
+  const onPoster = b.appliedMode === 'authentic_logo' ? 'The website\'s real logo' : b.appliedMode === 'text_only' ? 'The web address (and a brand name only if one was typed), written as text' : 'Nothing: this poster should not have been made';
   const rows: Array<[string, string]> = [['On this poster', onPoster]];
   if (b.logoKind) rows.push(['Logo found', `${b.logoKind === 'wordmark' ? 'Full logo' : 'Symbol only'}${b.logoWidth && b.logoHeight ? `, ${Math.round(b.logoWidth)} × ${Math.round(b.logoHeight)}` : ''}`]);
   if (b.sourcePage) rows.push(['Found on', b.sourcePage]);
@@ -172,7 +173,7 @@ export function brandingView(b: BrandingRecord): BrandingView {
     const how = b.placement.treatment === 'none' ? 'nothing added behind it' : b.placement.treatment === 'halo' ? 'a thin outline around it so it stays readable' : 'a small plate behind it so it stays readable';
     return { tone: 'done', headline: 'Real logo applied', explanation: 'The website\'s own logo, unchanged, is on this poster.', rows: [...rows, ['Placed', `${where} corner, ${how}`]] };
   }
-  if (b.intendedMode === 'authentic_logo') return { tone: 'note', headline: 'Real logo found, not applied', explanation: b.reason ?? 'The website\'s logo was found and verified, but this poster uses the brand name and web address as text.', rows };
+  if (b.intendedMode === 'authentic_logo') return { tone: 'note', headline: 'Real logo found, not applied', explanation: b.reason ?? 'The website\'s logo was found and verified, but this poster uses the web address as text.', rows };
   return { tone: 'plain', headline: 'Text sign-off used: no usable logo', explanation: b.reason ? `No real logo was used. ${b.reason}` : 'No real logo was used on this poster.', rows };
 }
 
@@ -343,7 +344,7 @@ export function networkState(client: Pick<ClientSummary, 'channels'> | undefined
 export const connectedNetworkKeys = (client: Pick<ClientSummary, 'channels'>): string[] =>
   NETWORK_CHOICES.filter((n) => networkState(client, n.key)?.state !== 'not-connected').map((n) => n.key);
 
-/** What a poster's sign-off says: the brand's name and the website's address, unless the owner changed either for this poster. */
+/** What a poster's sign-off says: the website's address (no brand name), unless the owner typed a name or changed the address for this poster. */
 export interface SignoffView { brandName: string; domain: string; changed: boolean }
 
 export function signoffView(batch: { signoffDefault?: { brandName: string; domain: string } }, post: { signoff?: { brandName?: string; domain?: string } }): SignoffView | null {

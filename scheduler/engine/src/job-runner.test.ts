@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { JobStore, type JobSpec } from './job-store.ts';
+import { JobStore, type Job, type JobSpec } from './job-store.ts';
 import { drain, engineArgs, execEngine, readLine, runJob, type Exec } from './job-runner.ts';
 
 const spec = (over: Partial<JobSpec> = {}): JobSpec => ({ kind: 'copy', brand: 'acme', site: 'https://acme.example.com', by: 'owner', networks: ['instagram', 'linkedin'], days: 4, ...over });
@@ -20,20 +20,20 @@ test('a copy job stops before any picture is bought, a draw job draws only the k
   const { s, done } = fresh();
   try {
     const copy = s.enqueue(spec()).job;
-    assert.deepEqual(engineArgs(copy), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4']);
+    assert.deepEqual(engineArgs(copy), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--brand', 'acme', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4']);
     const rhythm = s.enqueue(spec({ brand: 'beta', site: 'https://beta.example.com', days: 4, weekdays: ['mon', 'thu'] })).job;
-    assert.deepEqual(engineArgs(rhythm), ['src/autopilot.ts', '--site', 'https://beta.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'mon,thu']);
+    assert.deepEqual(engineArgs(rhythm), ['src/autopilot.ts', '--site', 'https://beta.example.com', '--brand', 'beta', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'mon,thu']);
     const timed = s.enqueue(spec({ brand: 'omega', site: 'https://omega.example.com', days: 4, weekdays: ['wed', 'sat'], startDate: '2026-12-16', time: '09:30' })).job;
-    assert.deepEqual(engineArgs(timed), ['src/autopilot.ts', '--site', 'https://omega.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'wed,sat', '--start', '2026-12-16', '--time', '09:30']);
+    assert.deepEqual(engineArgs(timed), ['src/autopilot.ts', '--site', 'https://omega.example.com', '--brand', 'omega', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'wed,sat', '--start', '2026-12-16', '--time', '09:30']);
     const retryDraw = s.enqueue(spec({ kind: 'draw', brand: 'delta', site: 'https://delta.example.com', planFile: 'week-02.json' })).job;
     s.claim(5, 1);
     s.update(retryDraw.id, { state: 'failed' });
     const again = s.enqueue(spec({ kind: 'draw', brand: 'delta', site: 'https://delta.example.com', planFile: 'week-02.json', retry: true })).job;
-    assert.deepEqual(engineArgs(again), ['src/autopilot.ts', '--site', 'https://delta.example.com', '--draw-kept', 'week-02.json', '--redraw-missing']);
+    assert.deepEqual(engineArgs(again), ['src/autopilot.ts', '--site', 'https://delta.example.com', '--brand', 'delta', '--draw-kept', 'week-02.json', '--redraw-missing']);
     const onePage = s.enqueue(spec({ brand: 'gamma', site: 'https://gamma.example.com/pricing', page: true, networks: [] })).job;
-    assert.deepEqual(engineArgs(onePage), ['src/autopilot.ts', '--site', 'https://gamma.example.com/pricing', '--copy-first', '--page', '--days', '4']);
+    assert.deepEqual(engineArgs(onePage), ['src/autopilot.ts', '--site', 'https://gamma.example.com/pricing', '--brand', 'gamma', '--copy-first', '--page', '--days', '4']);
     const draw = s.enqueue(spec({ kind: 'draw', planFile: 'week-03.json' })).job;
-    assert.deepEqual(engineArgs(draw), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--draw-kept', 'week-03.json']);
+    assert.deepEqual(engineArgs(draw), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--brand', 'acme', '--draw-kept', 'week-03.json']);
   } finally {
     done();
   }
@@ -103,4 +103,24 @@ test('the real process runner reads both streams, reports the exit code and stop
   assert.deepEqual(seen.sort(), ['err:FOO_BAR: boom', 'out:2/4 Writing (week-01.json)']);
   const slow = await exec(['-e', 'setTimeout(() => {}, 60000)'], () => {}, 300);
   assert.equal(slow.timedOut, true);
+});
+
+test('an add-a-network job runs the engine with the batch and network, keeps its per-topic result, and queues a draw for each topic that needs its own picture', async () => {
+  const { s, done } = fresh();
+  try {
+    const job = s.enqueue(spec({ kind: 'network', planFile: 'week-01.json', network: 'facebook' })).job;
+    assert.deepEqual(engineArgs(job), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--brand', 'acme', '--add-network', 'week-01.json', '--network', 'facebook']);
+    const claimed = s.claim(5, 1) as Job;
+    const result = { network: 'facebook', topics: [{ postId: 'w01-d1', outcome: 'written', versionIds: ['acme.1111111111111111'] }, { postId: 'w01-d2', outcome: 'written', needsDraw: true }] };
+    const done1 = await runJob(s, claimed, fake([['3/4 Writing a caption', 'out'], [`ADD_NETWORK_RESULT ${JSON.stringify(result)}`, 'out']]));
+    assert.equal(done1.state, 'succeeded');
+    const queued = s.list().find((j) => j.kind === 'newnet');
+    assert.ok(queued, 'a draw was queued');
+    assert.deepEqual([queued?.planFile, queued?.postId, queued?.network, queued?.state], ['week-01.json', 'w01-d2', 'facebook', 'queued']);
+    assert.deepEqual(done1.result?.topics, [{ postId: 'w01-d1', outcome: 'written', versionIds: ['acme.1111111111111111'] }, { postId: 'w01-d2', outcome: 'written', drawJobId: queued?.id }]);
+    assert.equal(done1.logTail.some((l) => l.includes('ADD_NETWORK_RESULT')), false, 'the result line is not shown as log');
+    assert.deepEqual(engineArgs(queued as Job), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--brand', 'acme', '--draw-kept', 'week-01.json', '--redraw-post', 'w01-d2', '--redraw-network', 'facebook']);
+  } finally {
+    done();
+  }
 });

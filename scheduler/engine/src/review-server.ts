@@ -23,7 +23,7 @@
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
@@ -34,11 +34,15 @@ import { editCopy, type SignoffDefaults } from './copy-edit.ts';
 import { displayDomain } from './ai-creative.ts';
 import { loadFacts } from './evidence-pipeline.ts';
 import { decideFact, FactsError, factsView } from './facts-view.ts';
-import { JobError, JobStore, type JobState } from './job-store.ts';
+import { checkCopyWords, checkNewWords } from './copy-edit.ts';
+import { JobError, JobStore, keyOf, type Job, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
 import { slugFromSite } from './analyze.ts';
-import { captionRulesView, isNetwork, NETWORKS } from './networks.ts';
+import { captionRulesView, composeVariant, isNetwork, NETWORKS } from './networks.ts';
+import { splitTrailingHashtags } from './caption-text.ts';
 import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
+import { ProductBrands, PRODUCT_ID } from './product-brands.ts';
+import { EXPIRY_DAYS, readExpiry, sweepExpired } from './expiry.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
@@ -51,6 +55,17 @@ export interface ReviewServerOptions {
   lockTimeoutMs?: number;
   /** Where the job files live; the job runner reads the same folder. Defaults to "jobs" beside the brands folder. */
   jobsRoot?: string;
+  /**
+   * Outside products whose customers decide their own brands' posters. Each has its own secret and is let in only for the one brand it names in the
+   * X-Brand header, as the person named in X-Actor. A brand a product owns can no longer be changed with the staff secret.
+   */
+  products?: Array<{ id: string; secret: string }>;
+  /** How many times one poster (one network of one post) may be drawn again; each costs a picture. Default 1. */
+  redrawCap?: number;
+  /** Days after which an undecided batch or picture of a product-owned brand is put away (14 by default; 0 turns it off). */
+  expiryDays?: number;
+  /** How often the service looks for such things (an hour by default). */
+  sweepEveryMs?: number;
 }
 
 const JOB_STATES: readonly JobState[] = ['queued', 'running', 'succeeded', 'failed'];
@@ -79,7 +94,7 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
 }
 
 const JOB_STATUS: Record<JobError['code'], number> = { NOT_FOUND: 404, INVALID: 400, LOCKED: 503 };
-const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503 };
+const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503, FORBIDDEN: 403, CONFLICT: 409, LIMIT: 409 };
 
 function fail(res: ServerResponse, error: unknown): void {
   if (error instanceof JobError) return send(res, JOB_STATUS[error.code], { error: error.message, code: error.code });
@@ -95,13 +110,30 @@ function fail(res: ServerResponse, error: unknown): void {
 }
 
 const FACTS_STATUS: Record<FactsError['code'], number> = { NOT_FOUND: 404, INVALID: 400, HELD: 409, LOCKED: 503 };
-const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, CLOSED: 409, REJECTED: 422, LOCKED: 503 };
+const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, CLOSED: 409, REJECTED: 422, LOCKED: 503, CONFLICT: 409 };
 
-const authorised = (req: IncomingMessage, secret: string): boolean => {
-  const given = Buffer.from(String(req.headers['authorization'] ?? '').replace(/^Bearer\s+/i, ''));
+const sameSecret = (given: Buffer, secret: string): boolean => {
   const wanted = Buffer.from(secret);
   return given.length === wanted.length && timingSafeEqual(given, wanted);
 };
+
+/** Who is asking: our own staff (the dashboard), or a product acting for one customer's brand. */
+export type Caller = { role: 'staff' } | { role: 'product'; productId: string; brand: string; actor: string };
+
+const ACTOR = /^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,79}$/;
+
+/** Null when the secret is not known. A product must also say which brand it acts for and who the person is; the headers are checked here, once. */
+function identify(req: IncomingMessage, secret: string, products: ReadonlyArray<{ id: string; secret: string }>): Caller | null {
+  const given = Buffer.from(String(req.headers['authorization'] ?? '').replace(/^Bearer\s+/i, ''));
+  if (sameSecret(given, secret)) return { role: 'staff' };
+  const product = products.find((p) => sameSecret(given, p.secret));
+  if (!product) return null;
+  const brand = String(req.headers['x-brand'] ?? '');
+  const actor = String(req.headers['x-actor'] ?? '');
+  if (!BRAND.test(brand)) throw new ReviewError('INVALID', 'X-Brand must name the one brand this request is for');
+  if (!ACTOR.test(actor)) throw new ReviewError('INVALID', 'X-Actor must name who is deciding');
+  return { role: 'product', productId: product.id, brand, actor };
+}
 
 async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
@@ -137,6 +169,25 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     return new ReviewStore(dir, brand, undefined, options.lockTimeoutMs);
   };
   const jobs = new JobStore(resolve(options.jobsRoot ?? join(root, '..', 'jobs')));
+  const owners = new ProductBrands(root);
+  const products = options.products ?? [];
+  for (const p of products) {
+    if (!PRODUCT_ID.test(p.id) || p.secret.length < 16 || p.secret === options.secret) throw new Error('each product needs a lowercase id and its own secret of at least 16 characters');
+  }
+  /** What one caller may see and change. A product sees only its one brand; staff see everything but cannot change a brand a product owns. */
+  const scopeFor = (caller: Caller) => ({
+    /** Throws unless this caller may look at (or, with `write`, change) the brand. A product is told "no such brand" about any other, so it learns nothing about them. */
+    guard(brand: string, write: boolean): void {
+      if (!BRAND.test(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+      if (caller.role === 'product') {
+        if (brand !== caller.brand || owners.get(brand)?.productId !== caller.productId) throw new ReviewError('NOT_FOUND', 'no such brand');
+      } else if (write && owners.has(brand)) {
+        throw new ReviewError('FORBIDDEN', 'this brand is decided by its own customer, so it cannot be changed from here');
+      }
+    },
+    visible: (all: string[]): string[] => (caller.role === 'product' ? all.filter((b) => b === caller.brand && owners.get(b)?.productId === caller.productId) : all),
+    by: (given: unknown): string => (caller.role === 'product' ? caller.actor : text(given, 80)),
+  });
   /** Once drawing has been asked for, the batch's choices and words are final: the runner may start at any moment, and a change in between would be lost or fail the draw. */
   const refuseIfDrawAsked = (brand: string, planFile: string): void => {
     if (jobs.list({ brand }).some((j) => j.kind === 'draw' && j.planFile === planFile)) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch\'s choices and words are final');
@@ -152,8 +203,9 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   /** What a poster's sign-off says unless the owner changes it: the brand's name and the website's address. Null when the brand has neither saved. */
   const signoffDefaultsOf = (brand: string): SignoffDefaults | null => {
     try {
-      const saved = JSON.parse(readFileSync(join(root, brand, 'brand.json'), 'utf8')) as { name?: unknown; website?: unknown };
-      return typeof saved.name === 'string' && saved.name.trim() !== '' ? { brandName: saved.name, domain: displayDomain(cleanSite(saved.website)) } : null;
+      const saved = JSON.parse(readFileSync(join(root, brand, 'brand.json'), 'utf8')) as { website?: unknown };
+      // Every poster's sign-off is the web address; a name is drawn only when one is typed for that post.
+      return { brandName: '', domain: displayDomain(cleanSite(saved.website)) };
     } catch {
       return null;
     }
@@ -161,28 +213,44 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   const storeOf = (versionId: string): ReviewStore => storeFor(versionId.split('.')[0] ?? '');
   const brands = (): string[] => readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && BRAND.test(d.name)).map((d) => d.name);
 
-  const summary = (item: ReviewItem) => ({
+  const redrawCap = options.redrawCap ?? 1;
+  /** A redraw that bought nothing (no picture passed the checks) does not use up the poster's allowance. */
+  const countsAgainstCap = (j: Job): boolean => !(j.state === 'failed' && j.error?.code === 'NOTHING_DRAWN');
+  const REDRAWABLE: readonly ReviewStatus[] = ['pending', 'rejected', 'blocked', 'held'];
+  /** Whether this picture can be drawn again, and how many more times: only the newest picture of a network that is not approved. */
+  const redrawFor = (item: ReviewItem, brandJobs: readonly Job[]): { canRedraw: boolean; redrawsLeft: number } => {
+    const v = item.version;
+    const key = keyOf({ kind: 'redraw', brand: v.brand, planFile: v.planFile, postId: v.postId, ...(v.network ? { network: v.network } : {}) });
+    const left = Math.max(0, redrawCap - brandJobs.filter((j) => j.key === key && countsAgainstCap(j)).length);
+    return { canRedraw: REDRAWABLE.includes(item.status) && left > 0, redrawsLeft: left };
+  };
+  const summary = (item: ReviewItem, redraw?: { canRedraw: boolean; redrawsLeft: number }) => ({
     versionId: item.version.versionId, brand: item.version.brand, postId: item.version.postId, planFile: item.version.planFile, versionNumber: item.version.versionNumber, status: item.status,
-    headline: item.version.headline, caption: item.version.caption, createdAt: item.version.createdAt, costUsd: item.version.costUsd,
+    headline: item.version.headline, caption: item.version.caption, createdAt: item.version.createdAt, costUsd: item.version.costUsd, imageSha256: item.version.imageSha256,
     ...(item.version.network ? { network: item.version.network } : {}),
     ...(item.version.width && item.version.height ? { width: item.version.width, height: item.version.height, shape: item.version.width / item.version.height >= 1.2 ? 'wide' : item.version.width / item.version.height <= 0.83 ? 'tall' : 'square' } : {}),
     ...(item.decision ? { decidedBy: item.decision.by, decidedAt: item.decision.at, reason: item.decision.reason } : {}),
+    ...(redraw ?? {}),
   });
 
-  return createServer(async (req, res) => {
+  const expiryDays = options.expiryDays ?? EXPIRY_DAYS;
+  const server = createServer(async (req, res) => {
     try {
-      if (!authorised(req, options.secret)) return send(res, 401, { error: 'Not allowed' });
+      const caller = identify(req, options.secret, products);
+      if (!caller) return send(res, 401, { error: 'Not allowed' });
+      const scope = scopeFor(caller);
       const url = new URL(req.url ?? '/', 'http://localhost');
       const parts = url.pathname.split('/').filter(Boolean);
       // The facts found on a brand's site: read them, and remove, confirm or put back one.
       if (parts[0] === 'review' && parts[1] === 'brands' && parts[3] === 'facts') {
         const factsBrand = decodeURIComponent(parts[2] ?? '');
-        if (!BRAND.test(factsBrand) || !brands().includes(factsBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+        scope.guard(factsBrand, req.method !== 'GET');
+        if (!brands().includes(factsBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
         const factsDir = join(root, factsBrand);
         if (parts.length === 4 && req.method === 'GET') return send(res, 200, await factsView(factsDir, factsBrand));
         const verb = parts[5];
         if (parts.length === 6 && req.method === 'POST' && (verb === 'confirm' || verb === 'remove' || verb === 'restore')) {
-          text((await readJson(req))['by'], 80);
+          await readJson(req);
           await decideFact(factsDir, decodeURIComponent(parts[4] ?? ''), verb);
           return send(res, 200, await factsView(factsDir, factsBrand));
         }
@@ -191,18 +259,33 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       if (parts[0] === 'review' && parts[1] === 'jobs') {
         if (parts.length === 2 && req.method === 'GET') {
           const state = url.searchParams.get('state') ?? undefined;
-          const brand = url.searchParams.get('brand') ?? undefined;
+          const brand = caller.role === 'product' ? caller.brand : url.searchParams.get('brand') ?? undefined;
           if (state !== undefined && !(JOB_STATES as readonly string[]).includes(state)) return send(res, 400, { error: `state must be one of ${JOB_STATES.join(', ')}` });
           if (brand !== undefined && !BRAND.test(brand)) return send(res, 400, { error: 'brand is not a brand name' });
           return send(res, 200, { jobs: jobs.list({ ...(brand ? { brand } : {}), ...(state ? { state: state as JobState } : {}) }) });
         }
-        if (parts.length === 3 && req.method === 'GET') return send(res, 200, { job: jobs.get(decodeURIComponent(parts[2] ?? '')) });
+        if (parts.length === 3 && req.method === 'GET') {
+          const job = jobs.get(decodeURIComponent(parts[2] ?? ''));
+          scope.guard(job.brand, false);
+          return send(res, 200, { job });
+        }
         if (parts.length === 2 && req.method === 'POST') {
           const body = await readJson(req);
           if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" (drawing is asked for on the written batch)');
           if (body['page'] !== undefined && typeof body['page'] !== 'boolean') throw new ReviewError('INVALID', 'page must be true or false');
           const page = body['page'] === true;
           const site = cleanSite(body['site'], { keepPath: page });
+          // The brand is named by whoever owns it, never by the website: two customers with the same website are two brands. Our own staff's brands are named after the site.
+          let jobBrand: string;
+          if (caller.role === 'product') {
+            if (body['brand'] !== caller.brand) throw new ReviewError('INVALID', 'brand must be the brand named in X-Brand');
+            jobBrand = caller.brand;
+            const claimed = owners.claim(jobBrand, caller.productId, () => existsSync(join(root, jobBrand)) || jobs.list({ brand: jobBrand }).length > 0);
+            if (claimed === 'taken') throw new ReviewError('CONFLICT', 'that brand name is not available');
+          } else {
+            jobBrand = slugFromSite(site);
+            scope.guard(jobBrand, true);
+          }
           const networks = body['networks'] === undefined ? [] : Array.isArray(body['networks']) ? body['networks'] : null;
           if (networks === null || networks.some((n) => typeof n !== 'string' || !isNetwork(n))) throw new ReviewError('INVALID', `networks must be a list of ${NETWORKS.join(', ')}`);
           // When the posts go out: the day of the first post and the time of day (India time). Both are optional; without them the engine chooses the next free day at 10:00.
@@ -230,7 +313,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               throw error;
             }
           }
-          const { job, created } = jobs.enqueue({ kind: 'copy', brand: slugFromSite(site), site, by: text(body['by'], 80), networks: [...new Set(networks as string[])], days: spread.days, ...(page ? { page } : {}), ...(spread.weekdays ? { weekdays: spread.weekdays } : {}), ...(startDate ? { startDate } : {}), ...(time ? { time } : {}) });
+          const { job, created } = jobs.enqueue({ kind: 'copy', brand: jobBrand, site, by: scope.by(body['by']), networks: [...new Set(networks as string[])], days: spread.days, ...(page ? { page } : {}), ...(spread.weekdays ? { weekdays: spread.weekdays } : {}), ...(startDate ? { startDate } : {}), ...(time ? { time } : {}) });
           return send(res, created ? 202 : 200, { job, created });
         }
         return send(res, 404, { error: 'Not found' });
@@ -239,15 +322,16 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (parts.length === 2 && req.method === 'GET') {
           // A batch that was drawn is no longer waiting for choices, unless its draw stopped before it finished: it stays listed so the draw can be asked for again.
           const stopped = (brand: string, planFile: string): boolean => jobs.list({ brand }).find((j) => j.kind === 'draw' && j.planFile === planFile)?.state === 'failed';
-          const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
+          const batches = scope.visible(brands()).flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
+          const plain = batches.map((b) => ({ ...b, networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
         if (parts.length === 6 && req.method === 'POST' && (verb === 'keep' || verb === 'drop')) {
-          if (!BRAND.test(brand) || !brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
-          const by = text((await readJson(req))['by'], 80);
+          scope.guard(brand, true);
+          if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const by = scope.by((await readJson(req))['by']);
           refuseIfDrawAsked(brand, planFile);
           const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
           return send(res, 200, { batch });
@@ -255,18 +339,35 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         // Put a whole batch away (POST .../<brand>/<planFile>/close) or change the words of one post before it is drawn (PUT .../<brand>/<planFile>/<postId>/edit).
         if (parts.length === 5 && req.method === 'POST' && parts[4] === 'close') {
           const [, , closeBrand = '', closePlan = ''] = parts.map(decodeURIComponent);
-          if (!BRAND.test(closeBrand) || !brands().includes(closeBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
-          const by = text((await readJson(req))['by'], 80);
+          scope.guard(closeBrand, true);
+          if (!brands().includes(closeBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const by = scope.by((await readJson(req))['by']);
           refuseIfDrawAsked(closeBrand, closePlan);
           return send(res, 200, { batch: new CopyStage(join(root, closeBrand), closeBrand).close(closePlan, by) });
         }
+        // Another network for a batch already written (waiting or drawn): the same topics, no new website read. It is a job, because the captions are written with the AI key, which only
+        // the job runner holds. The answer is the job; its result lists each topic.
+        if (parts.length === 5 && req.method === 'POST' && parts[4] === 'networks') {
+          const [, , netBrand = '', netPlan = ''] = parts.map(decodeURIComponent);
+          scope.guard(netBrand, true);
+          if (!brands().includes(netBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const body = await readJson(req);
+          const network = body['network'];
+          if (typeof network !== 'string' || !isNetwork(network)) throw new ReviewError('INVALID', `network must be one of ${NETWORKS.join(', ')}`);
+          const batch = new CopyStage(join(root, netBrand), netBrand).get(netPlan);
+          if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
+          if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
+          const { job, created } = jobs.enqueue({ kind: 'network', brand: netBrand, site: siteOf(netBrand), by: scope.by(body['by']), planFile: netPlan, network });
+          return send(res, created ? 202 : 200, { job, created });
+        }
         if (parts.length === 5 && req.method === 'POST' && parts[4] === 'draw') {
           const [, , drawBrand = '', drawPlan = ''] = parts.map(decodeURIComponent);
-          if (!BRAND.test(drawBrand) || !brands().includes(drawBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          scope.guard(drawBrand, true);
+          if (!brands().includes(drawBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const drawBody = await readJson(req);
-          const by = text(drawBody['by'], 80);
+          const by = scope.by(drawBody['by']);
           // The client the posters belong to (the name its channels are connected under); the website's own name when none is given.
-          const client = drawBody['client'] === undefined ? drawBrand : text(drawBody['client'], 63);
+          const client = caller.role === 'product' || drawBody['client'] === undefined ? drawBrand : text(drawBody['client'], 63);
           if (!CLIENT_NAME.test(client)) throw new ReviewError('INVALID', 'client must be lowercase letters, digits and dashes');
           const batch = new CopyStage(join(root, drawBrand), drawBrand).get(drawPlan);
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
@@ -284,8 +385,18 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const { job, created } = jobs.enqueue({ kind: 'draw', brand: drawBrand, site: drawSite, by, planFile: drawPlan, ...(retry ? { retry: true } : {}) });
           return send(res, created ? 202 : 200, { job, created });
         }
+        // Runs the checks of an edit on words that are not saved: nothing changes, and it works after a draw too.
+        if (parts.length === 6 && req.method === 'POST' && verb === 'check') {
+          scope.guard(brand, true);
+          if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const body = await readJson(req);
+          const facts = (await loadFacts(join(root, brand)))?.facts ?? [];
+          checkCopyWords({ brandDir: join(root, brand), planFile, postId, ...(typeof body['headline'] === 'string' ? { headline: body['headline'] } : {}), ...(typeof body['caption'] === 'string' ? { caption: body['caption'] } : {}), ...(typeof body['network'] === 'string' ? { network: body['network'] } : {}), facts });
+          return send(res, 200, { ok: true });
+        }
         if (parts.length === 6 && req.method === 'PUT' && verb === 'edit') {
-          if (!BRAND.test(brand) || !brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          scope.guard(brand, true);
+          if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const body = await readJson(req);
           refuseIfDrawAsked(brand, planFile);
           const brandDir = join(root, brand);
@@ -296,23 +407,36 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const brandName = typeof body['brandName'] === 'string' ? body['brandName'] : undefined;
           const domain = typeof body['domain'] === 'string' ? body['domain'] : undefined;
           const signoffDefaults = signoffDefaultsOf(brand);
-          return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), ...(brandName !== undefined ? { brandName } : {}), ...(domain !== undefined ? { domain } : {}), ...(signoffDefaults ? { signoffDefaults } : {}), by: text(body['by'], 80), facts }) });
+          return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), ...(brandName !== undefined ? { brandName } : {}), ...(domain !== undefined ? { domain } : {}), ...(signoffDefaults ? { signoffDefaults } : {}), by: scope.by(body['by']), facts }) });
         }
         return send(res, 404, { error: 'Not found' });
+      }
+      // What was put away because nobody decided in time (read only): a product sees its own brand's, staff see all.
+      if (parts[0] === 'review' && parts[1] === 'expiry' && parts.length === 2 && req.method === 'GET') {
+        const since = url.searchParams.get('since') ?? undefined;
+        return send(res, 200, { expired: readExpiry(root, { ...(caller.role === 'product' ? { brand: caller.brand } : {}), ...(since ? { since } : {}) }) });
       }
       // What is being made for each client's plans, for the dashboard's status panel. Read only.
       if (parts[0] === 'review' && parts[1] === 'campaigns' && parts.length === 2) {
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        if (caller.role === 'product') return send(res, 404, { error: 'Not found' });
         return send(res, 200, { campaigns: await listCampaigns(options.brandsRoot) });
       }
       // Approve a whole topic in one step: every network's picture of it that is waiting. Each is still its own decision, on its own exact version.
       if (parts[0] === 'review' && parts[1] === 'topics' && parts.length === 6 && parts[5] === 'approve' && req.method === 'POST') {
         const [, , topicBrand = '', topicPlan = '', topicPost = ''] = parts.map(decodeURIComponent);
-        if (!BRAND.test(topicBrand) || !brands().includes(topicBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
-        const by = text((await readJson(req))['by'], 80);
+        scope.guard(topicBrand, true);
+        if (!brands().includes(topicBrand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+        const by = scope.by((await readJson(req))['by']);
         const topicStore = storeFor(topicBrand);
-        const waiting = topicStore.list().filter((i) => i.status === 'pending' && i.version.postId === topicPost && i.version.planFile === topicPlan);
-        if (waiting.length === 0) throw new ReviewError('NOT_FOUND', 'nothing is waiting for approval for that topic');
+        const ofTopic = topicStore.list().filter((i) => i.version.postId === topicPost && i.version.planFile === topicPlan);
+        const waiting = ofTopic.filter((i) => i.status === 'pending');
+        if (waiting.length === 0) {
+          // A repeated request (a double click) gets the same answer as the first, never an error and never a second decision.
+          const already = ofTopic.filter((i) => i.status === 'approved');
+          if (already.length === 0) throw new ReviewError('NOT_FOUND', 'nothing is waiting for approval for that topic');
+          return send(res, 200, { decisions: already.map((i) => ({ versionId: i.version.versionId, network: i.version.network ?? null, status: i.status })), already: true });
+        }
         const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
         return send(res, 200, { decisions });
       }
@@ -324,7 +448,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (!(STATUSES as readonly string[]).includes(status)) return send(res, 400, { error: `status must be one of ${STATUSES.join(', ')}` });
         // A brand whose log is damaged is reported, never silently left out: an owner must not be told "nothing is waiting" when the record is broken.
         const problems: Array<{ brand: string; message: string }> = [];
-        const items = brands().flatMap((brand) => {
+        const items = scope.visible(brands()).flatMap((brand) => {
           try {
             const all = storeFor(brand).list();
             return status === 'all' ? all : status === 'open' ? all.filter((i) => i.status === 'pending' || i.status === 'held') : all.filter((i) => i.status === status);
@@ -336,15 +460,18 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             throw error;
           }
         });
-        return send(res, 200, { posts: items.sort((a, b) => b.version.createdAt.localeCompare(a.version.createdAt)).map(summary), problems, reasons: REJECTION_REASONS });
+        const jobsOf = new Map<string, Job[]>();
+        const redrawOf = (i: ReviewItem) => redrawFor(i, jobsOf.get(i.version.brand) ?? (jobsOf.set(i.version.brand, jobs.list({ brand: i.version.brand })), jobsOf.get(i.version.brand) as Job[]));
+        return send(res, 200, { posts: items.sort((a, b) => b.version.createdAt.localeCompare(a.version.createdAt)).map((i) => summary(i, redrawOf(i))), problems, reasons: REJECTION_REASONS });
       }
 
       const versionId = decodeURIComponent(parts[2] ?? '');
       const action = parts[3];
+      scope.guard(versionId.split('.')[0] ?? '', action === 'approve' || action === 'reject' || action === 'redraw' || action === 'words');
       const store = storeOf(versionId);
       if (parts.length === 3 && req.method === 'GET') {
         const item = store.get(versionId);
-        return send(res, 200, { ...item, history: store.history(item.version.postId, item.version.network ?? '').map(summary) });
+        return send(res, 200, { ...item, ...redrawFor(item, jobs.list({ brand: item.version.brand })), history: store.history(item.version.postId, item.version.network ?? '').map((h) => summary(h)) });
       }
       if (parts.length === 4 && action === 'image' && req.method === 'GET') {
         const bytes = store.previewBytes(versionId);
@@ -364,9 +491,41 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': bytes.length, 'Content-Disposition': `attachment; filename="${version.postId}-v${version.versionNumber}.jpg"`, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' });
         return void res.end(bytes);
       }
+      // New words for a picture that was already drawn: the same picture with a new caption, for its own network, checked like any edit and approved again.
+      // The headline is on the picture, so it cannot change here (that is a new picture).
+      if (parts.length === 4 && action === 'words' && req.method === 'POST') {
+        const body = await readJson(req);
+        if (body['headline'] !== undefined) throw new ReviewError('INVALID', 'the headline is printed on the picture; a new headline needs a new picture');
+        if (typeof body['caption'] !== 'string') throw new ReviewError('INVALID', 'caption must be text');
+        const item = store.get(versionId);
+        const v = item.version;
+        const facts = (await loadFacts(join(root, v.brand)))?.facts ?? [];
+        const { caption } = checkNewWords({ caption: body['caption'], wasHeadline: v.headline, wasCaption: v.caption, ...(v.network && isNetwork(v.network) ? { network: v.network } : {}), factIds: v.factIds, facts });
+        // The hashtags the version already carries stay; only the words change.
+        const { hashtags } = splitTrailingHashtags(v.caption);
+        const created = store.addCaptionVersion(versionId, composeVariant({ caption, hashtags }), scope.by(body['by']));
+        const made = store.get(created.versionId);
+        return send(res, 200, { version: summary(made, redrawFor(made, jobs.list({ brand: v.brand }))) });
+      }
+      // Another picture for one network of a post: only the newest, not approved, and only as many times as the allowance says. Every picture still waits for approval.
+      if (parts.length === 4 && action === 'redraw' && req.method === 'POST') {
+        const body = await readJson(req);
+        const item = store.get(versionId);
+        const v = item.version;
+        if (item.status === 'approved') throw new ReviewError('CONFLICT', 'this poster is approved: withdraw it first, then it can be drawn again');
+        if (item.status === 'superseded') throw new ReviewError('STALE', 'a newer picture of this post exists');
+        const spec = { kind: 'redraw' as const, brand: v.brand, site: siteOf(v.brand), by: scope.by(body['by']), planFile: v.planFile, postId: v.postId, ...(v.network ? { network: v.network } : {}) };
+        const earlier = jobs.list({ brand: v.brand }).filter((j) => j.key === keyOf(spec));
+        const active = earlier.find((j) => j.state === 'queued' || j.state === 'running');
+        if (active) return send(res, 200, { job: active, created: false });
+        if (earlier.filter(countsAgainstCap).length >= redrawCap) throw new ReviewError('LIMIT', 'this poster has already been drawn again as many times as is allowed');
+        const { job, created } = jobs.enqueue(spec);
+        return send(res, created ? 202 : 200, { job, created });
+      }
       if (parts.length === 4 && (action === 'approve' || action === 'reject') && req.method === 'POST') {
         const body = await readJson(req);
-        const by = text(body['by'], 80);
+        const by = scope.by(body['by']);
+        if (action === 'reject' && text(body['reason'], 40) === 'expired') throw new ReviewError('INVALID', 'that reason is only recorded by the system');
         const decision = action === 'approve' ? store.approve(versionId, by) : store.reject(versionId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
         return send(res, 200, { decision, status: store.get(versionId).status });
       }
@@ -375,6 +534,21 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       fail(res, error);
     }
   });
+  // Nobody decided in time: look now and then, with no one acting. Only product-owned brands are ever touched.
+  if (expiryDays > 0) {
+    const sweep = (): void => {
+      try {
+        sweepExpired({ brandsRoot: root, owners, now: new Date(), days: expiryDays, ...(options.lockTimeoutMs ? { lockTimeoutMs: options.lockTimeoutMs } : {}) });
+      } catch (error) {
+        console.error(`expiry sweep failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    const timer = setInterval(sweep, options.sweepEveryMs ?? 3_600_000);
+    timer.unref();
+    server.on('listening', sweep);
+    server.on('close', () => clearInterval(timer));
+  }
+  return server;
 }
 
 if (import.meta.main) {
@@ -391,7 +565,12 @@ if (import.meta.main) {
   }
   process.on('exit', releaseService);
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => process.exit(0));
-  const server = createReviewServer({ brandsRoot, secret });
+  // REVIEW_PRODUCT_SECRETS="brandbasket:<secret>,other:<secret>": each product's own secret (at least 16 characters).
+  const products = (process.env['REVIEW_PRODUCT_SECRETS'] ?? '').split(',').map((entry) => entry.trim()).filter((entry) => entry !== '').map((entry) => {
+    const at = entry.indexOf(':');
+    return { id: entry.slice(0, at), secret: entry.slice(at + 1) };
+  });
+  const server = createReviewServer({ brandsRoot, secret, products });
   const port = Number(process.env['PORT'] ?? 4012);
   const host = process.env['HOST'] ?? '127.0.0.1';
   server.listen(port, host, () => console.log(`review service listening on http://${host}:${port}`));

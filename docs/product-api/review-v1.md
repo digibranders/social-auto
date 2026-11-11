@@ -1,0 +1,56 @@
+# Review service v1: what a product builds its screens on
+
+Status: draft for the owner's review, built locally and not deployed. The shapes below are held by `scheduler/engine/src/review-v1-contract.test.ts`; real responses are in `review-v1-examples.json` (regenerate with `REVIEW_V1_EXAMPLES=<file> node --test src/review-v1-contract.test.ts`).
+
+## Who is calling
+
+Every request from a product sends:
+
+| Header | Value |
+| --- | --- |
+| `Authorization` | `Bearer <the product's own secret>` (`REVIEW_PRODUCT_SECRETS="brandbasket:<secret>"` on the service) |
+| `X-Brand` | the brand this request is for, chosen by the product (`bb-<workspaceId>`), never taken from the website |
+| `X-Actor` | who is deciding, `<productId>:<endUserId>`; recorded as the approver, and any `by` in a body is ignored |
+
+A product sees only its `X-Brand`. Any other brand answers `404`. Staff keep read-only access to product brands; every change from the staff secret answers `403 {code:"FORBIDDEN"}`.
+
+## Errors
+
+`{ "error": "<plain sentence>", "code": "<CODE>" }` with: `400 INVALID`, `403 FORBIDDEN`, `404 NOT_FOUND`, `409 STALE | ALREADY_DECIDED | NOT_APPROVED | BLOCKED | CONFLICT | LIMIT | ALREADY_DRAWN | CLOSED`, `422 REJECTED`, `503 LOCKED` (busy, try again). Messages are written for the owner today; a customer-safe wording layer is piece 6.
+
+## Calls
+
+| Call | Purpose |
+| --- | --- |
+| `POST /review/jobs` `{kind:"copy", site, brand, networks, weeks?, postsPerWeek?, days?, startDate?, time?, page?}` | read the website and write posts for the chosen networks. The first call claims `brand` for the product (409 `CONFLICT` if the name is taken). Answers `202 {job, created}`. |
+| `GET /review/jobs`, `GET /review/jobs/<id>` | progress (`state` queued/running/succeeded/failed, `step` 1 to 4, `error:{code,message}`) |
+| `GET /review/brands/<brand>/facts` | the facts found on the site: `{brand, builtAt, mode, profile, facts[{factId,text,sourceUrl,sourceQuote,state,held,heldReason?}], counts}` |
+| `POST /review/brands/<brand>/facts/<factId>/confirm\|remove\|restore` | answers the updated facts view; a held fact cannot be confirmed |
+| `GET /review/copy` | the written posts waiting for a decision: `{batches[{brand, planFile, createdAt, networks[], posts[{postId, headline, caption, captions{<network>:{text, edited?, fallback?}}, state, contentHash, edited?, advice?}], signoffDefault?}], networkRules}` |
+| `POST /review/copy/<brand>/<planFile>/<postId>/keep\|drop` | the headline and words approval, per post |
+| `POST /review/copy/<brand>/<planFile>/<postId>/check` `{headline?, caption?, network?}` | runs the checks of an edit (length, writing, and the claim gate against the post's facts) on words that are not saved, and changes nothing. Works after a draw. `200 {ok:true}` or `422 {code:"REJECTED"}` with the reason. |
+| `PUT /review/copy/<brand>/<planFile>/<postId>/edit` `{headline, caption, network?, brandName?, domain?}` | change words; checked against the site's facts |
+| `POST /review/copy/<brand>/<planFile>/networks` `{network}` | add a network to a written batch (waiting or already drawn), from the same topics and with no new website read. A **job** (`kind:"network"`, answer `202 {job, created}`; a second click while it runs returns `200` with the same job), because the captions are written with the AI key that only the job runner holds. For each topic (the kept ones once drawn, the ones not dropped while waiting) it writes the network's caption with the writer's own claim gate and the network's length limit, and stores it in the plan and the copy list; a caption that could not pass is replaced by the main caption adapted to the network and marked `fallback:true` with a fixed `reasonCode` (`WORDS_REFUSED`, `TOO_LONG`, `NO_FACTS` or `NO_CAPTION`, never free text); it is never skipped, so `outcome` is always `written`, and the customer can change the words. The batch's release record gains the network. For a drawn topic: a picture of the network's own shape that is approved or waiting (square for instagram, facebook and google; wide for linkedin) is reused as a new **pending** version for the network (same bytes, no draw, cost 0, `versionIds`); a topic with no such picture gets `drawJobId` of a `kind:"newnet"` job that draws one picture for that network (it does not use the redraw allowance). Nothing already approved changes; the new versions need approving. `GET /review/jobs/<id>` carries `result:{network, topics:[{postId, outcome:"written", fallback?, reasonCode?, versionIds?, drawJobId?}]}` once it succeeds. Errors: `400 INVALID` (unknown network), `409 CONFLICT` (the batch already has it), `409 CLOSED` (put away or expired), `404`, `403` for staff on a product brand. About $0.002 per topic for text, plus about $0.017 for each picture that has to be drawn. |
+| `POST /review/copy/<brand>/<planFile>/close` | put the batch away |
+| `POST /review/copy/<brand>/<planFile>/draw` `{retry?}` | draw the kept posts, once per batch (retry only after a failed draw). Words and choices are final from then on. |
+| `GET /review/posts?status=pending\|approved\|...` | the pictures: `{posts[{versionId, postId, planFile, network, shape, width, height, headline, caption, imageSha256, versionNumber, status, ...}], problems, reasons}` |
+| `GET /review/posts/<versionId>`, `/image`, `/logo`, `/download` (approved only) | one picture with its history and evidence |
+| `POST /review/posts/<versionId>/approve`, `/reject` `{reason, comment?}` | per picture; both give the same answer when repeated. A new version replaces only its own network's older one (`superseded`, `409 STALE` on approve). Reject also withdraws an approval; whether it has already been released is not checked yet (piece 8). |
+| `POST /review/posts/<versionId>/words` `{caption}` | new words for a drawn picture: a new **pending** version of the same picture (same bytes, no draw, no cost) with the new caption, for that version's network only; the hashtags it carries stay, a typed closing run of #tags is not added twice. The older version becomes `superseded` (an approval of it stops being in force; the release pass drops that network until the new version is approved) and the other networks of the post are untouched. Answers `200 {version:{...summary, status:"pending"}}`. `422 REJECTED` for words that fail the checks; `400 INVALID` if `headline` is sent (it is printed on the picture, so a new headline needs a new picture); `409 CONFLICT` for the same words, `409 BLOCKED` for a blocked picture, `409 STALE` for a superseded one; `404` for another brand; `403` for staff on a product brand. |
+| `POST /review/posts/<versionId>/redraw` | draw one more picture for that version's network only (the other networks of the post keep theirs). Allowed for the newest picture while it is pending, rejected, blocked or held, never while approved (withdraw first). One redraw per poster by default; a try that bought nothing does not use it. Answers `202 {job, created}`; a second click while it waits answers `200` with the same job; beyond the allowance `409 {code:"LIMIT"}`. The new picture arrives as a new pending version. Each poster in the list and in a picture's detail carries `canRedraw` and `redrawsLeft`. |
+| `GET /review/expiry?since=<iso>` | what was put away because nobody decided in time: `{expired[{at, brand, kind:"batch"\|"poster", planFile, postId?, network?, versionId?}]}` for the caller's brand, oldest first. For product-owned brands only, 14 days after creation: an undrawn written batch is closed and a waiting picture is rejected with `reason:"expired"` by `system:expiry`. Decided posters (approved or rejected) are left alone. The service looks hourly; the customer notice is the product's to send. "expired" cannot be chosen by a caller. |
+| `POST /review/topics/<brand>/<planFile>/<postId>/approve` | approve every network's waiting picture of one topic; a repeated call answers `200` with the same decisions and `already:true` |
+
+## Sign-off on the picture
+
+For every brand a poster carries the headline and the web address only: the brand's name is not drawn by default (the brand's real logo, when it has one, is a separate step and is unaffected). `signoffDefault` in the copy list says so for every brand: `{"brandName":"","domain":"<site address>"}`, so a screen shows an empty name box and the real address. A name typed for one post (`brandName` in the edit call, before drawing) is drawn on that post; an empty name is the default again, and clearing the address leaves that line off.
+
+## Release
+
+Approved pictures of a product-owned brand are released by the same pass as our own clients' (the campaign runner's release pass, hourly, only while publishing is switched on). Asking for a draw writes the release record under the customer's brand name (`client` in the body is ignored for products), so each approved network's picture and caption go out under that brand, to the networks they were written for. A tested sequence: nothing approved, nothing scheduled; approve the topic, both networks are scheduled; withdraw one picture, it leaves the schedule at the next pass and the other stays; withdraw both, nothing is scheduled.
+
+The review service does not know when the publisher has already sent a post, so it cannot refuse a withdrawal after that point. For a post already in the publisher's schedule or sent, the product layer decides from the publisher's own state (skip the planned post).
+
+## Not in v1 yet
+
+Customer-safe wording for errors and for blocked or held posters (the service gives `status` blocked or held and `canRedraw`; the wording is the product's), and the manual-only approval lock (the approval-mode switch lives in the publisher and the vps session's work, not in this branch).

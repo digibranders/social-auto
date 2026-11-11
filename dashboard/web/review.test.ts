@@ -67,7 +67,7 @@ test('a real logo is never said to be on a poster unless the record says it was 
   const found = brandingView(parseBranding(record()) as never);
   assert.equal(found.headline, 'Real logo found, not applied');
   assert.equal(found.tone, 'note');
-  assert.deepEqual(found.rows[0], ['On this poster', 'The brand name and web address, written as text']);
+  assert.deepEqual(found.rows[0], ['On this poster', 'The web address (and a brand name only if one was typed), written as text']);
   assert.ok(found.rows.some(([label, value]) => label === 'Found on' && value === 'https://acme.test/'));
   assert.ok(found.rows.some(([label, value]) => label === 'Logo found' && value === 'Full logo, 400 × 100'));
   const placement = { corner: 'top-right', treatment: 'halo', contrast: 12.5 };

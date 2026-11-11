@@ -140,8 +140,9 @@ export function observedPeople(readings: readonly CreativeReview[]): { observed:
   return any ? { observed: 'background', description: any.people.description } : { observed: 'none', description: '' };
 }
 
+/** A poster's sign-off is the web address; the brand's name is drawn only when one was typed for that post (an empty one leaves the line off). */
 export const manifestOf = (post: PlannedPost, brand: Brand, logo?: CreativeRunInput['logo']): TextManifest => ({
-  headline: plainHeadline(post.headline), brandName: post.signoff?.brandName ?? brand.name, domain: post.signoff?.domain ?? displayDomain(brand.website),
+  headline: plainHeadline(post.headline), brandName: post.signoff?.brandName ?? '', domain: post.signoff?.domain ?? displayDomain(brand.website),
   // A full logo carries the name, so the name is not drawn beside it; a symbol alone does not, so the name stays.
   ...(logo?.kind === 'wordmark' ? { brandSignoff: 'logo' as const } : {}),
 });
