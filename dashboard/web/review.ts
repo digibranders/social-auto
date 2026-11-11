@@ -221,12 +221,15 @@ export const STOPPED_VISIBLE_MS = 60 * 60 * 1000;
 
 /**
  * The jobs worth showing now: the ones in progress, then the ones that just finished. Older finished jobs are history and are left out. A finished job
- * with no end time (an older record) is not shown.
+ * with no end time (an older record) is not shown, and neither is a stop that a later try of the same work has replaced.
  */
 export function visibleJobs(jobs: readonly JobView[], now: number): JobView[] {
   const recent = (job: JobView): boolean => job.finishedAt !== undefined && now - job.finishedAt >= 0 && now - job.finishedAt <= (job.state === 'failed' ? STOPPED_VISIBLE_MS : DONE_VISIBLE_MS);
+  // A stop that a later try of the same work has since replaced (the same kind, client and plan, done or still going) is no longer news.
+  const replaced = (job: JobView): boolean =>
+    job.state === 'failed' && jobs.some((other) => other !== job && other.kind === job.kind && other.brand === job.brand && other.planFile === job.planFile && other.state !== 'failed' && (jobActive(other) || (other.finishedAt ?? 0) > (job.finishedAt ?? 0)));
   const active = jobs.filter(jobActive);
-  const finished = jobs.filter((j) => !jobActive(j) && recent(j)).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+  const finished = jobs.filter((j) => !jobActive(j) && recent(j) && !replaced(j)).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
   return [...active, ...finished];
 }
 

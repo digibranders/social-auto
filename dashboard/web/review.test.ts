@@ -180,7 +180,7 @@ test('the box shows what is in progress, then what just finished, and no older h
     job('new-done', 'succeeded', 60_000),
     job('running', 'running'),
     job('queued', 'queued'),
-    job('stopped-recently', 'failed', 30 * 60 * 1000),
+    { ...job('stopped-recently', 'failed', 30 * 60 * 1000), brand: 'other' },
     job('stopped-long-ago', 'failed', STOPPED_VISIBLE_MS + 1000),
     job('done-no-time', 'succeeded'),
     job('newest-done', 'succeeded', 1000),
@@ -196,4 +196,20 @@ test('a job\'s end time is read when the service gives one', () => {
   ] });
   assert.equal(done?.finishedAt, Date.parse('2026-11-11T11:00:00.000Z'));
   assert.equal(running?.finishedAt, undefined);
+});
+
+test('a stop that a later try has replaced is not shown, but one nothing replaced is', () => {
+  const now = Date.parse('2026-11-11T12:00:00Z');
+  const draw = (id: string, brand: string, planFile: string, state: JobView['state'], finishedAgoMs?: number): JobView => ({ id, kind: 'draw', brand, site: 'https://x.com', state, planFile, ...(finishedAgoMs !== undefined ? { finishedAt: now - finishedAgoMs } : {}) });
+  const jobs = [
+    draw('stopped-then-done', 'acme', 'week-02.json', 'failed', 17 * 60_000),
+    draw('done-after', 'acme', 'week-02.json', 'succeeded', 15 * 60_000 - 60_000),
+    draw('stopped-then-running', 'beta', 'week-01.json', 'failed', 10 * 60_000),
+    draw('running-after', 'beta', 'week-01.json', 'running'),
+    draw('stopped-alone', 'gamma', 'week-03.json', 'failed', 5 * 60_000),
+    draw('stopped-other-plan', 'acme', 'week-09.json', 'failed', 4 * 60_000),
+    draw('done-earlier', 'delta', 'week-01.json', 'succeeded', 20 * 60_000),
+    draw('stopped-later', 'delta', 'week-01.json', 'failed', 3 * 60_000),
+  ];
+  assert.deepEqual(visibleJobs(jobs, now).map((j) => j.id), ['running-after', 'stopped-later', 'stopped-other-plan', 'stopped-alone', 'done-after']);
 });
