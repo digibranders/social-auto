@@ -499,3 +499,75 @@ test('the release tells the owner about a poster close to its time that is still
     r.done();
   }
 });
+
+const carouselPlan = { platforms: ['instagram', 'linkedin'], startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, carousel: true };
+
+test('a plan with a weekly carousel makes its single posters first, then each carousel on its own day with its own command, tied to the plan\'s platforms', async () => {
+  const r = root();
+  try {
+    const calls: string[][] = [];
+    let week = 0;
+    const exec: RunnerDeps['exec'] = async (args) => {
+      calls.push(args);
+      mkdirSync(join(r.dir, 'oyechats'), { recursive: true });
+      week += 1;
+      writeFileSync(join(r.dir, 'oyechats', `week-0${week}.json`), '{}');
+      return { code: 0, tail: 'done' };
+    };
+    const [made] = await makeCampaigns([client({ plan: carouselPlan, spendCapUsd: 20 })], r.dir, deps({ exec }));
+    assert.deepEqual(calls.map((c) => c[0]), ['src/autopilot.ts', 'src/carousel-cli.ts', 'src/carousel-cli.ts']);
+    assert.equal(calls[0]?.[calls[0].indexOf('--days') + 1], '4', 'four single posters, Friday is left to the carousel');
+    assert.equal(calls[0]?.[calls[0].indexOf('--weekdays') + 1], 'mon,wed');
+    assert.deepEqual(calls.slice(1).map((c) => c[c.indexOf('--start') + 1]), ['2026-11-13', '2026-11-20']);
+    assert.deepEqual(calls[1]?.slice(-2), ['--month-cap-usd', '20']);
+    assert.deepEqual(made?.batches.map((b) => [b.kind ?? 'posters', b.dates.length, b.weekFile]), [['posters', 4, 'week-01.json'], ['carousel', 1, 'week-02.json'], ['carousel', 1, 'week-03.json']]);
+    assert.equal(made?.status, 'awaiting_approval');
+    const listed = (await listCampaigns(r.dir))[0];
+    assert.deepEqual(listed?.batches.map((b) => b.kind), [undefined, 'carousel', 'carousel']);
+  } finally {
+    r.done();
+  }
+});
+
+test('a carousel day that has already passed is not made, a carousel that could not be made fails alone, and a spending stop ends the plan\'s remaining days', async () => {
+  const r = root();
+  try {
+    const calls: string[][] = [];
+    const exec: RunnerDeps['exec'] = async (args) => { calls.push(args); return args[0] === 'src/carousel-cli.ts' ? { code: 1, tail: 'CAROUSEL_NOT_MADE: slide 2 was rejected' } : { code: 0, tail: 'done' }; };
+    const late = { now: () => new Date('2026-11-14T12:00:00Z') };
+    const [made] = await makeCampaigns([client({ plan: carouselPlan })], r.dir, deps({ exec, ...late }));
+    assert.deepEqual(calls.filter((c) => c[0] === 'src/carousel-cli.ts').map((c) => c[c.indexOf('--start') + 1]), ['2026-11-20'], '13 November has passed');
+    assert.equal(made?.batches.find((b) => b.kind === 'carousel')?.status, 'failed');
+    assert.match(made?.batches.find((b) => b.kind === 'carousel')?.tail ?? '', /slide 2 was rejected/);
+    assert.equal(made?.status, 'partial');
+
+    const stopped: string[][] = [];
+    const spend: RunnerDeps['exec'] = async (args) => { stopped.push(args); return args[0] === 'src/carousel-cli.ts' ? { code: 1, tail: 'BUDGET_EXHAUSTED: slide 1 was budget_stopped' } : { code: 0, tail: 'done' }; };
+    const [second] = await makeCampaigns([client({ plan: { ...carouselPlan, startDate: '2026-11-16' } })], r.dir, deps({ exec: spend }));
+    assert.equal(stopped.filter((c) => c[0] === 'src/carousel-cli.ts').length, 1);
+    assert.ok((second?.batches.filter((b) => b.status === 'failed').length ?? 0) >= 1);
+  } finally {
+    r.done();
+  }
+});
+
+test('automatic approval never approves a carousel: its slides and captions wait for the owner as a whole', () => {
+  const r = root();
+  try {
+    const brandDir = join(r.dir, 'oyechats');
+    mkdirSync(brandDir, { recursive: true });
+    writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify({ posts: [{ id: 'car1', date: '2099-11-20T10:00:00+05:30' }, { id: 'p1', date: '2099-11-18T10:00:00+05:30' }] }));
+    const store = new ReviewStore(brandDir, 'oyechats');
+    const base = { planFile: 'week-01.json', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.01 };
+    const picture = join(r.dir, 'p.jpg');
+    writeFileSync(picture, 'picture');
+    for (const n of [1, 2]) store.addVersion({ ...base, postId: `car1-s${n}`, headline: `Slide ${n}`, caption: '', imagePath: picture, carousel: { id: 'car1', position: n, count: 2 } });
+    store.addVersion({ ...base, postId: 'car1', network: 'instagram', headline: 'Topic', caption: 'Caption', imagePath: picture, carousel: { id: 'car1', position: 0, count: 2 } });
+    store.addVersion({ ...base, postId: 'p1', headline: 'A poster', caption: 'Words', imagePath: picture });
+    const result = autoApprove(brandDir, 'oyechats', ['week-01.json'], new Date('2026-11-05T12:00:00Z'));
+    assert.deepEqual(result, { approved: 1, left: 3 });
+    assert.equal(store.carouselStatus('car1'), 'pending');
+  } finally {
+    r.done();
+  }
+});

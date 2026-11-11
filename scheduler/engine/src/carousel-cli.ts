@@ -74,13 +74,15 @@ async function main(): Promise<void> {
   });
   console.log(ai.usage.format());
   if (result.status !== 'queued') {
-    console.error(`CAROUSEL_NOT_MADE: ${result.reason ?? result.status}`);
+    const reason = result.reason ?? result.status;
+    // A spending stop is reported the way the autopilot reports one, so a client's plan stops trying more days that would be refused the same way.
+    console.error(/POSTER_BUDGET|RUN_BUDGET|BRAND_DAY_BUDGET|BRAND_MONTH_BUDGET|GLOBAL_DAY_BUDGET|KILL_SWITCH/.test(reason) ? `BUDGET_EXHAUSTED: ${reason}. Nothing more was bought; what was already made is kept.` : `CAROUSEL_NOT_MADE: ${reason}`);
     process.exitCode = 1;
   }
 }
 
 main().catch((error: unknown) => {
-  if (error instanceof BudgetError) console.error(`${error.code}: ${error.message}`);
+  if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
   else console.error(`CAROUSEL_FAILED: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 });
