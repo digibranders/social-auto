@@ -4,6 +4,7 @@ import { connectedPlatforms, planPayload, planSentence } from '../shared/posting
 import { planFields } from './add-client.ts';
 import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
 import { AUTO_WARNING, SPEND_CAP_DEFAULT_USD, spentThisMonth, websiteHost, type ClientSummary } from './clients.ts';
+import { analyticsPage, type AnalyticsContext } from './analytics-page.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { postChannelId } from './new-post.ts';
@@ -11,7 +12,7 @@ import { stateLabel } from './calendar.ts';
 import type { ClientTab, GuideKey, Route } from './route.ts';
 import { brandMark, button, channelName, h, icon, statusMark, type ChannelKind } from './ui.ts';
 
-export interface ClientsContext {
+export interface ClientsContext extends AnalyticsContext {
   go(route: Route): void;
   openCalendar(brand: string): void;
   /** One upcoming post as a card; opens its window when clicked. */
@@ -58,7 +59,7 @@ export const pauseIdOf = (channel: ChannelHealth): string | null => channel.id ?
 const KINDS: readonly ChannelKind[] = ['facebook', 'instagram', 'google', 'linkedin'];
 const GUIDE_FOR: Record<ChannelKind, GuideKey> = { facebook: 'facebook', instagram: 'instagram', google: 'google', linkedin: 'linkedin' };
 const UPCOMING_SHOWN = 14;
-const TAB_LABELS: Record<ClientTab, string> = { channels: 'Channels', posts: 'Next posts', cost: 'Cost' };
+const TAB_LABELS: Record<ClientTab, string> = { channels: 'Channels', posts: 'Next posts', cost: 'Cost', analytics: 'Analytics' };
 
 export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTMLElement {
   const paused = ctx.allPaused();
@@ -428,7 +429,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
   const tabs = h(
     'div',
     { class: 'ctabs', role: 'tablist' },
-    ...(['channels', 'posts', 'cost'] as const).map((key) =>
+    ...(['channels', 'posts', 'cost', 'analytics'] as const).map((key) =>
       button(TAB_LABELS[key], `ctab${key === tab ? ' ctab-on' : ''}`, () => ctx.go({ page: 'client', brand: client.brand, tab: key })),
     ),
   );
@@ -465,7 +466,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     client.added ? plansCard(client, ctx) : null,
     client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
-    tab === 'channels' ? channels : tab === 'posts' ? posts : costPage(client, ctx),
+    tab === 'channels' ? channels : tab === 'posts' ? posts : tab === 'analytics' ? analyticsPage(client, ctx) : costPage(client, ctx),
   );
 }
 

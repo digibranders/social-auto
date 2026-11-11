@@ -1,4 +1,5 @@
 import { NO_BRAND_SETTINGS, parseBrandSettings, type BrandSettings } from './brands.js';
+import { EMPTY_ANALYTICS, parseAnalytics, type AnalyticsFile } from './analytics.js';
 import { EMPTY_OUTBOX, parseOutbox, type Outbox } from './outbox.js';
 import { NO_ALERTS, parseAlertLog, type AlertLog } from './missed.js';
 import { NO_PAUSES, parsePauses, type PauseFile } from './pauses.js';
@@ -227,4 +228,17 @@ export async function loadAlerts(): Promise<{ log: AlertLog; etag: string | null
 
 export function saveAlerts(log: AlertLog, etag: string | null): Promise<void> {
   return writeJson(ALERTS_PATH, log, etag);
+}
+
+const ANALYTICS_PATH = 'analytics.json';
+
+/** The numbers kept from the networks (lib/analytics.ts). */
+export async function loadAnalytics(): Promise<{ file: AnalyticsFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: EMPTY_ANALYTICS, etag: null };
+  const { value, etag } = await readJson(ANALYTICS_PATH);
+  return { file: value === null ? EMPTY_ANALYTICS : parseAnalytics(value), etag };
+}
+
+export function saveAnalytics(file: AnalyticsFile, etag: string | null): Promise<void> {
+  return writeJson(ANALYTICS_PATH, file, etag);
 }

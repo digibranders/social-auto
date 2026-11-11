@@ -8,6 +8,7 @@ export const routes: Record<string, { method: string | string[]; load: () => Pro
   '/api/auth/login': { method: 'POST', load: () => import('../api/auth/[step].js').then((m) => m.POST) },
   '/api/auth/logout': { method: 'POST', load: () => import('../api/auth/[step].js').then((m) => m.POST as Handler) },
   '/api/data': { method: 'GET', load: () => import('../api/data.js').then((m) => m.GET) },
+  '/api/analytics': { method: 'GET', load: () => import('../api/analytics.js').then((m) => m.GET) },
   '/api/facebook-start': { method: 'GET', load: () => import('../api/_connect/facebook-start.js').then((m) => m.GET as Handler) },
   '/api/facebook-callback': { method: 'GET', load: () => import('../api/_connect/facebook-callback.js').then((m) => m.GET) },
   '/api/instagram-start': { method: 'GET', load: () => import('../api/_connect/instagram-start.js').then((m) => m.GET as Handler) },
