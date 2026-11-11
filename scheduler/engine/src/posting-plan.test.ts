@@ -126,3 +126,63 @@ test('a plan may name the exact account for each platform; anything else about a
   assert.throws(() => parsePostingPlan({ ...base, channelIds: ['google:1'] }, { now: new Date(0) }), /not one of this plan's platforms/);
   assert.throws(() => parsePostingPlan({ ...base, channelIds: ['nonsense'] }, { now: new Date(0) }), /valid account id/);
 });
+
+import { carouselArgsFor, carouselWeekday, planCarouselDates, planSingleDates } from './posting-plan.ts';
+
+const weekly = (over: Record<string, unknown> = {}): PostingPlan => plan({ startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, carousel: true, ...over });
+
+test('a weekly carousel takes the last posting weekday of each week, so it replaces one post and the others stay as they were', () => {
+  const p = weekly();
+  assert.equal(carouselWeekday(p), 'fri');
+  assert.deepEqual(planDates(p), ['2026-11-09', '2026-11-11', '2026-11-13', '2026-11-16', '2026-11-18', '2026-11-20']);
+  assert.deepEqual(planCarouselDates(p), ['2026-11-13', '2026-11-20']);
+  assert.deepEqual(planSingleDates(p), ['2026-11-09', '2026-11-11', '2026-11-16', '2026-11-18']);
+  assert.equal(planPostCount(p), 6, 'a carousel counts as one post, so the plan\'s count and the weekly limit are unchanged');
+  assert.deepEqual(planPostCount(weekly({ carousel: undefined })), 6);
+  assert.deepEqual(planCarouselDates(weekly({ carousel: undefined })), []);
+  assert.equal(weekly({ carousel: undefined }).carousel, undefined);
+});
+
+test('exact weekdays work the same way, a window that ends mid-week keeps its short week, and a plan with every day uses Sunday', () => {
+  const p = weekly({ postsPerWeek: undefined, weekdays: ['tue', 'thu'], startDate: '2026-11-10', durationDays: 8 });
+  assert.equal(carouselWeekday(p), 'thu');
+  assert.deepEqual(planCarouselDates(p), ['2026-11-12']);
+  assert.deepEqual(planSingleDates(p), ['2026-11-10', '2026-11-17']);
+  const all = weekly({ postsPerWeek: undefined });
+  assert.equal(carouselWeekday(all), 'sun');
+});
+
+test('batches of single posters skip the carousel days, and the autopilot is asked for exactly those days', () => {
+  const p = weekly({ startDate: '2026-11-09', durationDays: 31 });
+  const singles = planSingleDates(p);
+  assert.ok(singles.every((d) => !planCarouselDates(p).includes(d)));
+  const batches = planBatches(p);
+  assert.deepEqual(batches.flatMap((b) => b.dates), singles);
+  const args = autopilotArgsFor(p, 'acme.com', batches[0] as never);
+  assert.equal(args[args.indexOf('--days') + 1], String(batches[0]?.dates.length));
+  assert.equal(args[args.indexOf('--weekdays') + 1], 'mon,wed', 'Friday is left to the carousel');
+});
+
+test('a weekly carousel needs more than one day and at least two posting days a week, and says so', () => {
+  assert.throws(() => weekly({ durationDays: 1 }), /more than one day/);
+  assert.throws(() => weekly({ postsPerWeek: 1 }), /at least two posting days/);
+  assert.throws(() => weekly({ postsPerWeek: undefined, weekdays: ['mon'] }), /at least two posting days/);
+  assert.throws(() => weekly({ carousel: 'yes' }), /carousel must be true or false/);
+  assert.equal(weekly({ carousel: false }).carousel, undefined);
+});
+
+test('the cost counts a carousel for what it costs, and the summary and the id tell a carousel plan from the same plan without one', () => {
+  const without = weekly({ carousel: undefined });
+  const withIt = weekly();
+  assert.ok(planCost(withIt).high > planCost(without).high - 1, 'a carousel is dearer than a single poster, never free');
+  assert.notEqual(planCost(withIt).low, planCost(without).low);
+  assert.match(planSummary(withIt), /2 of them a carousel/);
+  assert.doesNotMatch(planSummary(without), /carousel/);
+  assert.notEqual(planId('acme.com', withIt), planId('acme.com', without));
+});
+
+test('the carousel is made by its own command for its own day, with the plan\'s channels, time and the client\'s limits', () => {
+  const p = weekly({ platforms: ['instagram', 'linkedin'] });
+  assert.deepEqual(carouselArgsFor(p, 'acme.com', '2026-11-13'), ['src/carousel-cli.ts', '--site', 'acme.com', '--networks', 'instagram,linkedin', '--start', '2026-11-13', '--time', '10:00', '--utc-offset', '+05:30']);
+  assert.deepEqual(carouselArgsFor(p, 'acme.com', '2026-11-13', { requireAuthenticLogo: true, monthCapUsd: 20 }).slice(-5), ['--utc-offset', '+05:30', '--require-logo', '--month-cap-usd', '20']);
+});

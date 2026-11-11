@@ -51,6 +51,8 @@ export interface ClientPlan {
   weekdays?: string[];
   time: string;
   utcOffset: string;
+  /** A weekly carousel: each week one posting day (the last posting weekday) is a carousel instead of a single poster; it replaces a post and never adds one. */
+  carousel?: true;
 }
 
 const isRealDate = (date: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(date) && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
@@ -113,6 +115,15 @@ export function parseClientPlan(raw: unknown, now: number, options: { allowPast?
     const n = r['postsPerWeek'];
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 7) throw new EditError('posts per week must be from 1 to 7');
     plan.postsPerWeek = n;
+  }
+  if (r['carousel'] !== undefined) {
+    if (typeof r['carousel'] !== 'boolean') throw new EditError('carousel must be true or false');
+    if (r['carousel']) {
+      if (durationDays < 2) throw new EditError('a weekly carousel needs a plan of more than one day');
+      const perWeek = plan.weekdays ? plan.weekdays.length : plan.postsPerWeek ?? 7;
+      if (perWeek < 2) throw new EditError('a weekly carousel needs at least two posting days a week, so it replaces one post and does not take the only one');
+      plan.carousel = true;
+    }
   }
   return plan;
 }

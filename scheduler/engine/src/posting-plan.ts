@@ -5,7 +5,7 @@
  * here, in code, so the form, the runner and the tests all agree. Nothing here talks to a platform: a plan only says what is wanted.
  */
 import { createHash } from 'node:crypto';
-import { parseWeekdays, weekdayOf, weekdaysForPostsPerWeek, type Weekday } from './cadence.ts';
+import { parseWeekdays, WEEKDAYS, weekdayOf, weekdaysForPostsPerWeek, type Weekday } from './cadence.ts';
 
 export const PLAN_PLATFORMS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 export type PlanPlatform = (typeof PLAN_PLATFORMS)[number];
@@ -14,6 +14,8 @@ export type PlanPlatform = (typeof PLAN_PLATFORMS)[number];
 export const MAX_PLAN_DAYS = 31;
 /** Posters made in one run: a long plan is made in several runs, each within its own spending limits. */
 export const POSTERS_PER_RUN = 8;
+/** Rough dollars for one carousel (three to five slides, each drawn and read, with the planning and the captions), low and high. */
+export const CAROUSEL_COST_USD = { low: 0.09, high: 0.3 } as const;
 /** Rough dollars for one poster, low and high, with its writing, review and one possible retry; used only to show the owner what to expect. */
 export const POSTER_COST_USD = { low: 0.02, high: 0.06 } as const;
 
@@ -32,6 +34,8 @@ export interface PostingPlan {
   /** HH:MM local time of the post, and its UTC offset. */
   time: string;
   utcOffset: string;
+  /** A weekly carousel: each week one posting day (the last posting weekday) is a carousel instead of a single poster. It replaces a post and never adds one. */
+  carousel?: true;
 }
 
 export class PlanError extends Error {
@@ -100,6 +104,15 @@ export function parsePostingPlan(raw: unknown, options: { now?: Date } = {}): Po
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 1 || n > 7) throw new PlanError('posts per week must be a whole number from 1 to 7');
     plan.postsPerWeek = n;
   }
+  if (r['carousel'] !== undefined) {
+    if (typeof r['carousel'] !== 'boolean') throw new PlanError('carousel must be true or false');
+    if (r['carousel']) {
+      if (durationDays < 2) throw new PlanError('a weekly carousel needs a plan of more than one day');
+      const perWeek = plan.weekdays ? plan.weekdays.length : plan.postsPerWeek ?? 7;
+      if (perWeek < 2) throw new PlanError('a weekly carousel needs at least two posting days a week, so it replaces one post and does not take the only one');
+      plan.carousel = true;
+    }
+  }
   return plan;
 }
 
@@ -117,10 +130,33 @@ export function planDates(plan: PostingPlan): string[] {
 
 export const planPostCount = (plan: PostingPlan): number => planDates(plan).length;
 
+/**
+ * The weekday a weekly carousel takes: the last posting weekday of the pattern (a plan with no pattern posts every day, so Sunday). A whole weekday is taken, so the days
+ * left for single posters are still a plain weekday pattern, which is what the autopilot is asked for. Null when the plan has no carousel.
+ */
+export function carouselWeekday(plan: PostingPlan): Weekday | null {
+  if (!plan.carousel) return null;
+  const pattern = plan.weekdays ? new Set<Weekday>(plan.weekdays) : plan.postsPerWeek ? new Set<Weekday>(weekdaysForPostsPerWeek(plan.postsPerWeek)) : new Set<Weekday>(WEEKDAYS);
+  return [...WEEKDAYS].reverse().find((d) => pattern.has(d)) ?? null;
+}
+
+/** The posting days that are a carousel (a carousel counts as one post, like any posting day). */
+export function planCarouselDates(plan: PostingPlan): string[] {
+  const weekday = carouselWeekday(plan);
+  return weekday ? planDates(plan).filter((d) => weekdayOf(d) === weekday) : [];
+}
+
+/** The posting days that are single posters: every posting day that is not a carousel day. */
+export function planSingleDates(plan: PostingPlan): string[] {
+  const carousel = new Set(planCarouselDates(plan));
+  return planDates(plan).filter((d) => !carousel.has(d));
+}
+
 /** What to expect, in dollars, for the whole plan. Shown before anything starts; the spending limits are what actually protect the owner. */
 export function planCost(plan: PostingPlan): { low: number; high: number } {
-  const n = planPostCount(plan);
-  return { low: Math.round(n * POSTER_COST_USD.low * 100) / 100, high: Math.round((n * POSTER_COST_USD.high + 0.02) * 100) / 100 };
+  const n = planSingleDates(plan).length;
+  const c = planCarouselDates(plan).length;
+  return { low: Math.round((n * POSTER_COST_USD.low + c * CAROUSEL_COST_USD.low) * 100) / 100, high: Math.round((n * POSTER_COST_USD.high + c * CAROUSEL_COST_USD.high + 0.02) * 100) / 100 };
 }
 
 /** A short, stable id of a plan for one website: the same plan for the same site is the same campaign, so it is never started twice. */
@@ -134,9 +170,9 @@ export interface PlanBatch {
   dates: string[];
 }
 
-/** The plan's dates in runs of at most POSTERS_PER_RUN, so a month is made in a few runs, each within its own spending limits. */
+/** The plan's single-poster days in runs of at most POSTERS_PER_RUN, so a month is made in a few runs, each within its own spending limits. A carousel day is made on its own (carouselArgsFor). */
 export function planBatches(plan: PostingPlan, size: number = POSTERS_PER_RUN): PlanBatch[] {
-  const dates = planDates(plan);
+  const dates = planSingleDates(plan);
   const out: PlanBatch[] = [];
   for (let i = 0; i < dates.length; i += size) out.push({ index: out.length, dates: dates.slice(i, i + size) });
   return out;
@@ -158,11 +194,20 @@ export function autopilotArgsFor(plan: PostingPlan, site: string, batch: PlanBat
   return args;
 }
 
+/** The command that makes the carousel of one day of the plan (carousel-cli.ts): it writes the captions, draws the slides and queues the carousel for the owner's review; nothing is scheduled or published. */
+export function carouselArgsFor(plan: PostingPlan, site: string, date: string, options: { requireAuthenticLogo?: boolean; monthCapUsd?: number } = {}): string[] {
+  const args = ['src/carousel-cli.ts', '--site', site, '--networks', plan.platforms.join(','), '--start', date, '--time', plan.time, '--utc-offset', plan.utcOffset];
+  if (options.requireAuthenticLogo) args.push('--require-logo');
+  if (options.monthCapUsd !== undefined) args.push('--month-cap-usd', String(options.monthCapUsd));
+  return args;
+}
+
 /** A plain-language line for the dashboard: "3 posts: Mon 9 Nov, Wed 11 Nov, Fri 13 Nov on Instagram and Facebook". */
 export function planSummary(plan: PostingPlan): string {
   const dates = planDates(plan);
   const names: Record<PlanPlatform, string> = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', google: 'Google Business' };
   const where = plan.platforms.map((p) => names[p]);
   const list = where.length > 1 ? `${where.slice(0, -1).join(', ')} and ${where.at(-1)}` : (where[0] ?? '');
-  return `${dates.length} post${dates.length === 1 ? '' : 's'} on ${list}, ${dates.length === 1 ? dates[0] : `${dates[0]} to ${dates.at(-1)}`}`;
+  const carousels = planCarouselDates(plan).length;
+  return `${dates.length} post${dates.length === 1 ? '' : 's'}${carousels > 0 ? ` (${carousels} of them a carousel)` : ''} on ${list}, ${dates.length === 1 ? dates[0] : `${dates[0]} to ${dates.at(-1)}`}`;
 }

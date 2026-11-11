@@ -17,7 +17,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { slugFromSite } from './analyze.ts';
-import { autopilotArgsFor, parsePostingPlan, planBatches, planId, todayAt, type PostingPlan } from './posting-plan.ts';
+import { autopilotArgsFor, parsePostingPlan, planBatches, planId, todayAt, type PostingPlan , carouselArgsFor, planCarouselDates } from './posting-plan.ts';
 import { exportToPublisher } from './export-publisher.ts';
 import { ReviewError, ReviewStore } from './review-store.ts';
 import { checkLeadTime, type LeadTimeNotice } from './lead-time.ts';
@@ -31,6 +31,8 @@ export type CampaignStatus = 'queued' | 'running' | 'awaiting_approval' | 'parti
 export interface BatchState {
   index: number;
   dates: string[];
+  /** A carousel batch is one carousel for its one day, made by carousel-cli.ts; a batch without a kind is single posters made by the autopilot. */
+  kind?: 'carousel';
   status: BatchStatus;
   startedAt?: string;
   finishedAt?: string;
@@ -173,9 +175,12 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
     const today = todayAt(plan.utcOffset, deps.now?.() ?? new Date());
     let state = await readState(file);
     if (!state) {
-      const batches = planBatches(plan).map((b) => ({ index: b.index, dates: b.dates.filter((d) => d >= today) })).filter((b) => b.dates.length > 0);
+      const singles = planBatches(plan).map((b) => ({ index: b.index, dates: b.dates.filter((d) => d >= today) })).filter((b) => b.dates.length > 0);
+      // Each carousel day of a plan with a weekly carousel is its own batch, made after the single posters.
+      const carousels = planCarouselDates(plan).filter((d) => d >= today).map((date, n) => ({ index: singles.length + n, dates: [date], kind: 'carousel' as const }));
+      const batches: Array<{ index: number; dates: string[]; kind?: 'carousel' }> = [...singles, ...carousels];
       if (batches.length === 0) { log(`${client.brand}: every day of the plan has already passed; nothing to make`); continue; }
-      state = { id, brand: client.brand, siteBrand, site, plan, status: 'queued', batches: batches.map((b) => ({ index: b.index, dates: b.dates, status: 'pending' as const })), createdAt: stamp(deps), updatedAt: stamp(deps) };
+      state = { id, brand: client.brand, siteBrand, site, plan, status: 'queued', batches: batches.map((b) => ({ index: b.index, dates: b.dates, ...(b.kind ? { kind: b.kind } : {}), status: 'pending' as const })), createdAt: stamp(deps), updatedAt: stamp(deps) };
       await writeState(file, state);
     }
     // A batch left running by a process that is gone may have spent money: it is not repeated by itself.
@@ -189,7 +194,7 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
       state.status = 'running';
       state.updatedAt = stamp(deps);
       await writeState(file, state);
-      log(`${client.brand}: making ${batch.dates.length} poster${batch.dates.length === 1 ? '' : 's'} for ${batch.dates[0]}${batch.dates.length > 1 ? ` to ${batch.dates.at(-1)}` : ''}`);
+      log(batch.kind === 'carousel' ? `${client.brand}: making the carousel for ${batch.dates[0]}` : `${client.brand}: making ${batch.dates.length} poster${batch.dates.length === 1 ? '' : 's'} for ${batch.dates[0]}${batch.dates.length > 1 ? ` to ${batch.dates.at(-1)}` : ''}`);
       let outcome: { code: number; tail: string };
       const before = await weekFiles(join(brandsRoot, siteBrand));
       // What the run says as it goes is written to the record, so the dashboard can show what is being made. Writes are spaced out (and a change of step
@@ -211,7 +216,8 @@ export async function makeCampaigns(clients: readonly PlannedClient[], brandsRoo
         writing = writing.then(() => writeState(file, state)).catch(() => undefined);
       };
       try {
-        outcome = await deps.exec(autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, { requireAuthenticLogo: client.requireAuthenticLogo === true, ...(client.spendCapUsd !== undefined ? { monthCapUsd: client.spendCapUsd } : {}) }), onLine);
+        const limits = { requireAuthenticLogo: client.requireAuthenticLogo === true, ...(client.spendCapUsd !== undefined ? { monthCapUsd: client.spendCapUsd } : {}) };
+        outcome = await deps.exec(batch.kind === 'carousel' ? carouselArgsFor(plan, site, batch.dates[0] as string, limits) : autopilotArgsFor(plan, site, { index: batch.index, dates: batch.dates }, limits), onLine);
         await writing;
       } catch (error) {
         await writing;
@@ -277,7 +283,7 @@ export interface CampaignSummary {
   release?: { state: 'off' } | { state: 'on'; posts: number } | { state: 'failed'; reason: string };
   /** Where the owner has got to with this plan's posters: how many are approved, still waiting for a decision, or turned down. Missing when it cannot be read. */
   review?: { approved: number; pending: number; rejected: number };
-  batches: Array<{ index: number; dates: string[]; status: BatchStatus; stage?: BatchStage; stoppedAt?: BatchStage; detail?: string; drawn?: number; queued?: number; startedAt?: string; finishedAt?: string; failure?: string; note?: string }>;
+  batches: Array<{ index: number; dates: string[]; kind?: 'carousel'; status: BatchStatus; stage?: BatchStage; stoppedAt?: BatchStage; detail?: string; drawn?: number; queued?: number; startedAt?: string; finishedAt?: string; failure?: string; note?: string }>;
 }
 
 /** The last line of a failed run's output, cut short: enough to say why, with no room for anything long. */
@@ -312,7 +318,7 @@ export async function listCampaigns(brandsRoot: string): Promise<CampaignSummary
         ...(state.releaseNote?.startsWith('release failed') ? { release: { state: 'failed' as const, reason: state.releaseNote.replace(/^release failed:\s*/, '').slice(0, 240) } } : state.released ? { release: { state: 'on' as const, posts: state.released.posts } } : state.releaseNote ? { release: { state: 'off' as const } } : {}),
         ...reviewCounts(join(brandsRoot, site), site, state),
         batches: state.batches.map((b) => ({
-          index: b.index, dates: b.dates, status: b.status,
+          index: b.index, dates: b.dates, status: b.status, ...(b.kind ? { kind: b.kind } : {}),
           ...(b.stage ? { stage: b.stage } : {}), ...(b.stoppedAt ? { stoppedAt: b.stoppedAt } : {}), ...(b.detail ? { detail: b.detail } : {}), ...(typeof b.drawn === 'number' ? { drawn: b.drawn } : {}), ...(typeof b.queued === 'number' ? { queued: b.queued } : {}),
           ...(b.startedAt ? { startedAt: b.startedAt } : {}), ...(b.finishedAt ? { finishedAt: b.finishedAt } : {}),
           ...(b.status === 'failed' || b.status === 'interrupted' ? { failure: failureOf(b.tail) ?? b.note } : {}),
@@ -331,7 +337,7 @@ export const AUTO_APPROVER = 'auto-checks';
 /**
  * Approves the waiting posters of a client that is on automatic approval. Only a version that is still pending is approved: one the checks blocked, a person
  * rejected or a newer version replaced is left alone, and so is a poster whose time has already passed (it would only be missed). The version approved is
- * the exact one the checks passed; the approval is hash-bound like a person's. Returns how many were approved and how many were left.
+ * the exact one the checks passed; the approval is hash-bound like a person's. A carousel is never approved here. Returns how many were approved and how many were left.
  */
 export function autoApprove(brandDir: string, site: string, weekFiles: readonly string[], now: Date, log: (m: string) => void = () => undefined): { approved: number; left: number } {
   const wanted = new Set(weekFiles);
@@ -354,6 +360,8 @@ export function autoApprove(brandDir: string, site: string, weekFiles: readonly 
   let left = 0;
   for (const item of store.list({ status: 'pending' })) {
     if (!wanted.has(basename(item.version.planFile))) continue;
+    // A carousel is always approved by the owner, as a whole, in Review: the system's checks never approve one, not even for a client on automatic approval.
+    if (item.version.carousel) { left += 1; continue; }
     const at = dateOf(item.version.planFile, item.version.postId);
     if (at === undefined || !Number.isFinite(at) || at <= now.getTime()) { left += 1; continue; }
     try {
