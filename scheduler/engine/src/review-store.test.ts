@@ -283,3 +283,121 @@ test('a version made without a network behaves exactly as before, and a bad netw
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---- Carousels
+
+const slide = (picture: (n: string, t: string) => string, n: number, over: Partial<NewVersion> = {}): NewVersion =>
+  input(picture(`s${n}.jpg`, `slide ${n}`), { postId: `car1-s${n}`, headline: `Slide ${n}`, caption: '', factIds: ['f1'], carousel: { id: 'car1', position: n, count: 3 }, ...over });
+const captionFor = (picture: (n: string, t: string) => string, network: string): NewVersion =>
+  input(picture('cover.jpg', 'slide 1'), { postId: 'car1', network, headline: 'Choosing a curry', caption: `A caption for ${network}`, carousel: { id: 'car1', position: 0, count: 3 } });
+
+function carousel(store: ReviewStore, picture: (n: string, t: string) => string, networks: string[] = ['instagram', 'linkedin']): void {
+  for (const n of [1, 2, 3]) store.addVersion(slide(picture, n));
+  for (const network of networks) store.addVersion(captionFor(picture, network));
+}
+
+test('a carousel is stored as slides and captions that know their group', () => {
+  const { store, picture, done } = setup();
+  try {
+    carousel(store, picture);
+    const found = store.carouselSlides('car1');
+    assert.equal(found.count, 3);
+    assert.deepEqual(found.slides.map((s) => s?.version.postId), ['car1-s1', 'car1-s2', 'car1-s3']);
+    assert.deepEqual(found.captions.map((c) => c.version.network).sort(), ['instagram', 'linkedin']);
+    assert.equal(store.isCarousel('car1'), true);
+    assert.equal(store.isCarousel('w01-d1'), false);
+    assert.equal(store.list().length, 5);
+  } finally {
+    done();
+  }
+});
+
+test('one approval covers every slide and every caption, and then the carousel can be posted', () => {
+  const { store, picture, done } = setup();
+  try {
+    carousel(store, picture);
+    assert.equal(code(() => store.approvedCarousel('car1')), 'NOT_APPROVED');
+    store.approveCarousel('car1', 'owner');
+    assert.ok(store.list().every((i) => i.status === 'approved'));
+    const ready = store.approvedCarousel('car1');
+    assert.deepEqual(ready.slides.map((s) => s.version.headline), ['Slide 1', 'Slide 2', 'Slide 3']);
+    assert.deepEqual(ready.captions.map((c) => c.version.network).sort(), ['instagram', 'linkedin']);
+    assert.equal(ready.slides[0]?.bytes.toString(), 'slide 1');
+    store.approveCarousel('car1', 'owner');
+    assert.equal(store.list().length, 5, 'approving again changes nothing');
+  } finally {
+    done();
+  }
+});
+
+test('nothing is approved unless the whole carousel can be: a missing slide, a blocked slide or no caption stops it', () => {
+  const { store, picture, done } = setup();
+  try {
+    store.addVersion(slide(picture, 1));
+    store.addVersion(slide(picture, 3));
+    store.addVersion(captionFor(picture, 'instagram'));
+    assert.equal(code(() => store.approveCarousel('car1', 'owner')), 'INVALID', 'slide 2 is missing');
+    store.addVersion(slide(picture, 2, { validation: { accepted: false, readings: 2, defects: ['extra text'], reportFile: 'r.json' } }));
+    assert.equal(code(() => store.approveCarousel('car1', 'owner')), 'BLOCKED');
+    assert.ok(store.list().every((i) => i.status !== 'approved'), 'no slide was approved on the way');
+
+    const second = setup();
+    try {
+      for (const n of [1, 2, 3]) second.store.addVersion(slide(second.picture, n));
+      assert.equal(code(() => second.store.approveCarousel('car1', 'owner')), 'INVALID', 'no caption was written');
+      assert.ok(second.store.list().every((i) => i.status === 'pending'));
+    } finally {
+      second.done();
+    }
+  } finally {
+    done();
+  }
+});
+
+test('a slide redrawn after approval makes the carousel wait for a new approval, and the old slide is not posted', () => {
+  const { store, picture, done } = setup();
+  try {
+    carousel(store, picture);
+    store.approveCarousel('car1', 'owner');
+    const redrawn = store.addVersion(slide(picture, 2, { headline: 'Slide 2 again' }));
+    assert.equal(code(() => store.approvedCarousel('car1')), 'NOT_APPROVED');
+    assert.equal(store.get(redrawn.versionId).status, 'pending');
+    store.approveCarousel('car1', 'owner');
+    assert.equal(store.approvedCarousel('car1').slides[1]?.version.headline, 'Slide 2 again');
+  } finally {
+    done();
+  }
+});
+
+test('rejecting a carousel withdraws every slide and caption, and a rejected slide blocks approval', () => {
+  const { store, picture, done } = setup();
+  try {
+    carousel(store, picture);
+    store.rejectCarousel('car1', 'owner', 'style', 'not our look');
+    assert.ok(store.list().every((i) => i.status === 'rejected'));
+    assert.equal(code(() => store.approveCarousel('car1', 'owner')), 'ALREADY_DECIDED');
+    const other = setup();
+    try {
+      carousel(other.store, other.picture);
+      other.store.reject(other.store.carouselSlides('car1').slides[1]?.version.versionId ?? '', 'owner', 'poor_design');
+      assert.equal(code(() => other.store.approveCarousel('car1', 'owner')), 'ALREADY_DECIDED');
+    } finally {
+      other.done();
+    }
+  } finally {
+    done();
+  }
+});
+
+test('a slide picture that changed after approval stops the carousel from being posted', () => {
+  const { dir, store, picture, done } = setup();
+  try {
+    carousel(store, picture);
+    store.approveCarousel('car1', 'owner');
+    const file = store.carouselSlides('car1').slides[0]?.version.imageFile ?? '';
+    writeFileSync(join(dir, 'brand', file), 'swapped');
+    assert.equal(code(() => store.approvedCarousel('car1')), 'TAMPERED');
+  } finally {
+    done();
+  }
+});
