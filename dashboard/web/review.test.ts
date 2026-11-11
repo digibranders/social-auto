@@ -313,3 +313,14 @@ test('a carousel as the service shows it is kept only where it is well formed', 
   assert.equal(parseCarousel(null), null);
   assert.equal(parseCarousel({ id: 'car1', count: 3, status: 'weird', slides: [], captions: [] }), null);
 });
+
+test('a carousel job is kept and described in its own words', () => {
+  const base = { id: 'job-abc123-12345678', brand: 'acme', site: 'https://acme.example.com', state: 'running', finishedAt: undefined };
+  const [job] = parseJobs({ jobs: [{ ...base, kind: 'carousel', step: 3 }] });
+  assert.equal(job?.kind, 'carousel');
+  assert.equal(jobText(job as never), 'Making a carousel for https://acme.example.com: drawing the slides');
+  assert.equal(jobText({ ...(job as object), state: 'queued' } as never), 'Making a carousel for https://acme.example.com: waiting for its turn');
+  assert.equal(jobText({ ...(job as object), state: 'succeeded' } as never), 'Making a carousel for https://acme.example.com: done, the carousel is waiting for you in the list below');
+  assert.match(jobText({ ...(job as object), state: 'failed', error: 'slide 2 was rejected' } as never), /stopped\. slide 2 was rejected\. Nothing was published\.$/);
+  assert.equal(parseJobs({ jobs: [{ ...base, kind: 'banana' }] }).length, 0);
+});

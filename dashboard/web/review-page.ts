@@ -130,6 +130,21 @@ async function startWriting(redraw: () => void): Promise<void> {
   await loadJobs(redraw);
 }
 
+async function startCarousel(redraw: () => void): Promise<void> {
+  const form = state.start;
+  if (!looksLikeSite(form.site)) { state.error = 'Type the website address, like acme.com.'; redraw(); return; }
+  if (form.networks.length === 0) { state.error = 'Choose at least one network to write for.'; redraw(); return; }
+  const when = whenProblem(form.startDate, form.time, Date.now());
+  if (when) { state.error = when; redraw(); return; }
+  redraw();
+  const done = await post({ carousel_job: { site: form.site.trim(), networks: form.networks, time: form.time, ...(form.startDate ? { startDate: form.startDate } : {}) } }, 'The request could not be sent. Nothing was started.');
+  if (done.ok) {
+    state.notice = 'Started. The carousel is being planned from what the website states, then drawn; it appears in the list below for you to approve. Nothing is published until you approve it.';
+    state.start.site = '';
+  }
+  await loadJobs(redraw);
+}
+
 async function saveEdit(batch: CopyBatch, post_: CopyPost, network: string, words: { headline: string; caption: string; brandName?: string; domain?: string }, redraw: () => void): Promise<void> {
   const done = await post({ edit: { brand: batch.brand, planFile: batch.planFile, postId: post_.postId, headline: words.headline, caption: words.caption, ...(network ? { network } : {}), ...(words.brandName !== undefined ? { brandName: words.brandName } : {}), ...(words.domain !== undefined ? { domain: words.domain } : {}) } }, 'Your change could not be saved. Nothing changed.');
   if (done.ok) { state.editing = null; state.notice = 'Saved. The words were checked against the website.'; }
@@ -240,7 +255,9 @@ function startView(redraw: () => void): HTMLElement {
     h('div', { class: 'rv-actions' }, h('b', {}, 'Write for:'), ...networks),
     h('div', { class: 'rv-actions rv-when' }, h('label', { class: 'rv-check' }, 'First post on ', startDay), h('label', { class: 'rv-check' }, 'at ', startTime), h('small', { class: 'muted' }, 'India time. Leave the day empty and the next free day is used.')),
     h('div', { class: 'rv-actions rv-last' }, number('Weeks', form.weeks, 4, (n) => { form.weeks = n; }), number('Posts a week', form.postsPerWeek, 7, (n) => { form.postsPerWeek = n; }),
-      button(running ? 'Writing…' : 'Write the posts', 'btn btn-primary', () => void startWriting(redraw), 'Write the posts', state.busy)),
+      button(running ? 'Writing…' : 'Write the posts', 'btn btn-primary', () => void startWriting(redraw), 'Write the posts', state.busy),
+      button('Make a carousel', 'btn', () => void startCarousel(redraw), 'Make a carousel', state.busy)),
+    h('p', { class: 'muted rv-hint-carousel' }, 'A carousel is one post of 3 to 5 swipeable slides in one look, made from the facts of a website that has already been read. It uses the first post day and time above; you approve it in the list below before anything is published.'),
   );
 }
 
