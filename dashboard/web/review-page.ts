@@ -1,6 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
-import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import type { ClientSummary } from './clients.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -34,11 +35,13 @@ interface State {
   start: StartForm;
   /** The written post being edited, and which network's caption ('' is the main caption). */
   editing: { batch: string; postId: string; network: string; draft?: { headline: string; caption: string } } | null;
-  /** The client name each batch's pictures are released under; the site's own name until the owner changes it. */
+  /** The client each batch's pictures are drawn for, chosen from the clients list; the client named like the website until the owner picks another. */
   clientFor: Record<string, string>;
+  /** The clients, from the dashboard's data; null while it is still loading. */
+  clients: readonly ClientSummary[] | null;
 }
 
-const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2 }, editing: null, clientFor: {} };
+const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2 }, editing: null, clientFor: {}, clients: null };
 
 async function call(url: string, init?: RequestInit): Promise<{ ok: boolean; status: number; body: unknown }> {
   const response = await fetch(url, { credentials: 'same-origin', ...init });
@@ -118,7 +121,8 @@ async function saveEdit(batch: CopyBatch, post_: CopyPost, network: string, head
 }
 
 async function drawKept(batch: CopyBatch, redraw: () => void, retry = false): Promise<void> {
-  const client = state.clientFor[`${batch.brand}|${batch.planFile}`] ?? batch.brand;
+  const options = clientOptions(state.clients ?? [], batch.brand);
+  const client = chosenClient(options, state.clientFor[`${batch.brand}|${batch.planFile}`], batch.brand)?.value ?? batch.brand;
   const done = await post({ draw: { brand: batch.brand, planFile: batch.planFile, client, ...(retry ? { retry: true } : {}) } }, 'The request could not be sent. Nothing was started.');
   if (done.ok) state.notice = retry ? 'Drawing the missing posts again. Pictures already made are kept and not bought twice.' : 'Drawing started for the posts you kept. The pictures appear in the review list when they are ready; nothing is published until you approve them.';
   await Promise.all([loadJobs(redraw), loadCopy(redraw)]);
@@ -222,9 +226,12 @@ function copyView(redraw: () => void): HTMLElement | null {
       const drawJob = state.jobs.find((j) => j.kind === 'draw' && j.brand === batch.brand && j.planFile === batch.planFile);
       // Once drawing is asked for the choices and words are final.
       const locked = batch.drawnAt !== undefined || drawJob !== undefined;
-      const client = h('input', { class: 'rv-input', type: 'text', maxlength: '63', 'aria-label': 'Client name', value: state.clientFor[batchKey] ?? batch.brand });
-      client.value = state.clientFor[batchKey] ?? batch.brand;
-      client.addEventListener('input', () => { state.clientFor[batchKey] = client.value.trim().toLowerCase(); });
+      const options = state.clients === null ? [] : clientOptions(state.clients, batch.brand);
+      const chosen = chosenClient(options, state.clientFor[batchKey], batch.brand);
+      const client = h('select', { class: 'rv-input', 'aria-label': 'Client' }, ...options.map((o) => h('option', { value: o.value }, o.label)));
+      if (chosen) client.value = chosen.value;
+      client.disabled = locked || state.clients === null;
+      client.addEventListener('change', () => { state.clientFor[batchKey] = client.value; redraw(); });
       return h(
         'div',
         { class: 'rv-copy-batch' },
@@ -244,8 +251,9 @@ function copyView(redraw: () => void): HTMLElement | null {
         )),
         h('div', { class: 'rv-actions rv-draw' },
           h('span', {}, `${kept} kept${waiting > 0 ? `, ${waiting} still waiting for your choice (they will not be drawn)` : ''}`),
-          h('label', { class: 'rv-check' }, 'Client name ', client),
-          button(drawJob ? (jobActive(drawJob) ? 'Drawing…' : drawJob.state === 'failed' ? 'Drawing stopped' : 'Drawn') : `Draw the ${kept} kept post${kept === 1 ? '' : 's'}`, 'btn btn-primary', () => void drawKept(batch, redraw), `Draw the kept posts of ${batch.brand}`, state.busy || kept === 0 || drawJob !== undefined),
+          h('label', { class: 'rv-check' }, 'Client ', client),
+          h('p', { class: 'muted rv-client-detail' }, state.clients === null ? 'Loading your clients…' : chosen?.detail ?? ''),
+          button(drawJob ? (jobActive(drawJob) ? 'Drawing…' : drawJob.state === 'failed' ? 'Drawing stopped' : 'Drawn') : `Draw the ${kept} kept post${kept === 1 ? '' : 's'}`, 'btn btn-primary', () => void drawKept(batch, redraw), `Draw the kept posts of ${batch.brand}`, state.busy || kept === 0 || drawJob !== undefined || chosen === undefined),
           drawJob?.state === 'failed' ? button('Draw the posts that are missing', 'btn btn-primary', () => void drawKept(batch, redraw, true), `Draw again the kept posts of ${batch.brand} that have no picture`, state.busy) : null,
           button('Put this batch away', 'btn', () => void putAway(batch, redraw), `Put away: ${batch.brand} ${batch.planFile}`, state.busy),
         ),
@@ -399,7 +407,8 @@ function compareView(redraw: () => void): HTMLElement {
   );
 }
 
-export function reviewPage(redraw: () => void): HTMLElement {
+export function reviewPage(redraw: () => void, clients: readonly ClientSummary[] | null): HTMLElement {
+  state.clients = clients;
   // The page redraws itself now and then: a box the owner is typing in keeps its focus and cursor (found by its label in the new page).
   const typing = document.activeElement;
   const focused = (typing instanceof HTMLInputElement || typing instanceof HTMLTextAreaElement) && typing.closest('.rv') !== null && typing.getAttribute('aria-label') ? { label: typing.getAttribute('aria-label') as string, start: typing.selectionStart, end: typing.selectionEnd } : null;

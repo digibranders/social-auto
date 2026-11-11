@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, brandingView, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
 const good = { versionId: 'acme.0123456789abcdef', brand: 'acme', postId: 'w01-d1', versionNumber: 2, status: 'pending', headline: 'H', caption: 'C', createdAt: '2026-11-05T10:00:00Z', costUsd: 0.016 };
@@ -110,4 +111,36 @@ test('a website address is accepted with or without https and refused when it is
 test('the words of a caption are split from its closing hashtags so an edit does not add them twice', () => {
   assert.deepEqual(splitHashtags('Words.\n\nVisit acme.com\n\n#One #Two'), { body: 'Words.\n\nVisit acme.com', hashtags: '#One #Two' });
   assert.deepEqual(splitHashtags('No tags.'), { body: 'No tags.', hashtags: '' });
+});
+
+const clientNamed = (brand: string, over: Partial<ClientSummary> = {}): ClientSummary => ({
+  brand, label: brand, channels: [], postsLeft: 0, upcoming: [], pattern: null, problems: 0, missed: 0, queueLow: false, added: false, product: null, website: null,
+  paused: false, plans: [], weeklyLimit: 3, requireAuthenticLogo: false, approvalMode: 'manual', spendCapUsd: null, posts: [], costs: [], ...over,
+});
+const channel = (platform: 'instagram' | 'linkedin', account: string | null, ok = true): ClientSummary['channels'][number] => ({ id: account ? `${platform}:${account}` : null, platform, account, avatar: null, brands: [], paused: false, ok });
+
+test('a client with accounts says where its posts go; one without says so', () => {
+  assert.equal(accountsText(clientNamed('a')), 'no accounts connected');
+  assert.equal(accountsText(clientNamed('a', { channels: [channel('instagram', '@acme'), channel('linkedin', 'Acme Ltd', false)] })), 'Instagram: @acme, LinkedIn: Acme Ltd (has a problem)');
+});
+
+test('the client list offers the existing clients, and the website name as a new client only when it is not one of them', () => {
+  const clients = [clientNamed('zeta'), clientNamed('acme', { approvalMode: 'auto', channels: [channel('instagram', '@acme')] })];
+  const known = clientOptions(clients, 'acme');
+  assert.deepEqual(known.map((o) => o.value), ['acme', 'zeta']);
+  assert.match(known[0]?.detail ?? '', /Posts to Instagram: @acme\. Automatic: .*without you looking at them/);
+  assert.match(known[1]?.detail ?? '', /no accounts connected\. Manual: you approve each poster in Review/);
+
+  const fresh = clientOptions(clients, 'newsite');
+  assert.deepEqual(fresh.map((o) => o.value), ['newsite', 'acme', 'zeta']);
+  assert.equal(fresh[0]?.label, 'New client: newsite');
+  assert.match(fresh[0]?.detail ?? '', /not one of your clients yet, so it has no accounts connected/);
+});
+
+test('the shown client is the one picked if still offered, else the one named like the website, else the first', () => {
+  const options = clientOptions([clientNamed('acme'), clientNamed('zeta')], 'acme');
+  assert.equal(chosenClient(options, 'zeta', 'acme')?.value, 'zeta');
+  assert.equal(chosenClient(options, 'gone', 'acme')?.value, 'acme');
+  assert.equal(chosenClient(options, undefined, 'other')?.value, 'acme');
+  assert.equal(chosenClient([], undefined, 'acme'), undefined);
 });

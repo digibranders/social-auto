@@ -1,3 +1,5 @@
+import type { ClientSummary } from './clients.ts';
+
 /** What the review page shows, kept apart from the drawing so it can be tested: the labels, the filters and the wording of each state. */
 export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | 'superseded' | 'held';
 export type ReviewFilter = 'pending' | 'approved' | 'rejected';
@@ -242,4 +244,47 @@ export function splitHashtags(text: string): { body: string; hashtags: string } 
   const tags: string[] = [];
   while (paragraphs.length > 1 && ONLY_TAGS.test((paragraphs.at(-1) as string).trim())) tags.unshift((paragraphs.pop() as string).trim());
   return { body: paragraphs.join('\n\n').trim(), hashtags: tags.join(' ') };
+}
+
+/** One choice in the "which client" list under a written batch. */
+export interface ClientOption {
+  /** The client's name as the engine knows it. */
+  value: string;
+  label: string;
+  /** What choosing it means, in plain words: where posts will go and who approves them. */
+  detail: string;
+}
+
+const networkName = (platform: string): string => NETWORK_CHOICES.find((n) => n.key === platform)?.label ?? platform;
+
+/** The accounts a client posts to, e.g. "Instagram: @acme, LinkedIn: Acme Ltd (problem)". */
+export function accountsText(client: Pick<ClientSummary, 'channels'>): string {
+  const own = client.channels.filter((c) => c.id !== null || c.account !== null);
+  if (own.length === 0) return 'no accounts connected';
+  return own.map((c) => `${networkName(c.platform)}: ${c.account ?? 'connected'}${c.ok ? '' : ' (has a problem)'}`).join(', ');
+}
+
+/** What a client's approval mode means for a poster that was just drawn. */
+export const approvalText = (mode: ClientSummary['approvalMode']): string =>
+  mode === 'auto'
+    ? 'Automatic: posters that pass the automatic checks are approved by the system and published without you looking at them.'
+    : 'Manual: you approve each poster in Review before it can be published.';
+
+/**
+ * The clients a batch's posters can be drawn for. The existing clients come first; when the website's own name is not one of them it is offered
+ * first as a new client, which has no accounts yet. Nothing is typed, so a name cannot be mistyped into a different client.
+ */
+export function clientOptions(clients: readonly ClientSummary[], batchBrand: string): ClientOption[] {
+  const existing = [...clients].sort((a, b) => a.label.localeCompare(b.label)).map((c): ClientOption => ({
+    value: c.brand,
+    label: c.label,
+    detail: `Posts to ${accountsText(c)}. ${approvalText(c.approvalMode)}`,
+  }));
+  if (clients.some((c) => c.brand === batchBrand)) return existing;
+  return [{ value: batchBrand, label: `New client: ${batchBrand}`, detail: `${batchBrand} is not one of your clients yet, so it has no accounts connected. Connect accounts on the Clients page before anything can be published.` }, ...existing];
+}
+
+/** The choice to show: the one picked earlier if it is still on offer, else the client named like the website, else the first. */
+export function chosenClient(options: readonly ClientOption[], picked: string | undefined, batchBrand: string): ClientOption | undefined {
+  return options.find((o) => o.value === picked) ?? options.find((o) => o.value === batchBrand) ?? options[0];
 }
