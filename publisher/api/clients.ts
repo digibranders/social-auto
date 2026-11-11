@@ -9,15 +9,18 @@
  * POST /api/clients?action=set-approval-mode  body: {"brand": "brand-basket", "mode": "auto"}  ("manual": a person approves each poster; "auto": a poster that passes the automatic checks is approved by the system)
  * POST /api/clients?action=set-spend-cap  body: {"brand": "brand-basket", "cap": 5}  (what the AI may cost for the client in a calendar month, in dollars; null goes back to the default limit)
  * POST /api/clients?action=remove-plan  body: {"brand": "brand-basket", "index": 0}  (stops making posters for that plan)
+ * POST /api/clients?action=set-brands-default  body: {"value": 2}  (how many brands a product customer may have unless told otherwise, 1 to 4)
+ * POST /api/clients?action=set-brands-allowed  body: {"product": "brandbasket", "group": "<customer id>", "value": 3}  (one customer's own number, 1 to 4; null goes back to the default)
  * POST /api/clients?action=remove    body: {"brand": "brand-basket"}  (only an added client with no channels or extra posts)
  */
 import { scheduleData } from '../lib/schedule-source.js';
 import { channelsFor } from '../lib/channels.js';
-import { addClient, addPlan, isBrandSlug, removePlan, setApprovalMode, setRequireAuthenticLogo, setSpendCap, setWebsite, setWeeklyLimit } from '../lib/clients.js';
+import { addClient, addPlan, isBrandSlug, isExternalId, removePlan, workspacesInGroup, setApprovalMode, setRequireAuthenticLogo, setSpendCap, setWebsite, setWeeklyLimit } from '../lib/clients.js';
+import { BrandSettingsError, withDefaultBrands, withGroupBrands } from '../lib/brands.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
-import { loadChannels, loadClients, loadManual, saveClients, storeConfigured } from '../lib/store.js';
+import { loadBrandSettings, loadChannels, loadClients, loadManual, saveBrandSettings, saveClients, storeConfigured } from '../lib/store.js';
 
 const MAX_BODY_BYTES = 4 * 1024;
 
@@ -79,6 +82,25 @@ async function approvalMode(body: Record<string, unknown>): Promise<Response> {
   return json(200, { ok: true });
 }
 
+/** Who is recorded for a change: the dashboard has one login, so one fixed name. */
+const STAFF = 'owner';
+
+async function brandsDefault(body: Record<string, unknown>): Promise<Response> {
+  const { settings, etag } = await loadBrandSettings();
+  await saveBrandSettings(withDefaultBrands(settings, body['value'], STAFF, Date.now()), etag);
+  return json(200, { ok: true });
+}
+
+async function brandsAllowed(body: Record<string, unknown>): Promise<Response> {
+  const { product, group } = body;
+  if (typeof product !== 'string' || !/^[a-z][a-z0-9]{1,19}$/.test(product) || !isExternalId(group)) throw new EditError('unknown customer');
+  const { file } = await loadClients();
+  if (workspacesInGroup(file, product, group).length === 0) throw new EditError('no such customer', 404);
+  const { settings, etag } = await loadBrandSettings();
+  await saveBrandSettings(withGroupBrands(settings, product, group, body['value'] ?? null, STAFF, Date.now()), etag);
+  return json(200, { ok: true });
+}
+
 async function remove(body: Record<string, unknown>): Promise<Response> {
   const brand = body['brand'];
   if (!isBrandSlug(brand)) throw new EditError('unknown client');
@@ -107,10 +129,12 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'set-logo-required') return await logoRequired(body);
     if (action === 'set-approval-mode') return await approvalMode(body);
     if (action === 'set-spend-cap') return await spendCap(body);
+    if (action === 'set-brands-default') return await brandsDefault(body);
+    if (action === 'set-brands-allowed') return await brandsAllowed(body);
     if (action === 'remove') return await remove(body);
     return json(400, { error: 'unknown action' });
   } catch (error) {
-    if (error instanceof EditError) return json(error.status, { error: error.message });
+    if (error instanceof EditError || error instanceof BrandSettingsError) return json(error instanceof EditError ? error.status : 400, { error: error.message });
     console.error(describeError(error));
     return json(500, { error: 'could not save the change' });
   }

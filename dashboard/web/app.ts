@@ -1046,7 +1046,7 @@ async function saveWebsite(client: ClientSummary, website: string): Promise<stri
 }
 
 /** Sends one plan change for a client added in the dashboard; resolves to an explanation when it did not work. */
-async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required' | 'set-approval-mode' | 'set-spend-cap', body: Record<string, unknown>, done: string): Promise<string | null> {
+async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required' | 'set-approval-mode' | 'set-spend-cap' | 'set-brands-default' | 'set-brands-allowed', body: Record<string, unknown>, done: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/clients?action=${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (response.status === 401) {
@@ -1081,6 +1081,12 @@ const setSpendCap = (client: ClientSummary, cap: number | null): Promise<string 
   changePlans('set-spend-cap', { brand: client.brand, cap }, cap === null
     ? 'Saved: this client is back on the default monthly AI limit.'
     : `Saved: the AI may cost up to $${cap.toFixed(2)} a month for this client. Posters stop being made once it is reached.`);
+
+const setBrandsDefault = (value: number): Promise<string | null> =>
+  changePlans('set-brands-default', { value }, `Saved: a customer may have ${value} brand${value === 1 ? '' : 's'} unless set otherwise below. The app sees it at once.`);
+
+const setBrandsAllowed = (product: string, group: string, name: string, value: number | null): Promise<string | null> =>
+  changePlans('set-brands-allowed', { product, group, value }, value === null ? `Saved: ${name} is back on the default number of brands.` : `Saved: ${name} may have ${value} brand${value === 1 ? '' : 's'}. The app sees it at once.`);
 
 const removePlan = (client: ClientSummary, index: number): Promise<string | null> =>
   changePlans('remove-plan', { brand: client.brand, index }, 'Plan removed. Posters already made stay in Review; no more are made for it.');
@@ -1135,6 +1141,9 @@ const clientsContext: ClientsContext = {
   setLogoRequired,
   setApprovalMode,
   setSpendCap,
+  brands: () => state.data?.brands ?? null,
+  setBrandsDefault,
+  setBrandsAllowed,
   wantsPlanForm: (brand) => (planFormFor === brand ? ((planFormFor = null), true) : false),
   disconnect: (channel) => void disconnect(channel),
   allPaused: () => state.data?.pauses.all === true,

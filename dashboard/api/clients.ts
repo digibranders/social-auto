@@ -7,6 +7,8 @@
  * POST /api/clients?action=set-spend-cap  body: {"brand": "...", "cap": 5}   (what the AI may cost for the client in a calendar month, in dollars; null goes back to the default limit)
  * POST /api/clients?action=remove-plan  body: {"brand": "...", "index": 0}
  * POST /api/clients?action=set-website  body: {"brand": "...", "website": "..."}  (empty clears it)
+ * POST /api/clients?action=set-brands-default  body: {"value": 2}   (how many brands a product customer may have unless told otherwise, 1 to 4)
+ * POST /api/clients?action=set-brands-allowed  body: {"product": "...", "group": "...", "value": 3 | null}   (one customer's own number; null goes back to the default)
  * POST /api/clients?action=remove    body: {"brand": "..."}
  * Adds or removes a client in the dashboard. Signed-in people only, from this site's own pages only; the
  * publisher does the work through a secret the browser never sees.
@@ -14,7 +16,7 @@
 import { describeError, json } from '../lib/http.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
-const ACTIONS = ['add', 'set-website', 'add-plan', 'remove-plan', 'set-limit', 'set-logo-required', 'set-approval-mode', 'set-spend-cap', 'remove'] as const;
+const ACTIONS = ['add', 'set-website', 'add-plan', 'remove-plan', 'set-limit', 'set-logo-required', 'set-approval-mode', 'set-spend-cap', 'set-brands-default', 'set-brands-allowed', 'remove'] as const;
 const MAX_BODY_BYTES = 4 * 1024;
 const TIMEOUT_MS = 25_000;
 
