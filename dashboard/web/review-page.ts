@@ -154,7 +154,7 @@ function startView(redraw: () => void): HTMLElement {
     const select = h('select', { class: 'rv-input', 'aria-label': label }, ...Array.from({ length: max }, (_, i) => h('option', { value: String(i + 1) }, String(i + 1))));
     select.value = String(value);
     select.addEventListener('change', () => set(Number(select.value)));
-    return h('label', { class: 'rv-check' }, `${label} `, select);
+    return h('label', { class: 'rv-check rv-number' }, `${label} `, select);
   };
   const running = state.jobs.some((j) => j.kind === 'copy' && jobActive(j));
   return h(
@@ -165,7 +165,7 @@ function startView(redraw: () => void): HTMLElement {
     h('div', { class: 'rv-actions' }, site),
     h('div', { class: 'rv-actions' }, h('label', { class: 'rv-check', for: 'rv-page' }, onePage, ' Only this page (a new website only)')),
     h('div', { class: 'rv-actions' }, h('b', {}, 'Write for:'), ...networks),
-    h('div', { class: 'rv-actions' }, number('Weeks', form.weeks, 4, (n) => { form.weeks = n; }), number('Posts a week', form.postsPerWeek, 7, (n) => { form.postsPerWeek = n; }),
+    h('div', { class: 'rv-actions rv-last' }, number('Weeks', form.weeks, 4, (n) => { form.weeks = n; }), number('Posts a week', form.postsPerWeek, 7, (n) => { form.postsPerWeek = n; }),
       button(running ? 'Writing…' : 'Write the posts', 'btn btn-primary', () => void startWriting(redraw), 'Write the posts', state.busy)),
   );
 }
