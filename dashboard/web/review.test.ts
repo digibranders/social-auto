@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffView, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffView, visibleJobs, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -170,4 +170,30 @@ test('a poster\'s sign-off is the brand and website default unless the owner cha
   assert.deepEqual(signoffView(batch, { signoff: { domain: 'acme.com/pricing' } }), { brandName: 'Acme', domain: 'acme.com/pricing', changed: true });
   assert.deepEqual(signoffView(batch, { signoff: { brandName: 'Acme', domain: 'acme.com' } }), { brandName: 'Acme', domain: 'acme.com', changed: false });
   assert.equal(signoffView({}, {}), null, 'without the brand\'s name and website nothing is shown or editable');
+});
+
+test('the box shows what is in progress, then what just finished, and no older history', () => {
+  const now = Date.parse('2026-11-11T12:00:00Z');
+  const job = (id: string, state: JobView['state'], finishedAgoMs?: number): JobView => ({ id, kind: 'draw', brand: 'acme', site: 'https://acme.com', state, ...(finishedAgoMs !== undefined ? { finishedAt: now - finishedAgoMs } : {}) });
+  const shown = visibleJobs([
+    job('old-done', 'succeeded', DONE_VISIBLE_MS + 1000),
+    job('new-done', 'succeeded', 60_000),
+    job('running', 'running'),
+    job('queued', 'queued'),
+    job('stopped-recently', 'failed', 30 * 60 * 1000),
+    job('stopped-long-ago', 'failed', STOPPED_VISIBLE_MS + 1000),
+    job('done-no-time', 'succeeded'),
+    job('newest-done', 'succeeded', 1000),
+  ], now);
+  assert.deepEqual(shown.map((j) => j.id), ['running', 'queued', 'newest-done', 'new-done', 'stopped-recently']);
+  assert.deepEqual(visibleJobs([], now), []);
+});
+
+test('a job\'s end time is read when the service gives one', () => {
+  const [done, running] = parseJobs({ jobs: [
+    { id: 'job-a-1', kind: 'copy', brand: 'a', site: 'https://a.com', state: 'succeeded', finishedAt: '2026-11-11T11:00:00.000Z' },
+    { id: 'job-b-1', kind: 'copy', brand: 'b', site: 'https://b.com', state: 'running' },
+  ] });
+  assert.equal(done?.finishedAt, Date.parse('2026-11-11T11:00:00.000Z'));
+  assert.equal(running?.finishedAt, undefined);
 });

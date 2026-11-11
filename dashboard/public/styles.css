@@ -588,8 +588,11 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-start .rv-number .rv-input { flex: 0 0 auto; width: 88px; }
 .rv-start .rv-last { gap: 12px 24px; border-top: 1px solid var(--cell-border); padding-top: 14px; }
 .rv-draw { border-top: 1px solid var(--line, #e4e4e4); margin-top: 10px; padding-top: 10px; }
-.rv-job { margin: 4px 0; }
-.rv-job-failed { color: var(--danger, #b42318); }
+/* What is being made: the text is amber while it is in progress, green once it is done and red when it stopped. */
+.rv-job { margin: 6px 0; color: var(--job, var(--text)); }
+.rv-job-queued, .rv-job-running { --job: var(--due, #e0a84a); }
+.rv-job-succeeded { --job: var(--published, #3fb27f); }
+.rv-job-failed { --job: var(--missed, #e5534b); }
 .rv-copy-advice { color: var(--warn, #b45309); font-size: 0.9em; }
 .rv-edit { width: 100%; min-height: 9rem; resize: vertical; font: inherit; line-height: 1.45; }
 .rv-editor { display: grid; gap: .6rem; }

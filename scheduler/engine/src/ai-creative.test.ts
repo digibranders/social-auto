@@ -657,3 +657,11 @@ test('manifestOf draws the owner\'s sign-off wording when one was chosen, else t
   assert.deepEqual(manifestOf(chosen, brand), { headline: 'Track tasks', brandName: 'Oye Chats', domain: 'oyechats.com/pricing' });
   assert.deepEqual(manifestOf({ ...chosen, signoff: { brandName: 'Oye Chats' } }, brand), { headline: 'Track tasks', brandName: 'Oye Chats', domain: 'oyechats.com' });
 });
+
+test('a poster is judged against the sign-off the owner chose: the edited text passes, the old default no longer does, and no sign-off at all is rejected', () => {
+  const chosen = manifestOf({ ...post('p', 'Track tasks'), signoff: { brandName: 'Oye Chats Pro', domain: 'oyechats.com/pricing' } }, brand);
+  assert.equal(judgeCreative(chosen, review(['Track tasks', 'Oye Chats Pro', 'oyechats.com/pricing'])).accepted, true);
+  assert.equal(judgeCreative(chosen, review(['Track tasks', 'OyeChats', 'oyechats.com'])).accepted, false, 'the old wording is not what was chosen');
+  const plain = manifestOf(post('p', 'Track tasks'), brand);
+  assert.equal(judgeCreative(plain, review(['Track tasks'])).defects.filter((d) => d.kind === 'missing_text').map((d) => d.text).join(', '), 'the web address, the brand name');
+});
