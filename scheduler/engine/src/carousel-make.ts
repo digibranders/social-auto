@@ -15,7 +15,7 @@ export interface MakeCarouselInput {
   idPrefix: string;
   date: string;
   outDir: string;
-  /** The brand's real logo: it goes on the last slide only, with the brand's name and address. */
+  /** The brand's real logo: it goes on the last slide only, with the website's address. The business name is never written as text on a slide. */
   logo?: CreativeRunInput['logo'];
   log?: (message: string) => void;
   deps?: CreativeDeps;

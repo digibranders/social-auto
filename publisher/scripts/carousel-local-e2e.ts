@@ -51,7 +51,7 @@ const made = await runCarousel({
   deps: {
     plan: async () => draft,
     captions: async () => ({ captions: { instagram: 'Swipe through to find a curry.\n\nOrder at currycook.com (link in bio)\n\n#curry', facebook: 'A quick guide to choosing a curry.\n\nOrder at currycook.com', linkedin: 'How to choose a curry: popular favourites or build your own.\n\nOrder at currycook.com', google: 'Popular curries or build your own.\n\nOrder at currycook.com' }, fallback: [] }),
-    slides: { headlineGate: { enabled: false, config: defaultHeadlineGate }, scene: async (_p: string, file: string) => { drawn += 1; writeFileSync(file, Buffer.from(`slide-${drawn}-bytes`)); }, review: async () => reading([(draft.slides[(drawn - 1) % 3]?.headline ?? '').replace(/\|/g, ''), ...(drawn % 3 === 0 ? ['Curry Cook', 'currycook.com'] : [])]) },
+    slides: { headlineGate: { enabled: false, config: defaultHeadlineGate }, scene: async (_p: string, file: string) => { drawn += 1; writeFileSync(file, Buffer.from(`slide-${drawn}-bytes`)); }, review: async () => reading([(draft.slides[(drawn - 1) % 3]?.headline ?? '').replace(/\|/g, ''), ...(drawn % 3 === 0 ? ['currycook.com'] : [])]) },
   },
 });
 assert.equal(made.status, 'queued', made.reason);

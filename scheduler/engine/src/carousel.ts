@@ -142,14 +142,15 @@ export interface SlidePostOptions {
   date: string;
 }
 
-/** One planned post per slide. Slides before the last carry neither the brand's name nor its address (an empty string leaves the line off); the last carries both, as every poster does. Captions are written for the carousel as a whole, not per slide. */
+/** One planned post per slide. No slide carries the brand's name; slides before the last carry no web address either, and the last carries the website's address. Captions are written for the carousel as a whole, not per slide. */
 export function slidePosts(draft: CarouselDraft, options: SlidePostOptions): PlannedPost[] {
   return draft.slides.map((slide, index): PlannedPost => ({
     id: `${options.idPrefix}-s${index + 1}`,
     date: options.date,
     painPoint: draft.topic,
     mode: 'ai',
-    ...(index < draft.slides.length - 1 ? { signoff: { brandName: '', domain: '' } } : {}),
+    // The business name is never written on a carousel slide (the owner's rule). The web address is only on the last slide: an empty string leaves a line off, and a missing one means the website's own address.
+    signoff: index < draft.slides.length - 1 ? { brandName: '', domain: '' } : { brandName: '' },
     headline: slide.headline,
     subline: '',
     pillar: 'carousel',

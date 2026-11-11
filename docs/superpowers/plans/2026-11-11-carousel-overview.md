@@ -1,6 +1,6 @@
 # Weekly Carousel: Overview of the Plans
 
-**Goal:** One carousel per channel per week, the same slides on every channel that can take one (Instagram, Facebook, LinkedIn) with a caption written for each channel; Google Business gets the first slide as a normal post. The carousel replaces one of the four weekly posts per channel and counts as one post against the weekly limit. The owner approves each carousel before it posts. Slides are 3 to 5 pictures, one shared look per carousel, the brand name and web address only on the last slide.
+**Goal:** One carousel per channel per week, the same slides on every channel that can take one (Instagram, Facebook, LinkedIn) with a caption written for each channel; Google Business gets the first slide as a normal post. The carousel replaces one of the four weekly posts per channel and counts as one post against the weekly limit. The owner approves each carousel before it posts. Slides are 3 to 5 pictures, one shared look per carousel, no business name on any slide, the web address only on the last slide.
 
 **Decisions already made by the owner (2026-11-11):** same slides everywhere; replaces one of the 4 weekly posts; scheduled weekly through the client's posting plan; approved in Review first; a carousel not approved by its day is not posted (the engine already leaves out posters whose day has passed).
 
