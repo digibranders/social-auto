@@ -72,7 +72,9 @@ async function sendToChannels(platform: Platform, mainPost: ScheduledPost, origi
   const post = forPlatform(mainPost, platform);
   try {
     const { file } = await loadChannels();
-    if (!file.channels.some((c) => c.platform === platform)) return [];
+    // Nothing connected on this platform is only a reason to stop when the post does not name an exact account here: a post that names one needs the check below.
+    const namesAccountHere = (post.channels ?? []).some((id) => id.startsWith(`${platform}:`));
+    if (!file.channels.some((c) => c.platform === platform) && !namesAccountHere) return [];
     const key = parseKey(process.env['CHANNEL_KEY']);
     const { log } = await loadPosted();
     const now = Date.now();
@@ -93,7 +95,7 @@ async function sendToChannels(platform: Platform, mainPost: ScheduledPost, origi
       if (guards.gone.length > 0) {
         await notify({
           title: 'Post held: its account is no longer connected',
-          message: `${post.brand ?? 'default'}: the post ${post.id} is meant for ${guards.gone.join(', ')}, which is not connected any more. It was not sent anywhere else. Connect the account again, or choose another account for the plan.`,
+          message: `${post.brand ?? 'default'}: the post ${post.id} is meant for ${guards.gone.join(', ')}, which is not connected any more. It was not sent anywhere else and will not be sent later. Connect the account again for the posts after it, or choose another account for the plan.`,
           priority: 'high',
         });
         await recordEntries(Object.fromEntries(guards.gone.map((id) => [postedKey(post.id, id), { remoteId: 'account-disconnected', permalink: null, postedAt: new Date(now).toISOString(), skipped: true as const, reason: 'ACCOUNT_DISCONNECTED' }])));
