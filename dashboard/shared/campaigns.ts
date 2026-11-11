@@ -39,7 +39,7 @@ export interface Campaign {
   id: string;
   brand: string;
   site: string;
-  plan: { platforms: string[]; startDate: string; durationDays: number; postsPerWeek?: number; time: string };
+  plan: { platforms: string[]; startDate: string; durationDays: number; postsPerWeek?: number; time: string; carousel?: true };
   status: 'queued' | 'running' | 'awaiting_approval' | 'partial' | 'failed' | 'interrupted';
   createdAt: string;
   updatedAt: string;
@@ -58,6 +58,7 @@ export interface PlanOfClient {
   postsPerWeek?: number;
   weekdays?: readonly string[];
   time: string;
+  carousel?: true;
 }
 
 export interface ClientForStatus {
@@ -105,7 +106,7 @@ export function parseCampaigns(raw: unknown): Campaign[] {
     }
     out.push({
       id, brand, site: str(c['site'], 200) ?? '', status: status as Campaign['status'], ...parseRelease(c['release']), ...parseReview(c['review']), createdAt: str(c['createdAt'], 40) ?? '', updatedAt: str(c['updatedAt'], 40) ?? '', batches,
-      plan: { platforms: (plan['platforms'] as unknown[]).filter((p): p is string => typeof p === 'string'), startDate: plan['startDate'], durationDays: plan['durationDays'], ...(typeof plan['postsPerWeek'] === 'number' ? { postsPerWeek: plan['postsPerWeek'] } : {}), time: str(plan['time'], 10) ?? '10:00' },
+      plan: { platforms: (plan['platforms'] as unknown[]).filter((p): p is string => typeof p === 'string'), startDate: plan['startDate'], durationDays: plan['durationDays'], ...(typeof plan['postsPerWeek'] === 'number' ? { postsPerWeek: plan['postsPerWeek'] } : {}), time: str(plan['time'], 10) ?? '10:00', ...(plan['carousel'] === true ? { carousel: true as const } : {}) },
     });
   }
   return out;
@@ -132,12 +133,12 @@ function parseReview(raw: unknown): { review?: Campaign['review'] } {
 }
 
 /** The same plan, recognised by what the owner chose (the record and the client's list carry the same fields). */
-export function samePlan(a: Pick<PlanOfClient, 'platforms' | 'startDate' | 'durationDays' | 'postsPerWeek' | 'time'>, b: Pick<PlanOfClient, 'platforms' | 'startDate' | 'durationDays' | 'postsPerWeek' | 'time'>): boolean {
-  return [...a.platforms].sort().join(',') === [...b.platforms].sort().join(',') && a.startDate === b.startDate && a.durationDays === b.durationDays && (a.postsPerWeek ?? 0) === (b.postsPerWeek ?? 0) && a.time === b.time;
+export function samePlan(a: Pick<PlanOfClient, 'platforms' | 'startDate' | 'durationDays' | 'postsPerWeek' | 'time' | 'carousel'>, b: Pick<PlanOfClient, 'platforms' | 'startDate' | 'durationDays' | 'postsPerWeek' | 'time' | 'carousel'>): boolean {
+  return [...a.platforms].sort().join(',') === [...b.platforms].sort().join(',') && a.startDate === b.startDate && a.durationDays === b.durationDays && (a.postsPerWeek ?? 0) === (b.postsPerWeek ?? 0) && a.time === b.time && (a.carousel === true) === (b.carousel === true);
 }
 
 /** A key that stays the same for the same plan of the same client, so a dismissal or a first sighting can be remembered. */
-export const planKey = (brand: string, plan: PlanOfClient): string => `${brand}|${[...plan.platforms].sort().join('+')}|${plan.startDate}|${plan.durationDays}|${plan.postsPerWeek ?? 0}|${plan.time}`;
+export const planKey = (brand: string, plan: PlanOfClient): string => `${brand}|${[...plan.platforms].sort().join('+')}|${plan.startDate}|${plan.durationDays}|${plan.postsPerWeek ?? 0}|${plan.time}${plan.carousel ? '|carousel' : ''}`;
 
 /** Roughly how long `posters` take to make from the start, in seconds. */
 export const estimateSeconds = (posters: number): number => BASE_SECONDS + PER_POSTER_SECONDS * posters;

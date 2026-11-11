@@ -77,3 +77,56 @@ test('a run for one shape registers only the networks of that shape, and skips a
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+import { registerCarousel } from './review-register.ts';
+import type { CarouselDraft } from './carousel.ts';
+import type { CarouselSlides } from './carousel-make.ts';
+
+const carouselDraft: CarouselDraft = {
+  topic: 'Choosing a curry', style: 's', typography: 't',
+  slides: [
+    { role: 'hook', headline: 'Not sure?', scene: 'a bowl', factIds: ['f1'] },
+    { role: 'content', headline: 'Pick one', scene: 'jars', factIds: ['f1'] },
+    { role: 'closing', headline: 'Order today', scene: 'a bag', factIds: ['f1'] },
+  ],
+};
+const drawn = (dir: string, ready: boolean): CarouselSlides => {
+  const slides = carouselDraft.slides.map((s, i) => {
+    const file = join(dir, `s${i + 1}.jpg`);
+    writeFileSync(file, `slide ${i + 1}`);
+    return { postId: `c1-s${i + 1}`, manifest: { headline: s.headline, brandName: '', domain: '' }, status: 'accepted' as const, file, attempts: [], costUsd: 0.016 };
+  });
+  return { ready, slides, reports: [] };
+};
+const carouselInput = (dir: string, over: Partial<Parameters<typeof registerCarousel>[0]> = {}): Parameters<typeof registerCarousel>[0] => ({
+  brandDir: join(dir, 'brand'), brandSlug: 'curry', planFile: 'week-01.json', carouselId: 'c1', draft: carouselDraft, slides: drawn(dir, true), facts: [fact],
+  captions: { instagram: 'An Instagram caption', linkedin: 'A LinkedIn caption' }, ctaUrl: 'https://currycook.com', reportFile: 'creative-report.json', ...over,
+});
+
+test('a ready carousel enters the queue as pending slides and one caption version per network', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'register-carousel-'));
+  try {
+    const versions = registerCarousel(carouselInput(dir));
+    assert.equal(versions.length, 5);
+    const store = new ReviewStore(join(dir, 'brand'), 'curry');
+    const group = store.carouselSlides('c1');
+    assert.deepEqual(group.slides.map((s) => [s?.version.postId, s?.status, s?.version.evidence[0]?.factId]), [['c1-s1', 'pending', 'f1'], ['c1-s2', 'pending', 'f1'], ['c1-s3', 'pending', 'f1']]);
+    assert.deepEqual(group.captions.map((c) => [c.version.network, c.version.caption]).sort(), [['instagram', 'An Instagram caption'], ['linkedin', 'A LinkedIn caption']]);
+    assert.ok(group.captions.every((c) => c.version.imageSha256 === group.slides[0]?.version.imageSha256), 'the captions show the cover picture');
+    assert.equal(registerCarousel(carouselInput(dir)).length, 5);
+    assert.equal(store.list().length, 5, 'registering again makes nothing new');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a carousel that is not ready, or has no caption, puts nothing up for review', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'register-carousel-'));
+  try {
+    assert.deepEqual(registerCarousel(carouselInput(dir, { slides: drawn(dir, false) })), []);
+    assert.throws(() => registerCarousel(carouselInput(dir, { captions: { instagram: '  ' } })), /no caption/);
+    assert.equal(new ReviewStore(join(dir, 'brand'), 'curry').list().length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -3,7 +3,7 @@
  *
  *   JOBS_ROOT=jobs node src/job-runner.ts        (run from the engine folder; it holds the picture key, the review service does not)
  *
- * A copy job reads the website and writes the posts, then stops before any picture is bought (--copy-first). A draw job draws only the kept posts of one batch
+ * A carousel job makes one carousel from the facts already read and queues it for review (carousel-cli.ts). A copy job reads the website and writes the posts, then stops before any picture is bought (--copy-first). A draw job draws only the kept posts of one batch
  * (--draw-kept). Neither schedules or publishes anything. Different brands run side by side (JOBS_CONCURRENCY, default 2); one brand runs one job at a time.
  */
 import { spawn } from 'node:child_process';
@@ -30,6 +30,7 @@ export function engineArgs(job: Job): string[] {
     if (!job.planFile) throw new Error('a draw job needs the batch to draw');
     return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--draw-kept', job.planFile, ...(job.retry ? ['--redraw-missing'] : [])];
   }
+  if (job.kind === 'carousel') return ['src/carousel-cli.ts', '--site', job.site, '--networks', job.networks.join(','), ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
   const networks = job.networks.length > 0 ? ['--networks', job.networks.join(',')] : [];
   const rhythm = job.weekdays && job.weekdays.length > 0 ? ['--weekdays', job.weekdays.join(',')] : [];
   return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--copy-first', ...(job.page ? ['--page'] : []), ...networks, ...(job.days ? ['--days', String(job.days)] : []), ...rhythm, ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
@@ -99,12 +100,12 @@ export async function runJob(store: JobStore, job: Job, exec: Exec): Promise<Job
     if (tail.length > 60) tail.shift();
     const read = readLine(line, source);
     if (read.step !== undefined) step = read.step;
-    if (read.planFile && job.kind === 'copy') planFileMade = read.planFile;
+    if (read.planFile && (job.kind === 'copy' || job.kind === 'carousel')) planFileMade = read.planFile;
     if (read.error) lastError = read.error;
     // Progress is written at most once a second, however fast the engine talks.
     pending ??= setTimeout(flush, 1000);
   };
-  const { code, timedOut } = await exec(engineArgs(job), onLine, job.kind !== 'copy' ? DRAW_TIMEOUT_MS : COPY_TIMEOUT_MS);
+  const { code, timedOut } = await exec(engineArgs(job), onLine, job.kind === 'copy' ? COPY_TIMEOUT_MS : DRAW_TIMEOUT_MS);
   if (pending) clearTimeout(pending);
   const base = { logTail: tail, ...(step !== undefined ? { step } : {}), ...(planFileMade ? { planFileMade } : {}), ...(code !== null ? { exitCode: code } : {}) };
   if (code === 0 && !timedOut) {

@@ -29,6 +29,13 @@ export interface EvidenceSnapshot {
 
 import type { BrandingDecision } from './branding.ts';
 
+/** The group a version belongs to when it is part of a carousel: its id, the slide it is (1 to count), or 0 for the carousel's captions (which show the cover picture). */
+export interface CarouselMembership {
+  id: string;
+  position: number;
+  count: number;
+}
+
 export interface PostVersion {
   versionId: string;
   brand: string;
@@ -37,6 +44,8 @@ export interface PostVersion {
   versionNumber: number;
   /** The network this version was made for (instagram, facebook, linkedin, google). Versions made before networks existed have none. */
   network?: string;
+  /** Set when the version is a slide of a carousel, or one of its captions. */
+  carousel?: CarouselMembership;
   /** The picture's size in pixels, for the screen that shows it. */
   width?: number;
   height?: number;
@@ -115,6 +124,7 @@ export interface NewVersion {
   postId: string;
   planFile: string;
   network?: string;
+  carousel?: CarouselMembership;
   width?: number;
   height?: number;
   headline: string;
@@ -265,6 +275,10 @@ export class ReviewStore {
     const imageFile = join('versions', `${imageSha256}.jpg`);
     if (input.network !== undefined && !NETWORK.test(input.network)) throw new ReviewError('INVALID', 'the network must be a short lower-case name');
     const contentSha256 = contentHashOf(input);
+    const group = input.carousel;
+    if (group && (group.id === '' || !Number.isInteger(group.position) || !Number.isInteger(group.count) || group.count < 2 || group.count > 10 || group.position < 0 || group.position > group.count)) {
+      throw new ReviewError('INVALID', 'a carousel version needs a group id, a count of two to ten and a position from 0 to the count');
+    }
     return this.locked((owns) => {
       const items = this.fold().filter((i) => lineOf(i.version) === lineOf(input));
       const same = items.find((i) => i.version.imageSha256 === imageSha256 && i.version.contentSha256 === contentSha256);
@@ -276,6 +290,7 @@ export class ReviewStore {
         versionId: `${this.brand}.${sha256(`${input.postId}|${versionNumber}|${imageSha256}|${contentSha256}${input.network ? `|${input.network}` : ''}`).slice(0, 16)}`,
         brand: this.brand, postId: input.postId, planFile: input.planFile, versionNumber,
         ...(input.network ? { network: input.network } : {}),
+        ...(group ? { carousel: { id: group.id, position: group.position, count: group.count } } : {}),
         ...(input.width && input.height ? { width: input.width, height: input.height } : {}),
         headline: input.headline, caption: input.caption, ctaUrl: input.ctaUrl, factIds: input.factIds, evidence: input.evidence,
         imageFile, imageSha256, contentSha256, validation: input.validation, attempts: input.attempts, costUsd: input.costUsd,
@@ -405,6 +420,92 @@ export class ReviewStore {
   /** The latest approved version of each network a post was made for, ready to be released through that network. */
   approvedForNetworks(postId: string): Array<{ version: PostVersion; path: string; bytes: Buffer }> {
     return this.history(postId).filter((i) => i.status === 'approved' && i.version.network !== undefined).map((i) => this.approvedFile(i.version.versionId));
+  }
+
+  /** True when the post id is a carousel: some version names it as its group. */
+  isCarousel(postId: string): boolean {
+    return this.fold().some((i) => i.version.carousel?.id === postId);
+  }
+
+  /** A carousel as it stands: each slide's latest version in order (undefined where a slide has none yet) and each network's latest caption. */
+  carouselSlides(id: string): { count: number; slides: Array<ReviewItem | undefined>; captions: ReviewItem[] } {
+    const members = this.fold().filter((i) => i.version.carousel?.id === id);
+    const first = members[0]?.version.carousel;
+    if (!first) throw new ReviewError('NOT_FOUND', `there is no carousel ${id}`);
+    const newest = (items: ReviewItem[]): ReviewItem | undefined => items.reduce<ReviewItem | undefined>((best, i) => (best === undefined || i.version.versionNumber > best.version.versionNumber ? i : best), undefined);
+    const slides = Array.from({ length: first.count }, (_, index) => newest(members.filter((i) => i.version.carousel?.position === index + 1)));
+    const networks = [...new Set(members.filter((i) => i.version.carousel?.position === 0).map((i) => i.version.network ?? ''))];
+    const captions = networks.flatMap((network) => { const latest = newest(members.filter((i) => i.version.carousel?.position === 0 && (i.version.network ?? '') === network)); return latest ? [latest] : []; });
+    return { count: first.count, slides, captions };
+  }
+
+  /** Where a carousel stands as a whole: waiting for a slide, blocked, rejected, approved (everything, as it is now) or waiting for the owner. */
+  carouselStatus(id: string): 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending' {
+    const { slides, captions } = this.carouselSlides(id);
+    if (slides.some((s) => s === undefined)) return 'incomplete';
+    const all = [...(slides as ReviewItem[]), ...captions];
+    if (all.some((i) => i.status === 'blocked')) return 'blocked';
+    if (all.some((i) => i.status === 'rejected')) return 'rejected';
+    if (captions.length > 0 && all.every((i) => i.status === 'approved')) return 'approved';
+    return 'pending';
+  }
+
+  /**
+   * Approves a whole carousel in one step: the latest version of every slide and of every network's caption. Everything is checked first and nothing is approved
+   * unless all of it can be (every slide present, none blocked or rejected, at least one caption, every picture as it was made).
+   */
+  approveCarousel(id: string, by: string): Decision[] {
+    if (by.trim() === '') throw new ReviewError('INVALID', 'an approval needs the name of the person who approved it');
+    return this.locked((owns) => {
+      const { slides, captions } = this.carouselSlides(id);
+      const missing = slides.findIndex((s) => s === undefined);
+      if (missing !== -1) throw new ReviewError('INVALID', `slide ${missing + 1} has no picture yet`);
+      if (captions.length === 0) throw new ReviewError('INVALID', 'no caption was written for this carousel');
+      const all = [...(slides as ReviewItem[]), ...captions];
+      for (const item of all) {
+        if (item.status === 'blocked') throw new ReviewError('BLOCKED', `${item.version.postId} did not pass the system's checks, so the carousel cannot be approved`);
+        if (item.status === 'rejected') throw new ReviewError('ALREADY_DECIDED', `${item.version.postId} was rejected; make a new version of it first`);
+        if (item.status !== 'approved') this.verify(item.version);
+      }
+      const decisions: Decision[] = [];
+      this.mustOwn(owns);
+      for (const item of all) {
+        if (item.status === 'approved' && item.decision) continue;
+        const decision: Decision = { versionId: item.version.versionId, decision: 'approve', by, at: this.now().toISOString(), imageSha256: item.version.imageSha256, contentSha256: item.version.contentSha256 };
+        appendDurable(this.file, JSON.stringify({ type: 'decision', decision } satisfies Event));
+        decisions.push(decision);
+      }
+      return decisions;
+    });
+  }
+
+  /** Withdraws a whole carousel: every slide and caption that is not already rejected or blocked is rejected, with one reason. */
+  rejectCarousel(id: string, by: string, reason: RejectionReason, comment?: string): Decision[] {
+    if (by.trim() === '') throw new ReviewError('INVALID', 'a rejection needs the name of the person who made it');
+    if (!(REJECTION_REASONS as readonly string[]).includes(reason)) throw new ReviewError('INVALID', `the reason must be one of ${REJECTION_REASONS.join(', ')}`);
+    return this.locked((owns) => {
+      const { slides, captions } = this.carouselSlides(id);
+      const open = [...slides.filter((s): s is ReviewItem => s !== undefined), ...captions].filter((i) => i.status !== 'rejected' && i.status !== 'blocked');
+      this.mustOwn(owns);
+      return open.map((item): Decision => {
+        const decision: Decision = { versionId: item.version.versionId, decision: 'reject', by, at: this.now().toISOString(), reason, ...(comment ? { comment: comment.slice(0, 500) } : {}), imageSha256: item.version.imageSha256, contentSha256: item.version.contentSha256 };
+        appendDurable(this.file, JSON.stringify({ type: 'decision', decision } satisfies Event));
+        return decision;
+      });
+    });
+  }
+
+  /** The only way to get a carousel for posting: every slide's latest version approved and still as approved, and at least one approved caption. */
+  approvedCarousel(id: string): { slides: Array<{ version: PostVersion; path: string; bytes: Buffer }>; captions: Array<{ version: PostVersion; path: string; bytes: Buffer }> } {
+    const { slides, captions } = this.carouselSlides(id);
+    const notReady = slides.findIndex((s) => s === undefined || s.status !== 'approved');
+    if (notReady !== -1) throw new ReviewError('NOT_APPROVED', `slide ${notReady + 1} of carousel ${id} is not approved`);
+    const approvedCaptions = captions.filter((c) => c.status === 'approved');
+    if (approvedCaptions.length === 0) throw new ReviewError('NOT_APPROVED', `carousel ${id} has no approved caption`);
+    return {
+      slides: (slides as ReviewItem[]).map((s) => this.approvedFile(s.version.versionId)),
+      captions: approvedCaptions.map((c) => this.approvedFile(c.version.versionId)),
+    };
   }
 
   /** The approved version of a post that may go out now, if there is one. */

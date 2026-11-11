@@ -121,6 +121,46 @@ export async function createImageContainer(userId: string, token: string, imageU
   return String(body['id']);
 }
 
+/** The fewest and most pictures a carousel may hold. Instagram's own maximum is higher; a business post never needs more than ten. */
+export const CAROUSEL_MIN = 2;
+export const CAROUSEL_MAX = 10;
+
+/** One picture of a carousel: a container that is not a post by itself. The address must be public and a JPEG. */
+export async function createCarouselItem(userId: string, token: string, imageUrl: string): Promise<string> {
+  const form = new URLSearchParams({ image_url: imageUrl, is_carousel_item: 'true', access_token: token });
+  const body = await graph('create carousel item', `/${userId}/media`, { method: 'POST', body: form });
+  return String(body['id']);
+}
+
+/** The carousel's own container: its pictures in order, and the caption (it belongs to the carousel, never to a picture). */
+export async function createCarouselContainer(userId: string, token: string, itemIds: readonly string[], caption: string): Promise<string> {
+  if (itemIds.length < CAROUSEL_MIN || itemIds.length > CAROUSEL_MAX) {
+    throw new InstagramApiError('create carousel', `a carousel needs ${CAROUSEL_MIN} to ${CAROUSEL_MAX} pictures, not ${itemIds.length}`);
+  }
+  const form = new URLSearchParams({ media_type: 'CAROUSEL', children: itemIds.join(','), caption, access_token: token });
+  const body = await graph('create carousel', `/${userId}/media`, { method: 'POST', body: form });
+  return String(body['id']);
+}
+
+/**
+ * Makes every picture's container and then the carousel's, waiting until each is ready, and answers the carousel container. Nothing is published:
+ * `publishContainer` does that, so a check can stop here and leave a container that expires on its own after a day.
+ */
+export async function prepareCarousel(userId: string, token: string, imageUrls: readonly string[], caption: string): Promise<{ containerId: string; itemIds: string[] }> {
+  if (imageUrls.length < CAROUSEL_MIN || imageUrls.length > CAROUSEL_MAX) {
+    throw new InstagramApiError('create carousel', `a carousel needs ${CAROUSEL_MIN} to ${CAROUSEL_MAX} pictures, not ${imageUrls.length}`);
+  }
+  const itemIds: string[] = [];
+  for (const url of imageUrls) {
+    const id = await createCarouselItem(userId, token, url);
+    await waitUntilReady(id, token);
+    itemIds.push(id);
+  }
+  const containerId = await createCarouselContainer(userId, token, itemIds, caption);
+  await waitUntilReady(containerId, token);
+  return { containerId, itemIds };
+}
+
 /** Waits until Instagram has finished processing the container. */
 export async function waitUntilReady(containerId: string, token: string): Promise<void> {
   for (let i = 0; i < STATUS_MAX_POLLS; i++) {

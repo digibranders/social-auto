@@ -228,6 +228,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     versionId: item.version.versionId, brand: item.version.brand, postId: item.version.postId, planFile: item.version.planFile, versionNumber: item.version.versionNumber, status: item.status,
     headline: item.version.headline, caption: item.version.caption, createdAt: item.version.createdAt, costUsd: item.version.costUsd, imageSha256: item.version.imageSha256,
     ...(item.version.network ? { network: item.version.network } : {}),
+    ...(item.version.carousel ? { carousel: item.version.carousel } : {}),
     ...(item.version.width && item.version.height ? { width: item.version.width, height: item.version.height, shape: item.version.width / item.version.height >= 1.2 ? 'wide' : item.version.width / item.version.height <= 0.83 ? 'tall' : 'square' } : {}),
     ...(item.decision ? { decidedBy: item.decision.by, decidedAt: item.decision.at, reason: item.decision.reason } : {}),
     ...(redraw ?? {}),
@@ -271,7 +272,26 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         }
         if (parts.length === 2 && req.method === 'POST') {
           const body = await readJson(req);
-          if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" (drawing is asked for on the written batch)');
+          if (body['kind'] === 'carousel') {
+            // One carousel for a client whose website was already read (its profile and facts are what the carousel is made from): the day it is for and the time are optional.
+            const carouselSite = cleanSite(body['site']);
+            const carouselNetworks = Array.isArray(body['networks']) ? body['networks'] : null;
+            if (carouselNetworks === null || carouselNetworks.length === 0 || carouselNetworks.some((n) => typeof n !== 'string' || !isNetwork(n))) throw new ReviewError('INVALID', `networks must be a non-empty list of ${NETWORKS.join(', ')}`);
+            let carouselDay: string | undefined;
+            let carouselTime: string | undefined;
+            try {
+              if (body['startDate'] !== undefined) carouselDay = checkStartDate(body['startDate'], Date.now());
+              if (body['time'] !== undefined) carouselTime = checkTime(body['time']);
+            } catch (error) {
+              if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
+              throw error;
+            }
+            const carouselBrand = slugFromSite(carouselSite);
+            if (!BRAND.test(carouselBrand) || !existsSync(join(root, carouselBrand, 'brand.json'))) throw new ReviewError('INVALID', 'that website has not been read yet: write posts for it first, so a carousel can be made from what it states');
+            const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: text(body['by'], 80), networks: [...new Set(carouselNetworks as string[])], ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
+            return send(res, created ? 202 : 200, { job, created });
+          }
+          if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" or "carousel" (drawing is asked for on the written batch)');
           if (body['page'] !== undefined && typeof body['page'] !== 'boolean') throw new ReviewError('INVALID', 'page must be true or false');
           const page = body['page'] === true;
           const site = cleanSite(body['site'], { keepPath: page });
@@ -439,6 +459,28 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         }
         const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
         return send(res, 200, { decisions });
+      }
+      // A carousel: shown whole, and approved or rejected as one step. Its pictures are served by the ordinary picture route, by each slide's version id.
+      if (parts[0] === 'review' && parts[1] === 'carousels' && (parts.length === 4 || (parts.length === 5 && req.method === 'POST' && (parts[4] === 'approve' || parts[4] === 'reject')))) {
+        const carouselBrand = decodeURIComponent(parts[2] ?? '');
+        const carouselId = decodeURIComponent(parts[3] ?? '');
+        if (!BRAND.test(carouselBrand) || !brands().includes(carouselBrand) || !/^[A-Za-z0-9._-]{1,80}$/.test(carouselId)) throw new ReviewError('NOT_FOUND', 'no such carousel');
+        const carouselStore = storeFor(carouselBrand);
+        if (parts.length === 5) {
+          const body = await readJson(req);
+          const by = text(body['by'], 80);
+          if (parts[4] === 'approve') carouselStore.approveCarousel(carouselId, by);
+          else carouselStore.rejectCarousel(carouselId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
+          return send(res, 200, { status: carouselStore.carouselStatus(carouselId) });
+        }
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        const { count, slides, captions } = carouselStore.carouselSlides(carouselId);
+        return send(res, 200, {
+          id: carouselId, count, status: carouselStore.carouselStatus(carouselId),
+          slides: slides.map((item, index) => (item ? { position: index + 1, ...summary(item) } : { position: index + 1, versionId: null, status: 'missing' })),
+          captions: captions.map((c) => summary(c)),
+          reasons: REJECTION_REASONS,
+        });
       }
       if (parts[0] !== 'review' || parts[1] !== 'posts') return send(res, 404, { error: 'Not found' });
 

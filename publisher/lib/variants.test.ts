@@ -114,3 +114,12 @@ test('the status feed lists a post\'s own platform versions and matches Instagra
   assert.equal(row?.state, 'published');
   assert.deepEqual(row?.variants, { instagram: { caption: 'Short' }, linkedin: { caption: 'Long', image: 'https://x.test/wide.jpg' } });
 });
+
+test('a carousel keeps its pictures: a network\'s own caption applies, a network\'s own picture does not', () => {
+  const carousel = { id: 'c1', date: '2026-12-10T10:00:00+05:30', caption: 'Main', image: '/posts/b/1.jpg', images: ['/posts/b/1.jpg', '/posts/b/2.jpg'], variants: { linkedin: { caption: 'For LinkedIn', image: '/posts/b/other.jpg' } } } as unknown as ScheduledPost;
+  const forLinkedIn = forPlatform(carousel, 'linkedin');
+  assert.equal(forLinkedIn.caption, 'For LinkedIn');
+  assert.equal(forLinkedIn.image, '/posts/b/1.jpg');
+  assert.deepEqual(forLinkedIn.images, ['/posts/b/1.jpg', '/posts/b/2.jpg']);
+  assert.equal(forPlatform(carousel, 'facebook'), carousel, 'a network without a version of its own gets the post as it is');
+});

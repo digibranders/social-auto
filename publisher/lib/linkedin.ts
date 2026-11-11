@@ -142,6 +142,79 @@ export async function postImage(token: string, authorUrn: string, assetUrn: stri
   return { urn, url: `https://www.linkedin.com/feed/update/${urn}/` };
 }
 
+/** The Images and Posts APIs ask for a version (YYYYMM). The environment can set another when LinkedIn retires this one. */
+export const LINKEDIN_VERSION = process.env['LINKEDIN_API_VERSION'] ?? '202604';
+const versioned = (token: string): Record<string, string> => ({ ...restli(token), 'Linkedin-Version': LINKEDIN_VERSION });
+
+/** A multi-image post holds 2 to 20 pictures (LinkedIn's rule); a business post never needs more than ten. */
+export const MULTI_IMAGE_MIN = 2;
+export const MULTI_IMAGE_MAX = 10;
+
+/** Uploads a picture with the Images API and answers its reference ("urn:li:image:..."), which a multi-image post needs. */
+export async function uploadImageUrn(token: string, ownerUrn: string, image: Uint8Array): Promise<string> {
+  const start = await fetch(`${API}/rest/images?action=initializeUpload`, {
+    method: 'POST',
+    headers: { ...versioned(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ initializeUploadRequest: { owner: ownerUrn } }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await readJson(start);
+  const value = body['value'] as { uploadUrl?: unknown; image?: unknown } | undefined;
+  if (!start.ok || typeof value?.uploadUrl !== 'string' || typeof value.image !== 'string') throw new LinkedInApiError('picture registration', JSON.stringify(body));
+  const upload = await fetch(value.uploadUrl, {
+    method: 'PUT',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/octet-stream' },
+    body: Buffer.from(image),
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!upload.ok) throw new LinkedInApiError('picture upload', `status ${upload.status}`);
+  return value.image;
+}
+
+export interface CarouselImage {
+  /** "urn:li:image:..." from uploadImageUrn. */
+  urn: string;
+  /** What a screen reader says for it; at most 4,086 characters, under 120 is best. */
+  altText?: string;
+}
+
+/** Posts several pictures as one post (the Posts API's multiImage), with the caption as the commentary. */
+export async function postMultiImage(token: string, authorUrn: string, images: readonly CarouselImage[], caption: string, visibility: Visibility): Promise<LinkedInPost> {
+  if (images.length < MULTI_IMAGE_MIN || images.length > MULTI_IMAGE_MAX) {
+    throw new LinkedInApiError('post', `a multi-image post needs ${MULTI_IMAGE_MIN} to ${MULTI_IMAGE_MAX} pictures, not ${images.length}`);
+  }
+  if (images.some((i) => !i.urn.startsWith('urn:li:image:'))) throw new LinkedInApiError('post', 'every picture must be an uploaded image reference (urn:li:image:...)');
+  if (images.some((i) => (i.altText ?? '').length > 4086)) throw new LinkedInApiError('post', 'a picture description is longer than 4086 characters');
+  const response = await fetch(`${API}/rest/posts`, {
+    method: 'POST',
+    headers: { ...versioned(token), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      author: authorUrn,
+      commentary: caption,
+      visibility,
+      distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
+      lifecycleState: 'PUBLISHED',
+      isReshareDisabledByAuthor: false,
+      content: { multiImage: { images: images.map((i) => ({ id: i.urn, ...(i.altText ? { altText: i.altText } : {}) })) } },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new LinkedInApiError('post', JSON.stringify(await readJson(response)));
+  const urn = response.headers.get('x-restli-id');
+  if (!urn) throw new LinkedInApiError('post', 'no post id in the answer');
+  return { urn, url: `https://www.linkedin.com/feed/update/${urn}/` };
+}
+
+/** Removes a post made with the Posts API (used to clean up test posts). */
+export async function deleteRestPost(token: string, urn: string): Promise<void> {
+  const response = await fetch(`${API}/rest/posts/${encodeURIComponent(urn)}`, {
+    method: 'DELETE',
+    headers: { ...versioned(token), 'X-RestLi-Method': 'DELETE' },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok && response.status !== 204) throw new LinkedInApiError('delete post', `status ${response.status}`);
+}
+
 /** Removes a post by its urn (used to clean up test posts). */
 export async function deletePost(token: string, urn: string): Promise<void> {
   const response = await fetch(`${API}/v2/ugcPosts/${encodeURIComponent(urn)}`, {

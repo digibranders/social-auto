@@ -242,3 +242,16 @@ test('a client\'s monthly AI spend limit is stored in whole cents, shown in the 
   assert.throws(() => setSpendCap(made, 'nobody', 3), /only a client added in the dashboard/);
   assert.throws(() => parseClientsFile({ clients: [{ brand: 'a', createdAt: 'x', spendCapUsd: 0 }] }), /spendCapUsd/);
 });
+
+test('a plan may ask for a weekly carousel, which replaces a post and so needs a window of more than a day and at least two posting days a week', async () => {
+  const { parseClientPlan } = await import('./clients.ts');
+  const base = { platforms: ['instagram', 'linkedin'], startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, time: '10:00' };
+  assert.equal(parseClientPlan({ ...base, carousel: true }, NOW).carousel, true);
+  assert.equal(parseClientPlan({ ...base, carousel: false }, NOW).carousel, undefined);
+  assert.equal(parseClientPlan(base, NOW).carousel, undefined);
+  assert.equal(parseClientPlan({ ...base, postsPerWeek: undefined, weekdays: ['tue', 'thu'], carousel: true }, NOW).carousel, true);
+  assert.throws(() => parseClientPlan({ ...base, durationDays: 1, carousel: true }, NOW), /more than one day/);
+  assert.throws(() => parseClientPlan({ ...base, postsPerWeek: 1, carousel: true }, NOW), /at least two posting days/);
+  assert.throws(() => parseClientPlan({ ...base, postsPerWeek: undefined, weekdays: ['mon'], carousel: true }, NOW), /at least two posting days/);
+  assert.throws(() => parseClientPlan({ ...base, carousel: 'yes' }, NOW), /carousel must be true or false/);
+});

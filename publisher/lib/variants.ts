@@ -85,6 +85,8 @@ export function mergeVariants(base: StoredVariants | undefined, next: StoredVari
 export function forPlatform(post: ScheduledPost, platform: Platform): ScheduledPost {
   const variant = post.variants?.[platform];
   if (!variant) return post;
+  // A carousel keeps its pictures: a network's own caption applies, a network's own picture does not (a carousel has one set of slides).
+  if (post.images) return { ...post, caption: variant.caption ?? post.caption };
   return { ...post, caption: variant.caption ?? post.caption, image: variant.image ?? post.image };
 }
 

@@ -104,3 +104,23 @@ test('the ntfy sender sends nothing without a topic, posts the message to the to
   assert.equal(await ntfySender({ ALERT_NTFY_TOPIC: 'x' }, fake(500))({ title: 't', message: 'm' }), false);
   assert.equal(await ntfySender({ ALERT_NTFY_TOPIC: 'x' }, fake('throw'))({ title: 't', message: 'm' }), false);
 });
+
+test('a carousel waiting for approval is reported once, as the carousel (not once for each slide), and is no longer reported once it is approved', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'lead-carousel-'));
+  try {
+    const brandDir = join(dir, 'oyechats');
+    mkdirSync(brandDir, { recursive: true });
+    writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify({ posts: [{ id: 'car1', date: '2026-11-05T20:00:00+05:30' }] }));
+    const store = new ReviewStore(brandDir, 'oyechats');
+    const picture = join(dir, 'p.jpg');
+    writeFileSync(picture, 'picture');
+    const base = { planFile: 'week-01.json', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.01, imagePath: picture };
+    for (const n of [1, 2, 3]) store.addVersion({ ...base, postId: `car1-s${n}`, headline: `Slide ${n}`, caption: '', carousel: { id: 'car1', position: n, count: 3 } });
+    for (const network of ['instagram', 'linkedin']) store.addVersion({ ...base, postId: 'car1', network, headline: 'Topic', caption: `${network} caption`, carousel: { id: 'car1', position: 0, count: 3 } });
+    assert.deepEqual(waitingPosts(brandDir, 'oyechats', ['week-01.json'], NOW).map((p) => p.postId), ['car1']);
+    store.approveCarousel('car1', 'owner');
+    assert.deepEqual(waitingPosts(brandDir, 'oyechats', ['week-01.json'], NOW), []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

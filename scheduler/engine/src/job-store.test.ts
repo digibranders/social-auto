@@ -138,3 +138,22 @@ test('a draw is asked for once; only after it has failed may what it did not fin
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a carousel is one job per client at a time, separate from writing posts, and a new one may be asked for once the last has finished', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jobs-carousel-'));
+  try {
+    const s = new JobStore(dir);
+    const first = s.enqueue({ kind: 'carousel', brand: 'acme', site: 'https://acme.example.com', by: 'owner', networks: ['instagram'], startDate: '2026-11-18' });
+    assert.equal(first.created, true);
+    assert.equal(first.job.kind, 'carousel');
+    assert.equal(first.job.key, 'carousel:acme');
+    assert.equal(s.enqueue({ kind: 'carousel', brand: 'acme', site: 'https://acme.example.com', by: 'owner', networks: ['instagram'], startDate: '2026-11-25' }).created, false, 'a second click while one waits is the same job');
+    assert.equal(s.enqueue({ kind: 'copy', brand: 'acme', site: 'https://acme.example.com', by: 'owner', networks: ['instagram'], days: 2 }).created, true, 'writing posts is its own job');
+    const claimed = s.claim(2, process.pid);
+    assert.equal(claimed?.id, first.job.id);
+    s.update(first.job.id, { state: 'succeeded' });
+    assert.equal(s.enqueue({ kind: 'carousel', brand: 'acme', site: 'https://acme.example.com', by: 'owner', networks: ['instagram'], startDate: '2026-11-25' }).created, true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

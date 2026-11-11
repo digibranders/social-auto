@@ -4,6 +4,7 @@
  * The review service only writes a request here; a separate runner (job-runner.ts, which alone holds the picture key) picks it up. One file per job,
  * jobs/<id>.json, changed only under one lock. The same request made twice returns the job that already exists instead of starting a second one:
  *   - copy: one active job per website (a new one can start once the last has finished);
+ *   - carousel: one active job per client (a new one can start once the last has finished);
  *   - draw: one job per written batch, so a repeated click can never buy the pictures twice; once it has failed, one more may draw only what it did not finish.
  * At most one job per brand runs at a time (two would fight over the same week files); different brands run side by side.
  */
@@ -12,7 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { LockError, syncDir, withFileLock } from './file-lock.ts';
 
-export type JobKind = 'copy' | 'draw' | 'redraw' | 'network' | 'newnet';
+export type JobKind = 'copy' | 'draw' | 'carousel' | 'redraw' | 'network' | 'newnet';
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export class JobError extends Error {
@@ -30,7 +31,7 @@ export interface JobSpec {
   /** The website the brand was read from (needed by both kinds: the engine is started with it). */
   site: string;
   by: string;
-  /** Networks to write for (copy only). */
+  /** Networks to write for (copy and carousel). */
   networks?: string[];
   /** How many posts to write (copy only). */
   days?: number;
@@ -38,9 +39,9 @@ export interface JobSpec {
   page?: boolean;
   /** The weekdays the posts fall on, e.g. ["mon","thu"] (copy only); without it the engine writes consecutive days. */
   weekdays?: string[];
-  /** The day of the first post, YYYY-MM-DD (copy only); without it the engine chooses the next free day. */
+  /** The day of the first post, YYYY-MM-DD (copy), or the day the carousel is for (carousel); without it the engine chooses the next free day. */
   startDate?: string;
-  /** The time of day the posts go out, HH:MM India time (copy only); 10:00 when not given. */
+  /** The time of day the posts go out, HH:MM India time (copy and carousel); 10:00 when not given. */
   time?: string;
   /** The written batch to draw (draw only). */
   planFile?: string;
@@ -90,7 +91,7 @@ const LOG_LINE_CHARS = 300;
 export const scrub = (line: string): string => line.replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{10,}/g, '[key removed]').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{10,}/gi, 'Bearer [removed]').slice(0, LOG_LINE_CHARS);
 
 export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network'>): string =>
-  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
+  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
 
 export class JobStore {
   private readonly dir: string;
