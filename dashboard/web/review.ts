@@ -196,6 +196,8 @@ export interface JobView {
   step?: number;
   planFile?: string;
   error?: string;
+  /** When it ended (milliseconds), for a job that has ended. */
+  finishedAt?: number;
 }
 
 /** The jobs the service sends, kept only where well formed. */
@@ -207,11 +209,26 @@ export function parseJobs(value: unknown): JobView[] {
     if (!j || typeof j['id'] !== 'string' || (j['kind'] !== 'copy' && j['kind'] !== 'draw') || typeof j['brand'] !== 'string' || typeof j['site'] !== 'string' || !['queued', 'running', 'succeeded', 'failed'].includes(String(j['state']))) return [];
     const error = (j['error'] as { message?: unknown } | undefined)?.message;
     const planFile = typeof j['planFileMade'] === 'string' ? j['planFileMade'] : typeof j['planFile'] === 'string' ? j['planFile'] : undefined;
-    return [{ id: j['id'], kind: j['kind'], brand: j['brand'], site: j['site'], state: j['state'] as JobState, ...(typeof j['step'] === 'number' ? { step: j['step'] } : {}), ...(planFile ? { planFile } : {}), ...(typeof error === 'string' ? { error } : {}) }];
+    return [{ id: j['id'], kind: j['kind'], brand: j['brand'], site: j['site'], state: j['state'] as JobState, ...(typeof j['step'] === 'number' ? { step: j['step'] } : {}), ...(planFile ? { planFile } : {}), ...(typeof error === 'string' ? { error } : {}), ...(Number.isFinite(Date.parse(String(j['finishedAt']))) ? { finishedAt: Date.parse(String(j['finishedAt'])) } : {}) }];
   });
 }
 
 export const jobActive = (job: JobView): boolean => job.state === 'queued' || job.state === 'running';
+
+/** How long a job that finished well stays in the box, and how long one that stopped does (a stop stays a little longer, so it is not missed). */
+export const DONE_VISIBLE_MS = 15 * 60 * 1000;
+export const STOPPED_VISIBLE_MS = 60 * 60 * 1000;
+
+/**
+ * The jobs worth showing now: the ones in progress, then the ones that just finished. Older finished jobs are history and are left out. A finished job
+ * with no end time (an older record) is not shown.
+ */
+export function visibleJobs(jobs: readonly JobView[], now: number): JobView[] {
+  const recent = (job: JobView): boolean => job.finishedAt !== undefined && now - job.finishedAt >= 0 && now - job.finishedAt <= (job.state === 'failed' ? STOPPED_VISIBLE_MS : DONE_VISIBLE_MS);
+  const active = jobs.filter(jobActive);
+  const finished = jobs.filter((j) => !jobActive(j) && recent(j)).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
+  return [...active, ...finished];
+}
 
 const STEP_WORDS: Readonly<Record<number, string>> = { 1: 'reading the website', 2: 'writing the posts', 3: 'drawing the pictures', 4: 'putting them in the review list' };
 

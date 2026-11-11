@@ -1,7 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
 import { AUTO_WARNING, type ClientSummary } from './clients.ts';
-import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, signoffView, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, signoffView, startClientOptions, visibleJobs, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -229,8 +229,9 @@ function startView(redraw: () => void): HTMLElement {
 }
 
 function jobsView(): HTMLElement | null {
-  if (state.jobs.length === 0) return null;
-  return h('section', { class: 'rv-copy rv-jobs', 'aria-label': 'What is being made' }, h('h3', {}, 'What is being made'), ...state.jobs.map((j) => h('p', { class: `rv-job rv-job-${j.state}`, role: j.state === 'failed' ? 'alert' : 'status' }, jobText(j))));
+  const shown = visibleJobs(state.jobs, Date.now());
+  if (shown.length === 0) return null;
+  return h('section', { class: 'rv-copy rv-jobs', 'aria-label': 'What is being made' }, h('h3', {}, 'What is being made'), ...shown.map((j) => h('p', { class: `rv-job rv-job-${j.state}`, role: j.state === 'failed' ? 'alert' : 'status' }, jobText(j))));
 }
 
 function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: () => void): HTMLElement[] {
