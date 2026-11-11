@@ -22,6 +22,8 @@ export interface ChatJsonOptions<T> {
   images?: readonly string[];
   /** For tests: replaces the network call. */
   fetchFn?: typeof fetch;
+  /** When no other provider can take over: the waits before each new try of a call that came back with a server error or "too many requests" (default 1 s, then 4 s). */
+  retryDelaysMs?: readonly number[];
 }
 
 type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
@@ -123,7 +125,18 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       let content: string;
       try {
-        content = await complete(candidate, messages, fetchFn, options.ai, standingIn ? { requested: `${first.label} ${first.model}`, reason: lastFailure ?? 'unknown' } : undefined);
+        // A server error or "too many requests" is a passing fault: with no other provider to take over, the call is tried again after a short wait (the failed call was
+        // not paid for and is not blocked as a repeat). An answer that never arrived (a dropped connection) is never sent again on its own.
+        for (let retry = 0; ; retry += 1) {
+          try {
+            content = await complete(candidate, messages, fetchFn, options.ai, standingIn ? { requested: `${first.label} ${first.model}`, reason: lastFailure ?? 'unknown' } : undefined);
+            break;
+          } catch (error) {
+            const delay = (options.retryDelaysMs ?? [1_000, 4_000])[retry];
+            if (candidates.length > 1 || delay === undefined || !(error instanceof LlmError) || !/ returned (429|5\d\d):/.test(error.message)) throw error;
+            await new Promise((wake) => setTimeout(wake, delay));
+          }
+        }
       } catch (error) {
         // A spending refusal ends the call: no retry and no backup provider may be used to get around a cap.
         if (error instanceof BudgetError) throw error;

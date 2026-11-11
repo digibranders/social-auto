@@ -47,7 +47,8 @@ import { analyzeSite, slugFromSite } from './analyze.ts';
 import { ReviewStore } from './review-store.ts';
 import { parseWeekdays } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
-import { CopyStage } from './copy-stage.ts';
+import { addNetworkToBatch } from './add-network.ts';
+import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
 import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines } from './headline-gate.ts';
@@ -139,6 +140,7 @@ async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
       site: { type: 'string' },
+      brand: { type: 'string' },
       channel: { type: 'string' },
       days: { type: 'string', default: '7' },
       weekdays: { type: 'string' },
@@ -159,6 +161,10 @@ async function main(): Promise<void> {
       page: { type: 'boolean', default: false },
       'draw-kept': { type: 'string' },
       'redraw-missing': { type: 'boolean', default: false },
+      'redraw-post': { type: 'string' },
+      'add-network': { type: 'string' },
+      network: { type: 'string' },
+      'redraw-network': { type: 'string' },
       networks: { type: 'string' },
       'review-budget': { type: 'string', default: '0.015' },
       'allow-paid-ai': { type: 'boolean', default: false },
@@ -191,7 +197,7 @@ async function main(): Promise<void> {
 
   // One page, not the whole site: only the address given is read. It is for a website that has no saved profile yet; one that has is already read, and its facts are used.
   if (values.page) {
-    if (await fileExists(join(BRANDS_ROOT, slugFromSite(values.site), 'brand.json'))) throw new PageModeError('this website already has a saved profile, so it is not read again from a single page');
+    if (await fileExists(join(BRANDS_ROOT, values.brand ?? slugFromSite(values.site), 'brand.json'))) throw new PageModeError('this website already has a saved profile, so it is not read again from a single page');
     process.env['CRAWL_ONLY_THIS_PAGE'] = 'true';
   }
 
@@ -201,7 +207,8 @@ async function main(): Promise<void> {
   if (values['image-model']) ai.pollinationsImageModel = values['image-model'];
   console.log(`AI: ${ai.primary === 'openai' ? `OpenAI (${ai.textModel} for text, ${ai.imageModel} at ${ai.imageQuality} quality for pictures)` : 'Pollinations'}${ai.fallback ? ', with the other provider as backup' : ''}`);
 
-  const slug = slugFromSite(values.site);
+  const slug = values.brand ?? slugFromSite(values.site);
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(slug)) throw new Error('--brand must be lowercase letters, digits and dashes');
   // Every OpenAI call of this run is reserved against the budget caps before it is sent and recorded after (paid-ledger.ts). The file is shared by
   // all brands, so the daily caps hold across them; a run that hits a cap stops buying and keeps what it already made.
   const budgetLimits = budgetLimitsFromEnv(process.env);
@@ -213,6 +220,17 @@ async function main(): Promise<void> {
   }
   ai.ledger = new PaidLedger(resolve(process.env['PAID_LEDGER_FILE'] || join(BRANDS_ROOT, '..', 'ledger', 'paid-calls.jsonl')), budgetLimits, { jobId: `${slug}-${Date.now()}`, tenantId: 'owner', brandId: slug });
   let brandDir = join(BRANDS_ROOT, slug);
+  // Another network for a batch already written (and perhaps drawn): the same topics, text only, no website read and no picture bought here.
+  if (values['add-network']) {
+    const asked = values.network;
+    if (asked === undefined || !isNetwork(asked)) throw new Error(`--network names ${NETWORKS.join(', ')}`);
+    console.log(`3/4 Writing a caption for ${asked} for the topics of ${values['add-network']}…`);
+    ai.usage.purpose = 'writing';
+    const result = await addNetworkToBatch({ brandDir, brand: slug, planFile: values['add-network'], network: asked as Network, facts: (await loadFacts(brandDir))?.facts ?? [], write: (posts, networks) => writeNetworkCaptions({ ai, posts, networks }) });
+    console.log(ai.usage.format());
+    console.log(`ADD_NETWORK_RESULT ${JSON.stringify(result)}`);
+    return;
+  }
   // Art direction is checked before anything paid happens, so a refusal costs nothing.
   let artSettings: ArtTenantSettings | undefined;
   if (values.art && route === 'template') {
@@ -222,7 +240,7 @@ async function main(): Promise<void> {
   if (values['refresh-brand'] || !(await fileExists(join(brandDir, 'brand.json')))) {
     console.log(`1/4 Reading ${values.site} and building the brand profile…`);
     ai.usage.purpose = 'profile';
-    brandDir = (await analyzeSite(values.site, BRANDS_ROOT, ai)).dir;
+    brandDir = (await analyzeSite(values.site, BRANDS_ROOT, ai, { brand: slug })).dir;
   } else {
     console.log(`1/4 Using saved brand profile ${join('brands', slug, 'brand.json')}`);
   }
@@ -270,7 +288,7 @@ async function main(): Promise<void> {
       if (findings.some((f) => f.code === 'BRAND_UNVERIFIED')) ai.ledger?.disablePictures();
     }
     // Draws the given posts with the picture model and queues what is accepted for the owner's poster review. Nothing is scheduled or published.
-    const drawPosters = async (finalPlan: WeekPlan, planFile: string): Promise<{ queued: number; stoppedBy?: string }> => {
+    const drawPosters = async (finalPlan: WeekPlan, planFile: string, onlyNetwork?: Network): Promise<{ queued: number; stoppedBy?: string }> => {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
       // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
       const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
@@ -284,11 +302,12 @@ async function main(): Promise<void> {
       let queuedTotal = 0;
       let stoppedReason: string | undefined;
       const usageIds: string[] = [];
-      for (const group of pictureGroups(finalPlan.posts)) {
+      for (const group of pictureGroups(finalPlan.posts).filter((g) => onlyNetwork === undefined || g.networks.includes(onlyNetwork))) {
         const posts = finalPlan.posts.filter((p) => group.postIds.includes(p.id) && !dropped.has(p.id));
         if (posts.length === 0) continue;
         const suffix = group.shape.shape === 'square' ? '' : `-${group.shape.shape}`;
-        const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai${suffix}`);
+        // A new picture for one network goes in a folder of its own, so the files of the pictures already made are never overwritten.
+        const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai${suffix}${onlyNetwork ? `-redraw-${Date.now().toString(36)}` : ''}`);
         if (group.networks.length > 0) console.log(`    Drawing the ${group.shape.shape} picture for ${group.networks.join(', ')}…`);
         const made = await makeCreatives({
           ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape,
@@ -303,7 +322,7 @@ async function main(): Promise<void> {
         console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
         if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
         usageIds.push(...posts.map((p) => `${slug}-${p.id}${suffix}`));
-        const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(group.networks.length > 0 ? { networks: group.networks } : {}), ...(branding ? { branding } : {}) });
+        const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(onlyNetwork ? { networks: [onlyNetwork] } : group.networks.length > 0 ? { networks: group.networks } : {}), ...(branding ? { branding } : {}) });
         queuedTotal += queued.length;
         if (made.stoppedBy) { stoppedReason = String(made.stoppedBy); break; }
       }
@@ -323,6 +342,20 @@ async function main(): Promise<void> {
       const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })));
       for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
       if (postIds.length === 0) throw new Error(`${keptFile} has no kept posts to draw: keep at least one in the dashboard first`);
+      if (values['redraw-post']) {
+        // One more picture for one post (and one network of it) that already has pictures: only that network's picture is replaced, and every other network of the post keeps the one it has.
+        const redrawPost = values['redraw-post'];
+        const asked = values['redraw-network'];
+        if (asked !== undefined && !isNetwork(asked)) throw new Error(`--redraw-network names ${NETWORKS.join(', ')}; "${asked}" is not one of them`);
+        const redrawNetwork = asked as Network | undefined;
+        if (!postIds.includes(redrawPost)) throw new Error(`${redrawPost} is not a kept post of ${keptFile}, so it is not drawn`);
+        const versionsOfLine = (): number => new ReviewStore(brandDir, slug).list().filter((i) => i.version.planFile === keptFile && i.version.postId === redrawPost && (redrawNetwork === undefined || i.version.network === redrawNetwork)).length;
+        const before = versionsOfLine();
+        console.log(`3/4 Drawing one more picture for ${redrawPost}${redrawNetwork ? ` (${redrawNetwork})` : ''}…`);
+        const redrawn = await drawPosters({ ...stored, renderMode: 'ai_v1', posts: stored.posts.filter((p) => p.id === redrawPost) }, keptFile, redrawNetwork);
+        if (versionsOfLine() <= before) throw new NothingDrawnError(redrawn.stoppedBy ? `it stopped before a picture was accepted: ${redrawn.stoppedBy}` : 'no picture passed the checks, so there is nothing new to review');
+        return;
+      }
       let drawIds = postIds;
       if (values['redraw-missing']) {
         // A run that stopped part-way: only the kept posts that have no picture yet are drawn, so nothing already bought is bought again. The batch was closed by the first run.
@@ -511,6 +544,7 @@ if (import.meta.main) {
     else if (error instanceof PartialDrawError) console.error(`PARTIAL_DRAW: ${error.message}`);
     else if (error instanceof NothingDrawnError) console.error(`NOTHING_DRAWN: ${error.message}`);
     else if (error instanceof PageModeError) console.error(`PAGE_MODE_UNAVAILABLE: ${error.message}`);
+    else if (error instanceof CopyStageError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof PreflightError) console.error(`${error.code}: ${error.message}. No posters were made.`);
     else console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);

@@ -56,7 +56,7 @@ test('the gate is on unless switched off, and its threshold must be a sensible n
 const brand = { name: 'OyeChats', website: 'https://www.oyechats.com', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4', tile: '#EEEEEE' } } as unknown as Brand;
 const post = (id: string, headline: string): PlannedPost => ({ id, headline }) as unknown as PlannedPost;
 const clean: CreativeReview['marks'] = { graphicalLogoOrIcon: false, badgeSealAwardOrCertification: false, inventedNumberPriceOrStatistic: false, interfaceOrScreenshotWithText: false, personPresentedAsCustomerOrEndorser: false, flagOrReligiousSymbol: false };
-const reading = (headline: string): CreativeReview => ({ regions: [{ text: headline, readable: true }, { text: 'OyeChats', readable: true }, { text: 'oyechats.com', readable: true }], marks: { ...clean }, relevance: 2, composition: 2, readableSmall: true, textOverImportantArt: false, people: { present: false, estimatedCount: 0, prominent: false, description: '' }, notes: 'none' });
+const reading = (headline: string): CreativeReview => ({ regions: [{ text: headline, readable: true }, { text: 'oyechats.com', readable: true }], marks: { ...clean }, relevance: 2, composition: 2, readableSmall: true, textOverImportantArt: false, people: { present: false, estimatedCount: 0, prominent: false, description: '' }, notes: 'none' });
 
 async function run(headlines: Array<[string, string]>, deps: NonNullable<Parameters<typeof makeCreatives>[0]['deps']>) {
   const dir = mkdtempSync(join(tmpdir(), 'gate-'));

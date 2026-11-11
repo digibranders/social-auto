@@ -255,3 +255,21 @@ test('a shaped size the model does not offer (a 400) is retried once as a square
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test('with no other provider, a call that came back with a server error is tried again after a short wait, and gives up with the error after the waits are used', async () => {
+  const only = aiConfigFromEnv({ OPENAI_API_KEY: OPENAI });
+  let n = 0;
+  const flaky = scripted(() => (++n < 3 ? new Response('<html>520</html>', { status: 520 }) : reply('{"ok":true}')));
+  assert.deepEqual(await chatJson({ ai: only, system: 's', user: 'u', parse: (v) => v as object, fetchFn: flaky.fetchFn, retryDelaysMs: [0, 0] }), { ok: true });
+  assert.equal(flaky.calls.length, 3);
+
+  const down = scripted(() => new Response('{"error":"down"}', { status: 503 }));
+  const error = await chatJson({ ai: only, system: 's', user: 'u', parse: (v) => v, fetchFn: down.fetchFn, retryDelaysMs: [0, 0] }).catch((e: unknown) => e);
+  assert.ok(error instanceof LlmError);
+  assert.match((error as Error).message, /returned 503/);
+  assert.equal(down.calls.length, 3, 'the first try and two more');
+
+  const refused = scripted(() => new Response('{"error":"bad key"}', { status: 401 }));
+  await chatJson({ ai: only, system: 's', user: 'u', parse: (v) => v, fetchFn: refused.fetchFn, retryDelaysMs: [0, 0] }).catch(() => undefined);
+  assert.equal(refused.calls.length, 1, 'a refusal is not a passing fault and is not tried again');
+});

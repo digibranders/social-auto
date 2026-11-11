@@ -163,12 +163,12 @@ test('an accepted first attempt is kept as the poster, one picture bought, nothi
   const ctx = setup();
   try {
     const prompts: string[] = [];
-    const report = await run(ctx, [post('w01-d1', 'Answers from your |own docs|')], { scene: scene(prompts), review: async () => review(['Answers from your own docs', 'OyeChats', 'oyechats.com']) });
+    const report = await run(ctx, [post('w01-d1', 'Answers from your |own docs|')], { scene: scene(prompts), review: async () => review(['Answers from your own docs', 'oyechats.com']) });
     assert.equal(report.results[0]?.status, 'accepted');
     assert.equal(report.results[0]?.attempts.length, 1);
     assert.equal(prompts.length, 1);
     assert.equal(readFileSync(report.results[0]?.file as string, 'utf8'), 'picture 1');
-    assert.deepEqual(report.results[0]?.manifest, { headline: 'Answers from your own docs', brandName: 'OyeChats', domain: 'oyechats.com' });
+    assert.deepEqual(report.results[0]?.manifest, { headline: 'Answers from your own docs', brandName: '', domain: 'oyechats.com' });
     assert.ok(readFileSync(join(ctx.dir, 'out', 'creative-report.json'), 'utf8').includes('"accepted"'));
   } finally {
     ctx.done();
@@ -181,7 +181,7 @@ test('a poster rejected for invented text gets one retry that says what was wron
     const prompts: string[] = [];
     const report = await run(ctx, [post('w01-d1', 'Answers from your own docs')], {
       scene: scene(prompts),
-      review: async (file) => (file.includes('attempt1') ? review(['Answers from your own docs', 'OyeChats', 'oyechats.com', 'Reply sent']) : review(['Answers from your own docs', 'OyeChats', 'oyechats.com'])),
+      review: async (file) => (file.includes('attempt1') ? review(['Answers from your own docs', 'oyechats.com', 'Reply sent']) : review(['Answers from your own docs', 'oyechats.com'])),
     });
     const result = report.results[0];
     assert.equal(result?.status, 'accepted');
@@ -216,11 +216,11 @@ test('a mark that only one reader saw goes to one third reading: cleared it pass
   try {
     const prompts: string[] = [];
     const thirds: number[] = [];
-    const flagged = (reading: number) => (reading === 2 ? review(['Answers from your own docs', 'OyeChats', 'oyechats.com'], { marks: { ...clean, graphicalLogoOrIcon: true } }) : review(['Answers from your own docs', 'OyeChats', 'oyechats.com']));
+    const flagged = (reading: number) => (reading === 2 ? review(['Answers from your own docs', 'oyechats.com'], { marks: { ...clean, graphicalLogoOrIcon: true } }) : review(['Answers from your own docs', 'oyechats.com']));
     const cleared = await run(ctx, [post('w01-d1', 'Answers from your own docs')], {
       scene: scene(prompts),
       review: async (_f, _m, reading) => flagged(reading),
-      third: async () => { thirds.push(1); return { reading: review(['Answers from your own docs', 'OyeChats', 'oyechats.com']), cropped: false }; },
+      third: async () => { thirds.push(1); return { reading: review(['Answers from your own docs', 'oyechats.com']), cropped: false }; },
     });
     assert.equal(cleared.results[0]?.status, 'accepted');
     assert.equal(thirds.length, 1, 'exactly one third reading');
@@ -229,7 +229,7 @@ test('a mark that only one reader saw goes to one third reading: cleared it pass
     const confirmed = await run(ctx, [post('w01-d2', 'Answers from your own docs')], {
       scene: scene(prompts),
       review: async (_f, _m, reading) => flagged(reading),
-      third: async () => ({ reading: review(['Answers from your own docs', 'OyeChats', 'oyechats.com'], { marks: { ...clean, graphicalLogoOrIcon: true } }), cropped: true }),
+      third: async () => ({ reading: review(['Answers from your own docs', 'oyechats.com'], { marks: { ...clean, graphicalLogoOrIcon: true } }), cropped: true }),
       maxAttempts: 1,
     });
     assert.equal(confirmed.results[1]?.status ?? confirmed.results[0]?.status, 'rejected');
@@ -263,7 +263,7 @@ test('a spending cap ends the run, keeps what was made, and no further picture i
         if (drawn === 2) throw new BudgetError('RUN_BUDGET', 'this run would spend more than its limit');
         writeFileSync(out, 'x');
       },
-      review: async () => review(['Answers from your own docs', 'OyeChats', 'oyechats.com']),
+      review: async () => review(['Answers from your own docs', 'oyechats.com']),
     });
     assert.equal(report.results[0]?.status, 'accepted');
     assert.equal(report.results[1]?.status, 'budget_stopped');
@@ -284,7 +284,7 @@ test('a poster-level limit drops that poster only', async () => {
         if (drawn === 1) throw new BudgetError('IMAGE_LIMIT', 'no more pictures for this poster');
         writeFileSync(out, 'x');
       },
-      review: async () => review(['Plan your week', 'OyeChats', 'oyechats.com']),
+      review: async () => review(['Plan your week', 'oyechats.com']),
     });
     assert.equal(report.results[0]?.status, 'budget_stopped');
     assert.equal(report.results[1]?.status, 'accepted');
@@ -295,7 +295,7 @@ test('a poster-level limit drops that poster only', async () => {
 });
 
 test('manifestOf strips the accent markers and shows the plain address', () => {
-  assert.deepEqual(manifestOf(post('p', 'Track |tasks|'), brand), { headline: 'Track tasks', brandName: 'OyeChats', domain: 'oyechats.com' });
+  assert.deepEqual(manifestOf(post('p', 'Track |tasks|'), brand), { headline: 'Track tasks', brandName: '', domain: 'oyechats.com' });
 });
 
 test('with the creative director off (the default), no director call, comparison, side-by-side check or concept memory happens, and each poster is drawn on its own', async () => {
@@ -312,7 +312,7 @@ test('with the creative director off (the default), no director call, comparison
         direct: forbidden,
         lookAlikes: forbidden,
         scene: scene(prompts),
-        review: async (file) => review([file.includes('d1') ? 'Answers from your own docs' : 'Plan your week', 'OyeChats', 'oyechats.com']),
+        review: async (file) => review([file.includes('d1') ? 'Answers from your own docs' : 'Plan your week', 'oyechats.com']),
       },
     });
     assert.equal(touched, 0);
@@ -365,7 +365,7 @@ test('people in the pipeline: a mismatch with small figures is a warning, and a 
   const ctx = setup();
   try {
     const prompts: string[] = [];
-    const out = ['Answers from your own docs', 'OyeChats', 'oyechats.com'];
+    const out = ['Answers from your own docs', 'oyechats.com'];
     const report = await makeCreatives({
       ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, directorEnabled: true, factOf: () => 'f',
       posts: [post('p1', 'Answers from your own docs'), post('p2', 'Answers from your own docs'), post('p3', 'Answers from your own docs')],
@@ -395,7 +395,7 @@ test('people in the pipeline: a mismatch with small figures is a warning, and a 
 test('people in the pipeline: more prominent people than the batch may have rejects the later poster', async () => {
   const ctx = setup();
   try {
-    const out = ['Answers from your own docs', 'OyeChats', 'oyechats.com'];
+    const out = ['Answers from your own docs', 'oyechats.com'];
     const report = await makeCreatives({
       ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'out'), peopleCap: 1, directorEnabled: true, factOf: () => 'f',
       posts: [post('p1', 'Answers from your own docs'), post('p2', 'Answers from your own docs')],
@@ -610,7 +610,7 @@ test('with the director off, a poster that shows people when the batch is alread
         headlineGate: { enabled: false, config: defaultHeadlineGate },
         scene: scene(prompts),
         // Both posters first show people prominently; the second, drawn again after the note, shows none.
-        review: async (file) => review([file.includes('p1') ? 'Answers from your own docs' : 'Plan your week', 'OyeChats', 'oyechats.com'], { people: file.includes('p2') && file.includes('attempt2') ? folks(false, false) : folks(true, true, 'a person at a desk') }),
+        review: async (file) => review([file.includes('p1') ? 'Answers from your own docs' : 'Plan your week', 'oyechats.com'], { people: file.includes('p2') && file.includes('attempt2') ? folks(false, false) : folks(true, true, 'a person at a desk') }),
         third: async () => { throw new Error('no third reading expected'); },
       },
     });
@@ -636,7 +636,7 @@ test('a wide run asks the picture model for the wide size and the prompt for a w
       deps: {
         headlineGate: { enabled: false, config: defaultHeadlineGate },
         scene: async (prompt, out, s) => { seen.push({ prompt, width: s.width, height: s.height }); writeFileSync(out, 'x'); },
-        review: async () => review(['Answers from your own docs', 'OyeChats', 'oyechats.com']),
+        review: async () => review(['Answers from your own docs', 'oyechats.com']),
       },
     });
     const square = await draw({ shape: 'square', width: 1024, height: 1024 });
@@ -663,7 +663,7 @@ test('a poster is judged against the sign-off the owner chose: the edited text p
   assert.equal(judgeCreative(chosen, review(['Track tasks', 'Oye Chats Pro', 'oyechats.com/pricing'])).accepted, true);
   assert.equal(judgeCreative(chosen, review(['Track tasks', 'OyeChats', 'oyechats.com'])).accepted, false, 'the old wording is not what was chosen');
   const plain = manifestOf(post('p', 'Track tasks'), brand);
-  assert.equal(judgeCreative(plain, review(['Track tasks'])).defects.filter((d) => d.kind === 'missing_text').map((d) => d.text).join(', '), 'the web address, the brand name');
+  assert.equal(judgeCreative(plain, review(['Track tasks'])).defects.filter((d) => d.kind === 'missing_text').map((d) => d.text).join(', '), 'the web address', 'with no sign-off typed, only the address is required');
 });
 
 test('a poster whose owner left the brand name and web address off is asked for, and judged on, the headline alone', () => {
@@ -685,7 +685,7 @@ test('leaving off only one of the two keeps the other required and renumbers the
   assert.equal(judgeCreative(noName, review(['Track tasks', 'oyechats.com'])).accepted, true);
   assert.ok(judgeCreative(noName, review(['Track tasks'])).defects.some((d) => d.kind === 'missing_text' && d.text === 'the web address'));
   assert.equal(judgeCreative(noName, review(['Track tasks', 'OyeChats', 'oyechats.com'])).accepted, false, 'the name was left off, so it is extra');
-  const noAddress = manifestOf({ ...post('p', 'Track tasks'), signoff: { domain: '' } }, brand);
+  const noAddress = manifestOf({ ...post('p', 'Track tasks'), signoff: { brandName: 'OyeChats', domain: '' } }, brand);
   const promptNoAddress = buildCreativePrompt(noAddress, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } });
   assert.match(promptNoAddress, /2\. BRAND NAME: "OyeChats"/);
   assert.doesNotMatch(promptNoAddress, /WEB ADDRESS:/);
@@ -700,9 +700,9 @@ test('the sign-off saved in a plan file reaches the poster request: the file is 
   const bare = manifestOf(read, brand);
   assert.deepEqual(bare, { headline: 'Track tasks', brandName: '', domain: '' });
   assert.doesNotMatch(buildCreativePrompt(bare, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } }), /BRAND NAME:|WEB ADDRESS:/);
-  // And a plan with no sign-off still draws the default one.
+  // And a plan with no sign-off still draws the default one: the web address, without the brand's name.
   const plain = parseWeekPlan(JSON.parse(JSON.stringify({ ...saved, posts: [{ ...saved.posts[0], signoff: undefined }] })), 'week-01.json').posts[0] as PlannedPost;
-  assert.deepEqual(manifestOf(plain, brand), { headline: 'Track tasks', brandName: 'OyeChats', domain: 'oyechats.com' });
+  assert.deepEqual(manifestOf(plain, brand), { headline: 'Track tasks', brandName: '', domain: 'oyechats.com' });
 });
 
 test('a draw from a saved plan whose owner left the brand name and web address off asks the picture model for neither and accepts the headline alone', async () => {
@@ -736,4 +736,11 @@ test('the same draw, when the picture model writes the name and address anyway, 
   } finally {
     ctx.done();
   }
+});
+
+test('a poster\'s sign-off is the web address; the brand\'s name is drawn only when one was typed for that post, and an empty one leaves the line off', () => {
+  assert.deepEqual(manifestOf(post('p', 'Track |tasks|'), brand), { headline: 'Track tasks', brandName: '', domain: 'oyechats.com' });
+  assert.equal(manifestOf({ ...post('p', 'Hello there'), signoff: { brandName: 'Oye Chats' } }, brand).brandName, 'Oye Chats', 'a name typed on the post is drawn');
+  assert.equal(manifestOf({ ...post('p', 'Hello there'), signoff: { brandName: '' } }, brand).brandName, '', 'an empty name on the post leaves it off');
+  assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'wordmark' }).brandSignoff, 'logo', 'the logo is not affected');
 });

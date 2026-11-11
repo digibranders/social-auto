@@ -156,6 +156,8 @@ export interface AnalyzeDeps {
   facts?: false;
   factsDeps?: BuildDeps;
   log?: (message: string) => void;
+  /** The brand folder to use instead of the one named after the website (set by whoever owns the brand, so two owners of one website stay apart). */
+  brand?: string;
 }
 
 /** The record of where a logo came from. */
@@ -179,7 +181,7 @@ export async function analyzeSite(site: string, brandsRoot: string, ai: AiConfig
   // Before anything is bought or written: a site in a language the engine does not support stops here.
   const unsupported = checkLanguage(snapshot.pages.map((p) => p.text).join('\n').slice(0, 6000), snapshot.htmlLang);
   if (unsupported?.severity === 'stop') throw new PreflightError(unsupported);
-  const dir = join(brandsRoot, slugFromSite(snapshot.origin));
+  const dir = join(brandsRoot, deps.brand ?? slugFromSite(snapshot.origin));
   const assetsDir = join(dir, 'assets');
   await mkdir(assetsDir, { recursive: true });
   const fetchBytes = deps.fetchBytes ?? ((url: string) => safeFetchBytes(url, { maxBytes: 5_000_000, accept: 'image/*,*/*' }));

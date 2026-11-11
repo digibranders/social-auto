@@ -15,7 +15,9 @@ import { appendDurable, copyDurable, LockError, withFileLock } from './file-lock
 /** "held": approved before a log recovery that could not tell whether the approval was withdrawn in the damaged tail; it goes nowhere until the owner confirms it again. */
 export type ReviewStatus = 'pending' | 'approved' | 'rejected' | 'blocked' | 'superseded' | 'held';
 export const REJECTION_REASONS = ['weak_copy', 'irrelevant_image', 'poor_design', 'incorrect_branding', 'factual_issue', 'repetitive', 'style', 'other'] as const;
-export type RejectionReason = (typeof REJECTION_REASONS)[number];
+/** Recorded by the system, never chosen by a person: nobody decided in time. */
+export const EXPIRED_REASON = 'expired' as const;
+export type RejectionReason = (typeof REJECTION_REASONS)[number] | typeof EXPIRED_REASON;
 
 export interface EvidenceSnapshot {
   factId: string;
@@ -99,7 +101,7 @@ export interface RecoveryRecord {
 export type Event = { type: 'version'; version: PostVersion } | { type: 'decision'; decision: Decision } | { type: 'recovery'; recovery: RecoveryRecord };
 
 export class ReviewError extends Error {
-  readonly code: 'NOT_FOUND' | 'BLOCKED' | 'STALE' | 'ALREADY_DECIDED' | 'TAMPERED' | 'NOT_APPROVED' | 'INVALID' | 'LOCKED';
+  readonly code: 'NOT_FOUND' | 'BLOCKED' | 'STALE' | 'ALREADY_DECIDED' | 'TAMPERED' | 'NOT_APPROVED' | 'INVALID' | 'LOCKED' | 'FORBIDDEN' | 'CONFLICT' | 'LIMIT';
   constructor(code: ReviewError['code'], message: string) {
     super(message);
     this.name = 'ReviewError';
@@ -234,7 +236,8 @@ export class ReviewStore {
     for (const v of versions.values()) latest.set(lineOf(v), Math.max(latest.get(lineOf(v)) ?? 0, v.versionNumber));
     return [...versions.values()].map((version): ReviewItem => {
       const decision = decisions.get(version.versionId);
-      const status: ReviewStatus = !version.validation.accepted ? 'blocked'
+      // A version that did not pass the checks is blocked and can never be approved; the person it belongs to may put it away, which shows as rejected.
+      const status: ReviewStatus = !version.validation.accepted ? (decision?.decision === 'reject' ? 'rejected' : 'blocked')
         : decision?.decision === 'approve' ? (held.has(version.versionId) ? 'held' : 'approved')
         : decision?.decision === 'reject' ? 'rejected'
         : version.versionNumber < (latest.get(lineOf(version)) ?? 0) ? 'superseded'
@@ -298,6 +301,25 @@ export class ReviewStore {
       this.mustOwn(owns);
       appendDurable(this.file, JSON.stringify({ type: 'version', version } satisfies Event));
       return version;
+    });
+  }
+
+  /**
+   * A new version of an already drawn picture with other words: the same picture bytes (nothing is drawn or bought), the new caption, for that version's own
+   * network. It replaces the older version of that network (an approval of the older one stops being in force) and is pending, so it needs approving again.
+   * The caller has checked the words. A version the system blocked cannot be given new words; asking for the words it already has changes nothing.
+   */
+  addCaptionVersion(versionId: string, caption: string, by: string): PostVersion {
+    if (by.trim() === '') throw new ReviewError('INVALID', 'who is changing the words must be given');
+    const item = this.get(versionId);
+    const v = item.version;
+    if (item.status === 'blocked') throw new ReviewError('BLOCKED', 'this picture did not pass the system\'s checks, so its words cannot be changed');
+    if (item.status === 'superseded') throw new ReviewError('STALE', 'a newer version of this post exists; change the words of that one');
+    if (caption.trim() === v.caption.trim()) throw new ReviewError('CONFLICT', 'these are already the words of this picture');
+    return this.addVersion({
+      postId: v.postId, planFile: v.planFile, ...(v.network ? { network: v.network } : {}), ...(v.width && v.height ? { width: v.width, height: v.height } : {}),
+      headline: v.headline, caption, ctaUrl: v.ctaUrl, factIds: v.factIds, evidence: v.evidence, imagePath: join(this.brandDir, v.imageFile),
+      validation: v.validation, attempts: v.attempts, costUsd: 0, ...(v.branding ? { branding: v.branding } : {}), parentVersionId: v.versionId, createdBy: by.trim().slice(0, 80),
     });
   }
 
@@ -372,11 +394,10 @@ export class ReviewStore {
   /** Rejects a version (or withdraws an approval that has not gone out). The reason is kept for the history. */
   reject(versionId: string, by: string, reason: RejectionReason, comment?: string): Decision {
     if (by.trim() === '') throw new ReviewError('INVALID', 'a rejection needs the name of the person who made it');
-    if (!(REJECTION_REASONS as readonly string[]).includes(reason)) throw new ReviewError('INVALID', `the reason must be one of ${REJECTION_REASONS.join(', ')}`);
+    if (![...REJECTION_REASONS, EXPIRED_REASON].includes(reason as never)) throw new ReviewError('INVALID', `the reason must be one of ${REJECTION_REASONS.join(', ')}`);
     return this.locked((owns) => {
       const item = this.get(versionId);
       if (item.status === 'rejected' && item.decision) return item.decision;
-      if (item.status === 'blocked') throw new ReviewError('BLOCKED', 'this version never passed the system\'s checks and is already excluded');
       const decision: Decision = { versionId, decision: 'reject', by, at: this.now().toISOString(), reason, ...(comment ? { comment: comment.slice(0, 500) } : {}), imageSha256: item.version.imageSha256, contentSha256: item.version.contentSha256 };
       this.mustOwn(owns);
       appendDurable(this.file, JSON.stringify({ type: 'decision', decision } satisfies Event));

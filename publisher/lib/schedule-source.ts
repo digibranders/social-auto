@@ -57,5 +57,15 @@ export function createScheduleSource(
 
 export const scheduleSource = createScheduleSource(process.env['SCHEDULE_FILE'], bundled);
 
-/** Drop-in for the old `import { schedule } from '../data/schedule.js'`. */
-export const scheduleData = scheduleSource.data;
+/**
+ * A view of a source that reads the latest schedule each time `.posts` is read. (`source.data` is a getter: copying it once, as `const data = source.data`,
+ * would freeze the schedule as it was when the server started, and a schedule rewritten later would never be seen.)
+ */
+export const liveView = (source: ScheduleSource): { readonly posts: unknown } => ({
+  get posts() {
+    return source.data.posts;
+  },
+});
+
+/** Drop-in for the old `import { schedule } from '../data/schedule.js'`: always the latest schedule. */
+export const scheduleData = liveView(scheduleSource);

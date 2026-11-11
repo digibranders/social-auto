@@ -28,6 +28,22 @@ export interface ManualReleaseInput {
   now?: Date;
 }
 
+/**
+ * A network added to a batch after its record was made: the record's networks gain it, so an approved picture for it reaches the schedule. A batch with no
+ * record yet (not drawn) needs nothing: the record is made at the draw from the plan's own networks.
+ */
+export function addPlatformToRelease(brandDir: string, planFile: string, network: PlanPlatform): boolean {
+  const file = join(brandDir, 'campaigns', `manual-${planFile.replace(/\.json$/, '')}.json`);
+  if (!existsSync(file)) return false;
+  const state = JSON.parse(readFileSync(file, 'utf8')) as CampaignState;
+  if (state.plan.platforms.includes(network)) return false;
+  state.plan.platforms = [...state.plan.platforms, network];
+  const temp = `${file}.${process.pid}.tmp`;
+  writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`);
+  renameSync(temp, file);
+  return true;
+}
+
 /** Writes the record once; asking again for the same batch changes nothing. Returns the networks the batch may go to. */
 export function registerManualRelease(input: ManualReleaseInput): { file: string; platforms: PlanPlatform[]; created: boolean } {
   if (!CLIENT_NAME.test(input.client)) throw new Error('the client name must be lowercase letters, digits and dashes');
