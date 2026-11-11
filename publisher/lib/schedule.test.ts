@@ -158,3 +158,10 @@ test('a post may carry two to ten pictures as a carousel, and its first picture 
     assert.throws(() => parseSchedule({ posts: [{ ...base, ...bad }] }), ScheduleError, JSON.stringify(bad));
   }
 });
+
+test('buildStatus lists every picture of a carousel, and nothing extra for a plain post', () => {
+  const carousel = { ...scheduled('car', 22, 'Carousel caption'), images: ['/posts/b/car/1.jpg', '/posts/b/car/2.jpg'] };
+  const { posts: result } = buildStatus([carousel, scheduled('plain', 23, 'Plain caption')], null, NOW, 'https://pub.example');
+  assert.deepEqual(result.find((p) => p.id === 'car')?.images, ['https://pub.example/posts/b/car/1.jpg', 'https://pub.example/posts/b/car/2.jpg']);
+  assert.equal(result.find((p) => p.id === 'plain')?.images, undefined);
+});

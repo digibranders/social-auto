@@ -171,6 +171,8 @@ export interface StatusPost {
   caption: string;
   /** Absolute poster URL, or null once the poster was pruned. */
   image: string | null;
+  /** A carousel: the absolute URL of every picture, in order. Absent for a plain post. */
+  images?: string[];
   state: PostState;
   permalink: string | null;
   publishedAt: string | null;
@@ -225,6 +227,7 @@ export function buildStatus(posts: Array<ScheduledPost & { edited?: boolean }>, 
       date: post.date,
       caption: post.caption,
       image: post.image ? `${origin}${post.image}` : null,
+      ...(post.images ? { images: post.images.map((path) => `${origin}${path}`) } : {}),
       ...(post.variants ? { variants: Object.fromEntries(PLATFORMS.flatMap((p) => { const v = post.variants?.[p]; return v ? [[p, { ...(v.caption !== undefined ? { caption: v.caption } : {}), ...(v.image ? { image: `${origin}${v.image}` } : {}) }]] : []; })) } : {}),
       state,
       permalink: match?.permalink ?? null,

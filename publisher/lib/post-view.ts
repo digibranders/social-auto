@@ -31,6 +31,7 @@ export function scheduledView(post: ScheduledPost, channels: ChannelFile, posted
     date: post.date,
     caption: post.caption,
     ...(post.image && origin ? { imageUrl: `${origin}${post.image}` } : {}),
+    ...(post.images && origin ? { imageUrls: post.images.map((path) => `${origin}${path}`) } : {}),
     manual: post.manual === true,
     // Only the platforms that have a version of their own are listed; the others use the main caption and picture.
     ...(post.variants ? { variants: Object.fromEntries(PLATFORMS.flatMap((p) => { const v = post.variants?.[p]; return v ? [[p, { ...(v.caption !== undefined ? { caption: v.caption } : {}), ...(v.image && origin ? { imageUrl: `${origin}${v.image}` } : {}) }]] : []; })) } : {}),
