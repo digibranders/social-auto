@@ -3,14 +3,14 @@
  * cron and by a product's "send now". Each channel is independent: one failing never stops another.
  */
 import { parseKey } from './crypto.js';
-import { postToFacebook, postToGoogle, postToInstagram, postToLinkedIn, type CrosspostResult, type FacebookApi, type GoogleApi, type InstagramApi, type LinkedInApi } from './crosspost.js';
-import { pageHealth, postLink, postPhotoFromUrl } from './facebook.js';
+import { pictureUrls, postToFacebook, postToGoogle, postToInstagram, postToLinkedIn, type CrosspostResult, type FacebookApi, type GoogleApi, type InstagramApi, type LinkedInApi } from './crosspost.js';
+import { pageHealth, postLink, postPhotoFromUrl, postPhotos } from './facebook.js';
 import { describeError, requireEnv } from './http.js';
-import { createImageContainer, permalink, publishContainer, recentMedia, tokenHealth, waitUntilReady } from './instagram.js';
+import { createImageContainer, permalink, prepareCarousel, publishContainer, recentMedia, tokenHealth, waitUntilReady } from './instagram.js';
 import { accessTokenFor, createPost, locationHealth } from './google.js';
 import { parseProducts } from './products.js';
 import { dispatch, eventsForResults } from './webhooks.js';
-import { fetchImage, memberHealth, postImage, uploadImage } from './linkedin.js';
+import { fetchImage, memberHealth, postImage, postMultiImage, uploadImage, uploadImageUrn } from './linkedin.js';
 import { notify } from './notify.js';
 import { channelLabel, postedKey, type PostedEntry } from './channels.js';
 import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
@@ -20,9 +20,9 @@ import { fingerprintOf } from './duplicates.js';
 import { duplicateText, guardChannels } from './send-guards.js';
 import { loadChannels, loadClients, loadPosted, savePosted } from './store.js';
 
-const facebookApi: FacebookApi = { postPhotoFromUrl, postLink, pageHealth };
-const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, memberHealth };
-const instagramApi: InstagramApi = { createImageContainer, waitUntilReady, publishContainer, permalink, tokenHealth };
+const facebookApi: FacebookApi = { postPhotoFromUrl, postPhotos, postLink, pageHealth };
+const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, uploadImageUrn, postMultiImage, memberHealth };
+const instagramApi: InstagramApi = { createImageContainer, waitUntilReady, prepareCarousel, publishContainer, permalink, tokenHealth };
 const googleApp = (): { clientId: string; clientSecret: string } => ({ clientId: requireEnv('GOOGLE_CLIENT_ID'), clientSecret: requireEnv('GOOGLE_CLIENT_SECRET') });
 const googleApi: GoogleApi = {
   postUpdate: async (refreshToken, place, update) => createPost(await accessTokenFor(googleApp(), refreshToken), place.account, place.location, update),
@@ -38,8 +38,14 @@ async function sendToInstagram(mainPost: ScheduledPost, origin: string, dryRun: 
   const alreadyLive = (await recentMedia(userId, token)).find((m) => sameCaption(m.caption, post.caption));
   if (alreadyLive) return { status: 'already-published', post: post.id, media: alreadyLive.id };
 
-  const containerId = await createImageContainer(userId, token, `${origin}${post.image}`, post.caption);
-  await waitUntilReady(containerId, token);
+  const urls = pictureUrls(post, origin);
+  let containerId: string;
+  if (urls.length > 1) {
+    containerId = (await prepareCarousel(userId, token, urls, post.caption)).containerId;
+  } else {
+    containerId = await createImageContainer(userId, token, urls[0] as string, post.caption);
+    await waitUntilReady(containerId, token);
+  }
   if (dryRun) return { status: 'dry-run-ready', post: post.id, container: containerId };
 
   const mediaId = await publishContainer(userId, token, containerId);

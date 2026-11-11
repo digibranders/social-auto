@@ -20,6 +20,7 @@ function fakeApi(overrides: Partial<InstagramApi> = {}): InstagramApi & { calls:
       return 'c1';
     },
     waitUntilReady: async (id) => void calls.push(`ready ${id}`),
+    prepareCarousel: async () => { throw new Error('a carousel was not expected here'); },
     publishContainer: async (userId, _token, id) => {
       calls.push(`publish ${userId} ${id}`);
       return 'm9';
