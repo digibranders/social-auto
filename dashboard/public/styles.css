@@ -566,6 +566,16 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-copy-caption p { white-space: pre-wrap; }
 .rv-copy-caption .rv-input { display: block; width: 100%; margin: 6px 0; }
 .rv-draw .rv-check { flex: 1 1 220px; }
+.rv-client-detail { flex: 1 1 100%; margin: 0; }
+/* The "write posts for a website" form: one column that can shrink, labels that never break, and small number pickers. */
+.rv { grid-template-columns: minmax(0, 1fr); }
+.rv-start { display: grid; gap: 14px; padding: 18px 20px; }
+.rv-start h3, .rv-start .rv-hint { margin: 0; }
+.rv-start .rv-actions { gap: 8px 20px; }
+.rv-start .rv-check { white-space: nowrap; min-height: 36px; }
+.rv-start .rv-number { gap: 10px; }
+.rv-start .rv-number .rv-input { flex: 0 0 auto; width: 88px; }
+.rv-start .rv-last { gap: 12px 24px; border-top: 1px solid var(--cell-border); padding-top: 14px; }
 .rv-draw { border-top: 1px solid var(--line, #e4e4e4); margin-top: 10px; padding-top: 10px; }
 .rv-job { margin: 4px 0; }
 .rv-job-failed { color: var(--danger, #b42318); }
