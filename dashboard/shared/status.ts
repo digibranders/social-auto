@@ -90,6 +90,8 @@ export interface ClientPlanData {
   weekdays?: string[];
   time: string;
   utcOffset: string;
+  /** A weekly carousel: one posting day a week is a carousel instead of a single poster. */
+  carousel?: true;
 }
 
 /** The plans of a client, skipping any entry that is not a plan. */
@@ -101,7 +103,7 @@ function planData(value: unknown): ClientPlanData | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
   const p = value as Record<string, unknown>;
   if (!Array.isArray(p['platforms']) || !p['platforms'].every((x) => typeof x === 'string') || typeof p['startDate'] !== 'string' || typeof p['durationDays'] !== 'number' || typeof p['time'] !== 'string' || typeof p['utcOffset'] !== 'string') return undefined;
-  return { platforms: p['platforms'] as string[], startDate: p['startDate'], durationDays: p['durationDays'], time: p['time'], utcOffset: p['utcOffset'], ...(typeof p['postsPerWeek'] === 'number' ? { postsPerWeek: p['postsPerWeek'] } : {}), ...(Array.isArray(p['weekdays']) ? { weekdays: (p['weekdays'] as unknown[]).filter((d): d is string => typeof d === 'string') } : {}) };
+  return { platforms: p['platforms'] as string[], startDate: p['startDate'], durationDays: p['durationDays'], time: p['time'], utcOffset: p['utcOffset'], ...(typeof p['postsPerWeek'] === 'number' ? { postsPerWeek: p['postsPerWeek'] } : {}), ...(Array.isArray(p['weekdays']) ? { weekdays: (p['weekdays'] as unknown[]).filter((d): d is string => typeof d === 'string') } : {}), ...(p['carousel'] === true ? { carousel: true as const } : {}) };
 }
 
 export interface StatusResponse {

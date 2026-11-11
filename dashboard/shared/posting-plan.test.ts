@@ -55,3 +55,29 @@ test('the platforms a client can be planned for are those it has an account of i
   assert.deepEqual(connectedPlatforms([{ platform: 'tiktok', id: 'tiktok:1' }]), [], 'a platform the plans do not offer is ignored');
 });
 
+
+import { carouselDates, carouselWeekday } from './posting-plan.ts';
+
+test('a weekly carousel takes the last posting weekday, the same days the content engine picks (mirrors scheduler/engine/src/posting-plan.test.ts)', () => {
+  const plan = { startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, carousel: true };
+  assert.equal(carouselWeekday(plan), 'fri');
+  assert.deepEqual(carouselDates(plan), ['2026-11-13', '2026-11-20']);
+  assert.deepEqual(planDates(plan).length, 6, 'it replaces a post, so the number of posts is the same');
+  assert.deepEqual(carouselDates({ ...plan, carousel: false }), []);
+  assert.equal(carouselWeekday({ startDate: '2026-11-10', durationDays: 8, weekdays: ['tue', 'thu'], carousel: true }), 'thu');
+  assert.equal(carouselWeekday({ startDate: '2026-11-09', durationDays: 14, carousel: true }), 'sun');
+});
+
+test('the carousel is sent only for a plan that can carry one, is checked in plain words, and is told in the sentence and the cost', () => {
+  const base = input({ startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, carousel: true });
+  assert.deepEqual(planPayload(base)['carousel'], true);
+  assert.equal(planPayload({ ...base, carousel: false })['carousel'], undefined);
+  assert.equal(planPayload({ ...base, durationDays: 1 })['carousel'], undefined);
+  assert.match(planProblem({ ...base, durationDays: 1 }, NOW) ?? '', /more than one day/);
+  assert.match(planProblem({ ...base, postsPerWeek: 1 }, NOW) ?? '', /at least two posts a week/);
+  assert.equal(planProblem(base, NOW), null);
+  assert.match(planSentence({ platforms: ['instagram'], startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, carousel: true }), /6 posts \(2 of them a carousel\) on Instagram/);
+  assert.doesNotMatch(planSentence({ platforms: ['instagram'], startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3 }), /carousel/);
+  assert.ok(planCost(6, 2).high > planCost(6).high, 'a carousel costs more than a single poster');
+  assert.equal(planCost(6, 0).low, planCost(6).low);
+});

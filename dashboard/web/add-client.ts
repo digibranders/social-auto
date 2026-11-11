@@ -1,5 +1,5 @@
 import { brandLabel } from './calendar.ts';
-import { DURATIONS, PLATFORMS, dayLabel, planCost, planDates, planPayload, planProblem, platformNames, todayAt, tomorrowAt, type PlanInput, type PlanPlatform } from '../shared/posting-plan.ts';
+import { DURATIONS, PLATFORMS, carouselDates, dayLabel, planCost, planDates, planPayload, planProblem, platformNames, todayAt, tomorrowAt, type PlanInput, type PlanPlatform } from '../shared/posting-plan.ts';
 import { WEEKLY_LIMIT_DEFAULT, availability, quotaProblem, type QuotaPlan } from '../shared/quota.ts';
 import { button, h } from './ui.ts';
 
@@ -25,11 +25,11 @@ export function previewLabel(name: string): string {
 
 /** The plan the form's choices make, or why they do not make one. Pure, so it is tested without a page. */
 /** `quota` is what the client already has planned and its weekly limit; without it only the choices themselves are checked. */
-export function readPlan(values: { on: boolean; platforms: readonly string[]; startDate: string; durationId: string; postsPerWeek: number; time?: string }, now: Date = new Date(), quota?: { existing: readonly QuotaPlan[]; limit: number }): { plan: PlanInput | null; problem: string | null } {
+export function readPlan(values: { on: boolean; platforms: readonly string[]; startDate: string; durationId: string; postsPerWeek: number; time?: string; carousel?: boolean }, now: Date = new Date(), quota?: { existing: readonly QuotaPlan[]; limit: number }): { plan: PlanInput | null; problem: string | null } {
   if (!values.on) return { plan: null, problem: null };
   const duration = DURATIONS.find((d) => d.id === values.durationId) ?? DURATIONS[0];
   const platforms = PLATFORMS.map((p) => p.id).filter((id) => values.platforms.includes(id));
-  const plan: PlanInput = { platforms, startDate: values.startDate, durationDays: duration.days, ...(duration.days > 1 && values.postsPerWeek > 0 ? { postsPerWeek: values.postsPerWeek } : {}), time: values.time ?? '10:00', utcOffset: '+05:30' };
+  const plan: PlanInput = { platforms, startDate: values.startDate, durationDays: duration.days, ...(duration.days > 1 && values.postsPerWeek > 0 ? { postsPerWeek: values.postsPerWeek } : {}), ...(values.carousel ? { carousel: true } : {}), time: values.time ?? '10:00', utcOffset: '+05:30' };
   const problem = planProblem(plan, now, plan.utcOffset) ?? (quota ? quotaProblem(quota.existing, plan, quota.limit, todayAt(plan.utcOffset, now)) : null);
   return { plan: problem ? null : plan, problem };
 }
@@ -37,10 +37,11 @@ export function readPlan(values: { on: boolean; platforms: readonly string[]; st
 /** What the owner is told about the plan they have chosen: the sentence, every day when there are few, and what it may cost. */
 export function describePlan(plan: PlanInput): string[] {
   const dates = planDates(plan);
-  const cost = planCost(dates.length);
-  const lines = [`${dates.length} post${dates.length === 1 ? '' : 's'} on ${platformNames(plan.platforms)}, at ${plan.time} India time.`];
-  lines.push(dates.length <= 14 ? dates.map(dayLabel).join(' · ') : `${dayLabel(dates[0] as string)} to ${dayLabel(dates.at(-1) as string)}`);
-  lines.push(`The posters cost about $${cost.low.toFixed(2)} to $${cost.high.toFixed(2)} to make. Nothing is posted until you have looked at each poster and approved it.`);
+  const carousels = carouselDates(plan);
+  const cost = planCost(dates.length, carousels.length);
+  const lines = [`${dates.length} post${dates.length === 1 ? '' : 's'}${carousels.length > 0 ? ` (${carousels.length} of them a carousel)` : ''} on ${platformNames(plan.platforms)}, at ${plan.time} India time.`];
+  lines.push(dates.length <= 14 ? dates.map((d) => `${dayLabel(d)}${carousels.includes(d) ? ' (carousel)' : ''}`).join(' · ') : `${dayLabel(dates[0] as string)} to ${dayLabel(dates.at(-1) as string)}`);
+  lines.push(`${carousels.length > 0 ? 'The posters and carousels' : 'The posters'} cost about $${cost.low.toFixed(2)} to $${cost.high.toFixed(2)} to make. Nothing is posted until you have looked at each ${carousels.length > 0 ? 'one' : 'poster'} and approved it.`);
   return lines;
 }
 
@@ -69,6 +70,7 @@ export function planFields(prefix: string, options: { existing?: readonly QuotaP
   const ticks = new Map<PlanPlatform, HTMLInputElement>(PLATFORMS.map((p) => [p.id, h('input', { type: 'checkbox', id: `${prefix}-${p.id}`, ...(p.id === firstChoice ? { checked: 'checked' } : {}), ...(offered(p.id) ? {} : { disabled: 'disabled' }) })]));
   const duration = h('select', { id: `${prefix}-duration`, class: 'text-input', 'aria-label': 'For how long' }, ...DURATIONS.map((d) => h('option', { value: d.id }, d.label)));
   const often = h('select', { id: `${prefix}-often`, class: 'text-input', 'aria-label': 'How often' }, ...Array.from({ length: limit }, (_, i) => i + 1).map((n) => h('option', { value: String(n), ...(n === Math.min(3, limit) ? { selected: 'selected' } : {}) }, `${n} time${n === 1 ? '' : 's'} a week`)));
+  const weeklyCarousel = h('input', { id: `${prefix}-carousel`, type: 'checkbox' });
   const startDate = h('input', { id: `${prefix}-start`, type: 'date', class: 'text-input', 'aria-label': 'First day to post' });
   startDate.value = tomorrowAt('+05:30');
   const time = h('input', { id: `${prefix}-time`, type: 'time', class: 'text-input', 'aria-label': 'Time of day to post, India time', value: '10:00' });
@@ -82,6 +84,7 @@ export function planFields(prefix: string, options: { existing?: readonly QuotaP
     duration,
     h('label', { class: 'label', for: `${prefix}-often` }, 'How often'),
     often,
+    h('label', { class: 'check-row', for: `${prefix}-carousel` }, weeklyCarousel, h('span', {}, 'A weekly carousel: one post a week is a carousel (3 to 5 swipeable slides in one look) instead of a single poster. It counts as one of the week\'s posts, and you approve it like any other.')),
     h('label', { class: 'label', for: `${prefix}-start` }, 'First day'),
     startDate,
     h('label', { class: 'label', for: `${prefix}-time` }, 'Time of day (India time)'),
@@ -91,7 +94,7 @@ export function planFields(prefix: string, options: { existing?: readonly QuotaP
     summary,
   );
   const chosen = (): string[] => [...ticks].filter(([, box]) => box.checked).map(([id]) => id);
-  const read = (on: boolean, now: Date = new Date()): ReturnType<typeof readPlan> => available !== undefined && available.length === 0 ? { plan: null, problem: 'Connect a channel for this client first (Channels, below), then add a plan.' } : readPlan({ on, platforms: chosen(), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value), time: time.value }, now, { existing, limit });
+  const read = (on: boolean, now: Date = new Date()): ReturnType<typeof readPlan> => available !== undefined && available.length === 0 ? { plan: null, problem: 'Connect a channel for this client first (Channels, below), then add a plan.' } : readPlan({ on, platforms: chosen(), startDate: startDate.value, durationId: duration.value, postsPerWeek: Number(often.value), time: time.value, carousel: weeklyCarousel.checked }, now, { existing, limit });
   const drawQuota = (): void => {
     const channels = chosen();
     if (channels.length === 0) return void quota.replaceChildren();
@@ -115,7 +118,7 @@ export function planFields(prefix: string, options: { existing?: readonly QuotaP
     summary.classList.toggle('is-error', Boolean(problem));
     summary.replaceChildren(...(problem ? [h('p', {}, problem)] : plan ? describePlan(plan).map((line) => h('p', {}, line)) : []));
   };
-  return { element, read, refresh, controls: [duration, often, startDate, time, ...ticks.values()] };
+  return { element, read, refresh, controls: [duration, often, weeklyCarousel, startDate, time, ...ticks.values()] };
 }
 
 export function addClientForm(deps: AddClientDeps): HTMLElement {

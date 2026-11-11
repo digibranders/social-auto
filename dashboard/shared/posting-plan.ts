@@ -30,6 +30,8 @@ export type DurationId = (typeof DURATIONS)[number]['id'];
 export const MAX_PLAN_DAYS = 31;
 /** Rough dollars for one poster, low and high; shown only so the owner knows what to expect. */
 export const POSTER_COST = { low: 0.02, high: 0.06 } as const;
+/** Rough dollars for one carousel (three to five slides with the planning and captions). */
+export const CAROUSEL_COST = { low: 0.09, high: 0.3 } as const;
 
 const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
 /** "N a week" spread as evenly through the week as whole days allow (the same table the content engine uses). */
@@ -45,6 +47,8 @@ export interface PlanInput {
   postsPerWeek?: number;
   time: string;
   utcOffset: string;
+  /** A weekly carousel: one posting day a week is a carousel instead of a single poster. It replaces a post and never adds one. */
+  carousel?: boolean;
 }
 
 const addDays = (date: string, days: number): string => new Date(Date.parse(`${date}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
@@ -70,8 +74,25 @@ export function planDates(plan: Pick<PlanInput, 'startDate' | 'durationDays' | '
   return out;
 }
 
-export function planCost(count: number): { low: number; high: number } {
-  return { low: Math.round(count * POSTER_COST.low * 100) / 100, high: Math.round((count * POSTER_COST.high + 0.02) * 100) / 100 };
+/** What `count` posts may cost, of which `carousels` are carousels (a carousel replaces a post, so it is counted in `count`). */
+export function planCost(count: number, carousels = 0): { low: number; high: number } {
+  const singles = count - carousels;
+  return { low: Math.round((singles * POSTER_COST.low + carousels * CAROUSEL_COST.low) * 100) / 100, high: Math.round((singles * POSTER_COST.high + carousels * CAROUSEL_COST.high + 0.02) * 100) / 100 };
+}
+
+type PatternPlan = Pick<PlanInput, 'startDate' | 'durationDays' | 'postsPerWeek'> & { weekdays?: readonly string[]; carousel?: boolean };
+
+/** The weekday a weekly carousel takes: the last posting weekday of the pattern (Sunday when the plan posts every day). Null when there is no carousel. The same rule as the content engine. */
+export function carouselWeekday(plan: PatternPlan): (typeof WEEKDAYS)[number] | null {
+  if (!plan.carousel || plan.durationDays <= 1) return null;
+  const pattern = plan.weekdays ? new Set<string>(plan.weekdays) : plan.postsPerWeek ? new Set<string>(EVEN_SPREAD[plan.postsPerWeek] ?? []) : new Set<string>(WEEKDAYS);
+  return [...WEEKDAYS].reverse().find((d) => pattern.has(d)) ?? null;
+}
+
+/** The posting days that are a carousel. */
+export function carouselDates(plan: PatternPlan): string[] {
+  const weekday = carouselWeekday(plan);
+  return weekday ? planDates(plan).filter((d) => weekdayOf(d) === weekday) : [];
 }
 
 /** "Fri 6 Nov", read in English whatever the browser's language. */
@@ -92,13 +113,15 @@ export function nowTimeAt(utcOffset: string, now: Date = new Date()): string {
 }
 
 /** A problem with the choices made so far, in plain words, or null when they make a plan. */
-export function planProblem(input: Pick<PlanInput, 'platforms' | 'startDate' | 'durationDays'> & { time?: string }, now: Date = new Date(), utcOffset = '+05:30'): string | null {
+export function planProblem(input: Pick<PlanInput, 'platforms' | 'startDate' | 'durationDays'> & { time?: string; carousel?: boolean; postsPerWeek?: number }, now: Date = new Date(), utcOffset = '+05:30'): string | null {
   if (input.platforms.length === 0) return 'Choose at least one platform.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.startDate) || new Date(`${input.startDate}T00:00:00Z`).toISOString().slice(0, 10) !== input.startDate) return 'Choose the day to start.';
   if (input.startDate < todayAt(utcOffset, now)) return 'The start day has already passed.';
   if (input.time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(input.time)) return 'Choose the time of day to post.';
   if (input.time !== undefined && input.startDate === todayAt(utcOffset, now) && input.time <= nowTimeAt(utcOffset, now)) return 'That time has already passed today. Choose a later time, or start tomorrow.';
   if (input.durationDays < 1 || input.durationDays > MAX_PLAN_DAYS) return `Choose from 1 to ${MAX_PLAN_DAYS} days.`;
+  if (input.carousel && input.durationDays < 2) return 'A weekly carousel needs a plan of more than one day.';
+  if (input.carousel && input.postsPerWeek !== undefined && input.postsPerWeek < 2) return 'A weekly carousel needs at least two posts a week, because it replaces one of them.';
   return null;
 }
 
@@ -109,14 +132,16 @@ export function planPayload(input: PlanInput): Record<string, unknown> {
     startDate: input.startDate,
     durationDays: input.durationDays,
     ...(input.durationDays > 1 && input.postsPerWeek ? { postsPerWeek: input.postsPerWeek } : {}),
+    ...(input.durationDays > 1 && input.carousel ? { carousel: true } : {}),
     time: input.time,
     utcOffset: input.utcOffset,
   };
 }
 
 /** One sentence for the form and the client's page: "3 posts on Instagram and Facebook: Fri 6 Nov, Mon 9 Nov, Wed 11 Nov". */
-export function planSentence(plan: { platforms: readonly string[]; startDate: string; durationDays: number; postsPerWeek?: number; weekdays?: readonly string[] }): string {
+export function planSentence(plan: { platforms: readonly string[]; startDate: string; durationDays: number; postsPerWeek?: number; weekdays?: readonly string[]; carousel?: boolean }): string {
   const dates = planDates({ startDate: plan.startDate, durationDays: plan.durationDays, ...(plan.postsPerWeek ? { postsPerWeek: plan.postsPerWeek } : {}) });
+  const carousels = carouselDates({ startDate: plan.startDate, durationDays: plan.durationDays, ...(plan.postsPerWeek ? { postsPerWeek: plan.postsPerWeek } : {}), ...(plan.carousel ? { carousel: true } : {}) }).length;
   const shown = dates.length > 4 ? `${dayLabel(dates[0] as string)} to ${dayLabel(dates.at(-1) as string)}` : dates.map(dayLabel).join(', ');
-  return `${dates.length} post${dates.length === 1 ? '' : 's'} on ${platformNames(plan.platforms)}: ${shown}`;
+  return `${dates.length} post${dates.length === 1 ? '' : 's'}${carousels > 0 ? ` (${carousels} of them a carousel)` : ''} on ${platformNames(plan.platforms)}: ${shown}`;
 }

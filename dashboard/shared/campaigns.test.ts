@@ -224,3 +224,10 @@ test('the review counts and a failed release are read from the service, and nons
   assert.deepEqual([parsed[0]?.review, parsed[0]?.release], [{ approved: 2, pending: 1, rejected: 0 }, { state: 'failed', reason: 'disk full' }]);
   assert.deepEqual([parsed[1]?.review, parsed[1]?.release], [undefined, undefined]);
 });
+
+test('a plan with a weekly carousel is not the same plan as the one without, so each is matched to its own record', () => {
+  const base = { platforms: ['instagram'], startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, time: '10:00' };
+  assert.equal(samePlan(base, { ...base, carousel: true }), false);
+  assert.equal(samePlan({ ...base, carousel: true }, { ...base, carousel: true }), true);
+  assert.notEqual(planKey('acme', base), planKey('acme', { ...base, carousel: true }));
+});
