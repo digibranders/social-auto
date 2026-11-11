@@ -1,5 +1,9 @@
 import type { Channel } from './channels.js';
 import { forPlatform, PLATFORMS, type Variants } from './variants.js';
+/** A carousel shows between two and ten pictures. */
+export const MIN_CAROUSEL_PICTURES = 2;
+export const MAX_CAROUSEL_PICTURES = 10;
+
 export interface ScheduledPost {
   /** Client the post belongs to; posts without one count as a single "default" client. */
   brand?: string;
@@ -9,6 +13,8 @@ export interface ScheduledPost {
   caption: string;
   /** Path under the deployment, e.g. /posts/w01-d1.jpg. Null once the poster was pruned (old posts). */
   image: string | null;
+  /** A carousel: two to ten pictures shown together, in order. `image` is the first of them (the cover). Absent for a post with one picture. */
+  images?: string[];
   /** Added by hand in the dashboard rather than planned by the content job. */
   manual?: boolean;
   /** Where it goes: "instagram" and/or channel ids such as "linkedin:abc" or "google:123". Missing means every connected channel. */
@@ -56,7 +62,13 @@ export function parseSchedule(raw: unknown): ScheduledPost[] {
     if (p['brand'] !== undefined && typeof p['brand'] !== 'string') {
       throw new ScheduleError(`posts[${i}].brand must be a string`);
     }
-    return p as unknown as ScheduledPost;
+    if (p['images'] === undefined) return p as unknown as ScheduledPost;
+    const images = p['images'];
+    if (!Array.isArray(images) || images.length < MIN_CAROUSEL_PICTURES || images.length > MAX_CAROUSEL_PICTURES || images.some((entry) => typeof entry !== 'string' || !entry)) {
+      throw new ScheduleError(`posts[${i}].images must be a list of ${MIN_CAROUSEL_PICTURES} to ${MAX_CAROUSEL_PICTURES} non-empty strings`);
+    }
+    if (typeof p['image'] === 'string' && p['image'] !== images[0]) throw new ScheduleError(`posts[${i}].image must be the first of images`);
+    return { ...p, image: images[0] } as unknown as ScheduledPost;
   });
 }
 

@@ -136,3 +136,25 @@ test('a post with its own time that was never sent is missed after half an hour,
   assert.equal(stateAt(post({ manual: true, channels: ['linkedin'] }), 31), 'missed');
   assert.equal(stateAt(post({ channels: ['linkedin'] }), 31), 'due', 'a plain planned post is sent by the daily run, which may come hours later');
 });
+
+test('a post may carry two to ten pictures as a carousel, and its first picture is its cover', () => {
+  const base = { id: 'c1', brand: 'b', date: '2026-12-10T10:00:00+05:30', caption: 'Words' };
+  const three = ['/posts/b/1.jpg', '/posts/b/2.jpg', '/posts/b/3.jpg'];
+  const [filled] = parseSchedule({ posts: [{ ...base, image: null, images: three }] });
+  assert.deepEqual(filled?.images, three);
+  assert.equal(filled?.image, '/posts/b/1.jpg', 'a missing cover is the first picture');
+  const [same] = parseSchedule({ posts: [{ ...base, image: '/posts/b/1.jpg', images: three }] });
+  assert.equal(same?.image, '/posts/b/1.jpg');
+  const [plain] = parseSchedule({ posts: [{ ...base, image: '/posts/b/1.jpg' }] });
+  assert.equal(plain?.images, undefined, 'a post with one picture has no list');
+
+  for (const bad of [
+    { image: null, images: ['/posts/b/1.jpg'] },
+    { image: null, images: Array.from({ length: 11 }, (_, i) => `/posts/b/${i}.jpg`) },
+    { image: null, images: ['/posts/b/1.jpg', ''] },
+    { image: null, images: '/posts/b/1.jpg' },
+    { image: '/posts/b/9.jpg', images: three },
+  ]) {
+    assert.throws(() => parseSchedule({ posts: [{ ...base, ...bad }] }), ScheduleError, JSON.stringify(bad));
+  }
+});
