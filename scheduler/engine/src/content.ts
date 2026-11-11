@@ -464,6 +464,19 @@ function parsePost(raw: unknown, source: string): PlannedPost {
     if (typeof value !== 'string' || !value.trim()) throw new ContentValidationError(where, `"${key}" must be text`);
     post[key] = value.trim();
   }
+  // The owner's own sign-off wording for this poster, written into the plan when the words were edited in review. An empty string means that line is left off.
+  if (raw['signoff'] !== undefined) {
+    const chosen = raw['signoff'];
+    if (!isRecord(chosen)) throw new ContentValidationError(where, '"signoff" must be an object');
+    const signoff: PosterSignoff = {};
+    for (const key of ['brandName', 'domain'] as const) {
+      const value = chosen[key];
+      if (value === undefined) continue;
+      if (typeof value !== 'string' || value.length > 200) throw new ContentValidationError(where, `"signoff.${key}" must be text`);
+      signoff[key] = value;
+    }
+    if (Object.keys(signoff).length > 0) post.signoff = signoff;
+  }
   if (raw['cta'] !== undefined) post.cta = parseCta(raw['cta'], `${where}`);
   if (raw['ctaReason'] !== undefined) {
     if (typeof raw['ctaReason'] !== 'string' || !raw['ctaReason'].trim()) throw new ContentValidationError(where, '"ctaReason" must be text');

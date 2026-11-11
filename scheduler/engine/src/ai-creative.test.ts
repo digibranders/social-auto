@@ -9,7 +9,7 @@ import { defaultHeadlineGate } from './headline-gate.ts';
 import { makeCreatives, manifestOf } from './ai-creative-pipeline.ts';
 import type { DirectorResult } from './creative-director.ts';
 import { BudgetError, defaultBudgetLimits, PaidLedger } from './paid-ledger.ts';
-import type { Brand, PlannedPost } from './content.ts';
+import { parseWeekPlan, type Brand, type PlannedPost } from './content.ts';
 
 const manifest: TextManifest = { headline: 'Answers from your own docs', brandName: 'OyeChats', domain: 'oyechats.com' };
 const clean: CreativeReview['marks'] = { graphicalLogoOrIcon: false, badgeSealAwardOrCertification: false, inventedNumberPriceOrStatistic: false, interfaceOrScreenshotWithText: false, personPresentedAsCustomerOrEndorser: false, flagOrReligiousSymbol: false };
@@ -691,4 +691,49 @@ test('leaving off only one of the two keeps the other required and renumbers the
   assert.doesNotMatch(promptNoAddress, /WEB ADDRESS:/);
   assert.equal(judgeCreative(noAddress, review(['Track tasks', 'OyeChats'])).accepted, true);
   assert.ok(judgeCreative(noAddress, review(['Track tasks'])).defects.some((d) => d.kind === 'missing_text' && d.text === 'the brand name'));
+});
+
+test('the sign-off saved in a plan file reaches the poster request: the file is read, the manifest follows it, and the prompt leaves the lines off', () => {
+  // The same path a draw takes: the plan as saved by the review page, read back, then turned into the text the poster is asked for and judged on.
+  const saved = { brand: 'oyechats', timezone: '+05:30', posts: [{ id: 'p1', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline: 'Track |tasks|', subline: '', caption: 'c', hashtags: ['#a'], signoff: { brandName: '', domain: '' } }] };
+  const read = parseWeekPlan(JSON.parse(JSON.stringify(saved)), 'week-01.json').posts[0] as PlannedPost;
+  const bare = manifestOf(read, brand);
+  assert.deepEqual(bare, { headline: 'Track tasks', brandName: '', domain: '' });
+  assert.doesNotMatch(buildCreativePrompt(bare, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } }), /BRAND NAME:|WEB ADDRESS:/);
+  // And a plan with no sign-off still draws the default one.
+  const plain = parseWeekPlan(JSON.parse(JSON.stringify({ ...saved, posts: [{ ...saved.posts[0], signoff: undefined }] })), 'week-01.json').posts[0] as PlannedPost;
+  assert.deepEqual(manifestOf(plain, brand), { headline: 'Track tasks', brandName: 'OyeChats', domain: 'oyechats.com' });
+});
+
+test('a draw from a saved plan whose owner left the brand name and web address off asks the picture model for neither and accepts the headline alone', async () => {
+  const ctx = setup();
+  try {
+    const saved = { brand: 'oyechats', timezone: '+05:30', posts: [{ id: 'w01-d1', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline: 'Answers from your |own docs|', subline: '', caption: 'c', hashtags: ['#a'], signoff: { brandName: '', domain: '' } }] };
+    const posts = parseWeekPlan(JSON.parse(JSON.stringify(saved)), 'week-01.json').posts;
+    const prompts: string[] = [];
+    const report = await run(ctx, posts, { scene: scene(prompts), review: async () => review(['Answers from your own docs']) });
+    assert.equal(report.results[0]?.status, 'accepted');
+    assert.equal(prompts.length, 1);
+    assert.match(prompts[0] ?? '', /1\. HEADLINE: "Answers from your own docs"/);
+    assert.doesNotMatch(prompts[0] ?? '', /BRAND NAME:|WEB ADDRESS:/);
+    assert.deepEqual(report.results[0]?.manifest, { headline: 'Answers from your own docs', brandName: '', domain: '' });
+  } finally {
+    ctx.done();
+  }
+});
+
+test('the same draw, when the picture model writes the name and address anyway, is rejected as extra text and retried', async () => {
+  const ctx = setup();
+  try {
+    const saved = { brand: 'oyechats', timezone: '+05:30', posts: [{ id: 'w01-d1', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline: 'Answers from your |own docs|', subline: '', caption: 'c', hashtags: ['#a'], signoff: { brandName: '', domain: '' } }] };
+    const posts = parseWeekPlan(JSON.parse(JSON.stringify(saved)), 'week-01.json').posts;
+    const prompts: string[] = [];
+    const report = await run(ctx, posts, { scene: scene(prompts), review: async (file) => (file.includes('attempt1') ? review(['Answers from your own docs', 'OyeChats', 'oyechats.com']) : review(['Answers from your own docs'])) });
+    assert.equal(report.results[0]?.status, 'accepted');
+    assert.equal(report.results[0]?.attempts.length, 2);
+    assert.equal(report.results[0]?.attempts[0]?.accepted, false);
+    assert.match(prompts[1] ?? '', /CORRECTION.*oyechats/is);
+  } finally {
+    ctx.done();
+  }
 });
