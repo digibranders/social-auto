@@ -7,6 +7,8 @@ import { chatJson } from './llm.ts';
 import { checkCopy } from './copy-gate.ts';
 import { plainHeadline } from './ai-creative.ts';
 import { MAX_HEADLINE_CHARS } from './copy-edit.ts';
+import type { PlannedPost } from './content.ts';
+import type { PlannedConcept } from './creative-director.ts';
 
 export const MIN_SLIDES = 3;
 export const MAX_SLIDES = 5;
@@ -129,4 +131,40 @@ export async function planCarousel(input: PlanCarouselInput): Promise<CarouselDr
     user: JSON.stringify({ brand: input.brandName, facts: input.facts.map((f) => ({ id: f.id, text: f.text })), topics_to_avoid: input.avoidTopics }),
     parse: (value) => parseCarouselDraft(value, input.facts),
   });
+}
+
+export interface SlidePostOptions {
+  /** The slides' post ids are this, then "-s1", "-s2", and so on. */
+  idPrefix: string;
+  /** All slides of a carousel go out as one post, on one date. */
+  date: string;
+}
+
+/** One planned post per slide. Slides before the last carry neither the brand's name nor its address (an empty string leaves the line off); the last carries both, as every poster does. Captions are written for the carousel as a whole, not per slide. */
+export function slidePosts(draft: CarouselDraft, options: SlidePostOptions): PlannedPost[] {
+  return draft.slides.map((slide, index): PlannedPost => ({
+    id: `${options.idPrefix}-s${index + 1}`,
+    date: options.date,
+    painPoint: draft.topic,
+    mode: 'ai',
+    ...(index < draft.slides.length - 1 ? { signoff: { brandName: '', domain: '' } } : {}),
+    headline: slide.headline,
+    subline: '',
+    pillar: 'carousel',
+    factIds: slide.factIds,
+    caption: '',
+    hashtags: [],
+  }));
+}
+
+/** The creative director's answer for the slides, written by code: every slide gets the one shared style and typography, plus its own scene. This is what makes the slides read as one set. */
+export function slideConcepts(draft: CarouselDraft, posts: readonly PlannedPost[]): PlannedConcept[] {
+  return draft.slides.map((slide, index): PlannedConcept => ({
+    postId: posts[index]?.id ?? '',
+    concept: `ONE CAROUSEL OF ${draft.slides.length} SLIDES; every slide shares exactly the same visual system so they read as one set when swiped: ${draft.style} THIS SLIDE: ${slide.scene}.`,
+    people: false,
+    factToPicture: `The picture shows ${slide.scene}.`,
+    typography: draft.typography,
+    replans: 0,
+  }));
 }

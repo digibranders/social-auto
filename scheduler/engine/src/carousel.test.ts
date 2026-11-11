@@ -101,3 +101,27 @@ test('planCarousel asks again when the first answer breaks a rule, and gives up 
 test('planCarousel refuses to start without enough verified facts', async () => {
   await assert.rejects(planCarousel({ ai, brandName: 'Curry Cook', facts: facts.slice(0, 2), avoidTopics: [] }), /at least three verified facts/);
 });
+
+import { slideConcepts, slidePosts } from './carousel.ts';
+
+test('slidePosts makes one post per slide, with the brand name and address only on the last', () => {
+  const draft = parseCarouselDraft(good, facts);
+  const posts = slidePosts(draft, { idPrefix: 'cc-w46-car', date: '2026-11-18T10:00:00+05:30' });
+  assert.deepEqual(posts.map((p) => p.id), ['cc-w46-car-s1', 'cc-w46-car-s2', 'cc-w46-car-s3', 'cc-w46-car-s4']);
+  assert.ok(posts.every((p) => p.date === '2026-11-18T10:00:00+05:30' && p.mode === 'ai' && p.pillar === 'carousel'));
+  assert.deepEqual(posts.slice(0, 3).map((p) => p.signoff), [{ brandName: '', domain: '' }, { brandName: '', domain: '' }, { brandName: '', domain: '' }]);
+  assert.equal(posts[3]?.signoff, undefined);
+  assert.deepEqual(posts[2]?.factIds, ['f2']);
+  assert.equal(posts[0]?.headline, 'Not sure what |curry to choose|?');
+});
+
+test('slideConcepts gives every slide the same style and typography and its own scene', () => {
+  const draft = parseCarouselDraft(good, facts);
+  const posts = slidePosts(draft, { idPrefix: 'p', date: '2026-11-18T10:00:00+05:30' });
+  const concepts = slideConcepts(draft, posts);
+  assert.equal(concepts.length, 4);
+  assert.ok(concepts.every((c, i) => c.postId === posts[i]?.id && c.concept.includes(good.style) && c.typography === good.typography && c.people === false && c.replans === 0));
+  assert.match(concepts[1]?.concept ?? '', /THIS SLIDE: three curry bowls in a row/);
+  assert.equal(new Set(concepts.map((c) => c.concept)).size, 4);
+  assert.match(concepts[0]?.concept ?? '', /ONE CAROUSEL OF 4 SLIDES/);
+});
