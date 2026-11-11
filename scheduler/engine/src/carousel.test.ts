@@ -64,3 +64,40 @@ test('the shared style and typography must be written out, and a malformed answe
   assert.throws(() => parseCarouselDraft(null, facts), CarouselError);
   assert.throws(() => parseCarouselDraft(withSlides([{ role: 'hook' }, {}, {}]), facts), CarouselError);
 });
+
+import { aiConfigFromEnv } from './ai.ts';
+import { planCarousel } from './carousel.ts';
+
+const ai = aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' });
+const reply = (...answers: unknown[]): { fetchFn: typeof fetch; messages: string[] } => {
+  const messages: string[] = [];
+  let n = 0;
+  const fetchFn: typeof fetch = async (_url, init) => {
+    messages.push(String(init?.body));
+    const answer = answers[Math.min(n++, answers.length - 1)];
+    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200 });
+  };
+  return { fetchFn, messages };
+};
+
+test('planCarousel asks the model once and returns the checked draft', async () => {
+  const { fetchFn, messages } = reply(good);
+  const draft = await planCarousel({ ai, brandName: 'Curry Cook', facts, avoidTopics: ['Weekend specials'], fetchFn });
+  assert.equal(draft.topic, 'Choosing a curry');
+  assert.equal(messages.length, 1);
+  assert.match(messages[0] ?? '', /f2/);
+  assert.match(messages[0] ?? '', /Weekend specials/);
+});
+
+test('planCarousel asks again when the first answer breaks a rule, and gives up with the reason after that', async () => {
+  const bad = { ...good, slides: good.slides.slice(0, 2) };
+  const second = reply(bad, good);
+  assert.equal((await planCarousel({ ai, brandName: 'Curry Cook', facts, avoidTopics: [], fetchFn: second.fetchFn })).slides.length, 4);
+  assert.equal(second.messages.length, 2);
+  assert.match(second.messages[1] ?? '', /three to five slides/);
+  await assert.rejects(planCarousel({ ai, brandName: 'Curry Cook', facts, avoidTopics: [], fetchFn: reply(bad).fetchFn }), /three to five slides/);
+});
+
+test('planCarousel refuses to start without enough verified facts', async () => {
+  await assert.rejects(planCarousel({ ai, brandName: 'Curry Cook', facts: facts.slice(0, 2), avoidTopics: [] }), /at least three verified facts/);
+});
