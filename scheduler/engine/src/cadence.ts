@@ -13,6 +13,16 @@ const EVEN_SPREAD: Record<number, readonly Weekday[]> = {
   7: WEEKDAYS,
 };
 
+/**
+ * The days used for "N posts a week" when the first post must fall on a given day: that day, then the others spread as evenly through the week as whole
+ * days allow (two a week from a Wednesday is Wednesday and Saturday). The first post is on the start day, never a day later.
+ */
+export function weekdaysFrom(startDate: string, postsPerWeek: number): Weekday[] {
+  if (!Number.isInteger(postsPerWeek) || postsPerWeek < 1 || postsPerWeek > 7) throw new Error(`postsPerWeek must be a whole number from 1 to 7, got ${postsPerWeek}`);
+  const first = WEEKDAYS.indexOf(weekdayOf(startDate));
+  return Array.from({ length: postsPerWeek }, (_, i) => WEEKDAYS[(first + Math.floor((i * 7) / postsPerWeek)) % 7] as Weekday);
+}
+
 export function weekdaysForPostsPerWeek(postsPerWeek: number): readonly Weekday[] {
   const days = EVEN_SPREAD[postsPerWeek];
   if (!days) throw new Error(`postsPerWeek must be a whole number from 1 to 7, got ${postsPerWeek}`);

@@ -361,3 +361,23 @@ export function signoffText(view: Pick<SignoffView, 'brandName' | 'domain'>): st
   if (view.domain !== '') return `${view.domain} (no brand name)`;
   return 'no brand name and no web address';
 }
+
+/** The time of day a post goes out when none is chosen (India time). */
+export const DEFAULT_POST_TIME = '10:00';
+/** How far ahead the first post may be put, as the engine allows. */
+export const MAX_START_DAYS_AHEAD = 180;
+
+/** Tomorrow's date in India time, YYYY-MM-DD: the earliest day the first post can be put on. */
+export const tomorrowIst = (now: number): string => new Date(now + 5.5 * 3600_000 + 86_400_000).toISOString().slice(0, 10);
+
+/** What is wrong with the day and time chosen for the posts, in plain words; null when they are fine (the day may be left empty). */
+export function whenProblem(startDate: string, time: string, now: number): string | null {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return 'Choose the time of day the posts go out, like 10:00.';
+  if (startDate === '') return null;
+  const at = Date.parse(`${startDate}T00:00:00Z`);
+  // 30 February parses in JavaScript (as 2 March), so the day must read back as the same day.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !Number.isFinite(at) || new Date(at).toISOString().slice(0, 10) !== startDate) return 'Choose a real day for the first post.';
+  if (startDate < tomorrowIst(now)) return 'The first post can go out tomorrow or later (India time).';
+  if (at - Date.parse(`${tomorrowIst(now)}T00:00:00Z`) > MAX_START_DAYS_AHEAD * 86_400_000) return `The first post must be within ${MAX_START_DAYS_AHEAD} days.`;
+  return null;
+}

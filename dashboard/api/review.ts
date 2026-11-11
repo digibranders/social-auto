@@ -147,9 +147,11 @@ export async function POST(request: Request): Promise<Response> {
     const site = words(body.job?.['site'], 200);
     const networks = body.job?.['networks'];
     if (!site || !Array.isArray(networks) || !networks.every((n) => typeof n === 'string' && NETWORKS.includes(n))) return json(400, { error: 'Invalid request' });
-    const { page, weeks, postsPerWeek } = body.job ?? {};
-    if ((page !== undefined && typeof page !== 'boolean') || (weeks !== undefined && typeof weeks !== 'number') || (postsPerWeek !== undefined && typeof postsPerWeek !== 'number')) return json(400, { error: 'Invalid request' });
-    return send('/review/jobs', 'POST', { kind: 'copy', site, networks, ...(page ? { page } : {}), ...(weeks !== undefined ? { weeks } : {}), ...(postsPerWeek !== undefined ? { postsPerWeek } : {}) });
+    const { page, weeks, postsPerWeek, startDate, time } = body.job ?? {};
+    // The day of the first post and the time of day (India time) are optional; the engine checks that the day is tomorrow or later.
+    if ((page !== undefined && typeof page !== 'boolean') || (weeks !== undefined && typeof weeks !== 'number') || (postsPerWeek !== undefined && typeof postsPerWeek !== 'number')
+      || (startDate !== undefined && (typeof startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(startDate))) || (time !== undefined && (typeof time !== 'string' || !/^\d{2}:\d{2}$/.test(time)))) return json(400, { error: 'Invalid request' });
+    return send('/review/jobs', 'POST', { kind: 'copy', site, networks, ...(page ? { page } : {}), ...(weeks !== undefined ? { weeks } : {}), ...(postsPerWeek !== undefined ? { postsPerWeek } : {}), ...(startDate !== undefined ? { startDate } : {}), ...(time !== undefined ? { time } : {}) });
   }
   const id = typeof body.id === 'string' ? body.id : '';
   if (!VERSION_ID.test(id) || (body.action !== 'approve' && body.action !== 'reject')) return json(400, { error: 'Invalid request' });

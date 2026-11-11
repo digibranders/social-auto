@@ -82,3 +82,16 @@ test('autopilotArgs passes the batch size and the days', () => {
   const [old] = parseClients({ clients: [{ ...base, days: 7 }] });
   assert.ok(!autopilotArgs(old!).includes('--weekdays'));
 });
+
+test('weekdaysFrom puts the first post on the chosen day and spreads the rest through the week', async () => {
+  const { weekdaysFrom } = await import('./cadence.ts');
+  assert.deepEqual(weekdaysFrom('2026-12-14', 1), ['mon']);
+  assert.deepEqual(weekdaysFrom('2026-12-16', 2), ['wed', 'sat'], '16 December 2026 is a Wednesday');
+  assert.deepEqual(weekdaysFrom('2026-12-14', 3), ['mon', 'wed', 'fri']);
+  assert.deepEqual(weekdaysFrom('2026-12-17', 7), ['thu', 'fri', 'sat', 'sun', 'mon', 'tue', 'wed']);
+  // The first post of a written run is on the day asked for.
+  assert.equal(postDates('2026-12-16', 4, weekdaysFrom('2026-12-16', 2))[0], '2026-12-16');
+  assert.deepEqual(postDates('2026-12-16', 4, weekdaysFrom('2026-12-16', 2)), ['2026-12-16', '2026-12-19', '2026-12-23', '2026-12-26']);
+  assert.throws(() => weekdaysFrom('2026-12-16', 0), /whole number from 1 to 7/);
+  assert.throws(() => weekdaysFrom('2026-12-16', 8), /whole number from 1 to 7/);
+});

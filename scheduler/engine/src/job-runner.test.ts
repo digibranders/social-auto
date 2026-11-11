@@ -23,6 +23,8 @@ test('a copy job stops before any picture is bought, a draw job draws only the k
     assert.deepEqual(engineArgs(copy), ['src/autopilot.ts', '--site', 'https://acme.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4']);
     const rhythm = s.enqueue(spec({ brand: 'beta', site: 'https://beta.example.com', days: 4, weekdays: ['mon', 'thu'] })).job;
     assert.deepEqual(engineArgs(rhythm), ['src/autopilot.ts', '--site', 'https://beta.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'mon,thu']);
+    const timed = s.enqueue(spec({ brand: 'omega', site: 'https://omega.example.com', days: 4, weekdays: ['wed', 'sat'], startDate: '2026-12-16', time: '09:30' })).job;
+    assert.deepEqual(engineArgs(timed), ['src/autopilot.ts', '--site', 'https://omega.example.com', '--copy-first', '--networks', 'instagram,linkedin', '--days', '4', '--weekdays', 'wed,sat', '--start', '2026-12-16', '--time', '09:30']);
     const retryDraw = s.enqueue(spec({ kind: 'draw', brand: 'delta', site: 'https://delta.example.com', planFile: 'week-02.json' })).job;
     s.claim(5, 1);
     s.update(retryDraw.id, { state: 'failed' });
