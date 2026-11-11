@@ -56,7 +56,7 @@ const describe = (d: CreativeDefect): string => `${d.kind}${'text' in d ? `: ${d
 /** Where a reader placed what is in dispute: the boxes of text regions that are not part of the allowed text, and of the marks it flagged. */
 export function disputedBoxes(manifest: TextManifest, readings: readonly CreativeReview[], gates: readonly Gate[]): Box[] {
   const boxes: Box[] = [];
-  const allowed = new Set([manifest.headline, manifest.brandName, manifest.domain, ...(manifest.subline ? [manifest.subline] : [])].map((t) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()));
+  const allowed = new Set([manifest.headline, manifest.brandName, manifest.domain, ...(manifest.subline ? [manifest.subline] : [])].map((t) => t.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()).filter((t) => t !== ''));
   for (const r of readings) {
     if (gates.includes('text')) for (const region of r.regions) {
       const norm = region.text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();

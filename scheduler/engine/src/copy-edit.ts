@@ -38,15 +38,16 @@ const signoffOf = (value: unknown): Signoff => {
 };
 
 /**
- * The sign-off the owner asked for. A piece left out (undefined) stays as it was; an empty one goes back to the default. A name must be short plain text; an
- * address must be a web address on the client's own website (the website itself, a page of it or a subdomain), never someone else's. Returns only what differs
- * from the defaults, or null when nothing does.
+ * The sign-off the owner asked for. A piece left out (undefined) stays as it was; an empty one means the poster leaves that line off; the default wording typed
+ * again goes back to the default. A name must be short plain text; an address must be a web address on the client's own website (the website itself, a page of
+ * it or a subdomain), never someone else's. Returns only what differs from the defaults (an empty string is "left off"), or null when nothing does.
  */
 export function checkSignoff(wanted: { brandName?: string; domain?: string }, defaults: SignoffDefaults, current: Signoff): Signoff | null {
   const next: Signoff = { ...current };
   if (wanted.brandName !== undefined) {
     const name = wanted.brandName.replace(/\s+/g, ' ').trim();
-    if (name === '' || name === defaults.brandName) delete next.brandName;
+    if (name === defaults.brandName) delete next.brandName;
+    else if (name === '') next.brandName = '';
     else {
       if (name.length > MAX_BRAND_NAME_CHARS) throw new CopyStageError('REJECTED', `the brand name is ${name.length} characters; a poster can carry at most ${MAX_BRAND_NAME_CHARS}`);
       if (/["\\|\u0000-\u001f]/.test(name)) throw new CopyStageError('REJECTED', 'the brand name cannot contain quotation marks, | or a backslash');
@@ -58,7 +59,8 @@ export function checkSignoff(wanted: { brandName?: string; domain?: string }, de
     const slash = raw.indexOf('/');
     const host = (slash === -1 ? raw : raw.slice(0, slash)).toLowerCase();
     const address = slash === -1 ? host : `${host}${raw.slice(slash)}`;
-    if (raw === '' || address === defaults.domain) delete next.domain;
+    if (address === defaults.domain) delete next.domain;
+    else if (raw === '') next.domain = '';
     else {
       if (address.length > MAX_ADDRESS_CHARS) throw new CopyStageError('REJECTED', `the web address is ${address.length} characters; a poster can carry at most ${MAX_ADDRESS_CHARS}`);
       if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/[A-Za-z0-9._~\-/]*)?$/.test(address)) throw new CopyStageError('REJECTED', 'that does not look like a web address, such as acme.com or acme.com/pricing');
@@ -80,7 +82,7 @@ export function editCopy(input: {
   caption?: string;
   /** The network whose caption is being changed. Without one, or for Instagram, it is the main caption. */
   network?: string;
-  /** The brand name and the web address as the poster should show them; an empty one goes back to the default. */
+  /** The brand name and the web address as the poster should show them; an empty one leaves that line off the poster. */
   brandName?: string;
   domain?: string;
   /** What the sign-off says when not changed (the brand's name and the website's address); needed to change the sign-off. */

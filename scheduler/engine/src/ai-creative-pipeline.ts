@@ -241,7 +241,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   for (const post of posts) {
     const manifest = manifestOf(post, brand, input.logo);
     const fact = input.factOf(post);
-    allowedTexts = [manifest.headline, ...(manifest.subline ? [manifest.subline] : []), ...(manifest.brandSignoff === 'logo' ? [] : [manifest.brandName]), manifest.domain];
+    allowedTexts = [manifest.headline, ...(manifest.subline ? [manifest.subline] : []), ...(manifest.brandSignoff === 'logo' ? [] : [manifest.brandName]), manifest.domain].filter((text) => text !== '');
     const result: CreativeResult = { postId: post.id, manifest, status: 'rejected', attempts: [], costUsd: 0 };
     report.results.push(result);
     if (scored.has(post.id)) result.headline = scored.get(post.id) as HeadlineScore;

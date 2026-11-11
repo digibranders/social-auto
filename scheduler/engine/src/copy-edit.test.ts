@@ -144,7 +144,7 @@ test('changing Instagram\'s caption changes the main caption and its network ver
 
 const DEFAULTS = { brandName: 'Acme', domain: 'acme.com' };
 
-test('the brand name and web address of one poster can be changed; the plan and the list follow and an empty one goes back to the default', () => {
+test('the brand name and web address of one poster can be changed or left off; the plan and the list follow, and the default wording typed again goes back to the default', () => {
   const { dir, stage, done } = workspace();
   try {
     const batch = edit(dir, { brandName: ' Acme   Labs ', domain: 'https://www.Acme.com/Pricing/', signoffDefaults: DEFAULTS });
@@ -156,12 +156,26 @@ test('the brand name and web address of one poster can be changed; the plan and 
     assert.equal(plan().posts[1]?.signoff, undefined, 'other posts keep the default');
     assert.equal(stage.get('week-01.json').posts[1]?.signoff, undefined);
 
-    // Only the piece given changes; saying the default again, or nothing, clears it.
+    // Only the piece given changes; the default typed again clears it.
     assert.deepEqual(edit(dir, { domain: 'shop.acme.com', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: 'Acme Labs', domain: 'shop.acme.com' });
     assert.deepEqual(edit(dir, { brandName: 'Acme', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { domain: 'shop.acme.com' });
-    const cleared = edit(dir, { domain: '', signoffDefaults: DEFAULTS });
+    const cleared = edit(dir, { domain: 'acme.com', signoffDefaults: DEFAULTS });
     assert.equal(cleared.posts[0]?.signoff, undefined);
     assert.equal(plan().posts[0]?.signoff, undefined);
+  } finally {
+    done();
+  }
+});
+
+test('an empty brand name or web address leaves that line off the poster, and the default typed again brings it back', () => {
+  const { dir, done } = workspace();
+  try {
+    const plan = () => JSON.parse(readFileSync(join(dir, 'week-01.json'), 'utf8')) as { posts: Array<{ signoff?: unknown }> };
+    assert.deepEqual(edit(dir, { brandName: '', domain: '', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: '', domain: '' });
+    assert.deepEqual(plan().posts[0]?.signoff, { brandName: '', domain: '' });
+    assert.deepEqual(edit(dir, { brandName: '   ', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: '', domain: '' }, 'only spaces is empty too');
+    assert.deepEqual(edit(dir, { domain: 'acme.com', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: '' }, 'one line back, the other still off');
+    assert.equal(edit(dir, { brandName: 'Acme', signoffDefaults: DEFAULTS }).posts[0]?.signoff, undefined, 'both back: nothing is stored');
   } finally {
     done();
   }
