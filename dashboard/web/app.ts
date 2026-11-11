@@ -1147,7 +1147,7 @@ function screen(): HTMLElement {
   if (route.page === 'help') {
     return helpPage(route.channel, (channel) => go({ page: 'help', channel }), render);
   }
-  if (route.page === 'review') return reviewPage(render);
+  if (route.page === 'review') return reviewPage(render, data ? summarizeClients(data, Date.now()) : null);
   if (route.page === 'clients' || route.page === 'client') {
     if (!data) return h('p', { class: 'empty' }, state.error ? 'Could not load the clients.' : 'Loading…');
     const clients = summarizeClients(data, Date.now());
