@@ -16,7 +16,7 @@
  *   PUT  /review/copy/<brand>/<week-NN.json>/<postId>/edit   {"by":"...","headline":"...","caption":"...","network":"linkedin"}   (network optional: the caption of that network; checked like the writer's own words; 422 when refused)
  *   POST /review/copy/<brand>/<week-NN.json>/close   {"by":"..."}   put a batch away without drawing it
  *   POST /review/copy/<brand>/<week-NN.json>/draw   {"by":"...","client":"name its channels are connected under (default: the site's name)"}   ask for the kept posts to be drawn (202 with a job; the same batch is only ever drawn once; after a failed draw, "retry":true draws only the kept posts that still have no picture)
- *   POST /review/jobs   {"kind":"copy","site":"https://...","networks":["instagram","linkedin"],"weeks":1,"postsPerWeek":2,"by":"..."} ("days" instead gives that many posts on consecutive days)   read a website and write its posts (202 with a job)
+ *   POST /review/jobs   {"kind":"copy","site":"https://...","networks":["instagram","linkedin"],"weeks":1,"postsPerWeek":2,"by":"..."} ("days" instead gives that many posts on consecutive days; optional "startDate":"YYYY-MM-DD" (tomorrow or later, India time) puts the first post on that day and "time":"HH:MM" sets the time of day, India time, 10:00 by default)   read a website and write its posts (202 with a job)
  *   GET  /review/jobs?brand=&state=      the jobs, newest first;  GET /review/jobs/<jobId>   one job: state, step 1-4, the plan file, the error, the last lines
  *
  * Everything is decided here, on the server, by the review store: the browser never says what is approvable. A version id names its brand
@@ -38,7 +38,7 @@ import { JobError, JobStore, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
 import { slugFromSite } from './analyze.ts';
 import { isNetwork, NETWORKS } from './networks.ts';
-import { RhythmError, weeklyRhythm } from './rhythm.ts';
+import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
@@ -205,6 +205,16 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const site = cleanSite(body['site'], { keepPath: page });
           const networks = body['networks'] === undefined ? [] : Array.isArray(body['networks']) ? body['networks'] : null;
           if (networks === null || networks.some((n) => typeof n !== 'string' || !isNetwork(n))) throw new ReviewError('INVALID', `networks must be a list of ${NETWORKS.join(', ')}`);
+          // When the posts go out: the day of the first post and the time of day (India time). Both are optional; without them the engine chooses the next free day at 10:00.
+          let startDate: string | undefined;
+          let time: string | undefined;
+          try {
+            if (body['startDate'] !== undefined) startDate = checkStartDate(body['startDate'], Date.now());
+            if (body['time'] !== undefined) time = checkTime(body['time']);
+          } catch (error) {
+            if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
+            throw error;
+          }
           // How much to write: an exact number of posts ("days", on consecutive days), or a rhythm ("weeks" at "postsPerWeek" a week, two a week by default).
           let spread: { days: number; weekdays?: string[] };
           if (body['days'] !== undefined) {
@@ -213,14 +223,14 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             spread = { days };
           } else {
             try {
-              const rhythm = weeklyRhythm({ weeks: body['weeks'], postsPerWeek: body['postsPerWeek'] });
+              const rhythm = weeklyRhythm({ weeks: body['weeks'], postsPerWeek: body['postsPerWeek'], ...(startDate ? { startDate } : {}) });
               spread = { days: rhythm.days, weekdays: [...rhythm.weekdays] };
             } catch (error) {
               if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
               throw error;
             }
           }
-          const { job, created } = jobs.enqueue({ kind: 'copy', brand: slugFromSite(site), site, by: text(body['by'], 80), networks: [...new Set(networks as string[])], days: spread.days, ...(page ? { page } : {}), ...(spread.weekdays ? { weekdays: spread.weekdays } : {}) });
+          const { job, created } = jobs.enqueue({ kind: 'copy', brand: slugFromSite(site), site, by: text(body['by'], 80), networks: [...new Set(networks as string[])], days: spread.days, ...(page ? { page } : {}), ...(spread.weekdays ? { weekdays: spread.weekdays } : {}), ...(startDate ? { startDate } : {}), ...(time ? { time } : {}) });
           return send(res, created ? 202 : 200, { job, created });
         }
         return send(res, 404, { error: 'Not found' });

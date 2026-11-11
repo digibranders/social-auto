@@ -148,6 +148,16 @@ test('writing posts for a website, editing, drawing and putting a batch away are
   assert.equal(calls[0]?.init.method, 'PUT');
   assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/copy/acme/week-01.json/w01-d1/edit');
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', headline: 'New words', caption: 'Better caption', network: 'linkedin' });
+  // The day of the first post and the time of day go through; a malformed one does not.
+  calls = [];
+  upstream(202, { job: { id: 'job-abc123-0123abcd' } });
+  assert.equal((await POST(post({ job: { site: 'acme.example.com', networks: ['linkedin'], weeks: 1, postsPerWeek: 2, startDate: '2026-12-14', time: '09:30' } }))).status, 200);
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', kind: 'copy', site: 'acme.example.com', networks: ['linkedin'], weeks: 1, postsPerWeek: 2, startDate: '2026-12-14', time: '09:30' });
+  for (const bad of [{ startDate: '14/12/2026' }, { startDate: 20261214 }, { time: '9:30' }, { time: 930 }]) {
+    assert.equal((await POST(post({ job: { site: 'acme.example.com', networks: ['linkedin'], ...bad } }))).status, 400, JSON.stringify(bad));
+  }
+  calls = [];
+  upstream(200, { ok: true });
   assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'x', caption: '  ' } }))).status, 400);
   // The sign-off pieces go through as given (empty means the default), and must be text.
   calls = [];

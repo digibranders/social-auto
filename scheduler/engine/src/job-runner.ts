@@ -22,7 +22,7 @@ export function engineArgs(job: Job): string[] {
   }
   const networks = job.networks.length > 0 ? ['--networks', job.networks.join(',')] : [];
   const rhythm = job.weekdays && job.weekdays.length > 0 ? ['--weekdays', job.weekdays.join(',')] : [];
-  return ['src/autopilot.ts', '--site', job.site, '--copy-first', ...(job.page ? ['--page'] : []), ...networks, ...(job.days ? ['--days', String(job.days)] : []), ...rhythm];
+  return ['src/autopilot.ts', '--site', job.site, '--copy-first', ...(job.page ? ['--page'] : []), ...networks, ...(job.days ? ['--days', String(job.days)] : []), ...rhythm, ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
 }
 
 /** What one line the engine printed says about the job. */

@@ -453,3 +453,26 @@ test('the sign-off of a written post can be changed over the API: the list shows
     await s.done();
   }
 });
+
+test('jobs: the day of the first post and the time can be chosen, are checked, and set the weekdays the posts fall on', async () => {
+  const s = await start();
+  try {
+    const post = (body: unknown) => s.call('/review/jobs', { method: 'POST', body: JSON.stringify(body) });
+    const day = (daysAhead: number): string => new Date(Date.now() + 5.5 * 3600_000 + daysAhead * 86_400_000).toISOString().slice(0, 10);
+    const dayOfWeek = (date: string): string => ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'][new Date(`${date}T00:00:00Z`).getUTCDay()] as string;
+    const first = day(10);
+    const ok = await post({ kind: 'copy', site: 'https://acme.example.com', networks: ['linkedin'], weeks: 2, postsPerWeek: 1, startDate: first, time: '09:30', by: 'owner' });
+    assert.equal(ok.status, 202);
+    const { job } = (await ok.json()) as { job: { days: number; weekdays: string[]; startDate: string; time: string } };
+    assert.deepEqual([job.days, job.weekdays, job.startDate, job.time], [2, [dayOfWeek(first)], first, '09:30'], 'the first post is on the chosen day');
+    for (const bad of [{ startDate: day(0) }, { startDate: day(-3) }, { startDate: day(400) }, { startDate: '2026-02-30' }, { startDate: 'soon' }, { time: '25:00' }, { time: '9:30' }, { time: 930 }]) {
+      assert.equal((await post({ kind: 'copy', site: 'https://beta.example.com', by: 'owner', ...bad })).status, 400, JSON.stringify(bad));
+    }
+    // With an exact number of posts the day and time still apply.
+    const exact = await post({ kind: 'copy', site: 'https://gamma.example.com', days: 3, startDate: day(5), by: 'owner' });
+    assert.equal(exact.status, 202);
+    assert.equal(((await exact.json()) as { job: { startDate: string; time?: string } }).job.time, undefined, 'no time given: the engine default applies');
+  } finally {
+    await s.done();
+  }
+});

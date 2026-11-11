@@ -1,7 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
 import { AUTO_WARNING, type ClientSummary } from './clients.ts';
-import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, signoffText, signoffView, startClientOptions, visibleJobs, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, DEFAULT_POST_TIME, networkState, NEW_CLIENT, signoffText, signoffView, startClientOptions, tomorrowIst, visibleJobs, whenProblem, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -14,7 +14,7 @@ interface CopyPost { postId: string; headline: string; caption: string; captions
 interface CopyBatch { brand: string; planFile: string; posts: CopyPost[]; drawnAt?: string; /** The brand's name and the website's address, shown on a poster unless changed. */ signoffDefault?: { brandName: string; domain: string } }
 
 /** What the owner is typing in the "write posts for a website" form; kept here so a redraw does not wipe it. */
-interface StartForm { site: string; page: boolean; networks: string[]; weeks: number; postsPerWeek: number; /** The client the posts are for: a client's name, or NEW_CLIENT for one named after the website. */ client: string }
+interface StartForm { site: string; page: boolean; networks: string[]; weeks: number; postsPerWeek: number; /** The day of the first post (YYYY-MM-DD), or empty for the next free day. */ startDate: string; /** The time of day the posts go out, India time (HH:MM). */ time: string; /** The client the posts are for: a client's name, or NEW_CLIENT for one named after the website. */ client: string }
 
 interface State {
   /** Written posts waiting to be kept or dropped, before any picture is bought. */
@@ -43,7 +43,7 @@ interface State {
   clients: readonly ClientSummary[] | null;
 }
 
-const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, clients: null };
+const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, startDate: '', time: DEFAULT_POST_TIME, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, clients: null };
 
 /** Saves a client's approval mode (set by the page that owns the data); null means saved, else the problem in words. */
 let saveApprovalMode: (client: ClientSummary, mode: 'manual' | 'auto') => Promise<string | null> = async () => 'Not available here.';
@@ -110,8 +110,10 @@ async function startWriting(redraw: () => void): Promise<void> {
   const form = state.start;
   if (!looksLikeSite(form.site)) { state.error = 'Type the website address, like acme.com.'; redraw(); return; }
   if (form.networks.length === 0) { state.error = 'Choose at least one network to write for.'; redraw(); return; }
+  const when = whenProblem(form.startDate, form.time, Date.now());
+  if (when) { state.error = when; redraw(); return; }
   redraw();
-  const done = await post({ job: { site: form.site.trim(), networks: form.networks, weeks: form.weeks, postsPerWeek: form.postsPerWeek, ...(form.page ? { page: true } : {}) } }, 'The request could not be sent. Nothing was started.');
+  const done = await post({ job: { site: form.site.trim(), networks: form.networks, weeks: form.weeks, postsPerWeek: form.postsPerWeek, time: form.time, ...(form.startDate ? { startDate: form.startDate } : {}), ...(form.page ? { page: true } : {}) } }, 'The request could not be sent. Nothing was started.');
   if (done.ok) {
     state.notice = 'Started. The website is being read; the posts appear below when they are written. Nothing is drawn or paid for until you ask.';
     // The batch is named after the website; remember who it is for, so the draw step starts on that client.
@@ -202,6 +204,13 @@ function startView(redraw: () => void): HTMLElement {
     return h('label', { class: 'rv-check rv-number' }, `${label} `, select);
   };
   const running = state.jobs.some((j) => j.kind === 'copy' && jobActive(j));
+  // When the posts go out: the day of the first one and the time of day. The written posts keep their spacing after the first.
+  const startDay = h('input', { class: 'rv-input', type: 'date', 'aria-label': 'Day of the first post', min: tomorrowIst(Date.now()) });
+  startDay.value = form.startDate;
+  startDay.addEventListener('input', () => { form.startDate = startDay.value; });
+  const startTime = h('input', { class: 'rv-input', type: 'time', 'aria-label': 'Time of day, India time' });
+  startTime.value = form.time;
+  startTime.addEventListener('input', () => { form.time = startTime.value; });
   const clientSelect = h('select', { class: 'rv-input', 'aria-label': 'Client' }, ...startOptions.map((o) => h('option', { value: o.value }, o.label)));
   if (picked) clientSelect.value = picked.value;
   clientSelect.disabled = state.clients === null;
@@ -223,6 +232,7 @@ function startView(redraw: () => void): HTMLElement {
     approvalControl(pickedClient, redraw),
     h('div', { class: 'rv-actions' }, h('label', { class: 'rv-check', for: 'rv-page' }, onePage, ' Only this page (a new website only)')),
     h('div', { class: 'rv-actions' }, h('b', {}, 'Write for:'), ...networks),
+    h('div', { class: 'rv-actions rv-when' }, h('label', { class: 'rv-check' }, 'First post on ', startDay), h('label', { class: 'rv-check' }, 'at ', startTime), h('small', { class: 'muted' }, 'India time. Leave the day empty and the next free day is used.')),
     h('div', { class: 'rv-actions rv-last' }, number('Weeks', form.weeks, 4, (n) => { form.weeks = n; }), number('Posts a week', form.postsPerWeek, 7, (n) => { form.postsPerWeek = n; }),
       button(running ? 'Writing…' : 'Write the posts', 'btn btn-primary', () => void startWriting(redraw), 'Write the posts', state.busy)),
   );

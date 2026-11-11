@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffText, signoffView, visibleJobs, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffText, signoffView, tomorrowIst, visibleJobs, whenProblem, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -221,4 +221,17 @@ test('the sign-off line says in words what the poster carries, including what wa
   assert.equal(signoffText({ brandName: '', domain: '' }), 'no brand name and no web address');
   const batch = { signoffDefault: { brandName: 'Acme', domain: 'acme.com' } };
   assert.deepEqual(signoffView(batch, { signoff: { brandName: '', domain: '' } }), { brandName: '', domain: '', changed: true });
+});
+
+test('the day and time of the posts are checked in plain words, with India time deciding what tomorrow is', () => {
+  const now = Date.parse('2026-11-11T06:55:00Z'); // 12:25 on 11 November in India
+  assert.equal(tomorrowIst(now), '2026-11-12');
+  assert.equal(tomorrowIst(Date.parse('2026-11-11T19:00:00Z')), '2026-11-13', 'already the 12th in India');
+  assert.equal(whenProblem('', '10:00', now), null, 'no day: the next free day is used');
+  assert.equal(whenProblem('2026-11-12', '09:30', now), null);
+  assert.equal(whenProblem('2026-12-14', '23:59', now), null);
+  assert.match(whenProblem('2026-11-11', '10:00', now) ?? '', /tomorrow or later/);
+  assert.match(whenProblem('2026-02-30', '10:00', now) ?? '', /real day/);
+  assert.match(whenProblem('2027-06-01', '10:00', now) ?? '', /within 180 days/);
+  for (const bad of ['', '9:30', '25:00', '10:60']) assert.match(whenProblem('2026-12-14', bad, now) ?? '', /time of day/, bad);
 });

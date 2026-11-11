@@ -38,6 +38,10 @@ export interface JobSpec {
   page?: boolean;
   /** The weekdays the posts fall on, e.g. ["mon","thu"] (copy only); without it the engine writes consecutive days. */
   weekdays?: string[];
+  /** The day of the first post, YYYY-MM-DD (copy only); without it the engine chooses the next free day. */
+  startDate?: string;
+  /** The time of day the posts go out, HH:MM India time (copy only); 10:00 when not given. */
+  time?: string;
   /** The written batch to draw (draw only). */
   planFile?: string;
   /** Draw again only what a failed draw did not finish (draw only; allowed once the last draw of the batch has failed). */
@@ -141,6 +145,8 @@ export class JobStore {
         ...(spec.page ? { page: true as const } : {}),
         ...(retrying ? { retry: true as const } : {}),
         ...(spec.weekdays && spec.weekdays.length > 0 ? { weekdays: spec.weekdays } : {}),
+        ...(spec.startDate ? { startDate: spec.startDate } : {}),
+        ...(spec.time ? { time: spec.time } : {}),
         ...(spec.planFile ? { planFile: spec.planFile } : {}),
         state: 'queued',
         createdAt: stamp.toISOString(),
