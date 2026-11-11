@@ -257,10 +257,12 @@ export interface ClientOption {
 
 const networkName = (platform: string): string => NETWORK_CHOICES.find((n) => n.key === platform)?.label ?? platform;
 
+const NO_ACCOUNTS = 'no accounts connected';
+
 /** The accounts a client posts to, e.g. "Instagram: @acme, LinkedIn: Acme Ltd (problem)". */
 export function accountsText(client: Pick<ClientSummary, 'channels'>): string {
   const own = client.channels.filter((c) => c.id !== null || c.account !== null);
-  if (own.length === 0) return 'no accounts connected';
+  if (own.length === 0) return NO_ACCOUNTS;
   return own.map((c) => `${networkName(c.platform)}: ${c.account ?? 'connected'}${c.ok ? '' : ' (has a problem)'}`).join(', ');
 }
 
@@ -275,7 +277,7 @@ export function existingClientOptions(clients: readonly ClientSummary[]): Client
   return [...clients].sort((a, b) => a.label.localeCompare(b.label)).map((c): ClientOption => ({
     value: c.brand,
     label: c.label,
-    detail: `Posts to ${accountsText(c)}. ${approvalText(c.approvalMode)}`,
+    detail: `${accountsText(c) === NO_ACCOUNTS ? 'No accounts are connected, so nothing can be published yet.' : `Posts to ${accountsText(c)}.`} ${approvalText(c.approvalMode)}`,
   }));
 }
 
@@ -302,3 +304,21 @@ export function startClientOptions(clients: readonly ClientSummary[]): ClientOpt
   const newClient: ClientOption = { value: NEW_CLIENT, label: 'New client (named after the website)', detail: 'A new client with no accounts connected yet. Connect accounts on the Clients page before anything can be published.' };
   return [newClient, ...existingClientOptions(clients)];
 }
+
+export interface NetworkState {
+  state: 'connected' | 'problem' | 'not-connected';
+  /** The account's name when one is connected. */
+  account: string | null;
+}
+
+/** Whether a client has an account connected on a network, for the "write for" choices. Null when no client is chosen yet (a new client has none). */
+export function networkState(client: Pick<ClientSummary, 'channels'> | undefined, platform: string): NetworkState | null {
+  if (client === undefined) return null;
+  const own = client.channels.find((c) => c.platform === platform && (c.id !== null || c.account !== null));
+  if (!own) return { state: 'not-connected', account: null };
+  return { state: own.ok ? 'connected' : 'problem', account: own.account };
+}
+
+/** The networks a client has an account on, in the order they are offered; used to tick the right boxes when the client is chosen. */
+export const connectedNetworkKeys = (client: Pick<ClientSummary, 'channels'>): string[] =>
+  NETWORK_CHOICES.filter((n) => networkState(client, n.key)?.state !== 'not-connected').map((n) => n.key);
