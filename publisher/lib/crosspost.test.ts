@@ -18,6 +18,7 @@ function fakeApi(overrides: Partial<FacebookApi> = {}): FacebookApi & { calls: s
       calls.push(`post ${pageId} ${token} ${url} ${caption}`);
       return { photoId: 'photo1', postId: '77_post1' };
     },
+    postPhotos: async () => { throw new Error('a carousel was not expected here'); },
     postLink: async () => 'https://facebook.com/77/posts/1',
     pageHealth: async () => ({ ok: true }),
     ...overrides,
@@ -136,6 +137,8 @@ function fakeLinkedIn(overrides: Partial<LinkedInApi> = {}): LinkedInApi & { cal
       calls.push(`post ${author} ${asset} ${caption} ${visibility}`);
       return { urn: 'urn:li:share:9', url: 'https://www.linkedin.com/feed/update/urn:li:share:9/' };
     },
+    uploadImageUrn: async () => { throw new Error('a carousel was not expected here'); },
+    postMultiImage: async () => { throw new Error('a carousel was not expected here'); },
     memberHealth: async () => ({ ok: true }),
     ...overrides,
   };
