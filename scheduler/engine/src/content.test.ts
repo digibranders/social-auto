@@ -98,3 +98,12 @@ test('a plan post may have an empty subline (a poster needs none when the facts 
   const plan = { brand: 'acme', timezone: '+05:30', posts: [{ id: 'p1', date: '2026-11-04T10:00:00+05:30', painPoint: 'p', mode: 'template', headline: 'A |clear| line', subline: '', caption: 'c', hashtags: ['#a'] }] };
   assert.equal(parseWeekPlan(plan, 'week-01').posts[0]?.subline, '');
 });
+
+test('parseWeekPlan keeps the sign-off the owner chose, an empty one included, and refuses a malformed one', () => {
+  const kept = parseWeekPlan(plan([{ ...validPost, signoff: { brandName: '', domain: 'acme.com/pricing' } }]), 'test');
+  assert.deepEqual(kept.posts[0]?.signoff, { brandName: '', domain: 'acme.com/pricing' });
+  assert.equal(parseWeekPlan(plan([validPost]), 'test').posts[0]?.signoff, undefined, 'a post without one has none');
+  assert.equal(parseWeekPlan(plan([{ ...validPost, signoff: {} }]), 'test').posts[0]?.signoff, undefined);
+  assert.throws(() => parseWeekPlan(plan([{ ...validPost, signoff: 'acme' }]), 'test'), /"signoff" must be an object/);
+  assert.throws(() => parseWeekPlan(plan([{ ...validPost, signoff: { domain: 5 } }]), 'test'), /"signoff.domain" must be text/);
+});
