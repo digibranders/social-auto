@@ -3,7 +3,7 @@ import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import { connectedPlatforms, planPayload, planSentence } from '../shared/posting-plan.ts';
 import { planFields } from './add-client.ts';
 import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
-import { SPEND_CAP_DEFAULT_USD, spentThisMonth, websiteHost, type ClientSummary } from './clients.ts';
+import { AUTO_WARNING, SPEND_CAP_DEFAULT_USD, spentThisMonth, websiteHost, type ClientSummary } from './clients.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { postChannelId } from './new-post.ts';
@@ -266,7 +266,6 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
       }
     });
   });
-  const AUTO_WARNING = 'Automatic: posters that pass the automatic checks are approved by the system and posted on their day. Nobody approves them in the Review tab, so you do not see a poster before it goes out. Failed checks, limits and the pause switch still stop a post.';
   const modeSelect = h('select', { id: `mode-${client.brand}`, class: 'text-input limit-select', 'aria-label': 'Who approves the posters' },
     h('option', { value: 'manual', ...(client.approvalMode === 'manual' ? { selected: 'selected' } : {}) }, 'Manual: a person approves each poster in Review'),
     h('option', { value: 'auto', ...(client.approvalMode === 'auto' ? { selected: 'selected' } : {}) }, 'Automatic: approved by the system after the checks'),

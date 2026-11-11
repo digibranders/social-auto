@@ -114,3 +114,6 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
     };
   });
 }
+
+/** What choosing automatic approval means, said wherever the choice is offered. */
+export const AUTO_WARNING = 'Automatic: posters that pass the automatic checks are approved by the system and posted on their day. Nobody approves them in the Review tab, so you do not see a poster before it goes out. Failed checks, limits and the pause switch still stop a post.';
