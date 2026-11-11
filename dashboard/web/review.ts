@@ -353,3 +353,11 @@ export function signoffView(batch: { signoffDefault?: { brandName: string; domai
   const domain = post.signoff?.domain ?? base.domain;
   return { brandName, domain, changed: brandName !== base.brandName || domain !== base.domain };
 }
+
+/** What a poster's sign-off line says in words, e.g. "Alsonotify | alsonotify.com", or what is left off. */
+export function signoffText(view: Pick<SignoffView, 'brandName' | 'domain'>): string {
+  if (view.brandName !== '' && view.domain !== '') return `${view.brandName} | ${view.domain}`;
+  if (view.brandName !== '') return `${view.brandName} (no web address)`;
+  if (view.domain !== '') return `${view.domain} (no brand name)`;
+  return 'no brand name and no web address';
+}

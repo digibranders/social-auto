@@ -139,7 +139,7 @@ export interface PostArt {
   offer?: PostOffer;
 }
 
-/** The owner's own wording for the sign-off of one poster: only what differs from the brand's name and the website's address. */
+/** The owner's own wording for the sign-off of one poster: only what differs from the brand's name and the website's address. An empty string leaves that line off the poster. */
 export interface PosterSignoff {
   brandName?: string;
   domain?: string;

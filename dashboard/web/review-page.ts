@@ -1,7 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
 import { AUTO_WARNING, type ClientSummary } from './clients.ts';
-import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, signoffView, startClientOptions, visibleJobs, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, signoffText, signoffView, startClientOptions, visibleJobs, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -274,7 +274,7 @@ function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: ()
       brandName && domain ? h('div', { class: 'rv-signoff-edit' },
         h('label', { class: 'rv-field' }, 'Brand name on the poster', brandName),
         h('label', { class: 'rv-field' }, 'Web address on the poster', domain),
-        h('small', { class: 'muted' }, 'The sign-off at the bottom of the poster. With the client\'s real logo on the poster, the logo carries the name and the name is not drawn. The address must be on the client\'s own website. Empty goes back to the default.')) : null,
+        h('small', { class: 'muted' }, 'The sign-off at the bottom of the poster. Clear a box to leave that line off the poster; type the original again to go back to it. With the client\'s real logo on the poster, the logo carries the name and the name is not drawn. The address must be on the client\'s own website.')) : null,
       h('div', { class: 'rv-actions' },
         button('Save', 'btn btn-primary', () => void saveEdit(batch, p, e.network, { headline: headline.value, caption: caption.value, ...(brandName && domain ? { brandName: brandName.value, domain: domain.value } : {}) }, redraw), 'Save', state.busy),
         button('Cancel', 'btn', () => { state.editing = null; redraw(); })));
@@ -312,7 +312,7 @@ function copyView(redraw: () => void): HTMLElement | null {
           'div',
           { class: `rv-copy-post rv-copy-${p.state}` },
           h('p', {}, h('b', {}, p.headline), p.edited ? ' (edited by you)' : ''),
-          (() => { const sign = signoffView(batch, p); return sign ? h('p', { class: 'muted rv-signoff' }, `On the poster: ${sign.brandName} | ${sign.domain}${sign.changed ? ' (changed by you)' : ''}`) : null; })(),
+          (() => { const sign = signoffView(batch, p); return sign ? h('p', { class: 'muted rv-signoff' }, `On the poster: ${signoffText(sign)}${sign.changed ? ' (changed by you)' : ''}`) : null; })(),
           ...postCaptions(batch, p, locked, redraw),
           p.advice ? h('p', { class: 'rv-copy-advice' }, `Suggested drop: ${p.advice}`) : null,
           h('div', { class: 'rv-actions' },

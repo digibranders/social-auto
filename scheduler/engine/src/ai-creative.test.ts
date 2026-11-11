@@ -665,3 +665,30 @@ test('a poster is judged against the sign-off the owner chose: the edited text p
   const plain = manifestOf(post('p', 'Track tasks'), brand);
   assert.equal(judgeCreative(plain, review(['Track tasks'])).defects.filter((d) => d.kind === 'missing_text').map((d) => d.text).join(', '), 'the web address, the brand name');
 });
+
+test('a poster whose owner left the brand name and web address off is asked for, and judged on, the headline alone', () => {
+  const bare = manifestOf({ ...post('p', 'Track |tasks|'), signoff: { brandName: '', domain: '' } }, brand);
+  assert.deepEqual(bare, { headline: 'Track tasks', brandName: '', domain: '' });
+  const prompt = buildCreativePrompt(bare, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } });
+  assert.match(prompt, /1\. HEADLINE: "Track tasks"/);
+  assert.doesNotMatch(prompt, /BRAND NAME:|WEB ADDRESS:/);
+  assert.match(prompt, /The brand name is not part of the text on this poster\. Do not write the brand name anywhere/);
+  assert.match(prompt, /No web address is part of the text on this poster\. Do not write a web address/);
+  assert.equal(judgeCreative(bare, review(['Track tasks'])).accepted, true, 'the headline alone is the whole poster');
+  assert.deepEqual(judgeCreative(bare, review(['Track tasks', 'OyeChats', 'oyechats.com'])).defects, [{ kind: 'extra_text', text: 'oyechats oyechats com' }], 'a name or address that was left off must not appear');
+});
+
+test('leaving off only one of the two keeps the other required and renumbers the contract', () => {
+  const noName = manifestOf({ ...post('p', 'Track tasks'), signoff: { brandName: '' } }, brand);
+  const promptNoName = buildCreativePrompt(noName, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } });
+  assert.match(promptNoName, /2\. WEB ADDRESS: "oyechats\.com", clearly legible and not tiny/);
+  assert.equal(judgeCreative(noName, review(['Track tasks', 'oyechats.com'])).accepted, true);
+  assert.ok(judgeCreative(noName, review(['Track tasks'])).defects.some((d) => d.kind === 'missing_text' && d.text === 'the web address'));
+  assert.equal(judgeCreative(noName, review(['Track tasks', 'OyeChats', 'oyechats.com'])).accepted, false, 'the name was left off, so it is extra');
+  const noAddress = manifestOf({ ...post('p', 'Track tasks'), signoff: { domain: '' } }, brand);
+  const promptNoAddress = buildCreativePrompt(noAddress, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } });
+  assert.match(promptNoAddress, /2\. BRAND NAME: "OyeChats"/);
+  assert.doesNotMatch(promptNoAddress, /WEB ADDRESS:/);
+  assert.equal(judgeCreative(noAddress, review(['Track tasks', 'OyeChats'])).accepted, true);
+  assert.ok(judgeCreative(noAddress, review(['Track tasks'])).defects.some((d) => d.kind === 'missing_text' && d.text === 'the brand name'));
+});

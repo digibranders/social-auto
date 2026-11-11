@@ -31,7 +31,7 @@ export interface CopyPost {
   captions?: Record<string, { text: string; edited?: boolean; fallback?: boolean }>;
   /** True once the owner has changed the writer's words. */
   edited?: boolean;
-  /** The owner's own sign-off wording for this poster: only what differs from the brand's name and the website's address. */
+  /** The owner's own sign-off wording for this poster: only what differs from the brand's name and the website's address; an empty string leaves that line off. */
   signoff?: { brandName?: string; domain?: string };
   /** A note for the owner, such as "weak headline: it tells the reader nothing specific". Advice only: the owner can still keep the post. */
   advice?: string;

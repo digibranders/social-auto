@@ -18,8 +18,9 @@ export interface TextManifest {
   headline: string;
   /** Only when the poster is meant to carry a supporting line. */
   subline?: string;
+  /** The brand's name as the poster signs off with it; empty when the owner chose to leave it off. */
   brandName: string;
-  /** The brand's web address as shown, e.g. "oyechats.com". */
+  /** The brand's web address as shown, e.g. "oyechats.com"; empty when the owner chose to leave it off. */
   domain: string;
   /** How the brand is named on the poster: `drawn` (its name in ordinary lettering, the default) or `logo` (the real logo, which already carries the name and is added afterwards by code, so the name is not drawn). */
   brandSignoff?: 'drawn' | 'logo';
@@ -63,13 +64,21 @@ function logoSpaceLines(manifest: TextManifest, kind: 'wordmark' | 'symbol'): st
 export function buildCreativePrompt(manifest: TextManifest, context: CreativeContext): string {
   // The picture's shape in words: a wide poster is composed for a wide frame, never a square one cropped.
   const shapeWords = context.shape?.shape === 'wide' ? 'wide landscape (3:2, clearly wider than it is tall, composed for that wide frame)' : 'square (1:1)';
+  // The texts the poster must carry, numbered in order: the brand name and the web address are left out when the owner left them off (the real logo carries the name when there is one).
+  const nameShown = manifest.brandSignoff !== 'logo' && manifest.brandName !== '';
+  let number = 0;
+  const texts = [
+    `${++number}. HEADLINE: "${manifest.headline}"`,
+    ...(manifest.subline ? [`${++number}. SUPPORTING LINE: "${manifest.subline}"`] : []),
+    ...(nameShown ? [`${++number}. BRAND NAME: "${manifest.brandName}", as a clear sign-off in bold or semibold lettering, its letters at least 4 percent of the poster's height tall (about 40 pixels on a 1024 pixel poster), smaller than the headline but never small, with strong contrast against what is directly behind it, placed wherever it fits the composition naturally${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`] : []),
+    ...(manifest.domain !== '' ? [`${++number}. WEB ADDRESS: "${manifest.domain}", ${nameShown ? 'set at the same size and weight as the brand name, next to or directly beneath it, as part of the same sign-off' : 'clearly legible and not tiny: its letters are at least about 3 percent of the poster\'s height, with strong contrast'}.`] : []),
+  ];
   const lines = [
     'Generate one complete, original, ' + shapeWords + ' social media advertisement. The whole poster, including typography, artwork, layout, hierarchy and composition, is designed by you as one unified creative: do not use a fixed poster template.',
     'TEXT CONTRACT. The only visible text on the poster is the following, each exactly once and spelled character for character:',
-    `1. HEADLINE: "${manifest.headline}"`,
-    ...(manifest.subline ? [`2. SUPPORTING LINE: "${manifest.subline}"`] : []),
-    ...(manifest.brandSignoff === 'logo' ? [] : [`${manifest.subline ? 3 : 2}. BRAND NAME: "${manifest.brandName}", as a clear sign-off in bold or semibold lettering, its letters at least 4 percent of the poster's height tall (about 40 pixels on a 1024 pixel poster), smaller than the headline but never small, with strong contrast against what is directly behind it, placed wherever it fits the composition naturally${manifest.headline.toLowerCase().includes(manifest.brandName.toLowerCase()) ? ' (it may be left out if the headline already names the brand)' : ''}.`]),
-    `${(manifest.subline ? 3 : 2) + (manifest.brandSignoff === 'logo' ? 0 : 1)}. WEB ADDRESS: "${manifest.domain}", ${manifest.brandSignoff === 'logo' ? 'clearly legible and not tiny: its letters are at least about 3 percent of the poster\'s height, with strong contrast' : 'set at the same size and weight as the brand name, next to or directly beneath it, as part of the same sign-off'}.`,
+    ...texts,
+    ...(manifest.brandName === '' && manifest.brandSignoff !== 'logo' ? ['The brand name is not part of the text on this poster. Do not write the brand name anywhere (the headline may contain it only where its wording says so).'] : []),
+    ...(manifest.domain === '' ? ['No web address is part of the text on this poster. Do not write a web address or a website anywhere.'] : []),
     'Show no other words, letters, numbers or symbols that resemble writing anywhere: no labels, buttons, slogans, interface messages, captions, watermarks, signs, screens with writing, or made-up text.',
     'Never draw or imitate a logo, an app icon, a custom wordmark, a certification badge, a seal, a medal or an award.',
     ...(context.logo ? logoSpaceLines(manifest, context.logo) : []),
@@ -263,6 +272,7 @@ export function judgeCreative(manifest: TextManifest, review: CreativeReview, pl
     for (const start of [...at].reverse()) rest = [...rest.slice(0, start), ...rest.slice(start + needle.length)];
   };
 
+  // The brand name and the web address are required once each unless the owner left them off; an empty one is not asked for, and any such text on the poster is then extra text.
   const brandInHeadline = runsOf(tokens(manifest.headline), tokens(manifest.brandName)).length > 0;
   // The longest texts go first: the address and the headline can contain the brand's name.
   take('the headline', manifest.headline, true, false);
@@ -272,7 +282,7 @@ export function judgeCreative(manifest: TextManifest, review: CreativeReview, pl
   if (manifest.brandSignoff === 'logo') {
     // The real logo carries the name, so the name is not drawn: the web address is required once, and any other mention of the name (outside the headline, which
     // was taken first) is left in `rest` and rejected as text that was not asked for.
-    take('the web address', manifest.domain, true, false);
+    if (addressWords.length > 0) take('the web address', manifest.domain, true, false);
   } else if (addressWords.length > 0 && addressWords.length === nameWords.length && addressWords.every((w, i) => w === nameWords[i])) {
     // A business named after its own address ("Fynix Digital" and "fynix.digital") has two pieces of text that read as the same words. They are told
     // apart by shape: an address has a dot between letters, a name does not. Each is then required once (the name may be left to the headline).
@@ -295,8 +305,8 @@ export function judgeCreative(manifest: TextManifest, review: CreativeReview, pl
     }
     for (const start of [...found].reverse()) rest = [...rest.slice(0, start), ...rest.slice(start + addressWords.length)];
   } else {
-    take('the web address', manifest.domain, true, false);
-    take('the brand name', manifest.brandName, !brandInHeadline, brandInHeadline);
+    if (addressWords.length > 0) take('the web address', manifest.domain, true, false);
+    if (nameWords.length > 0) take('the brand name', manifest.brandName, !brandInHeadline, brandInHeadline);
   }
 
   if (rest.length > 0) defects.push({ kind: 'extra_text', text: rest.join(' ') });

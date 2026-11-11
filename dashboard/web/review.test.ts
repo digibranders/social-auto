@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffView, visibleJobs, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffText, signoffView, visibleJobs, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -212,4 +212,13 @@ test('a stop that a later try has replaced is not shown, but one nothing replace
     draw('stopped-later', 'delta', 'week-01.json', 'failed', 3 * 60_000),
   ];
   assert.deepEqual(visibleJobs(jobs, now).map((j) => j.id), ['running-after', 'stopped-later', 'stopped-other-plan', 'stopped-alone', 'done-after']);
+});
+
+test('the sign-off line says in words what the poster carries, including what was left off', () => {
+  assert.equal(signoffText({ brandName: 'Acme', domain: 'acme.com' }), 'Acme | acme.com');
+  assert.equal(signoffText({ brandName: 'Acme', domain: '' }), 'Acme (no web address)');
+  assert.equal(signoffText({ brandName: '', domain: 'acme.com' }), 'acme.com (no brand name)');
+  assert.equal(signoffText({ brandName: '', domain: '' }), 'no brand name and no web address');
+  const batch = { signoffDefault: { brandName: 'Acme', domain: 'acme.com' } };
+  assert.deepEqual(signoffView(batch, { signoff: { brandName: '', domain: '' } }), { brandName: '', domain: '', changed: true });
 });
