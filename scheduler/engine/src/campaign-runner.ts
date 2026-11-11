@@ -22,6 +22,7 @@ import { exportToPublisher } from './export-publisher.ts';
 import { ReviewError, ReviewStore } from './review-store.ts';
 import { checkLeadTime, type LeadTimeNotice } from './lead-time.ts';
 import { ntfySender } from './owner-notice.ts';
+import { ProductBrands } from './product-brands.ts';
 
 export type BatchStatus = 'pending' | 'running' | 'done' | 'failed' | 'interrupted';
 /** What a running batch is doing, as far as the autopilot's own progress lines say. */
@@ -378,6 +379,7 @@ export function autoApprove(brandDir: string, site: string, weekFiles: readonly 
 export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Promise<CampaignState[]> {
   const log = deps.log ?? (() => undefined);
   const released: CampaignState[] = [];
+  const owners = new ProductBrands(brandsRoot);
   let siteBrands: string[] = [];
   try {
     siteBrands = (await readdir(brandsRoot, { withFileTypes: true })).filter((d) => d.isDirectory()).map((d) => d.name);
@@ -408,7 +410,8 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
       const weekFiles = [...new Set(members.flatMap(({ state }) => state.batches.flatMap((b) => (b.weekFile ? [b.weekFile] : []))))];
       try {
         // A client on automatic approval has the posters that passed every check approved here, just before they are handed over.
-        if ((deps.approvalMode?.(client) ?? 'manual') === 'auto') {
+        // A brand a product owns is never approved by the system, whatever its setting says: only its own customer approves.
+        if ((deps.approvalMode?.(client) ?? 'manual') === 'auto' && !owners.has(siteBrand) && !owners.has(client)) {
           const result = autoApprove(join(brandsRoot, siteBrand), siteBrand, weekFiles, deps.now?.() ?? new Date(), log);
           if (result.approved > 0) log(`${client}: ${result.approved} poster${result.approved === 1 ? '' : 's'} approved automatically after the checks`);
         }
