@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ReviewStore } from './review-store.ts';
+import { ProductBrands } from './product-brands.ts';
 import { acquireLease, autoApprove, listCampaigns, makeCampaigns, parseProgressLine, releaseCampaigns, statusOf, type PlannedClient, type RunnerDeps } from './campaign-runner.ts';
 
 const NOW = new Date('2026-11-05T12:00:00Z');
@@ -567,6 +568,22 @@ test('automatic approval never approves a carousel: its slides and captions wait
     const result = autoApprove(brandDir, 'oyechats', ['week-01.json'], new Date('2026-11-05T12:00:00Z'));
     assert.deepEqual(result, { approved: 1, left: 3 });
     assert.equal(store.carouselStatus('car1'), 'pending');
+  } finally {
+    r.done();
+  }
+});
+
+test('a brand a product owns is never approved by the system, even when its setting says automatic; only its customer approves', async () => {
+  const r = root();
+  try {
+    const exec: RunnerDeps['exec'] = async () => { mkdirSync(join(r.dir, 'oyechats'), { recursive: true }); writeFileSync(join(r.dir, 'oyechats', 'week-01.json'), JSON.stringify({ posts: [{ id: 'future', date: '2026-11-09T10:00:00+05:30' }] })); return { code: 0, tail: 'done' }; };
+    await makeCampaigns([client()], r.dir, deps({ exec }));
+    new ProductBrands(r.dir).claim('oyechats', 'brandbasket', () => false);
+    const store = new ReviewStore(join(r.dir, 'oyechats'), 'oyechats');
+    const v = store.addVersion({ postId: 'future', planFile: 'week-01.json', headline: 'H', caption: 'C', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], imagePath: (() => { const p = join(r.dir, 'future.jpg'); writeFileSync(p, 'future'); return p; })(), validation: { accepted: true, readings: 1, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0 });
+    await releaseCampaigns(r.dir, deps({ approvalMode: () => 'auto', release: async () => 0 }));
+    assert.equal(store.get(v.versionId).status, 'pending', 'the system did not approve it');
+    assert.equal(store.get(v.versionId).decision, undefined);
   } finally {
     r.done();
   }
