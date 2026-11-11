@@ -61,8 +61,12 @@ test('a Facebook post gives reactions, comments and shares with no new permissio
   const none = await facebookPost('7_1', 'tok', fakeFetch([[/\/7_1\/insights/, 400, refusal], [/\/7_1\?/, 200, { message: 'Hi', permalink_url: 'https://fb/1', shares: { count: 2 }, reactions: { summary: { total_count: 9 } }, comments: { summary: { total_count: 4 } } }]]));
   assert.deepEqual(none.numbers, { likes: 9, comments: 4, shares: 2 });
   assert.deepEqual(none.needs, ['reconnect']);
-  const full = await facebookPost('7_1', 'tok', fakeFetch([[/\/7_1\/insights/, 200, { data: [{ name: 'post_impressions_unique', values: [{ value: 300 }] }, { name: 'post_clicks', values: [{ value: 21 }] }] }], [/\/7_1\?/, 200, { reactions: { summary: { total_count: 1 } } }]]));
-  assert.deepEqual(full.numbers, { likes: 1, reach: 300, clicks: 21 });
+  const full = await facebookPost('7_1', 'tok', fakeFetch([
+    [/metric=post_clicks/, 200, { data: [{ name: 'post_clicks', values: [{ value: 21 }] }] }],
+    [/\/7_1\/insights/, 200, { data: [{ name: 'post_total_media_view_unique', values: [{ value: 300 }] }, { name: 'post_media_view', values: [{ value: 450 }] }] }],
+    [/\/7_1\?/, 200, { reactions: { summary: { total_count: 1 } } }],
+  ]));
+  assert.deepEqual(full.numbers, { likes: 1, reach: 300, views: 450, clicks: 21 });
 });
 
 test('a Facebook page gives followers, and daily reach with read_insights', async () => {
@@ -87,4 +91,13 @@ test('Google numbers still come when the search terms cannot be read', async () 
   const f = fakeFetch([[/fetchMultiDailyMetricsTimeSeries/, 200, { multiDailyMetricTimeSeries: [] }], [/searchkeywords/, 403, { error: { message: 'no' } }]]);
   const reading = await googleLocation('locations/9', 'access', '2026-10-29', '2026-11-11', f);
   assert.deepEqual(reading, { numbers: {}, needs: [] });
+});
+
+test('a metric Meta has retired is not the customer\'s doing: the other numbers are kept, nothing is thrown, and no reconnect is asked for', async () => {
+  const retired = { error: { code: 100, message: '(#100) The value must be a valid insights metric' } };
+  const post = await facebookPost('7_1', 'tok', fakeFetch([[/\/7_1\/insights/, 400, retired], [/\/7_1\?/, 200, { reactions: { summary: { total_count: 5 } }, comments: { summary: { total_count: 1 } } }]]));
+  assert.deepEqual(post.numbers, { likes: 5, comments: 1 });
+  assert.deepEqual(post.needs, []);
+  const account = await facebookAccount('7', 'tok', '2026-11-12', fakeFetch([[/\/7\/insights/, 400, retired], [/\/7\?/, 200, { followers_count: 9 }]]));
+  assert.deepEqual(account, { numbers: { '2026-11-12': { followers: 9 } }, needs: [] });
 });

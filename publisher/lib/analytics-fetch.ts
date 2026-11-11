@@ -22,6 +22,8 @@ type Json = Record<string, unknown>;
 interface Refusal {
   permission: boolean;
   followers: boolean;
+  /** Meta no longer knows the metric asked for (they retire metrics): the number is simply not available, which is not the customer's doing. */
+  retired: boolean;
 }
 
 function refusalOf(body: Json): Refusal | null {
@@ -32,7 +34,8 @@ function refusalOf(body: Json): Refusal | null {
   const text = `${String(e['message'] ?? '')} ${String(e['error_user_msg'] ?? '')}`.toLowerCase();
   const followers = /100 followers|not enough followers|minimum of 100/.test(text);
   const permission = code === 10 || (code >= 200 && code <= 299) || /permission|not authorized|requires/.test(text);
-  return permission || followers ? { permission, followers } : null;
+  const retired = code === 100 && /valid insights metric|metric.*(not supported|deprecated|no longer)/.test(text);
+  return permission || followers || retired ? { permission, followers, retired } : null;
 }
 
 async function graph(fetcher: Fetch, source: string, url: string): Promise<{ body: Json; refusal: Refusal | null }> {
@@ -86,7 +89,7 @@ export async function instagramPost(mediaId: string, token: string, fetcher: Fet
   put(numbers, 'comments', count(basic.body['comments_count']));
   const needs: Need[] = [];
   const insights = await graph(fetcher, 'Instagram post insights', `${INSTAGRAM_GRAPH}/${mediaId}/insights?${new URLSearchParams({ metric: 'reach,views,shares,saved', access_token: token })}`);
-  if (insights.refusal) needs.push('reconnect');
+  if (insights.refusal) { if (insights.refusal.permission) needs.push('reconnect'); }
   else {
     put(numbers, 'reach', insightValue(insights.body, 'reach'));
     put(numbers, 'views', insightValue(insights.body, 'views'));
@@ -112,7 +115,7 @@ export async function instagramAccount(userId: string, token: string, today: str
   if (followers !== undefined) numbers[today] = { followers };
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
   const day = await graph(fetcher, 'Instagram account insights', `${INSTAGRAM_GRAPH}/${userId}/insights?${new URLSearchParams({ metric: 'reach,views,profile_views', metric_type: 'total_value', period: 'day', since: String(utcSeconds(yesterday)), until: String(utcSeconds(today)), access_token: token })}`);
-  if (day.refusal) needs.push('reconnect');
+  if (day.refusal) { if (day.refusal.permission) needs.push('reconnect'); }
   else {
     const entry: AccountNumbers = {};
     put(entry, 'reach', insightValue(day.body, 'reach'));
@@ -126,6 +129,7 @@ export async function instagramAccount(userId: string, token: string, today: str
       const answer = await graph(fetcher, 'Instagram audience', `${INSTAGRAM_GRAPH}/${userId}/insights?${new URLSearchParams({ metric: 'follower_demographics', period: 'lifetime', metric_type: 'total_value', breakdown: part, access_token: token })}`);
       if (answer.refusal) {
         if (answer.refusal.followers) needs.push('followers');
+        else if (answer.refusal.permission) needs.push('reconnect');
         break;
       }
       const data = Array.isArray(answer.body['data']) ? (answer.body['data'] as Json[]) : [];
@@ -155,11 +159,16 @@ export async function facebookPost(postId: string, pageToken: string, fetcher: F
   put(numbers, 'comments', summary('comments'));
   put(numbers, 'shares', count((basic.body['shares'] as Json | undefined)?.['count']));
   const needs: Need[] = [];
-  const insights = await graph(fetcher, 'Facebook post insights', `${FACEBOOK_GRAPH}/${postId}/insights?${new URLSearchParams({ metric: 'post_impressions_unique,post_clicks', access_token: pageToken })}`);
-  if (insights.refusal) needs.push('reconnect');
+  // Meta retired the "impressions" metrics for Pages in favour of "media views"; reach is the unique count of those.
+  const insights = await graph(fetcher, 'Facebook post insights', `${FACEBOOK_GRAPH}/${postId}/insights?${new URLSearchParams({ metric: 'post_total_media_view_unique,post_media_view', access_token: pageToken })}`);
+  if (insights.refusal) { if (insights.refusal.permission) needs.push('reconnect'); }
   else {
-    put(numbers, 'reach', insightValue(insights.body, 'post_impressions_unique'));
-    put(numbers, 'clicks', insightValue(insights.body, 'post_clicks'));
+    put(numbers, 'reach', insightValue(insights.body, 'post_total_media_view_unique'));
+    put(numbers, 'views', insightValue(insights.body, 'post_media_view'));
+  }
+  if (!insights.refusal) {
+    const clicks = await graph(fetcher, 'Facebook post clicks', `${FACEBOOK_GRAPH}/${postId}/insights?${new URLSearchParams({ metric: 'post_clicks', access_token: pageToken })}`);
+    if (!clicks.refusal) put(numbers, 'clicks', insightValue(clicks.body, 'post_clicks'));
   }
   return {
     numbers,
@@ -176,8 +185,8 @@ export async function facebookAccount(pageId: string, pageToken: string, today: 
   const profile = await graph(fetcher, 'Facebook page', `${FACEBOOK_GRAPH}/${pageId}?${new URLSearchParams({ fields: 'followers_count', access_token: pageToken })}`);
   const followers = count(profile.body['followers_count']);
   if (followers !== undefined) numbers[today] = { followers };
-  const insights = await graph(fetcher, 'Facebook page insights', `${FACEBOOK_GRAPH}/${pageId}/insights?${new URLSearchParams({ metric: 'page_impressions_unique', period: 'day', access_token: pageToken })}`);
-  if (insights.refusal) needs.push('reconnect');
+  const insights = await graph(fetcher, 'Facebook page insights', `${FACEBOOK_GRAPH}/${pageId}/insights?${new URLSearchParams({ metric: 'page_total_media_view_unique', period: 'day', access_token: pageToken })}`);
+  if (insights.refusal) { if (insights.refusal.permission) needs.push('reconnect'); }
   else {
     const data = Array.isArray(insights.body['data']) ? (insights.body['data'] as Json[]) : [];
     const values = Array.isArray(data[0]?.['values']) ? (data[0]?.['values'] as Json[]) : [];
