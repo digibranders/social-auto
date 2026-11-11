@@ -569,6 +569,10 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-client-detail { flex: 1 1 100%; margin: 0; }
 .rv-approval { display: grid; gap: 6px; flex: 1 1 100%; }
 .rv-client-pick { flex-wrap: wrap; }
+.rv-net-note { color: var(--muted); }
+.rv-net-on { color: var(--published, #3fb27f); }
+.rv-net-problem { color: var(--due, #e0a84a); }
+.rv-net-off { color: var(--muted); font-style: italic; }
 .rv-client-pick .rv-input { flex: 0 1 380px; min-width: 0; }
 /* The "write posts for a website" form: one column that can shrink, labels that never break, and small number pickers. */
 .rv { grid-template-columns: minmax(0, 1fr); }

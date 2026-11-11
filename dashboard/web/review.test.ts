@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -129,7 +129,7 @@ test('the client list offers the existing clients, and the website name as a new
   const known = clientOptions(clients, 'acme');
   assert.deepEqual(known.map((o) => o.value), ['acme', 'zeta']);
   assert.match(known[0]?.detail ?? '', /Posts to Instagram: @acme\. Automatic: .*without you looking at them/);
-  assert.match(known[1]?.detail ?? '', /no accounts connected\. Manual: you approve each poster in Review/);
+  assert.match(known[1]?.detail ?? '', /^No accounts are connected, so nothing can be published yet\. Manual: you approve each poster in Review/);
 
   const fresh = clientOptions(clients, 'newsite');
   assert.deepEqual(fresh.map((o) => o.value), ['newsite', 'acme', 'zeta']);
@@ -152,4 +152,14 @@ test('the write form offers a new client first, then the existing clients, none 
   assert.match(options[0]?.detail ?? '', /no accounts connected yet/);
   assert.match(options[1]?.detail ?? '', /Automatic: .*without you looking at them/);
   assert.deepEqual(startClientOptions([]).map((o) => o.value), [NEW_CLIENT]);
+});
+
+test('each network says whether the chosen client has an account on it, and a new client says nothing', () => {
+  const client = clientNamed('acme', { channels: [channel('instagram', '@acme'), channel('linkedin', 'Acme Ltd', false)] });
+  assert.deepEqual(networkState(client, 'instagram'), { state: 'connected', account: '@acme' });
+  assert.deepEqual(networkState(client, 'linkedin'), { state: 'problem', account: 'Acme Ltd' });
+  assert.deepEqual(networkState(client, 'facebook'), { state: 'not-connected', account: null });
+  assert.equal(networkState(undefined, 'instagram'), null);
+  assert.deepEqual(connectedNetworkKeys(client), ['instagram', 'linkedin']);
+  assert.deepEqual(connectedNetworkKeys(clientNamed('empty')), []);
 });

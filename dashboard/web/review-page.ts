@@ -1,7 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
 import { AUTO_WARNING, type ClientSummary } from './clients.ts';
-import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -181,11 +181,19 @@ function startView(redraw: () => void): HTMLElement {
   const onePage = h('input', { type: 'checkbox', id: 'rv-page' });
   onePage.checked = form.page;
   onePage.addEventListener('change', () => { form.page = onePage.checked; });
+  const startOptions = state.clients === null ? [] : startClientOptions(state.clients);
+  const picked = startOptions.find((o) => o.value === form.client) ?? startOptions[0];
+  const pickedClient = picked && picked.value !== NEW_CLIENT ? state.clients?.find((c) => c.brand === picked.value) : undefined;
   const networks = NETWORK_CHOICES.map((n) => {
     const box = h('input', { type: 'checkbox', id: `rv-net-${n.key}` });
     box.checked = form.networks.includes(n.key);
     box.addEventListener('change', () => { form.networks = box.checked ? [...form.networks, n.key] : form.networks.filter((k) => k !== n.key); });
-    return h('label', { class: 'rv-check', for: `rv-net-${n.key}` }, box, ` ${n.label}`);
+    // For an existing client: which accounts are connected on this network and which are not.
+    const connection = networkState(pickedClient, n.key);
+    const note = connection === null ? null
+      : connection.state === 'not-connected' ? h('small', { class: 'rv-net-note rv-net-off' }, 'not connected')
+        : h('small', { class: `rv-net-note${connection.state === 'problem' ? ' rv-net-problem' : ' rv-net-on'}` }, `${connection.account ?? 'connected'}${connection.state === 'problem' ? ' (has a problem)' : ''}`);
+    return h('label', { class: 'rv-check', for: `rv-net-${n.key}` }, box, ` ${n.label} `, note);
   });
   const number = (label: string, value: number, max: number, set: (n: number) => void): HTMLElement => {
     const select = h('select', { class: 'rv-input', 'aria-label': label }, ...Array.from({ length: max }, (_, i) => h('option', { value: String(i + 1) }, String(i + 1))));
@@ -194,13 +202,17 @@ function startView(redraw: () => void): HTMLElement {
     return h('label', { class: 'rv-check rv-number' }, `${label} `, select);
   };
   const running = state.jobs.some((j) => j.kind === 'copy' && jobActive(j));
-  const startOptions = state.clients === null ? [] : startClientOptions(state.clients);
-  const picked = startOptions.find((o) => o.value === form.client) ?? startOptions[0];
   const clientSelect = h('select', { class: 'rv-input', 'aria-label': 'Client' }, ...startOptions.map((o) => h('option', { value: o.value }, o.label)));
   if (picked) clientSelect.value = picked.value;
   clientSelect.disabled = state.clients === null;
-  clientSelect.addEventListener('change', () => { form.client = clientSelect.value; redraw(); });
-  const pickedClient = picked && picked.value !== NEW_CLIENT ? state.clients?.find((c) => c.brand === picked.value) : undefined;
+  clientSelect.addEventListener('change', () => {
+    form.client = clientSelect.value;
+    // Tick the networks this client has accounts on (left as they were when it has none, so the choice is never emptied).
+    const chosen = state.clients?.find((c) => c.brand === form.client);
+    const connected = chosen ? connectedNetworkKeys(chosen) : [];
+    if (connected.length > 0) form.networks = connected;
+    redraw();
+  });
   return h(
     'section',
     { class: 'rv-copy rv-start', 'aria-label': 'Write posts for a website' },
