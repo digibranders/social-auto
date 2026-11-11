@@ -106,6 +106,14 @@ function planData(value: unknown): ClientPlanData | undefined {
   return { platforms: p['platforms'] as string[], startDate: p['startDate'], durationDays: p['durationDays'], time: p['time'], utcOffset: p['utcOffset'], ...(typeof p['postsPerWeek'] === 'number' ? { postsPerWeek: p['postsPerWeek'] } : {}), ...(Array.isArray(p['weekdays']) ? { weekdays: (p['weekdays'] as unknown[]).filter((d): d is string => typeof d === 'string') } : {}), ...(p['carousel'] === true ? { carousel: true as const } : {}) };
 }
 
+/** How many brands each customer of a product app may have: the default, one line per customer, and the latest changes (newest first). */
+export interface BrandsStatus {
+  defaultBrands: number;
+  ceiling: number;
+  customers: Array<{ product: string; group: string; name: string; brandsAllowed: number; brandsUsed: number; brandsTotal: number; custom: boolean }>;
+  log: Array<{ at: string; by: string; what: string; old: number | null; new: number | null }>;
+}
+
 export interface StatusResponse {
   generatedAt: string;
   pauses: Pauses;
@@ -114,6 +122,34 @@ export interface StatusResponse {
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
   runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[]; weeklyLimit?: number; requireAuthenticLogo?: true; approvalMode?: 'manual' | 'auto'; spendCapUsd?: number }>;
   costs: CostEntry[];
+  /** Missing when the publisher could not read it; the rest of the status still loads. */
+  brands?: BrandsStatus;
+}
+
+const wholeOrNull = (value: unknown): number | null => (typeof value === 'number' && Number.isInteger(value) ? value : null);
+
+/** The brands part of the status, read leniently: a part that is missing or odd is left out and never stops the rest of the status from loading. */
+function brandsOf(raw: unknown): BrandsStatus | null {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const defaultBrands = wholeOrNull(r['defaultBrands']);
+  const ceiling = wholeOrNull(r['ceiling']);
+  if (defaultBrands === null || ceiling === null || !Array.isArray(r['customers'])) return null;
+  const customers = r['customers'].flatMap((c): BrandsStatus['customers'] => {
+    if (typeof c !== 'object' || c === null) return [];
+    const e = c as Record<string, unknown>;
+    const allowed = wholeOrNull(e['brandsAllowed']);
+    const used = wholeOrNull(e['brandsUsed']);
+    const total = wholeOrNull(e['brandsTotal']);
+    if (typeof e['product'] !== 'string' || typeof e['group'] !== 'string' || typeof e['name'] !== 'string' || allowed === null || used === null || total === null) return [];
+    return [{ product: e['product'], group: e['group'], name: e['name'], brandsAllowed: allowed, brandsUsed: used, brandsTotal: total, custom: e['custom'] === true }];
+  });
+  const log = (Array.isArray(r['log']) ? r['log'] : []).flatMap((l): BrandsStatus['log'] => {
+    if (typeof l !== 'object' || l === null) return [];
+    const e = l as Record<string, unknown>;
+    return typeof e['at'] === 'string' && typeof e['by'] === 'string' && typeof e['what'] === 'string' ? [{ at: e['at'], by: e['by'], what: e['what'], old: wholeOrNull(e['old']), new: wholeOrNull(e['new']) }] : [];
+  });
+  return { defaultBrands, ceiling, customers, log };
 }
 
 export class StatusParseError extends Error {
@@ -253,5 +289,6 @@ export function parseStatus(raw: unknown): StatusResponse {
     return { brand: text(entry, 'brand', where), post: textOrNull(entry, 'post', where), purpose: oneOf(text(entry, 'purpose', where), COST_PURPOSES, `${where}.purpose`), at, usd };
   });
 
-  return { generatedAt, pauses, channels, posts, runway, costs };
+  const brands = brandsOf(root['brands']);
+  return { generatedAt, pauses, channels, posts, runway, costs, ...(brands ? { brands } : {}) };
 }

@@ -20,7 +20,8 @@ import { brandIsPaused, isPaused, type PauseFile } from '../lib/pauses.js';
 import { buildStatus, isWantedOn, parseSchedule, type StatusPost } from '../lib/schedule.js';
 import { loadCosts } from '../lib/usage.js';
 import { clientFeedDetails } from '../lib/clients.js';
-import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted } from '../lib/store.js';
+import { brandsFeed } from '../lib/brands.js';
+import { loadBrandSettings, loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted } from '../lib/store.js';
 
 /** Instagram is asked at most once a minute per warm function instance, however many people look. */
 const CACHE_MS = 60_000;
@@ -163,6 +164,11 @@ export async function GET(request: Request): Promise<Response> {
         ...added.clients.filter((c) => !summary.runway.some((r) => r.brand === c.brand)).map((c) => ({ brand: c.brand, postsLeft: 0, added: true as const, ...clientFeedDetails(c) })),
       ],
       posts: summary.posts.map((p) => withPauses(withCrossposts(p, channels, posted, now, pauses), pauses)),
+      // How many brands each product customer may have: a nicety for the staff screen, so a damaged record must not stop the rest of the status.
+      brands: await loadBrandSettings().then(({ settings }) => brandsFeed(settings, added)).catch((error: unknown) => {
+        console.error(describeError(error));
+        return null;
+      }),
       // The cost view is a nicety: if its log is unreadable the rest of the status must still load.
       costs: await loadCosts(process.env['USAGE_LOG_FILE']).catch((error: unknown) => {
         console.error(describeError(error));

@@ -124,3 +124,19 @@ test('a plan keeps its weekly carousel through the feed, and a carousel flag tha
   const parsed = parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://acme.com', plans: [plan(true), plan('yes'), plan(undefined)] }] });
   assert.deepEqual(parsed.runway[0]?.plans?.map((p) => p.carousel), [true, undefined, undefined]);
 });
+
+test('parseStatus reads how many brands each product customer may have, and leaves out a part it cannot read without failing the rest', () => {
+  const brands = {
+    defaultBrands: 1,
+    ceiling: 4,
+    customers: [{ product: 'brandbasket', group: 'biz-1', name: 'Om Sweets', brandsAllowed: 2, brandsUsed: 1, brandsTotal: 2, custom: true }, { product: 'brandbasket', group: 'biz-2' }, 'odd'],
+    log: [{ at: '2026-11-20T10:00:00.000Z', by: 'owner', what: 'default', old: 1, new: 2 }, { at: 5 }],
+  };
+  const parsed = parseStatus({ ...valid, brands });
+  assert.deepEqual(parsed.brands?.customers, [{ product: 'brandbasket', group: 'biz-1', name: 'Om Sweets', brandsAllowed: 2, brandsUsed: 1, brandsTotal: 2, custom: true }]);
+  assert.deepEqual(parsed.brands?.log, [{ at: '2026-11-20T10:00:00.000Z', by: 'owner', what: 'default', old: 1, new: 2 }]);
+  assert.deepEqual([parsed.brands?.defaultBrands, parsed.brands?.ceiling], [1, 4]);
+  assert.equal(parseStatus(valid).brands, undefined, 'older publishers say nothing about brands');
+  assert.equal(parseStatus({ ...valid, brands: { defaultBrands: 'many' } }).brands, undefined);
+  assert.equal(parseStatus({ ...valid, brands: null }).brands, undefined);
+});

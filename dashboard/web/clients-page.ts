@@ -1,5 +1,5 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
-import type { ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
+import type { BrandsStatus, ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
 import { connectedPlatforms, planPayload, planSentence } from '../shared/posting-plan.ts';
 import { planFields } from './add-client.ts';
 import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
@@ -37,6 +37,12 @@ export interface ClientsContext {
   setApprovalMode(client: ClientSummary, mode: 'manual' | 'auto'): Promise<string | null>;
   /** Sets what the AI may cost for the client in a calendar month, in dollars; null goes back to the default limit. */
   setSpendCap(client: ClientSummary, cap: number | null): Promise<string | null>;
+  /** How many brands each customer of a product app may have (the default, each customer and the latest changes), or null when the status could not say. */
+  brands(): BrandsStatus | null;
+  /** Sets how many brands a customer of a product app may have unless set otherwise (1 to the ceiling). */
+  setBrandsDefault(value: number): Promise<string | null>;
+  /** Sets one customer's number of brands, or null to put them back on the default. */
+  setBrandsAllowed(product: string, group: string, name: string, value: number | null): Promise<string | null>;
   /** True once when the New post window sent the owner here to make posters from the website: the plan form then opens by itself. */
   wantsPlanForm(brand: string): boolean;
   disconnect(channel: ChannelHealth): void;
@@ -62,7 +68,7 @@ export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTML
     button([icon('plus'), 'Add client'], 'btn btn-primary', () => ctx.addClient()),
     button(paused ? 'Resume everything' : 'Pause everything', paused ? 'btn' : 'btn btn-quiet btn-danger', () => ctx.setPause('all', null, !paused)),
   );
-  if (clients.length === 0) return h('div', {}, add, h('p', { class: 'empty' }, 'No clients yet.'));
+  if (clients.length === 0) return h('div', {}, add, h('p', { class: 'empty' }, 'No clients yet.'), brandsPanel(ctx));
   return h('div', {}, add, h(
     'div',
     { class: 'folders' },
@@ -78,7 +84,72 @@ export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTML
       card.addEventListener('click', () => ctx.go({ page: 'client', brand: client.brand, tab: 'channels' }));
       return card;
     }),
-  ));
+  ), brandsPanel(ctx));
+}
+
+/** A number from 1 to the ceiling, as a choice (so a wrong number cannot be typed). */
+function countSelect(label: string, ceiling: number, value: number): HTMLSelectElement {
+  return h('select', { class: 'text-input limit-select', 'aria-label': label }, ...Array.from({ length: ceiling }, (_, i) => h('option', { value: String(i + 1), ...(i + 1 === value ? { selected: 'selected' } : {}) }, String(i + 1)))) as HTMLSelectElement;
+}
+
+const logWhat = (what: string, customers: BrandsStatus['customers']): string => {
+  if (what === 'default') return 'the default';
+  const found = customers.find((c) => `${c.product}:${c.group}` === what);
+  return found ? found.name : what;
+};
+const logNumber = (value: number | null): string => (value === null ? 'the default' : String(value));
+
+/**
+ * How many brands each customer of a product app (such as Brandbasket) may have under one login. The app makes one workspace per brand and is refused past this
+ * number, so changing it here takes effect at once; the highest number is fixed in the code and cannot be raised from this screen.
+ */
+export function brandsPanel(ctx: ClientsContext): HTMLElement | null {
+  const brands = ctx.brands();
+  if (!brands) return null;
+  const message = h('p', { class: 'muted', role: 'status' }, '');
+  const say = (text: string, bad: boolean): void => {
+    message.textContent = text;
+    message.className = bad ? 'form-error' : 'muted';
+  };
+  const defaultSelect = countSelect('How many brands a customer may have by default', brands.ceiling, brands.defaultBrands);
+  const saveDefault = button('Save', 'btn', () => {
+    defaultSelect.disabled = true;
+    say('Saving…', false);
+    void ctx.setBrandsDefault(Number(defaultSelect.value)).then((problem) => {
+      defaultSelect.disabled = false;
+      if (problem) say(problem, true);
+    });
+  });
+  const rows = brands.customers.map((customer) => {
+    const select = countSelect(`Brands ${customer.name} may have`, brands.ceiling, customer.brandsAllowed);
+    const run = (value: number | null): void => {
+      select.disabled = true;
+      say('Saving…', false);
+      void ctx.setBrandsAllowed(customer.product, customer.group, customer.name, value).then((problem) => {
+        select.disabled = false;
+        if (problem) say(problem, true);
+      });
+    };
+    return h(
+      'li',
+      { class: 'brands-row' },
+      h('span', {}, h('strong', {}, customer.name), ` (${customer.product}) uses ${customer.brandsUsed} of ${customer.brandsAllowed}${customer.brandsTotal > customer.brandsUsed ? `, ${customer.brandsTotal - customer.brandsUsed} put away` : ''}${customer.custom ? '' : ' (the default)'} `),
+      select,
+      button('Save', 'btn', () => run(Number(select.value))),
+      customer.custom ? button('Use the default', 'btn btn-quiet', () => run(null)) : null,
+    );
+  });
+  const log = brands.log.slice(0, 8).map((l) => h('li', { class: 'muted' }, `${new Date(l.at).toLocaleString()}: ${l.by} changed ${logWhat(l.what, brands.customers)} from ${logNumber(l.old)} to ${logNumber(l.new)}.`));
+  return h(
+    'section',
+    { class: 'brands-panel', 'aria-label': 'Brands per customer' },
+    h('h3', {}, 'Brands per customer'),
+    h('p', { class: 'muted' }, `Customers of an app (such as Brandbasket) can have several brands under one login, up to ${brands.ceiling}. The app cannot make more than the number set here, and it sees a change at once. Lowering a number never removes a brand; it only stops new ones.`),
+    h('p', {}, 'By default a customer may have ', defaultSelect, ' brand(s). ', saveDefault),
+    rows.length > 0 ? h('ul', { class: 'brands-list' }, ...rows) : h('p', { class: 'muted' }, 'No customers of an app yet.'),
+    message,
+    log.length > 0 ? h('details', {}, h('summary', {}, 'Recent changes'), h('ul', {}, ...log)) : null,
+  );
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
