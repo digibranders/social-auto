@@ -6,9 +6,10 @@
  * POST /api/v1/send
  * POST|GET|PATCH|DELETE /api/v1/posts
  * POST|GET /api/v1/site-jobs      POST|GET /api/v1/facts      POST|GET /api/v1/batches
- * POST|GET /api/v1/posters      GET /api/v1/events      GET /api/v1/topics
+ * POST|GET /api/v1/posters      GET /api/v1/events      GET /api/v1/topics      GET /api/v1/analytics
  */
 import { json } from '../../lib/http.js';
+import * as analytics from '../_v1/analytics.js';
 import * as batches from '../_v1/batches.js';
 import * as connectLink from '../_v1/connect-link.js';
 import * as events from '../_v1/events.js';
@@ -42,6 +43,8 @@ export function GET(request: Request): Response | Promise<Response> {
       return events.GET(request);
     case 'topics':
       return topics.GET(request);
+    case 'analytics':
+      return analytics.GET(request);
     default:
       return json(404, { error: 'Not found' });
   }

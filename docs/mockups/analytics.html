@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="dark" />
+<title>Analytics mockup · Social dashboard</title>
+<style>
+:root{--bg:#141416;--panel:#1b1b1f;--cell:#212126;--border:#2d2d34;--text:#ecedf0;--muted:#9a9ca6;--accent:#7c5cff;--ok:#38c172;--warn:#e7a93a;--bad:#ee5d5d;--radius:12px}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+button,select{font:inherit;color:inherit;cursor:pointer}h1,h2,h3,p{margin:0}
+main{padding:22px 28px;max-width:1100px;margin:0 auto}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:6px;flex-wrap:wrap}
+.crumbs{color:var(--muted);font-size:13px;margin-bottom:4px}h1{font-size:22px}.sub{color:var(--muted);font-size:13px}
+.btn,select{border:1px solid var(--border);background:var(--panel);border-radius:9px;padding:8px 14px;min-height:36px}
+.btn:hover{background:var(--cell)}.btn.primary{background:var(--accent);border-color:transparent;color:#fff;font-weight:600}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.spacer{flex:1}
+.chips{display:flex;gap:6px;flex-wrap:wrap}.chip{border:1px solid var(--border);background:var(--cell);border-radius:8px;padding:6px 11px}.chip.on{background:var(--accent);border-color:transparent;color:#fff}
+.tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin:14px 0 18px;overflow-x:auto}.tabs button{background:none;border:0;border-bottom:2px solid transparent;padding:9px 14px;color:var(--muted);white-space:nowrap}.tabs button.on{color:var(--text);border-color:var(--accent)}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:16px}
+.kpi .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}.kpi .v{font-size:26px;font-weight:700;margin:4px 0 2px}.kpi .d{font-size:13px}.up{color:var(--ok)}.down{color:var(--bad)}.na{color:var(--muted)}
+.two{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;margin-bottom:16px}@media(max-width:860px){.two{grid-template-columns:1fr}}
+.chart{height:190px;display:flex;align-items:flex-end;gap:5px;padding-top:10px}.chart i{flex:1;background:linear-gradient(var(--accent),#4b35b8);border-radius:4px 4px 0 0;min-height:4px;opacity:.9}
+.axis{display:flex;justify-content:space-between;color:var(--muted);font-size:12px;margin-top:6px}
+.lg{width:24px;height:24px;border-radius:7px;display:inline-grid;place-items:center;font-size:11px;font-weight:800;color:#fff;flex:none}
+.ig{background:linear-gradient(135deg,#f58529,#dd2a7b 55%,#8134af)}.fb{background:#1877f2;border-radius:50%}.gb{background:#fff;color:#4285f4}.li{background:#0a66c2}
+table{width:100%;border-collapse:collapse;font-size:14px}th{color:var(--muted);font-weight:500;text-align:right;padding:8px;border-bottom:1px solid var(--border);font-size:12px;text-transform:uppercase;letter-spacing:.04em}td{padding:10px 8px;border-bottom:1px solid var(--border);text-align:right}th:first-child,td:first-child{text-align:left}tr:last-child td{border:0}
+.post{display:flex;gap:10px;align-items:center}.thumb{width:44px;height:44px;border-radius:8px;background:linear-gradient(135deg,#f2dcc0,#c48a47);flex:none}.post .c{max-width:34ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.post .t{color:var(--muted);font-size:12px}
+.bar{display:grid;grid-template-columns:90px 1fr 44px;gap:10px;align-items:center;margin:8px 0;font-size:13px}.bar b{height:10px;border-radius:6px;background:var(--accent);display:block}.bar span:last-child{text-align:right;color:var(--muted)}
+.note{background:rgba(124,92,255,.1);border:1px solid rgba(124,92,255,.35);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+.warn{background:rgba(231,169,58,.1);border:1px solid rgba(231,169,58,.4);color:var(--warn);border-radius:10px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+.empty{text-align:center;color:var(--muted);padding:34px 14px}.empty b{color:var(--text);display:block;margin-bottom:4px}
+.pill{display:inline-flex;font-size:12px;border-radius:99px;padding:2px 10px;background:var(--cell);border:1px solid var(--border);color:var(--muted)}
+.hide{display:none!important}h3{font-size:15px;margin-bottom:10px}
+.switch{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:12px 0;border-top:1px solid var(--border)}.switch p{font-size:13px;color:var(--muted)}
+.demo{position:sticky;top:0;background:var(--cell);border-bottom:1px solid var(--border);padding:8px 28px;font-size:13px;color:var(--muted);z-index:2}.demo select{min-height:28px;padding:2px 8px}
+</style>
+</head>
+<body>
+<div class="demo">Mockup with made-up numbers. Pretend the account is in this state: <select id="state"><option value="ok">Working, numbers in</option><option value="new">Connected today, first check not done</option><option value="reconnect">Needs reconnect (new permission)</option></select></div>
+<main>
+  <div class="top">
+    <div><div class="crumbs">Clients › Om Sweets</div><h1>Analytics</h1><p class="sub">Numbers come from each network once a day. Last check: today 06:10</p></div>
+    <div class="row"><select id="range"><option>Last 7 days</option><option selected>Last 30 days</option><option>Last 90 days</option></select><button class="btn">Download report</button></div>
+  </div>
+  <div class="row" style="margin:12px 0 0"><span class="sub">Channels</span><div class="chips" id="chans"></div></div>
+
+  <div class="tabs" id="tabs"><button class="on" data-t="overview">Overview</button><button data-t="posts">Posts</button><button data-t="audience">Audience</button><button data-t="hashtags">Hashtags</button><button data-t="reports">Reports</button></div>
+
+  <div id="banner"></div>
+
+  <section data-p="overview">
+    <div class="kpis" id="kpis"></div>
+    <div class="two">
+      <div class="card"><h3>Reach per day</h3><div class="chart" id="chart"></div><div class="axis"><span>12 Oct</span><span>26 Oct</span><span>11 Nov</span></div></div>
+      <div class="card"><h3>By channel</h3><div id="bychan"></div><p class="sub" style="margin-top:10px">Google shows how people found the business on Google, not post reach.</p></div>
+    </div>
+    <div class="card"><h3>Best posts this period</h3><div id="best"></div></div>
+  </section>
+
+  <section data-p="posts" class="hide">
+    <div class="card"><table><thead><tr><th>Post</th><th>Channel</th><th>Reach</th><th>Likes</th><th>Comments</th><th>Shares</th><th>Saves</th><th>Clicks</th></tr></thead><tbody id="rows"></tbody></table></div>
+    <p class="sub" style="margin-top:10px">Google posts are not listed: Google does not give numbers for single posts. A dash means the network does not give that number.</p>
+  </section>
+
+  <section data-p="audience" class="hide">
+    <div class="two">
+      <div class="card"><h3>Age and gender <span class="pill">Instagram</span></h3><div id="age"></div></div>
+      <div class="card"><h3>Top places <span class="pill">Instagram</span></h3><div id="where"></div></div>
+    </div>
+    <div class="note">Instagram only shows who follows an account once it has 100 followers. Facebook shows less, and Google and LinkedIn show nothing here.</div>
+    <div class="card empty hide" id="aud-empty"><b>Not enough followers yet</b>This account has 62 followers. Audience numbers appear at 100.</div>
+  </section>
+
+  <section data-p="hashtags" class="hide">
+    <div class="card"><table><thead><tr><th>Hashtag</th><th>Posts</th><th>Average reach</th><th>Best post</th></tr></thead><tbody id="tags"></tbody></table></div>
+    <p class="sub" style="margin-top:10px">We work this out from your own posts: the average reach of the posts that used each hashtag. The networks do not give hashtag numbers themselves.</p>
+  </section>
+
+  <section data-p="reports" class="hide">
+    <div class="two">
+      <div class="card"><h3>Reports</h3>
+        <table><thead><tr><th>Report</th><th>Period</th><th></th></tr></thead><tbody>
+          <tr><td>Monthly report</td><td>October 2026</td><td><button class="btn">Download</button></td></tr>
+          <tr><td>Monthly report</td><td>September 2026</td><td><button class="btn">Download</button></td></tr>
+        </tbody></table>
+        <button class="btn primary" style="margin-top:12px">Make a report now</button>
+      </div>
+      <div class="card"><h3>Send automatically</h3>
+        <div class="switch"><div><b>Every month</b><p>On the 1st, to the people below</p></div><button class="btn">On</button></div>
+        <div class="switch"><div><b>Every week</b><p>Monday morning</p></div><button class="btn">Off</button></div>
+        <div class="switch"><div><b>Sent to</b><p>owner@omsweets.example</p></div><button class="btn">Change</button></div>
+        <div class="switch"><div><b>Look</b><p>Logo and brand colours of Om Sweets</p></div><button class="btn">Edit</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+const CH={ig:['IG','ig','Instagram'],fb:['f','fb','Facebook'],gb:['G','gb','Google']};
+const on={ig:true,fb:true,gb:true};
+const $=s=>document.querySelector(s);
+const posts=[['Diwali gift boxes are ready','ig','4,210',386,41,58,92,'-'],['Fresh jalebi every morning','fb','2,980',241,18,33,'-',74],['Kaju katli, made today','ig','2,640',312,27,19,64,'-'],['Weekend offer: 10% off','fb','1,870',133,9,21,'-',51],['Meet our sweet makers','ig','1,540',201,23,12,37,'-']];
+const tags=[['#diwali','6','3,420','Diwali gift boxes'],['#mithai','9','2,610','Kaju katli, made today'],['#sweets','12','1,980','Fresh jalebi'],['#delhi','5','1,420','Meet our sweet makers']];
+function tag(k){return `<span class="lg ${CH[k][1]}">${CH[k][0]}</span>`}
+function draw(){
+  const s=$('#state').value;
+  $('#chans').innerHTML=Object.keys(CH).map(k=>`<button class="chip ${on[k]?'on':''}" data-k="${k}">${CH[k][2]}</button>`).join('')+'<span class="pill" title="LinkedIn is not offered for numbers">LinkedIn: not available</span>';
+  document.querySelectorAll('#chans .chip').forEach(b=>b.onclick=()=>{on[b.dataset.k]=!on[b.dataset.k];draw()});
+  const empty=s!=='ok';
+  $('#banner').innerHTML=s==='reconnect'?'<div class="warn"><b>Reconnect Instagram and Facebook to see numbers.</b> We ask for one more permission, to read your numbers. It takes a minute and your scheduled posts are not affected. <button class="btn" style="margin-left:8px">Reconnect</button></div>':s==='new'?'<div class="note"><b>Numbers appear after the first daily check.</b> This account was connected today, so there is nothing to show yet. Check back tomorrow.</div>':'';
+  const k=[['Reach','48,210','+12%',1],['Profile and page views','6,904','+4%',1],['Likes and reactions','3,120','+9%',1],['Comments','412','-3%',0],['New followers','186','+22%',1],['Google: calls','37','+8%',1],['Google: directions','64','+15%',1],['Google: website clicks','129','-2%',0]];
+  $('#kpis').innerHTML=empty?'':k.map(x=>`<div class="card kpi"><div class="l">${x[0]}</div><div class="v">${x[1]}</div><div class="d ${x[3]?'up':'down'}">${x[2]} vs previous 30 days</div></div>`).join('');
+  $('#chart').innerHTML=empty?'<div class="empty" style="width:100%">No numbers yet</div>':Array.from({length:30},(_,i)=>`<i style="height:${30+Math.abs(Math.sin(i/3)*55)+(i%7)*4}%"></i>`).join('');
+  $('#bychan').innerHTML=empty?'':[['ig','Instagram','31,400','65%'],['fb','Facebook','16,810','35%'],['gb','Google','views 5,210','']].map(c=>`<div class="bar"><span>${tag(c[0])} ${c[1]}</span><b style="width:${c[3]||'40%'}"></b><span>${c[2]}</span></div>`).join('');
+  const shown=posts.filter(p=>on[p[1]]);
+  $('#best').innerHTML=empty?'<div class="empty"><b>Nothing to show yet</b></div>':shown.slice(0,3).map(p=>`<div class="post" style="margin:8px 0"><div class="thumb"></div><div><div class="c">${p[0]}</div><div class="t">${tag(p[1])} reach ${p[2]}</div></div></div>`).join('');
+  $('#rows').innerHTML=empty?'<tr><td colspan="8" class="empty">No numbers yet</td></tr>':shown.map(p=>`<tr><td><div class="post"><div class="thumb"></div><div><div class="c">${p[0]}</div><div class="t">Posted 3 Nov</div></div></div></td><td>${tag(p[1])}</td>${p.slice(2).map(v=>`<td class="${v==='-'?'na':''}">${v}</td>`).join('')}</tr>`).join('');
+  $('#tags').innerHTML=empty?'<tr><td colspan="4" class="empty">No numbers yet</td></tr>':tags.map(t=>`<tr><td>${t[0]}</td><td>${t[1]}</td><td>${t[2]}</td><td>${t[3]}</td></tr>`).join('');
+  const age=[['13-17','3%'],['18-24','22%'],['25-34','41%'],['35-44','21%'],['45+','13%']];
+  $('#age').innerHTML=empty?'<div class="empty">No numbers yet</div>':age.map(a=>`<div class="bar"><span>${a[0]}</span><b style="width:${a[1]}"></b><span>${a[1]}</span></div>`).join('')+'<p class="sub">Women 58% · Men 41% · Other 1%</p>';
+  $('#where').innerHTML=empty?'<div class="empty">No numbers yet</div>':[['Delhi','46%'],['Gurugram','18%'],['Noida','12%'],['Mumbai','6%']].map(a=>`<div class="bar"><span>${a[0]}</span><b style="width:${a[1]}"></b><span>${a[1]}</span></div>`).join('');
+}
+$('#state').onchange=draw;
+$('#tabs').onclick=e=>{const t=e.target.dataset.t;if(!t)return;document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('on',b===e.target));document.querySelectorAll('section[data-p]').forEach(s=>s.classList.toggle('hide',s.dataset.p!==t))};
+draw();
+</script>
+</body>
+</html>

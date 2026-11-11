@@ -10,6 +10,7 @@ Authorization: Bearer <product key>
 
 | Where | Name | Meaning |
 |---|---|---|
+| publisher | `ANALYTICS_ENABLED` | `true` turns on the daily check of the networks' numbers (`social-analytics.timer`) and `GET /api/v1/analytics`. Off by default: until then the read answers `503 SERVICE_NOT_CONFIGURED` and nothing is collected |
 | publisher | `PRODUCTS` | JSON list: `{id, keyHash (SHA-256 hex of the key), returnUrls[], webhookUrl?, webhookSecret? (16+ chars)}` |
 | publisher + dashboard | `INVITE_SECRET` | 32+ characters, the same value in both; signs connect links |
 | publisher | `DASHBOARD_ORIGIN` | the dashboard's address, where connect links point |
@@ -110,6 +111,26 @@ PATCH { "variants": { "instagram": null, "linkedin": { "caption": "New words." }
 - On `PATCH`, a platform left out stays as it is, `null` puts the platform back on the main caption and picture, and inside a platform a field left out stays while `null` or `""` removes it. A version with neither a caption nor a picture is dropped.
 - A variant caption follows the same rules as the main one (`CAPTION_TOO_LONG`, `TOO_MANY_HASHTAGS`).
 - `GET` and the answers of `POST`/`PATCH` show `variants` only for the platforms that have their own version, as `{caption?, imageUrl?}`.
+
+## Analytics
+
+`GET /api/v1/analytics?externalId=[&from=YYYY-MM-DD&to=YYYY-MM-DD]` (default: the last 30 days, at most one year) gives the numbers the networks report for a customer's connected accounts and for the posts we sent. Read only; your own workspaces only (`WORKSPACE_NOT_FOUND` otherwise). A daily check on our side asks each network once a day, so numbers are up to a day old; nothing is ever written to a network.
+
+```
+{ "posts":    [{ "postId", "channel", "platform", "permalink", "postedAt", "caption",
+                 "total": { "reach", "views", "likes", "comments", "shares", "saves", "clicks" },
+                 "series": [{ "date", ...the same numbers, counted since the post went out }] }],
+  "accounts": [{ "channel", "platform", "label", "checkedAt",
+                 "series": [{ "date", "reach", "views", "profileViews", "followers", "calls", "directions", "websiteClicks" }],
+                 "audience": { "age", "gender", "country", "city" }, "searchTerms": [{ "term", "impressions" }], "needs": ["reconnect" | "followers"] }],
+  "hashtags": [{ "tag", "posts", "avgReach" }], "checkedAt" }
+```
+
+- **A number a network does not give is absent, never 0.** Instagram and Facebook give per-post numbers; Google gives account numbers only (`views` = Maps and Search together, `calls`, `directions`, `websiteClicks`, `searchTerms` for the last full month) and nothing per post or audience; LinkedIn is not offered. Only posts we sent to Instagram or Facebook appear in `posts`, from the last 60 days.
+- `total` is a post's latest numbers (each field from the newest day that has it); `series` is one entry per day we checked (daily for the first week, then weekly).
+- `needs`: `"reconnect"`: the customer must connect that account again so it can give us the permission to read its numbers (until then only likes, comments, followers and shares show); `"followers"`: Instagram gives the audience only from 100 followers.
+- `hashtags` is worked out by us: for each hashtag used in the period, how many posts used it and the average reach of those that have a reach number.
+- `checkedAt` is when the last daily check finished (`null` before the first).
 
 ## Errors
 

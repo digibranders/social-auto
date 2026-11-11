@@ -1,0 +1,10 @@
+[Unit]
+Description=Check the networks' numbers every day at 06:10 India time
+
+[Timer]
+OnCalendar=*-*-* 06:10:00 Asia/Kolkata
+Persistent=true
+Unit=social-analytics.service
+
+[Install]
+WantedBy=timers.target

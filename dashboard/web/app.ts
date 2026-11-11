@@ -1,4 +1,5 @@
 /** The calendar page. Every piece of text goes into the page as text, never as HTML. */
+import type { AnalyticsData } from '../shared/analytics.ts';
 import { NO_PAUSES, parseStatus, PLATFORMS, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
 import {
   addDays,
@@ -1028,6 +1029,17 @@ function openAddClient(): void {
 }
 
 /** Saves the website of a client added in the dashboard (empty clears it). Resolves to an explanation when it could not be saved. */
+/** This client's numbers for the last `days` days, read through the dashboard's server (which holds the secret). */
+async function loadAnalytics(brand: string, days: number): Promise<AnalyticsData> {
+  const to = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - (days - 1) * 86_400_000).toISOString().slice(0, 10);
+  const response = await fetch(`/api/analytics?${new URLSearchParams({ brand, from, to })}`, { credentials: 'same-origin', cache: 'no-store' });
+  if (response.status === 401) throw new Error('You were signed out. Reload the page and sign in again.');
+  const body = (await response.json().catch(() => ({}))) as { error?: string };
+  if (!response.ok) throw new Error(body.error ?? 'The numbers could not be loaded.');
+  return body as unknown as AnalyticsData;
+}
+
 async function saveWebsite(client: ClientSummary, website: string): Promise<string | null> {
   try {
     const response = await fetch('/api/clients?action=set-website', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand: client.brand, website }) });
@@ -1135,6 +1147,7 @@ const clientsContext: ClientsContext = {
   addClient: openAddClient,
   removeClient: (client) => void removeClient(client),
   saveWebsite,
+  loadAnalytics,
   addPlan,
   removePlan,
   setLimit,
