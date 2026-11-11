@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
-import { accountProfile, InstagramApiError, mediaSince, refreshToken } from './instagram.ts';
+import { accountProfile, CAROUSEL_MAX, CAROUSEL_MIN, createCarouselContainer, createCarouselItem, InstagramApiError, mediaSince, prepareCarousel, refreshToken } from './instagram.ts';
 
 test('accountProfile returns the username and picture, and tolerates missing fields', async () => {
   const full = mock.method(globalThis, 'fetch', async () => Response.json({ username: 'dai23_sy', profile_picture_url: 'https://cdn.example/me.jpg' }));
@@ -77,4 +77,67 @@ test('refreshToken throws a descriptive error that does not contain the token', 
   } finally {
     fetchMock.mock.restore();
   }
+});
+
+test('a carousel picture is made as a carousel item, and the carousel container lists them in order with the caption', async () => {
+  const calls: Array<{ url: string; form: URLSearchParams }> = [];
+  const fetchMock = mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), form: new URLSearchParams(String(init?.body)) });
+    return Response.json({ id: `container-${calls.length}` });
+  });
+  try {
+    assert.equal(await createCarouselItem('42', 'tok', 'https://cdn.example/one.jpg'), 'container-1');
+    assert.equal(await createCarouselContainer('42', 'tok', ['a', 'b', 'c'], 'The caption.\n\n#tag'), 'container-2');
+  } finally {
+    fetchMock.mock.restore();
+  }
+  assert.match(calls[0]?.url ?? '', /\/42\/media$/);
+  assert.equal(calls[0]?.form.get('is_carousel_item'), 'true');
+  assert.equal(calls[0]?.form.get('image_url'), 'https://cdn.example/one.jpg');
+  assert.equal(calls[0]?.form.get('caption'), null, 'a picture of a carousel carries no caption');
+  assert.equal(calls[1]?.form.get('media_type'), 'CAROUSEL');
+  assert.equal(calls[1]?.form.get('children'), 'a,b,c');
+  assert.equal(calls[1]?.form.get('caption'), 'The caption.\n\n#tag');
+  assert.equal(calls[1]?.form.get('is_carousel_item'), null);
+});
+
+test('a carousel needs between the least and the most pictures, and is refused before anything is sent', async () => {
+  const fetchMock = mock.method(globalThis, 'fetch', async () => Response.json({ id: 'x' }));
+  try {
+    await assert.rejects(createCarouselContainer('42', 'tok', ['only-one'], 'c'), (e: unknown) => e instanceof InstagramApiError && /needs 2 to 10 pictures, not 1/.test(e.message));
+    await assert.rejects(createCarouselContainer('42', 'tok', Array.from({ length: CAROUSEL_MAX + 1 }, (_, i) => `i${i}`), 'c'), /needs 2 to 10 pictures, not 11/);
+    await assert.rejects(prepareCarousel('42', 'tok', ['https://cdn.example/one.jpg'], 'c'), /needs 2 to 10 pictures/);
+    assert.equal(fetchMock.mock.callCount(), 0, 'nothing was sent');
+    assert.equal(CAROUSEL_MIN, 2);
+  } finally {
+    fetchMock.mock.restore();
+  }
+});
+
+test('prepareCarousel makes every picture, waits for each, then the carousel, and publishes nothing', async () => {
+  const log: string[] = [];
+  let n = 0;
+  const fetchMock = mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (init?.method === 'POST' && url.endsWith('/media')) {
+      const form = new URLSearchParams(String(init.body));
+      n += 1;
+      log.push(form.get('media_type') === 'CAROUSEL' ? `carousel(${form.get('children')})` : `item(${form.get('image_url')})`);
+      return Response.json({ id: `c${n}` });
+    }
+    if (url.includes('media_publish')) log.push('PUBLISHED');
+    if (url.includes('fields=status_code')) {
+      log.push(`status(${/\/(c\d+)\?/.exec(url)?.[1]})`);
+      return Response.json({ status_code: 'FINISHED' });
+    }
+    return Response.json({});
+  });
+  try {
+    const made = await prepareCarousel('42', 'tok', ['https://cdn.example/1.jpg', 'https://cdn.example/2.jpg', 'https://cdn.example/3.jpg'], 'Caption');
+    assert.deepEqual(made, { containerId: 'c4', itemIds: ['c1', 'c2', 'c3'] });
+  } finally {
+    fetchMock.mock.restore();
+  }
+  assert.deepEqual(log, ['item(https://cdn.example/1.jpg)', 'status(c1)', 'item(https://cdn.example/2.jpg)', 'status(c2)', 'item(https://cdn.example/3.jpg)', 'status(c3)', 'carousel(c1,c2,c3)', 'status(c4)']);
+  assert.ok(!log.includes('PUBLISHED'));
 });
