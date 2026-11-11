@@ -223,7 +223,7 @@ test('each poster is drawn from its own concept, a dropped post buys nothing, an
         direct: async () => ({ concepts: [{ postId: 'p1', concept: DOCS, people: false, factToPicture: 'It shows the fact as an idea.', typography: TYPE_A, replans: 0 }, { postId: 'p3', concept: LINE, people: false, factToPicture: 'It shows the fact as an idea.', typography: TYPE_B, replans: 1 }], dropped: [{ postId: 'p2', reason: 'no distinct idea' }], flags: [] }),
         lookAlikes: async () => ({ scenes: [], typography: [] }),
         scene: async (prompt, out) => { prompts.push(prompt); writeFileSync(out, 'x'); },
-        review: async (file) => ({ ...(await reviewOk()), regions: [{ text: file.includes('p1.') ? 'Answers from your own docs OyeChats oyechats.com' : 'Something unrelated', readable: true }] }),
+        review: async (file) => ({ ...(await reviewOk()), regions: [{ text: file.includes('p1.') ? 'Answers from your own docs oyechats.com' : 'Something unrelated', readable: true }] }),
       },
     });
     assert.deepEqual(report.results.map((r) => r.status), ['accepted', 'dropped', 'rejected']);
@@ -265,7 +265,7 @@ test('posters that look alike side by side: the later one is rejected and its fi
         headlineGate: { enabled: false, config: defaultHeadlineGate },
         direct: async (ps) => ({ concepts: ps.map((p, i) => ({ postId: p.id, concept: [DOCS, LINE][i] as string, people: false, factToPicture: 'It shows the fact as an idea.', typography: TYPE_A, replans: 0 })), dropped: [], flags: [] }),
         scene: async (_p, out) => writeFileSync(out, 'x'),
-        review: async () => ({ ...(await reviewOk()), regions: [{ text: 'Answers from your own docs OyeChats oyechats.com', readable: true }] }),
+        review: async () => ({ ...(await reviewOk()), regions: [{ text: 'Answers from your own docs oyechats.com', readable: true }] }),
         lookAlikes: async () => ({ scenes: [{ a: 'p1', b: 'p2', why: 'the same desk scene' }], typography: [{ a: 'p1', b: 'p2', why: 'the same heavy headline at the top' }] }),
       },
     });

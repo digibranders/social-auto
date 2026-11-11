@@ -1,0 +1,219 @@
+{
+  "copyList": {
+    "batches": [
+      {
+        "brand": "bb-acme",
+        "planFile": "week-01.json",
+        "createdAt": "2026-11-11T11:45:49.281Z",
+        "posts": [
+          {
+            "postId": "w01-d1",
+            "headline": "Answers from your own docs",
+            "caption": "Your docs already know the answer. (link in bio)",
+            "contentHash": "ebd48a3306b8da50d9f922d0053501804a617977eee811c7284397b674bfb322",
+            "captions": {
+              "instagram": {
+                "text": "Your docs already know the answer. (link in bio)"
+              },
+              "linkedin": {
+                "text": "Your docs already know the answer. Set it up in minutes."
+              }
+            },
+            "state": "pending"
+          }
+        ],
+        "networks": [
+          "instagram",
+          "linkedin"
+        ],
+        "signoffDefault": {
+          "brandName": "",
+          "domain": "acme.example"
+        }
+      }
+    ],
+    "networkRules": {
+      "instagram": {
+        "maxCaption": 600,
+        "recommendedMin": 100,
+        "recommendedMax": 300,
+        "visibleChars": 125,
+        "maxHashtags": 5
+      },
+      "facebook": {
+        "maxCaption": 600,
+        "recommendedMin": 100,
+        "recommendedMax": 250,
+        "visibleChars": 125,
+        "maxHashtags": 3
+      },
+      "linkedin": {
+        "maxCaption": 1300,
+        "recommendedMin": 400,
+        "recommendedMax": 800,
+        "visibleChars": 140,
+        "maxHashtags": 3
+      },
+      "google": {
+        "maxCaption": 1000,
+        "recommendedMin": 150,
+        "recommendedMax": 300,
+        "visibleChars": 100,
+        "maxHashtags": 0
+      }
+    }
+  },
+  "facts": {
+    "brand": "bb-acme",
+    "builtAt": "2026-11-06T00:00:00.000Z",
+    "mode": "all_usable",
+    "profile": {
+      "name": "Acme Replies",
+      "website": "https://acme.example",
+      "tone": "Warm and plain",
+      "audience": "Small websites",
+      "offer": "A support chatbot"
+    },
+    "facts": [
+      {
+        "factId": "b5c7abc54d40",
+        "text": "Installation takes under 10 minutes and uses one script tag.",
+        "sourceUrl": "https://acme.example/features",
+        "sourceQuote": "Installation takes under 10 minutes and uses one script tag.",
+        "state": "suggested",
+        "held": false
+      },
+      {
+        "factId": "9a9f1586147e",
+        "text": "Answers come from your own pages and documents.",
+        "sourceUrl": "https://acme.example/features",
+        "sourceQuote": "Answers come from your own pages and documents.",
+        "state": "suggested",
+        "held": false
+      }
+    ],
+    "counts": {
+      "suggested": 2,
+      "confirmed": 0,
+      "removed": 0,
+      "held": 0
+    }
+  },
+  "versions": {
+    "posts": [
+      {
+        "versionId": "bb-acme.8f2d3b4ef277ea5e",
+        "brand": "bb-acme",
+        "postId": "w01-d1",
+        "planFile": "week-01.json",
+        "versionNumber": 1,
+        "status": "pending",
+        "headline": "Answers from your own docs",
+        "caption": "Your docs already know the answer. (link in bio)",
+        "createdAt": "2026-11-11T11:45:49.315Z",
+        "costUsd": 0.016,
+        "imageSha256": "2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97",
+        "network": "instagram",
+        "width": 1080,
+        "height": 1350,
+        "shape": "tall",
+        "canRedraw": true,
+        "redrawsLeft": 1
+      }
+    ],
+    "problems": [],
+    "reasons": [
+      "weak_copy",
+      "irrelevant_image",
+      "poor_design",
+      "incorrect_branding",
+      "factual_issue",
+      "repetitive",
+      "style",
+      "other"
+    ]
+  },
+  "approve": {
+    "decision": {
+      "versionId": "bb-acme.8f2d3b4ef277ea5e",
+      "decision": "approve",
+      "by": "brandbasket:user-42",
+      "at": "2026-11-11T11:45:49.384Z",
+      "imageSha256": "2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97",
+      "contentSha256": "3b1ec83e316f7f8fd6d288e9950cc3b7654e42e7edc68e34e81ed9fa44716f2a"
+    },
+    "status": "approved"
+  },
+  "versionDetail": {
+    "version": {
+      "versionId": "bb-acme.8f2d3b4ef277ea5e",
+      "brand": "bb-acme",
+      "postId": "w01-d1",
+      "planFile": "week-01.json",
+      "versionNumber": 1,
+      "network": "instagram",
+      "width": 1080,
+      "height": 1350,
+      "headline": "Answers from your own docs",
+      "caption": "Your docs already know the answer. (link in bio)",
+      "ctaUrl": "https://acme.example",
+      "factIds": [
+        "f1"
+      ],
+      "evidence": [
+        {
+          "factId": "f1",
+          "text": "t",
+          "quote": "q",
+          "url": "https://acme.example/",
+          "context": "c"
+        }
+      ],
+      "imageFile": "versions/2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97.jpg",
+      "imageSha256": "2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97",
+      "contentSha256": "3b1ec83e316f7f8fd6d288e9950cc3b7654e42e7edc68e34e81ed9fa44716f2a",
+      "validation": {
+        "accepted": true,
+        "readings": 2,
+        "defects": [],
+        "reportFile": "r.json"
+      },
+      "attempts": 1,
+      "costUsd": 0.016,
+      "createdAt": "2026-11-11T11:45:49.315Z",
+      "createdBy": "engine"
+    },
+    "status": "approved",
+    "decision": {
+      "versionId": "bb-acme.8f2d3b4ef277ea5e",
+      "decision": "approve",
+      "by": "brandbasket:user-42",
+      "at": "2026-11-11T11:45:49.384Z",
+      "imageSha256": "2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97",
+      "contentSha256": "3b1ec83e316f7f8fd6d288e9950cc3b7654e42e7edc68e34e81ed9fa44716f2a"
+    },
+    "canRedraw": false,
+    "redrawsLeft": 1,
+    "history": [
+      {
+        "versionId": "bb-acme.8f2d3b4ef277ea5e",
+        "brand": "bb-acme",
+        "postId": "w01-d1",
+        "planFile": "week-01.json",
+        "versionNumber": 1,
+        "status": "approved",
+        "headline": "Answers from your own docs",
+        "caption": "Your docs already know the answer. (link in bio)",
+        "createdAt": "2026-11-11T11:45:49.315Z",
+        "costUsd": 0.016,
+        "imageSha256": "2cea274d0bedc39ec4ab6ba9e59ec889e3ed6fb56a1cf088a64d9b383378dc97",
+        "network": "instagram",
+        "width": 1080,
+        "height": 1350,
+        "shape": "tall",
+        "decidedBy": "brandbasket:user-42",
+        "decidedAt": "2026-11-11T11:45:49.384Z"
+      }
+    ]
+  }
+}

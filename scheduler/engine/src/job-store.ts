@@ -13,7 +13,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { LockError, syncDir, withFileLock } from './file-lock.ts';
 
-export type JobKind = 'copy' | 'draw' | 'carousel';
+export type JobKind = 'copy' | 'draw' | 'carousel' | 'redraw' | 'network' | 'newnet';
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export class JobError extends Error {
@@ -47,6 +47,15 @@ export interface JobSpec {
   planFile?: string;
   /** Draw again only what a failed draw did not finish (draw only; allowed once the last draw of the batch has failed). */
   retry?: boolean;
+  /** The one post, and the one network of it, to draw a new picture for (redraw only; the batch was already drawn). */
+  postId?: string;
+  network?: string;
+}
+
+/** What an add-a-network job found, per topic of the batch. */
+export interface NetworkResult {
+  network: string;
+  topics: Array<{ postId: string; outcome: 'written'; /** The caption is the main one adapted to the network, because a fresh one could not be written within the checks; `reasonCode` says why, as a fixed code. */ fallback?: true; reasonCode?: 'WORDS_REFUSED' | 'TOO_LONG' | 'NO_FACTS' | 'NO_CAPTION'; /** Versions made from a picture the topic already had (same bytes, cost 0). */ versionIds?: string[]; /** The id of the draw queued for this network's own picture. */ drawJobId?: string; /** Set by the engine: this topic needs its own picture drawn; the runner queues the draw and replaces this with `drawJobId`. */ needsDraw?: true }>;
 }
 
 export interface Job extends Omit<JobSpec, 'networks' | 'days' | 'weekdays' | 'page' | 'retry'> {
@@ -68,6 +77,8 @@ export interface Job extends Omit<JobSpec, 'networks' | 'days' | 'weekdays' | 'p
   runnerPid?: number;
   exitCode?: number;
   error?: { code: string; message: string };
+  /** What an add-a-network job did for each topic (that kind only). */
+  result?: NetworkResult;
   /** The last lines the engine printed, secrets removed. */
   logTail: string[];
 }
@@ -79,7 +90,8 @@ const LOG_LINE_CHARS = 300;
 /** A key that looks like one of ours must never be shown, whatever the engine printed. */
 export const scrub = (line: string): string => line.replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{10,}/g, '[key removed]').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{10,}/gi, 'Bearer [removed]').slice(0, LOG_LINE_CHARS);
 
-export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile'>): string => (spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : `copy:${spec.brand}`);
+export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network'>): string =>
+  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
 
 export class JobStore {
   private readonly dir: string;
@@ -149,6 +161,8 @@ export class JobStore {
         ...(spec.startDate ? { startDate: spec.startDate } : {}),
         ...(spec.time ? { time: spec.time } : {}),
         ...(spec.planFile ? { planFile: spec.planFile } : {}),
+        ...(spec.postId ? { postId: spec.postId } : {}),
+        ...(spec.network ? { network: spec.network } : {}),
         state: 'queued',
         createdAt: stamp.toISOString(),
         logTail: [],
@@ -186,7 +200,7 @@ export class JobStore {
   }
 
   /** Records progress or the end of a job. A finished job is never changed again. */
-  update(id: string, patch: Partial<Pick<Job, 'state' | 'step' | 'planFileMade' | 'exitCode' | 'error' | 'logTail'>>): Job {
+  update(id: string, patch: Partial<Pick<Job, 'state' | 'step' | 'planFileMade' | 'exitCode' | 'error' | 'logTail' | 'result'>>): Job {
     return this.locked(() => {
       const job = this.get(id);
       if (job.state === 'succeeded' || job.state === 'failed') return job;

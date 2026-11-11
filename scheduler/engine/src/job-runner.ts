@@ -9,21 +9,31 @@
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
-import { JobStore, scrub, type Job } from './job-store.ts';
+import { JobStore, scrub, type Job, type NetworkResult } from './job-store.ts';
 
 export const COPY_TIMEOUT_MS = 30 * 60_000;
 export const DRAW_TIMEOUT_MS = 45 * 60_000;
+/** The line the engine prints when an add-a-network run is done: what it did for each topic. */
+const RESULT_PREFIX = 'ADD_NETWORK_RESULT ';
 
 /** The command line the engine is started with for a job. */
 export function engineArgs(job: Job): string[] {
+  if (job.kind === 'network') {
+    if (!job.planFile || !job.network) throw new Error('a network job needs the batch and the network');
+    return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--add-network', job.planFile, '--network', job.network];
+  }
+  if (job.kind === 'redraw' || job.kind === 'newnet') {
+    if (!job.planFile || !job.postId) throw new Error('a redraw job needs the batch and the post to draw');
+    return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--draw-kept', job.planFile, '--redraw-post', job.postId, ...(job.network ? ['--redraw-network', job.network] : [])];
+  }
   if (job.kind === 'draw') {
     if (!job.planFile) throw new Error('a draw job needs the batch to draw');
-    return ['src/autopilot.ts', '--site', job.site, '--draw-kept', job.planFile, ...(job.retry ? ['--redraw-missing'] : [])];
+    return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--draw-kept', job.planFile, ...(job.retry ? ['--redraw-missing'] : [])];
   }
   if (job.kind === 'carousel') return ['src/carousel-cli.ts', '--site', job.site, '--networks', job.networks.join(','), ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
   const networks = job.networks.length > 0 ? ['--networks', job.networks.join(',')] : [];
   const rhythm = job.weekdays && job.weekdays.length > 0 ? ['--weekdays', job.weekdays.join(',')] : [];
-  return ['src/autopilot.ts', '--site', job.site, '--copy-first', ...(job.page ? ['--page'] : []), ...networks, ...(job.days ? ['--days', String(job.days)] : []), ...rhythm, ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
+  return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--copy-first', ...(job.page ? ['--page'] : []), ...networks, ...(job.days ? ['--days', String(job.days)] : []), ...rhythm, ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
 }
 
 /** What one line the engine printed says about the job. */
@@ -67,8 +77,9 @@ export const execEngine = (cwd: string): Exec => (args, onLine, timeoutMs) =>
 export async function runJob(store: JobStore, job: Job, exec: Exec): Promise<Job> {
   const tail: string[] = [];
   let step: number | undefined;
-  let planFileMade: string | undefined = job.kind === 'draw' ? job.planFile : undefined;
+  let planFileMade: string | undefined = job.kind !== 'copy' ? job.planFile : undefined;
   let lastError: { code: string; message: string } | undefined;
+  let networkResult: NetworkResult | undefined;
   let pending: NodeJS.Timeout | undefined;
   const flush = (): void => {
     pending = undefined;
@@ -76,6 +87,15 @@ export async function runJob(store: JobStore, job: Job, exec: Exec): Promise<Job
   };
   const onLine = (line: string, source: 'out' | 'err'): void => {
     if (line.trim() === '') return;
+    if (source === 'out' && line.startsWith(RESULT_PREFIX)) {
+      try {
+        const parsed = JSON.parse(line.slice(RESULT_PREFIX.length)) as NetworkResult;
+        if (typeof parsed.network === 'string' && Array.isArray(parsed.topics)) networkResult = parsed;
+      } catch {
+        // A line that is not the result is just output.
+      }
+      return;
+    }
     tail.push(line);
     if (tail.length > 60) tail.shift();
     const read = readLine(line, source);
@@ -88,7 +108,17 @@ export async function runJob(store: JobStore, job: Job, exec: Exec): Promise<Job
   const { code, timedOut } = await exec(engineArgs(job), onLine, job.kind === 'copy' ? COPY_TIMEOUT_MS : DRAW_TIMEOUT_MS);
   if (pending) clearTimeout(pending);
   const base = { logTail: tail, ...(step !== undefined ? { step } : {}), ...(planFileMade ? { planFileMade } : {}), ...(code !== null ? { exitCode: code } : {}) };
-  if (code === 0 && !timedOut) return store.update(job.id, { ...base, state: 'succeeded' });
+  if (code === 0 && !timedOut) {
+    if (!networkResult) return store.update(job.id, { ...base, state: 'succeeded' });
+    // A topic that has no picture of the new network's shape gets its own draw, one picture, queued now so the product can follow it.
+    const topics = networkResult.topics.map((topic) => {
+      const { needsDraw, ...rest } = topic;
+      if (!needsDraw || !job.planFile) return rest;
+      const queued = store.enqueue({ kind: 'newnet', brand: job.brand, site: job.site, by: job.by, planFile: job.planFile, postId: topic.postId, network: networkResult?.network ?? '' });
+      return { ...rest, drawJobId: queued.job.id };
+    });
+    return store.update(job.id, { ...base, state: 'succeeded', result: { network: networkResult.network, topics } });
+  }
   const error = timedOut ? { code: 'TIMEOUT', message: 'the engine took too long and was stopped' } : lastError ?? { code: 'FAILED', message: `the engine stopped with exit code ${code ?? 'none'}` };
   return store.update(job.id, { ...base, state: 'failed', error });
 }

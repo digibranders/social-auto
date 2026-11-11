@@ -73,6 +73,11 @@ test('a version the system did not pass is blocked: it cannot be approved, and n
     assert.equal(store.get(v.versionId).status, 'blocked');
     assert.equal(code(() => store.approve(v.versionId, 'owner')), 'BLOCKED');
     assert.equal(code(() => store.approvedFile(v.versionId)), 'NOT_APPROVED');
+    // It can be put away (shown as rejected), and still never approved.
+    store.reject(v.versionId, 'owner', 'other');
+    assert.equal(store.get(v.versionId).status, 'rejected');
+    assert.equal(code(() => store.approve(v.versionId, 'owner')), 'ALREADY_DECIDED');
+    assert.equal(code(() => store.approvedFile(v.versionId)), 'NOT_APPROVED');
   } finally {
     done();
   }

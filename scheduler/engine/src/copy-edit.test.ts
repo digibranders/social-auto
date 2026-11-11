@@ -229,3 +229,20 @@ test('a caption longer than the network takes is refused when the owner makes it
     done();
   }
 });
+
+test('a number, a superlative or a market-position claim that no fact of the post states is refused, also when the post names no facts at all', () => {
+  const { dir, done } = workspace();
+  try {
+    const caption = 'We are the number one sweet shop in all of India with 500 shops worldwide.';
+    assert.match(refusal(() => edit(dir, { caption })), /^REJECTED: the words say something the website does not support/, 'a post with facts');
+    // The same post written without any fact ids: the gate still runs, with nothing to lean on.
+    const plan = JSON.parse(readFileSync(join(dir, 'week-01.json'), 'utf8')) as { posts: Array<{ factIds?: string[] }> };
+    for (const post of plan.posts) delete post.factIds;
+    writeFileSync(join(dir, 'week-01.json'), JSON.stringify(plan));
+    assert.match(refusal(() => edit(dir, { caption })), /^REJECTED: the words say something the website does not support/, 'a post without facts');
+    assert.match(refusal(() => edit(dir, { caption: 'The best sweet shop in India.' })), /^REJECTED/, 'a superlative alone');
+    assert.equal(edit(dir, { caption: 'Fresh laddoos every morning, made by hand.' }).posts[0]?.edited, true, 'plain words with no claim are still accepted');
+  } finally {
+    done();
+  }
+});
