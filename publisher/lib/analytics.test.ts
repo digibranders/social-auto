@@ -160,3 +160,10 @@ test('each connected channel says where it stands, and Instagram\'s audience say
   assert.deepEqual(viewFor(EMPTY_ANALYTICS, 'b', '2026-11-01', '2026-11-12', connected.slice(0, 1)).audience, { instagram: { status: 'none' } });
   assert.deepEqual(viewFor(EMPTY_ANALYTICS, 'b', '2026-11-01', '2026-11-12').audience, {}, 'no Instagram connected, no audience entry');
 });
+
+test('a Google connection the network withdrew is recorded as "reconnect" instead of waiting for ever', async () => {
+  const { file, report } = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [gl], posted: {}, key: KEY, googleApp: { clientId: 'c', clientSecret: 's' }, readers: readers([], { googleToken: async () => { throw new Error('Google sign-in refresh failed: access was withdrawn or expired. Connect Google again from the dashboard.'); } }), now: NOW });
+  assert.equal(report.failures.length, 1);
+  assert.deepEqual(file.accounts['google:9']?.needs, ['reconnect']);
+  assert.equal(viewFor(file, 'b', '2026-11-01', '2026-11-12', [{ id: 'google:9', platform: 'google', label: 'Shop' }]).channels[0]?.status, 'reconnect');
+});

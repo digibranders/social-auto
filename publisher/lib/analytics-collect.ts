@@ -91,6 +91,10 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
       report.accounts += 1;
     } catch (error) {
       report.failures.push({ id: channel.id, reason: reasonOf(error) });
+      // A connection the network withdrew is for the customer to connect again: say so, rather than showing "waiting" for ever.
+      if (/connect google again|withdrawn|expired/i.test(reasonOf(error)) && channel.platform === 'google') {
+        file = recordAccount(file, channel.id, { brand: channel.brand, channel: channel.id, platform: channel.platform, label: channelLabel(channel), needs: ['reconnect'], checkedAt: new Date(now).toISOString() }, {}, now);
+      }
     }
   }
 
