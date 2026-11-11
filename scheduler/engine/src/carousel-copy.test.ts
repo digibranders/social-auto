@@ -61,3 +61,11 @@ test('a main caption that states something the facts do not is asked for again, 
   assert.match(third.captions['instagram'] ?? '', /Not sure what curry to choose\?/);
   assert.deepEqual(third.fallback.map((f) => f.network), ['instagram']);
 });
+
+test('a hook of two words is fine: the captions are judged against all the slides, and none falls back to the plain caption (found in the first real run)', async () => {
+  const short = { ...input, headlines: ['Event catering', 'We cater lunches, gatherings & weddings', 'Message or call us for custom menus'], facts: ['We cater corporate lunches, family gatherings, and weddings.', 'Send us a message or call us for custom menu packages.'] };
+  const out = await writeCarouselCaptions({ ...short, networks: ['instagram', 'linkedin'], fetchFn: answers({ caption: 'Planning an event? Swipe to see what we can cater for you.', hashtags: ['#catering'] }, { captions: [{ postId: 'carousel', network: 'linkedin', caption: 'We cater corporate lunches, family gatherings and weddings, and can build a custom menu for yours.', hashtags: [] }] }).fetchFn });
+  assert.deepEqual(out.fallback, []);
+  assert.match(out.captions['instagram'] ?? '', /Planning an event/);
+  assert.match(out.captions['linkedin'] ?? '', /corporate lunches/);
+});

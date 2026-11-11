@@ -42,6 +42,12 @@ Return JSON only: {"caption": string, "hashtags": ["#..."]}`;
 
 interface Main { caption: string; hashtags: string[] }
 
+/**
+ * What the caption is judged against in place of a headline: every slide's headline, in order. A carousel has no single headline, and its first slide's is often short
+ * on purpose (a hook of two words), which the writing check would turn back as "too short to say anything" and so send every caption to the plain fallback.
+ */
+const subjectOf = (input: Pick<CarouselCaptionInput, 'headlines' | 'topic'>): string => (input.headlines.length > 0 ? input.headlines.map(plainHeadline).join('. ') : input.topic);
+
 function parseMain(value: unknown, input: CarouselCaptionInput): Main {
   const v = (typeof value === 'object' && value !== null ? value : {}) as { caption?: unknown; hashtags?: unknown };
   const rules = NETWORK_RULES.instagram;
@@ -51,7 +57,7 @@ function parseMain(value: unknown, input: CarouselCaptionInput): Main {
   const tags = Array.isArray(v.hashtags) ? v.hashtags : [];
   if (!tags.every((t) => typeof t === 'string' && /^#\S+$/.test(t))) throw new Error('every hashtag must be one word starting with #');
   const hashtags = (tags as string[]).slice(0, rules.maxHashtags);
-  const headline = plainHeadline(input.headlines[0] ?? input.topic);
+  const headline = subjectOf(input);
   const quality = checkCopyQuality({ headline, caption });
   if (quality) throw new Error(quality);
   const violations = checkCopy({ headline, subline: '', caption }, input.facts);
@@ -76,7 +82,7 @@ export async function writeCarouselCaptions(input: CarouselCaptionInput): Promis
     fallback.push({ network: 'instagram', reason: error instanceof Error ? error.message : String(error) });
   }
   const full = `${tidyPunctuation(main.caption)}\n\n${input.closingLine}`;
-  const written = await writeNetworkCaptions({ ai: input.ai, networks: input.networks, posts: [{ id: POST_ID, headline: plainHeadline(input.headlines[0] ?? input.topic), caption: full, hashtags: main.hashtags, facts: [...input.facts] }], ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}) });
+  const written = await writeNetworkCaptions({ ai: input.ai, networks: input.networks, posts: [{ id: POST_ID, headline: subjectOf(input), caption: full, hashtags: main.hashtags, facts: [...input.facts] }], ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}) });
   for (const f of written.report.fallback) fallback.push({ network: f.network, reason: f.reason });
   const variants = written.variants[POST_ID] ?? {};
   const captions = Object.fromEntries(input.networks.flatMap((network) => { const v = variants[network]; return v ? [[network, composeVariant(v)]] : []; }));

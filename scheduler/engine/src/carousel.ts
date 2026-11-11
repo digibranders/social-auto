@@ -102,7 +102,7 @@ Choose ONE topic that the facts support well, and tell it in three to five slide
 - The first slide is the "hook": a short headline that makes a stranger want to swipe. The last slide is the "closing": a plain, friendly call to act. Slides in between are "content", one idea each.
 - Every slide names the verified facts it is about (factIds, at least one) and its headline may say only what those facts say. Never add numbers, prices, times, results, guarantees, awards, customers or any claim the named facts do not state.
 - Headlines are short (at most 60 characters), plain words, different on every slide. Put the key words of a headline between |pipes| to show them in the accent colour.
-- "scene" says what the slide's picture shows: one concrete thing, drawn, with no words, logos, screens with writing, or real people.
+- "scene" says what the slide's picture shows: one concrete thing, drawn, with no words, logos, screens with writing, or real people. It must fit what this business really sells and where it works (its cuisine, products, setting, as described under "about_the_brand"): never show another kind of food or product than the business's own.
 - "style" is ONE visual system that every slide shares so they look like one set: the way things are drawn, the background, and the only colours used. Write it as a precise instruction.
 - "typography" is how every slide's headline is set, identical on all slides: typeface feel, weight, colour, alignment, position and size.
 - Do not choose a topic from the list of topics to avoid.
@@ -115,6 +115,8 @@ export interface PlanCarouselInput {
   facts: readonly CarouselFact[];
   /** Topics of recent carousels, so this one is about something else. */
   avoidTopics: readonly string[];
+  /** What the business is and sells, in a few words (its tone, audience and offer), so the scenes drawn fit it. */
+  about?: string;
   /** For tests: replaces the network call. */
   fetchFn?: typeof fetch;
 }
@@ -128,7 +130,7 @@ export async function planCarousel(input: PlanCarouselInput): Promise<CarouselDr
     ai: input.ai,
     ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}),
     system: CAROUSEL_SYSTEM,
-    user: JSON.stringify({ brand: input.brandName, facts: input.facts.map((f) => ({ id: f.id, text: f.text })), topics_to_avoid: input.avoidTopics }),
+    user: JSON.stringify({ brand: input.brandName, ...(input.about ? { about_the_brand: input.about } : {}), facts: input.facts.map((f) => ({ id: f.id, text: f.text })), topics_to_avoid: input.avoidTopics }),
     parse: (value) => parseCarouselDraft(value, input.facts),
   });
 }

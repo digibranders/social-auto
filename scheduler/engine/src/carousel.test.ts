@@ -125,3 +125,13 @@ test('slideConcepts gives every slide the same style and typography and its own 
   assert.equal(new Set(concepts.map((c) => c.concept)).size, 4);
   assert.match(concepts[0]?.concept ?? '', /ONE CAROUSEL OF 4 SLIDES/);
 });
+
+test('planCarousel tells the model what the business is and sells, so the scenes fit it', async () => {
+  const { fetchFn, messages } = reply(good);
+  await planCarousel({ ai, brandName: 'Curry Cook', facts, avoidTopics: [], about: 'What it offers: Indian curries and catering.', fetchFn });
+  assert.match(messages[0] ?? '', /\\"about_the_brand\\":\\"What it offers: Indian curries and catering/);
+  assert.match(messages[0] ?? '', /never show another kind of food or product/);
+  const without = reply(good);
+  await planCarousel({ ai, brandName: 'Curry Cook', facts, avoidTopics: [], fetchFn: without.fetchFn });
+  assert.doesNotMatch(without.messages[0] ?? '', /\\"about_the_brand\\":/);
+});
