@@ -8,8 +8,8 @@
  */
 import { channelLabel, channelsFor, type Channel } from '../../lib/channels.js';
 import { ensureWorkspace, findWorkspace, isExternalId, type AddedClient } from '../../lib/clients.js';
-import { describeError, json } from '../../lib/http.js';
-import { EditError } from '../../lib/overrides.js';
+import { apiError, errorResponse } from '../../lib/api-error.js';
+import { json } from '../../lib/http.js';
 import { productOf } from '../../lib/product-request.js';
 import { brandIsPaused, isPaused, type PauseFile } from '../../lib/pauses.js';
 import { loadChannels, loadClients, loadPauses, saveClients, storeConfigured } from '../../lib/store.js';
@@ -35,10 +35,10 @@ function workspaceView(client: AddedClient, channels: Channel[], pauses: PauseFi
 export async function POST(request: Request): Promise<Response> {
   const product = productOf(request);
   if (product instanceof Response) return product;
-  if (!storeConfigured()) return json(503, { error: 'storage is not set up' });
-  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'request too large' });
+  if (!storeConfigured()) return apiError(503, 'STORAGE_NOT_SET_UP', 'storage is not set up');
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return apiError(413, 'REQUEST_TOO_LARGE', 'request too large');
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (typeof body !== 'object' || body === null) return json(400, { error: 'send JSON' });
+  if (typeof body !== 'object' || body === null) return apiError(400, 'INVALID_REQUEST', 'send JSON');
 
   try {
     const { file, etag } = await loadClients();
@@ -47,26 +47,23 @@ export async function POST(request: Request): Promise<Response> {
     const [{ file: channels }, { file: pauses }] = await Promise.all([loadChannels(), loadPauses()]);
     return json(result.created ? 201 : 200, { workspace: workspaceView(result.client, channelsFor(channels, result.client.brand), pauses) });
   } catch (error) {
-    if (error instanceof EditError) return json(error.status, { error: error.message });
-    console.error(describeError(error));
-    return json(500, { error: 'could not save the workspace' });
+    return errorResponse(error, 'save the workspace');
   }
 }
 
 export async function GET(request: Request): Promise<Response> {
   const product = productOf(request);
   if (product instanceof Response) return product;
-  if (!storeConfigured()) return json(503, { error: 'storage is not set up' });
+  if (!storeConfigured()) return apiError(503, 'STORAGE_NOT_SET_UP', 'storage is not set up');
   const externalId = new URL(request.url).searchParams.get('externalId');
-  if (!isExternalId(externalId)) return json(400, { error: 'externalId is required' });
+  if (!isExternalId(externalId)) return apiError(400, 'INVALID_EXTERNAL_ID', 'externalId is required');
 
   try {
     const [{ file }, { file: channels }, { file: pauses }] = await Promise.all([loadClients(), loadChannels(), loadPauses()]);
     const client = findWorkspace(file, product.id, externalId);
-    if (!client) return json(404, { error: 'no such workspace' });
+    if (!client) return apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
     return json(200, { workspace: workspaceView(client, channelsFor(channels, client.brand), pauses) });
   } catch (error) {
-    console.error(describeError(error));
-    return json(500, { error: 'could not read the workspace' });
+    return errorResponse(error, 'read the workspace');
   }
 }

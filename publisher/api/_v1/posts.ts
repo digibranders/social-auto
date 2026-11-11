@@ -12,10 +12,11 @@
  */
 import { scheduleData } from '../../lib/schedule-source.js';
 import { findWorkspace, isExternalId } from '../../lib/clients.js';
-import { describeError, json } from '../../lib/http.js';
+import { apiError, errorResponse } from '../../lib/api-error.js';
+import { json } from '../../lib/http.js';
 import { removeNewPost, saveNewPost, updateNewPost } from '../../lib/manual-service.js';
 import { toScheduled } from '../../lib/manual.js';
-import { applyOverrides, EditError } from '../../lib/overrides.js';
+import { applyOverrides } from '../../lib/overrides.js';
 import { postView, scheduledView } from '../../lib/post-view.js';
 import { productOf } from '../../lib/product-request.js';
 import { parseSchedule } from '../../lib/schedule.js';
@@ -40,23 +41,19 @@ type Caller = { brand: string };
 async function workspaceFor(request: Request, externalId: unknown): Promise<Caller | Response> {
   const product = productOf(request);
   if (product instanceof Response) return product;
-  if (!storeConfigured()) return json(503, { error: 'storage is not set up' });
-  if (!isExternalId(externalId)) return json(400, { error: 'externalId is required' });
+  if (!storeConfigured()) return apiError(503, 'STORAGE_NOT_SET_UP', 'storage is not set up');
+  if (!isExternalId(externalId)) return apiError(400, 'INVALID_EXTERNAL_ID', 'externalId is required');
   const { file } = await loadClients();
   const workspace = findWorkspace(file, product.id, externalId);
-  return workspace ? { brand: workspace.brand } : json(404, { error: 'no such workspace' });
+  return workspace ? { brand: workspace.brand } : apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
 }
 
-function failure(error: unknown, what: string): Response {
-  if (error instanceof EditError) return json(error.status, { error: error.message });
-  console.error(describeError(error));
-  return json(500, { error: `could not ${what}` });
-}
+const failure = errorResponse;
 
 export async function POST(request: Request): Promise<Response> {
-  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'request too large' });
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return apiError(413, 'REQUEST_TOO_LARGE', 'request too large');
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (typeof body !== 'object' || body === null) return json(400, { error: 'send JSON' });
+  if (typeof body !== 'object' || body === null) return apiError(400, 'INVALID_REQUEST', 'send JSON');
   const caller = await workspaceFor(request, body['externalId']);
   if (caller instanceof Response) return caller;
   try {
@@ -74,7 +71,7 @@ export async function GET(request: Request): Promise<Response> {
   if (caller instanceof Response) return caller;
   const from = params.has('from') ? startOfDay(params.get('from')) : null;
   const to = params.has('to') ? startOfDay(params.get('to')) : null;
-  if ((params.has('from') && from === null) || (params.has('to') && to === null)) return json(400, { error: 'from and to must be days like 2026-11-20' });
+  if ((params.has('from') && from === null) || (params.has('to') && to === null)) return apiError(400, 'INVALID_DAY', 'from and to must be days like 2026-11-20');
   try {
     const [{ file: manual }, { file: channels }, { log }, { overrides }, { file: pauses }] = await Promise.all([loadManual(), loadChannels(), loadPosted(), loadOverrides(), loadPauses()]);
     const now = Date.now();
@@ -91,10 +88,10 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function PATCH(request: Request): Promise<Response> {
-  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'request too large' });
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return apiError(413, 'REQUEST_TOO_LARGE', 'request too large');
   const params = new URL(request.url).searchParams;
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  if (typeof body !== 'object' || body === null) return json(400, { error: 'send JSON' });
+  if (typeof body !== 'object' || body === null) return apiError(400, 'INVALID_REQUEST', 'send JSON');
   const caller = await workspaceFor(request, params.get('externalId'));
   if (caller instanceof Response) return caller;
   try {

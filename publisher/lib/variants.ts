@@ -31,17 +31,17 @@ const isObject = (value: unknown): value is Record<string, unknown> => typeof va
  * picture is dropped, which is how "same as main" is expressed. Throws EditError for an unknown platform or a bad value.
  */
 export function validateVariants(raw: unknown): StoredVariants {
-  if (!isObject(raw)) throw new EditError('variants must be an object keyed by platform');
+  if (!isObject(raw)) throw new EditError('variants must be an object keyed by platform', 400, 'INVALID_VARIANTS');
   const result: StoredVariants = {};
   for (const [platform, value] of Object.entries(raw)) {
-    if (!isPlatform(platform)) throw new EditError(`"${platform}" is not a platform. Use ${PLATFORMS.join(', ')}.`);
+    if (!isPlatform(platform)) throw new EditError(`"${platform}" is not a platform. Use ${PLATFORMS.join(', ')}.`, 400, 'INVALID_VARIANTS');
     if (value === null) continue;
-    if (!isObject(value)) throw new EditError(`variants.${platform} must be an object`);
+    if (!isObject(value)) throw new EditError(`variants.${platform} must be an object`, 400, 'INVALID_VARIANTS');
     const variant: StoredVariant = {};
     if (value['caption'] !== undefined && value['caption'] !== null && value['caption'] !== '') variant.caption = validateCaption(value['caption']);
     const pictureId = value['pictureId'] ?? value['imageKey'];
     if (pictureId !== undefined && pictureId !== null && pictureId !== '') {
-      if (!isImageKey(pictureId)) throw new EditError(`variants.${platform}.pictureId is not a picture`);
+      if (!isImageKey(pictureId)) throw new EditError(`variants.${platform}.pictureId is not a picture`, 400, 'INVALID_VARIANTS');
       variant.imageKey = pictureId;
     }
     if (variant.caption !== undefined || variant.imageKey !== undefined) result[platform] = variant;
@@ -108,15 +108,15 @@ export function mergeViews(base: Variants | undefined, next: Variants | undefine
  * Answers the whole set after the change (empty means no platform has a version of its own).
  */
 export function applyVariantPatch(current: StoredVariants | undefined, raw: unknown): StoredVariants {
-  if (!isObject(raw)) throw new EditError('variants must be an object keyed by platform');
+  if (!isObject(raw)) throw new EditError('variants must be an object keyed by platform', 400, 'INVALID_VARIANTS');
   const result: StoredVariants = { ...current };
   for (const [platform, value] of Object.entries(raw)) {
-    if (!isPlatform(platform)) throw new EditError(`"${platform}" is not a platform. Use ${PLATFORMS.join(', ')}.`);
+    if (!isPlatform(platform)) throw new EditError(`"${platform}" is not a platform. Use ${PLATFORMS.join(', ')}.`, 400, 'INVALID_VARIANTS');
     if (value === null) {
       delete result[platform];
       continue;
     }
-    if (!isObject(value)) throw new EditError(`variants.${platform} must be an object or null`);
+    if (!isObject(value)) throw new EditError(`variants.${platform} must be an object or null`, 400, 'INVALID_VARIANTS');
     const next: StoredVariant = { ...result[platform] };
     const caption = value['caption'];
     if (caption === null || caption === '') delete next.caption;
@@ -124,7 +124,7 @@ export function applyVariantPatch(current: StoredVariants | undefined, raw: unkn
     const pictureId = 'pictureId' in value ? value['pictureId'] : value['imageKey'];
     if (pictureId === null || pictureId === '') delete next.imageKey;
     else if (pictureId !== undefined) {
-      if (!isImageKey(pictureId)) throw new EditError(`variants.${platform}.pictureId is not a picture`);
+      if (!isImageKey(pictureId)) throw new EditError(`variants.${platform}.pictureId is not a picture`, 400, 'INVALID_VARIANTS');
       next.imageKey = pictureId;
     }
     if (next.caption !== undefined || next.imageKey !== undefined) result[platform] = next;
