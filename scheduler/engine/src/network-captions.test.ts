@@ -83,3 +83,17 @@ test('a plan keeps its per-network captions when it is read back, and refuses a 
   assert.deepEqual(plan.posts[0]?.variants, { linkedin: { caption: 'One script tag for teams.', hashtags: ['#acme'], fallback: true } });
   assert.throws(() => parseWeekPlan({ brand: 'acme', timezone: '+05:30', renderMode: 'ai_v1', posts: [{ ...post, variants: { tiktok: { caption: 'x', hashtags: [] } } }] }, 'week-01.json'), /not a network/);
 });
+
+test('the writer is told how long each network\'s caption should be and that the hook comes first', async () => {
+  const { fetchFn, requests } = model([{ captions: [
+    good('linkedin', 'p1', 'Teams can put an assistant on their site with one script tag, in under 10 minutes.'),
+    good('linkedin', 'p2', 'Customers get answers drawn from your own pages and documents.'),
+    good('google', 'p1', 'Install takes under 10 minutes and needs one script tag.'),
+    good('google', 'p2', 'Answers come from your own pages and documents.'),
+  ] }]);
+  await writeNetworkCaptions({ ai, posts, networks: ['linkedin', 'google'], fetchFn });
+  const asked = requests[0] ?? '';
+  assert.match(asked, /linkedin: .*Aim for about 400 to 800 characters/);
+  assert.match(asked, /google: .*Aim for about 150 to 300 characters/);
+  assert.match(asked, /the hook comes first/);
+});

@@ -9,7 +9,7 @@ import { checkCopy } from './copy-gate.ts';
 import { checkCopyQuality } from './copy-quality.ts';
 import { tidyPunctuation } from './caption-text.ts';
 import { chatJson } from './llm.ts';
-import { NETWORK_RULES, type Network, type PostVariant, type PostVariants } from './networks.ts';
+import { NETWORK_RULES, recommendedLengthText, type Network, type PostVariant, type PostVariants } from './networks.ts';
 
 export interface CaptionPost {
   id: string;
@@ -76,7 +76,7 @@ function problemWith(draft: Draft, post: CaptionPost): string | undefined {
 
 async function ask(ai: AiConfig, posts: readonly CaptionPost[], wanted: ReadonlyArray<{ postId: string; network: Network; note?: string }>, fetchFn?: typeof fetch): Promise<Draft[]> {
   const networks = [...new Set(wanted.map((w) => w.network))];
-  const user = `Networks and what each takes:\n${networks.map((n) => `- ${n}: ${NETWORK_RULES[n].voice}. At most ${NETWORK_RULES[n].maxHashtags} hashtags.`).join('\n')}\n\nWrite these captions:\n${JSON.stringify(wanted.map((w) => {
+  const user = `Networks and what each takes:\n${networks.map((n) => `- ${n}: ${NETWORK_RULES[n].voice}. Aim for ${recommendedLengthText(n)}; most readers stop after the first line or two, so the hook comes first. At most ${NETWORK_RULES[n].maxHashtags} hashtags.`).join('\n')}\n\nWrite these captions:\n${JSON.stringify(wanted.map((w) => {
     const post = posts.find((p) => p.id === w.postId) as CaptionPost;
     return { postId: w.postId, network: w.network, headline: post.headline, mainCaption: bodyOf(post.caption), facts: post.facts, ...(w.note ? { fixThis: w.note } : {}) };
   }), null, 2)}`;

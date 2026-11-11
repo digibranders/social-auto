@@ -381,3 +381,57 @@ export function whenProblem(startDate: string, time: string, now: number): strin
   if (at - Date.parse(`${tomorrowIst(now)}T00:00:00Z`) > MAX_START_DAYS_AHEAD * 86_400_000) return `The first post must be within ${MAX_START_DAYS_AHEAD} days.`;
   return null;
 }
+
+/** What a network takes in a caption, as the service sends it. */
+export interface CaptionRules { maxCaption: number; recommendedMin: number; recommendedMax: number; visibleChars: number; maxHashtags: number }
+
+/** The caption rules of every network, keeping only what is well formed. */
+export function parseCaptionRules(value: unknown): Record<string, CaptionRules> {
+  const out: Record<string, CaptionRules> = {};
+  if (typeof value !== 'object' || value === null) return out;
+  for (const [network, raw] of Object.entries(value as Record<string, unknown>)) {
+    const r = raw as Record<string, unknown> | null;
+    const whole = (k: string): number | null => (typeof r?.[k] === 'number' && Number.isFinite(r[k] as number) && (r[k] as number) >= 0 ? (r[k] as number) : null);
+    const maxCaption = whole('maxCaption');
+    const recommendedMin = whole('recommendedMin');
+    const recommendedMax = whole('recommendedMax');
+    const visibleChars = whole('visibleChars');
+    const maxHashtags = whole('maxHashtags');
+    if (maxCaption === null || recommendedMin === null || recommendedMax === null || visibleChars === null || maxHashtags === null || recommendedMin > recommendedMax || recommendedMax > maxCaption) continue;
+    out[network] = { maxCaption, recommendedMin, recommendedMax, visibleChars, maxHashtags };
+  }
+  return out;
+}
+
+export type MeterLevel = 'short' | 'good' | 'long' | 'over';
+export interface CaptionMeter {
+  /** The characters of the words (the closing hashtags are sent after them and are not counted). */
+  length: number;
+  level: MeterLevel;
+  /** One line for the owner: the count, what to aim for, and what is wrong if anything. */
+  text: string;
+  /** The start of the caption a reader sees before the network folds the rest behind "more", cut at a whole word. */
+  seen: string;
+  /** Whether part of the caption is folded away. */
+  folded: boolean;
+}
+
+/** How a caption reads against what its network takes: its length, where it falls against the range worth aiming for, and what a reader sees first. */
+export function captionMeter(text: string, rules: CaptionRules, networkLabel: string): CaptionMeter {
+  const words = splitHashtags(text).body.trim();
+  const length = words.length;
+  const aim = `${rules.recommendedMin} to ${rules.recommendedMax}`;
+  const level: MeterLevel = length > rules.maxCaption ? 'over' : length > rules.recommendedMax ? 'long' : length < rules.recommendedMin ? 'short' : 'good';
+  const note: Record<MeterLevel, string> = {
+    over: `Too long for ${networkLabel}: at most ${rules.maxCaption} characters.`,
+    long: `A little long for ${networkLabel}: readers often stop early, so the hook should come first.`,
+    short: `Shorter than the usual range for ${networkLabel}, which is fine if the message is clear.`,
+    good: `A good length for ${networkLabel}.`,
+  };
+  let seen = words;
+  if (length > rules.visibleChars) {
+    const cut = words.slice(0, rules.visibleChars);
+    seen = (/\s/.test(words.charAt(rules.visibleChars)) ? cut : cut.replace(/\s+\S*$/, '')).trim();
+  }
+  return { length, level, text: `${length} characters (aim for ${aim}). ${note[level]}`, seen, folded: length > rules.visibleChars };
+}

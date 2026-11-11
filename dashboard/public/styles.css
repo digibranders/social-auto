@@ -569,6 +569,12 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-client-detail { flex: 1 1 100%; margin: 0; }
 .rv-approval { display: grid; gap: 6px; flex: 1 1 100%; }
 .rv-client-pick { flex-wrap: wrap; }
+.rv-meter { margin: 4px 0 0; font-size: 0.9em; }
+.rv-meter-good { color: var(--published, #3fb27f); }
+.rv-meter-long { color: var(--due, #e0a84a); }
+.rv-meter-over { color: var(--missed, #e5534b); }
+.rv-meter-short { color: var(--muted); }
+.rv-seen { margin: 2px 0 8px; font-size: 0.85em; overflow-wrap: anywhere; }
 .rv-when .rv-input { flex: 0 0 auto; width: auto; min-width: 150px; }
 .rv-signoff { margin: 2px 0; font-size: 0.9em; }
 .rv-signoff-edit { display: grid; gap: 8px; margin: 8px 0; }

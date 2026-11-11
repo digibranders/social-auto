@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffText, signoffView, tomorrowIst, visibleJobs, whenProblem, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, captionMeter, parseCaptionRules, signoffText, signoffView, tomorrowIst, visibleJobs, whenProblem, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -234,4 +234,40 @@ test('the day and time of the posts are checked in plain words, with India time 
   assert.match(whenProblem('2026-02-30', '10:00', now) ?? '', /real day/);
   assert.match(whenProblem('2027-06-01', '10:00', now) ?? '', /within 180 days/);
   for (const bad of ['', '9:30', '25:00', '10:60']) assert.match(whenProblem('2026-12-14', bad, now) ?? '', /time of day/, bad);
+});
+
+const LINKEDIN = { maxCaption: 1300, recommendedMin: 400, recommendedMax: 800, visibleChars: 140, maxHashtags: 3 };
+const INSTAGRAM = { maxCaption: 600, recommendedMin: 100, recommendedMax: 300, visibleChars: 125, maxHashtags: 5 };
+
+test('a caption is read against its network: short, a good length, a little long, or too long, with the hashtags left out of the count', () => {
+  const of = (n: number): string => 'word '.repeat(Math.ceil(n / 5)).slice(0, n).trim();
+  assert.equal(captionMeter(of(50), INSTAGRAM, 'Instagram').level, 'short');
+  assert.equal(captionMeter(of(200), INSTAGRAM, 'Instagram').level, 'good');
+  assert.equal(captionMeter(of(450), INSTAGRAM, 'Instagram').level, 'long');
+  assert.equal(captionMeter(of(650), INSTAGRAM, 'Instagram').level, 'over');
+  assert.equal(captionMeter(of(450), LINKEDIN, 'LinkedIn').level, 'good', 'the same words suit a longer network');
+  const over = captionMeter(of(650), INSTAGRAM, 'Instagram');
+  assert.match(over.text, /^\d+ characters \(aim for 100 to 300\)\. Too long for Instagram: at most 600 characters\.$/);
+  // Closing hashtags are sent after the words and are not counted.
+  assert.equal(captionMeter(`${of(200)}\n\n#one #two #three`, INSTAGRAM, 'Instagram').length, of(200).length);
+});
+
+test('what a reader sees first is cut at a whole word where the network folds the caption, and nothing is folded in a short one', () => {
+  const text = 'Setup takes under ten minutes with one script tag and the assistant answers from your own pages and guides without extra work for your team at all today.';
+  const m = captionMeter(text, { ...INSTAGRAM, visibleChars: 40 }, 'Instagram');
+  assert.equal(m.folded, true);
+  assert.equal(m.seen, 'Setup takes under ten minutes with one');
+  assert.ok(text.startsWith(m.seen) && m.seen.length <= 40);
+  const short = captionMeter('A short one.', INSTAGRAM, 'Instagram');
+  assert.deepEqual([short.folded, short.seen], [false, 'A short one.']);
+  // The cut falls exactly on a space: that word is whole.
+  assert.equal(captionMeter('abcd efgh ijkl', { ...INSTAGRAM, visibleChars: 9 }, 'Instagram').seen, 'abcd efgh');
+});
+
+test('the caption rules from the service are kept only where well formed', () => {
+  const ok = { instagram: { ...INSTAGRAM }, linkedin: { ...LINKEDIN } };
+  assert.deepEqual(parseCaptionRules(ok), ok);
+  assert.deepEqual(parseCaptionRules({ instagram: INSTAGRAM, broken: { maxCaption: 'x' }, backwards: { ...INSTAGRAM, recommendedMin: 400 }, tooBig: { ...INSTAGRAM, recommendedMax: 900 } }), { instagram: INSTAGRAM });
+  assert.deepEqual(parseCaptionRules(null), {});
+  assert.deepEqual(parseCaptionRules([]), {});
 });
