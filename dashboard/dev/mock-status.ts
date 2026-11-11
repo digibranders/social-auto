@@ -75,10 +75,9 @@ export function mockStatus(scenario: string, origin: string, now = Date.now()): 
     { id: 'facebook:demo', platform: 'facebook', account: 'Oye Chats Page', avatar: null, brands: ['oye-chats'], ok: true },
   ];
   const built = buildStatus(posts, media, now, origin);
-  // One client added in the dashboard, with a website and two plans of its own, so the plans card can be seen.
+  // One client added in the dashboard, with a website and one small plan (two posters), so the plans card can be seen without a long list of demo posters.
   const added = { brand: 'oye-chats', name: 'Oye Chats', postsLeft: 0, added: true as const, website: 'https://oyechats.com', plans: [
-    { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 31, postsPerWeek: 3, time: '10:00', utcOffset: '+05:30' },
-    { platforms: ['linkedin'], startDate: '2026-11-06', durationDays: 31, postsPerWeek: 1, time: '10:00', utcOffset: '+05:30' },
+    { platforms: ['instagram'], startDate: '2026-11-06', durationDays: 21, postsPerWeek: 1, time: '10:00', utcOffset: '+05:30' },
   ] };
   return { generatedAt: new Date(now).toISOString(), channels, ...built, runway: [...built.runway, added], costs: inventedCosts(posts) };
 }
