@@ -7,20 +7,23 @@
  * GET    /api/v1/posts?externalId=...[&from=YYYY-MM-DD&to=YYYY-MM-DD]
  *                                                   all of the customer's posts (planned and extra), earliest first, and where each stands on each channel;
  *                                                   from is the first day shown and to the last, both in India time
- * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "time"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out
+ * PATCH  /api/v1/posts?externalId=...&postId=...    {"day"?, "time"?, "caption"?, "pictureId"?, "channels"?}: changes a post a product made, while it has not gone out.
+ *                                                   A scheduled post that was written and approved for the customer (planned) can only be moved: {"day"?, "time"?},
+ *                                                   its words and pictures stay and every network moves together
  * DELETE /api/v1/posts?externalId=...&postId=...    removes a post that has not gone out yet
  */
-import { scheduleData } from '../../lib/schedule-source.js';
+import type { ScheduledPost } from '../../lib/schedule.js';
+import { releasedSchedule } from '../../lib/customer-skip.js';
+import { editPost } from '../../lib/editing.js';
 import { findWorkspace, isExternalId } from '../../lib/clients.js';
 import { apiError, errorResponse } from '../../lib/api-error.js';
 import { json } from '../../lib/http.js';
 import { removeNewPost, saveNewPost, updateNewPost } from '../../lib/manual-service.js';
-import { toScheduled } from '../../lib/manual.js';
-import { applyOverrides } from '../../lib/overrides.js';
+import { isManualId, toScheduled } from '../../lib/manual.js';
+import { applyOverrides, EditError } from '../../lib/overrides.js';
 import { postView, scheduledView } from '../../lib/post-view.js';
 import { productOf } from '../../lib/product-request.js';
-import { parseSchedule } from '../../lib/schedule.js';
-import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted, storeConfigured } from '../../lib/store.js';
+import { deleteImage, loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted, saveImage, saveOverrides, storeConfigured } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -77,7 +80,7 @@ export async function GET(request: Request): Promise<Response> {
     const now = Date.now();
     const origin = originOf(request);
     // Planned posts carry the customer's workspace id as their client; dashboard edits are applied on top.
-    const planned = parseSchedule(scheduleData).filter((p) => (p.brand ?? 'default') === caller.brand);
+    const planned = releasedSchedule.read().filter((p) => (p.brand ?? 'default') === caller.brand);
     const posts = applyOverrides([...planned, ...manual.posts.filter((p) => p.brand === caller.brand).map(toScheduled)], overrides)
       .filter((p) => (from === null || Date.parse(p.date) >= from) && (to === null || Date.parse(p.date) < to + DAY_MS))
       .sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
@@ -85,6 +88,29 @@ export async function GET(request: Request): Promise<Response> {
   } catch (error) {
     return failure(error, 'read the posts');
   }
+}
+
+/** The only things about a planned post that can change, as a product sees it. */
+const PLANNED_FIELDS = new Set(['day', 'time']);
+
+/** Moves a scheduled post that was written and approved for the customer. Its words and pictures stay; all networks move together. */
+async function movePlanned(request: Request, brand: string, postId: string, body: Record<string, unknown>): Promise<Response> {
+  const extra = Object.keys(body).filter((k) => !PLANNED_FIELDS.has(k) && body[k] !== undefined);
+  if (extra.length > 0) return apiError(400, 'INVALID_REQUEST', 'a scheduled post written for you can only be moved: send its day and/or time');
+  if (body['day'] === undefined && body['time'] === undefined) return apiError(400, 'NOTHING_TO_CHANGE', 'say the day and/or time to move it to');
+  // Only this customer's own posts are looked at, so another customer's post is simply "not found".
+  const own = releasedSchedule.read().filter((p) => (p.brand ?? 'default') === brand);
+  const post = own.find((p) => p.id === postId);
+  if (!post) throw new EditError('no such post', 404, 'POST_NOT_FOUND');
+  const now = Date.now();
+  const { overrides } = await loadOverrides();
+  // Without a day the post stays on its day (as it is now, with any earlier move applied); only the time changes.
+  const [current] = applyOverrides([post], overrides);
+  const day = body['day'] ?? new Date(Date.parse((current ?? post).date) + 5.5 * 3_600_000).toISOString().slice(0, 10);
+  await editPost({ load: loadOverrides, save: saveOverrides, saveImage, deleteImage }, own, postId, { kind: 'move', day, ...(body['time'] === undefined ? {} : { time: body['time'] }) }, now);
+  const [{ file: channels }, { log }, { file: pauses }, { overrides: after }] = await Promise.all([loadChannels(), loadPosted(), loadPauses(), loadOverrides()]);
+  const [moved] = applyOverrides([post], after);
+  return json(200, { post: scheduledView(moved as ScheduledPost, channels, log, Date.now(), originOf(request), pauses) });
 }
 
 export async function PATCH(request: Request): Promise<Response> {
@@ -95,6 +121,8 @@ export async function PATCH(request: Request): Promise<Response> {
   const caller = await workspaceFor(request, params.get('externalId'));
   if (caller instanceof Response) return caller;
   try {
+    const id = params.get('postId');
+    if (typeof id === 'string' && !isManualId(id)) return await movePlanned(request, caller.brand, id, body);
     const post = await updateNewPost(params.get('postId'), { day: body['day'], time: body['time'], caption: body['caption'], imageKey: body['pictureId'], channels: body['channels'], variants: body['variants'] }, Date.now(), caller.brand);
     const [{ file: channels }, { log }, { file: pauses }] = await Promise.all([loadChannels(), loadPosted(), loadPauses()]);
     return json(200, { post: postView(post, channels, log, Date.now(), originOf(request), pauses) });

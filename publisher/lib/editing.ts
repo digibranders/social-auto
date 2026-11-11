@@ -44,10 +44,10 @@ const istParts = (date: string): { day: string; time: string } => {
 /** The post with the dashboard's changes on it, which is what must still be ahead of its time to be edited. */
 function findEditable(posts: ScheduledPost[], overrides: OverrideMap, id: string, now: number): { original: ScheduledPost; current: ScheduledPost } {
   const original = posts.find((p) => p.id === id);
-  if (!original) throw new EditError('no such post', 404);
+  if (!original) throw new EditError('no such post', 404, 'POST_NOT_FOUND');
   const current = applyOverrides([original], overrides)[0] as ScheduledPost;
   if (!isEditable(current, now)) {
-    throw new EditError('this post is already due or published, so it can no longer be changed', 409);
+    throw new EditError('this post is already due or published, so it can no longer be changed', 409, 'POST_NOT_EDITABLE');
   }
   return { original, current };
 }
@@ -102,10 +102,13 @@ export async function editPost(
     if (Object.keys(variants).length > 0) next.variants = variants;
     else delete next.variants;
   } else if (action.kind === 'skip') {
+    // A skip by the team is its own decision, whoever skipped the post before.
     next = { ...current, skipped: true, updatedAt };
+    delete next.skippedBy;
   } else if (action.kind === 'unskip') {
     next = { ...current, updatedAt };
     delete next.skipped;
+    delete next.skippedBy;
   } else {
     // Reverting discards the words and the picture, not the decision to skip the post or the day it was moved to.
     if (current?.imageKey) staleImages.push(current.imageKey);

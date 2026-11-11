@@ -4,6 +4,8 @@
  *
  * Nothing that would only help a developer is ever sent: an unexpected failure answers INTERNAL with a generic sentence, and the real error is logged here.
  */
+import { ActorError } from './actor.js';
+import { EngineError } from './engine-client.js';
 import { describeError, json } from './http.js';
 import { EditError } from './overrides.js';
 
@@ -16,6 +18,29 @@ export const ERROR_CODES = [
   'SERVICE_UNAVAILABLE',
   'INVALID_REQUEST',
   'REQUEST_TOO_LARGE',
+  'INVALID_SITE',
+  'SITE_MISMATCH',
+  'INVALID_NETWORKS',
+  'JOB_NOT_FOUND',
+  'JOB_LIMIT_REACHED',
+  'FACT_HELD',
+  'BATCH_LOCKED',
+  'WORDS_NOT_ACCEPTED',
+  'NOTHING_KEPT',
+  'POSTER_SUPERSEDED',
+  'POSTER_BLOCKED',
+  'POSTER_ALREADY_DECIDED',
+  'INVALID_REASON',
+  'DRAW_LIMIT_REACHED',
+  'REDRAW_LIMIT_REACHED',
+  'NETWORK_ALREADY_THERE',
+  'BRAND_LIMIT_REACHED',
+  'GROUP_MISMATCH',
+  'INVALID_GROUP',
+  'WORKSPACE_ARCHIVED',
+  'ACTOR_REQUIRED',
+  'INVALID_ACTOR',
+  'ENGINE_UNAVAILABLE',
   // The workspace and its channels
   'INVALID_EXTERNAL_ID',
   'WORKSPACE_NOT_FOUND',
@@ -87,6 +112,8 @@ export const apiError = (status: number, code: ErrorCode, message: string): Resp
 /** The answer for something thrown while serving a call: a known error as it is, anything else as INTERNAL with a generic sentence. */
 export function errorResponse(error: unknown, what: string): Response {
   if (error instanceof EditError) return apiError(error.status, error.code ?? codeForStatus(error.status), error.message);
+  if (error instanceof ActorError) return apiError(error.status, error.code, error.message);
+  if (error instanceof EngineError) return apiError(error.status, error.code, error.message);
   console.error(describeError(error));
   return apiError(500, 'INTERNAL', `could not ${what}`);
 }

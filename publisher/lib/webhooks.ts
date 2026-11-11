@@ -7,7 +7,9 @@ import type { Product } from './products.js';
 /** A message to a product about something that happened to one of its customers. */
 export interface WebhookEvent {
   id: string;
-  type: 'post.published' | 'post.failed' | 'connection.expiring';
+  type: 'post.published' | 'post.failed' | 'connection.expiring' | 'job.finished' | 'poster.ready' | 'poster.expiring' | 'poster.expired' | 'post.held' | 'post.missed';
+  /** The place of the event in the product's log (see lib/outbox.ts); present once it was written down. */
+  seq?: number;
   createdAt: string;
   data: Record<string, unknown>;
 }
@@ -39,7 +41,7 @@ export const newEvent = (type: WebhookEvent['type'], data: Record<string, unknow
 });
 
 /** The customer a workspace id belongs to, if a product created it: which product and its own id for them. */
-function ownerOf(clients: ClientsFile, brand: string): { product: string; externalId: string } | null {
+export function ownerOf(clients: ClientsFile, brand: string): { product: string; externalId: string } | null {
   const client = clients.clients.find((c) => c.brand === brand);
   return client?.product && client.externalId ? { product: client.product, externalId: client.externalId } : null;
 }
@@ -99,4 +101,20 @@ export async function dispatch(items: readonly Addressed[], products: readonly P
     const target = products.find((p) => p.id === product);
     if (target) await deliver(target, event, send);
   }
+}
+
+/** What to tell a product when a post of one of its customers missed its window on an account (once per post and account). */
+export function eventsForMissed(missed: ReadonlyArray<{ brand: string; postId: string; channelId: string; account: string; date: string }>, clients: ClientsFile, now: number): Addressed[] {
+  return missed.flatMap((m): Addressed[] => {
+    const owner = ownerOf(clients, m.brand);
+    return owner ? [{ product: owner.product, event: newEvent('post.missed', { externalId: owner.externalId, postId: m.postId, channel: m.channelId, account: m.account, date: m.date }, now) }] : [];
+  });
+}
+
+/** What to tell a product when a post of one of its customers is due but an account it was aimed at is no longer connected: the post waits for the account. */
+export function eventsForHeld(held: ReadonlyArray<{ brand: string; postId: string; channelId: string; platform: string; date: string }>, clients: ClientsFile, now: number): Addressed[] {
+  return held.flatMap((h): Addressed[] => {
+    const owner = ownerOf(clients, h.brand);
+    return owner ? [{ product: owner.product, event: newEvent('post.held', { externalId: owner.externalId, postId: h.postId, channel: h.channelId, platform: h.platform, date: h.date, code: 'ACCOUNT_DISCONNECTED' }, now) }] : [];
+  });
 }

@@ -14,6 +14,8 @@ export interface PostOverride {
   imageKey?: string;
   /** The post is skipped: it stays on the calendar but is never sent. Undone by unskipping, while its time is still ahead. */
   skipped?: boolean;
+  /** Set when the skip was made by the customer withdrawing a picture (not by the team): approving again undoes it, a team skip is never undone that way. */
+  skippedBy?: 'customer';
   /** Own caption and/or picture for single platforms (see variants.ts). */
   variants?: StoredVariants;
   /** A planned post moved to another day or given another time: ISO 8601 with offset. Hand-made posts are moved in their own file instead. */
@@ -107,6 +109,7 @@ export function parseOverrides(raw: unknown): OverrideMap {
     if (o['imageKey'] !== undefined && !isImageKey(o['imageKey'])) throw new Error(`overrides["${id}"].imageKey is malformed`);
     if (o['date'] !== undefined && (typeof o['date'] !== 'string' || Number.isNaN(Date.parse(o['date'])))) throw new Error(`overrides["${id}"].date is malformed`);
     if (o['skipped'] !== undefined && typeof o['skipped'] !== 'boolean') throw new Error(`overrides["${id}"].skipped is malformed`);
+    if (o['skippedBy'] !== undefined && o['skippedBy'] !== 'customer') throw new Error(`overrides["${id}"].skippedBy is malformed`);
     const variants = parseStoredVariants(o['variants']);
     const parsed = { ...(o as unknown as PostOverride) };
     if (variants) parsed.variants = variants;

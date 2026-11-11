@@ -12,7 +12,9 @@ import { scheduleData } from '../lib/schedule-source.js';
 import { channelLabel, expiringSoon } from '../lib/channels.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { parseProducts } from '../lib/products.js';
-import { dispatch, eventForExpiry } from '../lib/webhooks.js';
+import { publishEvents, retryDueEvents } from '../lib/events.js';
+import { announceEngineProgress, announcePostProblems } from '../lib/product-watch.js';
+import { eventForExpiry } from '../lib/webhooks.js';
 import { notify } from '../lib/notify.js';
 import { applyOverrides } from '../lib/overrides.js';
 import { brandIsPaused, isPaused, type PauseFile } from '../lib/pauses.js';
@@ -45,7 +47,7 @@ async function warnAboutExpiringConnections(pauses: PauseFile): Promise<void> {
     // A paused account is held on purpose, so its connection ending is not worth a phone alert.
     for (const { channel, days } of expiringSoon(file, Date.now()).filter(({ channel: c }) => !isPaused(pauses, c.brand, c.id))) {
       const item = eventForExpiry(channel, days, added, Date.now());
-      if (item) await dispatch([item], products);
+      if (item) await publishEvents([item], products);
       const name = channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram';
       await notify({
         title: days === 0 ? `${name} connection ends today` : `${name} connection ends in ${days} day${days === 1 ? '' : 's'}`,
@@ -77,6 +79,18 @@ async function announceMissedPosts(posts: readonly ScheduledPost[], pauses: Paus
       if (await notify({ title, message, priority: 'high', tags: 'rotating_light' })) delivered.push(...group);
     }
     if (delivered.length > 0) await saveAlerts(withAnnounced(sent, delivered, now), etag);
+  } catch (error) {
+    console.error(describeError(error));
+  }
+}
+
+/** Announces what the AI side finished for products' customers, and retries the messages that failed. Never throws. */
+async function tellProductsAboutProgress(posts: readonly ScheduledPost[]): Promise<void> {
+  try {
+    const products = parseProducts(process.env['PRODUCTS']);
+    await retryDueEvents(products);
+    await announceEngineProgress(products);
+    await announcePostProblems(posts, products);
   } catch (error) {
     console.error(describeError(error));
   }
@@ -119,6 +133,8 @@ export async function GET(request: Request): Promise<Response> {
     }
     // Both runs look for posts that missed their window: the frequent run catches a hand-made post within minutes, the daily run the rest.
     if (!dryRun) await announceMissedPosts(everything, pauses);
+    // Products hear about what the AI side finished, and a message that could not be delivered is tried again. Neither can stop posting.
+    if (!dryRun) await tellProductsAboutProgress(everything);
 
     // A specific post can be named only in dry-run mode, to test the pipeline before its day.
     const testPostId = dryRun ? url.searchParams.get('post') : null;

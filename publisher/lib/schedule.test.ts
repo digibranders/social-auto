@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildStatus, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError, usesTeamInstagram, type ScheduledPost } from './schedule.ts';
+import { buildStatus, dueManualPosts, duePlannedPost, duePost, lowQueueWarnings, parseSchedule, sameCaption, ScheduleError, usesTeamInstagram, type ScheduledPost } from './schedule.ts';
 
 const hour = 60 * 60 * 1000;
 const NOW = Date.parse('2026-12-10T12:00:00+05:30');
@@ -164,4 +164,18 @@ test('buildStatus lists every picture of a carousel, and nothing extra for a pla
   const { posts: result } = buildStatus([carousel, scheduled('plain', 23, 'Plain caption')], null, NOW, 'https://pub.example');
   assert.deepEqual(result.find((p) => p.id === 'car')?.images, ['https://pub.example/posts/b/car/1.jpg', 'https://pub.example/posts/b/car/2.jpg']);
   assert.equal(result.find((p) => p.id === 'plain')?.images, undefined);
+});
+
+test('a post the team skipped is never sent by the daily run, and skipping today\'s post does not bring yesterday\'s back', () => {
+  const yesterday = scheduled('y', -24, 'Yesterday');
+  const today = { ...scheduled('t', -1, 'Today'), skipped: true };
+  assert.equal(duePlannedPost([yesterday, today], NOW), null, 'the latest due post is the skipped one, so nothing is sent');
+  assert.equal(duePlannedPost([yesterday, { ...today, skipped: false }], NOW)?.id, 't');
+});
+
+test('a hand-made post or a post with its own time that the team skipped is left out of the frequent run', () => {
+  const made = { ...scheduled('m', -0.1, 'By hand'), manual: true };
+  const ownTime = { ...scheduled('o', -0.1, 'Moved'), ownTime: true };
+  assert.deepEqual(dueManualPosts([made, ownTime], NOW).map((p) => p.id), ['m', 'o']);
+  assert.deepEqual(dueManualPosts([{ ...made, skipped: true }, { ...ownTime, skipped: true }], NOW), []);
 });
