@@ -44,6 +44,17 @@ export interface ReviewSummary {
   decidedBy?: string;
   decidedAt?: string;
   reason?: string;
+  /** The network this version was written for, when it was written for one. */
+  network?: string;
+  /** Set when this version is a slide of a carousel (position 1 to count) or one of its captions (position 0). */
+  carousel?: { id: string; position: number; count: number };
+}
+
+/** The carousel a version belongs to, when the service says so in a well formed way. */
+function carouselOf(value: unknown): { carousel?: NonNullable<ReviewSummary['carousel']> } {
+  const c = value as { id?: unknown; position?: unknown; count?: unknown } | null;
+  return c && typeof c.id === 'string' && c.id !== '' && Number.isInteger(c.position) && Number.isInteger(c.count) && (c.position as number) >= 0 && (c.count as number) >= 2
+    ? { carousel: { id: c.id, position: c.position as number, count: c.count as number } } : {};
 }
 
 const STATUSES: readonly string[] = ['pending', 'approved', 'rejected', 'blocked', 'superseded', 'held'];
@@ -61,6 +72,7 @@ export function parseQueue(value: unknown): { posts: ReviewSummary[]; reasons: s
     return [{
       versionId: e.versionId, brand: e.brand, postId: e.postId, planFile: typeof e.planFile === 'string' ? e.planFile : '', versionNumber: Number(e.versionNumber) || 1, status: e.status as ReviewStatus, headline: e.headline, caption: e.caption,
       createdAt: typeof e.createdAt === 'string' ? e.createdAt : '', costUsd: Number(e.costUsd) || 0,
+      ...(typeof e.network === 'string' ? { network: e.network } : {}), ...carouselOf(e.carousel),
       ...(typeof e.decidedBy === 'string' ? { decidedBy: e.decidedBy } : {}), ...(typeof e.decidedAt === 'string' ? { decidedAt: e.decidedAt } : {}), ...(typeof e.reason === 'string' ? { reason: e.reason } : {}),
     }];
   }) : [];
@@ -434,4 +446,70 @@ export function captionMeter(text: string, rules: CaptionRules, networkLabel: st
     seen = (/\s/.test(words.charAt(rules.visibleChars)) ? cut : cut.replace(/\s+\S*$/, '')).trim();
   }
   return { length, level, text: `${length} characters (aim for ${aim}). ${note[level]}`, seen, folded: length > rules.visibleChars };
+}
+
+/** A carousel as one card of the queue: its slides in order, its captions, the cover and where it stands. */
+export interface CarouselGroup {
+  key: string;
+  brand: string;
+  id: string;
+  count: number;
+  slides: ReviewSummary[];
+  captions: ReviewSummary[];
+  cover: ReviewSummary | undefined;
+  /** Slides the list does not show (another tab holds them, or they are not made yet). */
+  missing: number;
+  /** The least settled status among the parts shown: it is approved only when every part is. */
+  status: ReviewStatus;
+}
+
+const SETTLED_ORDER: readonly ReviewStatus[] = ['blocked', 'rejected', 'held', 'pending', 'superseded', 'approved'];
+
+/** Splits the queue into single posters and carousels, keeping the order posters came in. */
+export function groupCarousels(posts: readonly ReviewSummary[]): { singles: ReviewSummary[]; carousels: CarouselGroup[] } {
+  const singles: ReviewSummary[] = [];
+  const groups = new Map<string, CarouselGroup>();
+  for (const post of posts) {
+    const member = post.carousel;
+    if (!member) { singles.push(post); continue; }
+    const key = `${post.brand}|${member.id}`;
+    const group = groups.get(key) ?? { key, brand: post.brand, id: member.id, count: member.count, slides: [], captions: [], cover: undefined, missing: 0, status: 'approved' as ReviewStatus };
+    (member.position === 0 ? group.captions : group.slides).push(post);
+    groups.set(key, group);
+  }
+  const carousels = [...groups.values()].map((group): CarouselGroup => {
+    const slides = [...group.slides].sort((a, b) => (a.carousel?.position ?? 0) - (b.carousel?.position ?? 0));
+    const parts = [...slides, ...group.captions];
+    const status = parts.reduce<ReviewStatus>((worst, p) => (SETTLED_ORDER.indexOf(p.status) < SETTLED_ORDER.indexOf(worst) ? p.status : worst), 'approved');
+    return { ...group, slides, cover: slides[0], missing: Math.max(0, group.count - slides.length), status };
+  });
+  return { singles, carousels };
+}
+
+/** A carousel as the service shows it when opened: every slide in order (a slide with no picture yet is "Missing"), the captions, and where it stands. */
+export interface CarouselView {
+  id: string;
+  count: number;
+  status: 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
+  slides: Array<{ position: number; versionId: string | null; status: string; headline: string }>;
+  captions: Array<{ network: string; versionId: string; caption: string; status: string }>;
+  reasons: string[];
+}
+
+const CAROUSEL_STATES: readonly string[] = ['incomplete', 'blocked', 'rejected', 'approved', 'pending'];
+
+export function parseCarousel(value: unknown): CarouselView | null {
+  const raw = value as { id?: unknown; count?: unknown; status?: unknown; slides?: unknown; captions?: unknown; reasons?: unknown } | null;
+  if (!raw || typeof raw.id !== 'string' || !Number.isInteger(raw.count) || typeof raw.status !== 'string' || !CAROUSEL_STATES.includes(raw.status) || !Array.isArray(raw.slides) || !Array.isArray(raw.captions)) return null;
+  const slides = raw.slides.flatMap((entry): CarouselView['slides'] => {
+    const e = entry as { position?: unknown; versionId?: unknown; status?: unknown; headline?: unknown } | null;
+    if (!e || !Number.isInteger(e.position) || typeof e.status !== 'string') return [];
+    return [{ position: e.position as number, versionId: typeof e.versionId === 'string' ? e.versionId : null, status: e.status, headline: typeof e.headline === 'string' ? e.headline : 'Missing' }];
+  });
+  const captions = raw.captions.flatMap((entry): CarouselView['captions'] => {
+    const e = entry as { network?: unknown; versionId?: unknown; caption?: unknown; status?: unknown } | null;
+    return e && typeof e.network === 'string' && typeof e.versionId === 'string' && typeof e.caption === 'string' ? [{ network: e.network, versionId: e.versionId, caption: e.caption, status: typeof e.status === 'string' ? e.status : 'pending' }] : [];
+  });
+  const reasons = Array.isArray(raw.reasons) ? raw.reasons.filter((r): r is string => typeof r === 'string' && r in REASON_LABELS) : Object.keys(REASON_LABELS);
+  return { id: raw.id, count: raw.count as number, status: raw.status as CarouselView['status'], slides, captions, reasons: reasons.length > 0 ? reasons : Object.keys(REASON_LABELS) };
 }

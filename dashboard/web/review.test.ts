@@ -271,3 +271,45 @@ test('the caption rules from the service are kept only where well formed', () =>
   assert.deepEqual(parseCaptionRules(null), {});
   assert.deepEqual(parseCaptionRules([]), {});
 });
+
+import { groupCarousels, parseCarousel } from './review.ts';
+
+const slideOf = (n: number, status = 'pending'): Record<string, unknown> => ({ ...good, versionId: `acme.${String(n).padStart(16, '0')}`, postId: `car1-s${n}`, headline: `Slide ${n}`, status, carousel: { id: 'car1', position: n, count: 3 } });
+const captionOf = (network: string): Record<string, unknown> => ({ ...good, versionId: `acme.cccccccccccccc0${network.length}`, postId: 'car1', network, headline: 'Topic', caption: `${network} caption`, carousel: { id: 'car1', position: 0, count: 3 } });
+
+test('the queue keeps the carousel a version belongs to, and drops a malformed one', () => {
+  const parsed = parseQueue({ posts: [slideOf(1), { ...slideOf(2), carousel: { id: 'car1', position: 'x', count: 3 } }, { ...slideOf(3), carousel: { id: '', position: 3, count: 3 } }] });
+  assert.deepEqual(parsed.posts.map((p) => p.carousel), [{ id: 'car1', position: 1, count: 3 }, undefined, undefined]);
+});
+
+test('slides and captions of a carousel are gathered into one card, in slide order, and the rest stay single posters', () => {
+  const posts = parseQueue({ posts: [slideOf(3), good, captionOf('instagram'), slideOf(1), slideOf(2), captionOf('linkedin')] }).posts;
+  const { singles, carousels } = groupCarousels(posts);
+  assert.deepEqual(singles.map((p) => p.postId), ['w01-d1']);
+  assert.equal(carousels.length, 1);
+  assert.deepEqual(carousels[0]?.slides.map((p) => p.postId), ['car1-s1', 'car1-s2', 'car1-s3']);
+  assert.deepEqual(carousels[0]?.captions.map((p) => p.network).sort(), ['instagram', 'linkedin']);
+  assert.equal(carousels[0]?.status, 'pending');
+  assert.equal(carousels[0]?.cover?.versionId, carousels[0]?.slides[0]?.versionId);
+  assert.equal(carousels[0]?.missing, 0);
+});
+
+test('a carousel card says when slides are missing from the list, and shows the least settled status of its parts', () => {
+  const some = groupCarousels(parseQueue({ posts: [slideOf(1, 'approved'), slideOf(3, 'approved')] }).posts).carousels[0];
+  assert.equal(some?.missing, 1);
+  const all = groupCarousels(parseQueue({ posts: [slideOf(1, 'approved'), slideOf(2, 'approved'), slideOf(3, 'approved'), { ...captionOf('instagram'), status: 'approved' }] }).posts).carousels[0];
+  assert.equal(all?.status, 'approved');
+  const mixed = groupCarousels(parseQueue({ posts: [slideOf(1, 'approved'), slideOf(2, 'pending'), slideOf(3, 'approved')] }).posts).carousels[0];
+  assert.equal(mixed?.status, 'pending');
+});
+
+test('a carousel as the service shows it is kept only where it is well formed', () => {
+  const view = parseCarousel({ id: 'car1', count: 3, status: 'pending', slides: [{ position: 1, versionId: 'acme.0000000000000001', status: 'pending', headline: 'Slide 1' }, { position: 2, versionId: null, status: 'missing' }, 'junk'], captions: [{ network: 'instagram', versionId: 'acme.cccccccccccccc09', caption: 'Hello', status: 'pending' }, { network: 5 }], reasons: ['style', 'made_up'] });
+  assert.equal(view?.id, 'car1');
+  assert.deepEqual(view?.slides.map((s) => [s.position, s.versionId, s.headline]), [[1, 'acme.0000000000000001', 'Slide 1'], [2, null, 'Missing']]);
+  assert.deepEqual(view?.captions.map((c) => [c.network, c.caption]), [['instagram', 'Hello']]);
+  assert.deepEqual(view?.reasons, ['style']);
+  assert.equal(parseCarousel({ id: 5 }), null);
+  assert.equal(parseCarousel(null), null);
+  assert.equal(parseCarousel({ id: 'car1', count: 3, status: 'weird', slides: [], captions: [] }), null);
+});

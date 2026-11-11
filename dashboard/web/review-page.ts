@@ -1,7 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
 import { AUTO_WARNING, type ClientSummary } from './clients.ts';
-import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, DEFAULT_POST_TIME, networkState, NEW_CLIENT, parseCaptionRules, signoffText, signoffView, startClientOptions, tomorrowIst, visibleJobs, whenProblem, captionMeter, type CaptionRules, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, DEFAULT_POST_TIME, networkState, NEW_CLIENT, parseCaptionRules, signoffText, signoffView, startClientOptions, tomorrowIst, visibleJobs, whenProblem, captionMeter, type CaptionRules, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary, groupCarousels, parseCarousel, type CarouselGroup, type CarouselView } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -27,6 +27,9 @@ interface State {
   problems: string[];
   openId: string | null;
   detail: Detail | null;
+  /** The carousel opened on the right, and what the service says about it. */
+  carouselOpen: { brand: string; id: string } | null;
+  carousel: CarouselView | null;
   error: string | null;
   notice: string | null;
   busy: boolean;
@@ -45,7 +48,7 @@ interface State {
   clients: readonly ClientSummary[] | null;
 }
 
-const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, startDate: '', time: DEFAULT_POST_TIME, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, rules: {}, clients: null };
+const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, carouselOpen: null, carousel: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, startDate: '', time: DEFAULT_POST_TIME, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, rules: {}, clients: null };
 
 /** Saves a client's approval mode (set by the page that owns the data); null means saved, else the problem in words. */
 let saveApprovalMode: (client: ClientSummary, mode: 'manual' | 'auto') => Promise<string | null> = async () => 'Not available here.';
@@ -379,6 +382,8 @@ async function loadQueue(redraw: () => void): Promise<void> {
 
 async function open(id: string, redraw: () => void): Promise<void> {
   state.openId = id;
+  state.carouselOpen = null;
+  state.carousel = null;
   state.detail = null;
   state.rejecting = false;
   state.notice = null;
@@ -402,6 +407,36 @@ async function decide(id: string, body: Record<string, string>, done: string, re
   await Promise.all([loadQueue(redraw), open(id, redraw)]);
 }
 
+async function openCarousel(brand: string, id: string, redraw: () => void): Promise<void> {
+  state.carouselOpen = { brand, id };
+  state.carousel = null;
+  state.openId = null;
+  state.detail = null;
+  state.rejecting = false;
+  state.notice = null;
+  redraw();
+  const result = await call(`/api/review?view=carousel&brand=${encodeURIComponent(brand)}&id=${encodeURIComponent(id)}`).catch(() => null);
+  if (state.carouselOpen?.id !== id || state.carouselOpen.brand !== brand) return;
+  const view = result?.ok ? parseCarousel(result.body) : null;
+  if (!view) state.error = result && !result.ok ? failureText(result.body, result.status) : 'That carousel could not be loaded.';
+  else state.carousel = view;
+  redraw();
+}
+
+async function decideCarousel(brand: string, id: string, body: Record<string, string>, done: string, redraw: () => void): Promise<void> {
+  state.busy = true;
+  state.error = null;
+  redraw();
+  const result = await call('/api/review', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ carousel: { brand, id, ...body } }) }).catch(() => null);
+  state.busy = false;
+  if (!result?.ok) state.error = result ? failureText(result.body, result.status) : 'The decision could not be saved. Nothing changed.';
+  state.rejecting = false;
+  await Promise.all([loadQueue(redraw), openCarousel(brand, id, redraw)]);
+  // Set after the carousel was opened again, which clears the notice of whatever was open before.
+  if (result?.ok) state.notice = done;
+  redraw();
+}
+
 const when = (iso: string): string => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
 function card(post: ReviewSummary, redraw: () => void): HTMLElement {
@@ -414,6 +449,66 @@ function card(post: ReviewSummary, redraw: () => void): HTMLElement {
   );
   element.addEventListener('click', () => void open(post.versionId, redraw));
   return element;
+}
+
+const SLIDES_SHOWN = 5;
+
+/** A carousel in the list: its slides side by side, one card for the whole set. */
+function carouselCard(group: CarouselGroup, redraw: () => void): HTMLElement {
+  const on = state.carouselOpen?.id === group.id && state.carouselOpen.brand === group.brand;
+  const topic = group.captions[0]?.headline ?? group.slides[0]?.headline ?? 'Carousel';
+  const element = h(
+    'button',
+    { type: 'button', class: `rv-card rv-card-carousel${on ? ' rv-on' : ''}`, 'aria-label': `${group.brand}: carousel, ${topic}` },
+    h('span', { class: 'rv-strip' }, ...group.slides.slice(0, SLIDES_SHOWN).map((slide) => h('img', { class: 'rv-thumb rv-thumb-slide', src: imageUrl(slide.versionId), alt: '', loading: 'lazy' }))),
+    h('span', { class: 'rv-card-text' }, h('b', {}, topic), h('small', {}, `${group.brand} · Carousel of ${group.count} · ${group.missing > 0 ? `${group.missing} slide${group.missing === 1 ? '' : 's'} not shown` : STATUS_LABELS[group.status]}`)),
+  );
+  element.addEventListener('click', () => void openCarousel(group.brand, group.id, redraw));
+  return element;
+}
+
+const CAROUSEL_STATE_TEXT: Readonly<Record<CarouselView['status'], string>> = {
+  pending: 'Waiting for your decision',
+  approved: 'Approved: every slide and caption',
+  rejected: 'Rejected',
+  blocked: 'A slide did not pass the automatic checks, so this carousel cannot be approved.',
+  incomplete: 'Not all slides are made yet, so it cannot be approved.',
+};
+
+/** An opened carousel: every slide in order, each network's caption, and one decision for the whole set (a carousel is approved or rejected together, never slide by slide). */
+function carouselDetail(view: CarouselView, brand: string, redraw: () => void): HTMLElement {
+  const actions = h('div', { class: 'rv-actions' });
+  if (view.status === 'pending') {
+    actions.append(
+      button('Approve the carousel', 'btn btn-primary', () => void decideCarousel(brand, view.id, { action: 'approve' }, 'Approved. Every slide and caption can now be posted.', redraw), undefined, state.busy),
+      button('Reject', 'btn', () => { state.rejecting = true; redraw(); }, undefined, state.busy),
+    );
+  }
+  if (view.status === 'approved') actions.append(button('Withdraw approval', 'btn btn-danger', () => { state.rejecting = true; redraw(); }, undefined, state.busy));
+  const reasonSelect = h('select', { class: 'rv-input', 'aria-label': 'Why' }, ...view.reasons.map((r) => h('option', { value: r }, REASON_LABELS[r] ?? r)));
+  const comment = h('input', { class: 'rv-input', type: 'text', maxlength: '500', placeholder: 'Anything else? (optional)', 'aria-label': 'Comment' });
+  const rejectForm = state.rejecting
+    ? h('div', { class: 'rv-reject' }, reasonSelect, comment, button('Confirm', 'btn btn-danger', () => void decideCarousel(brand, view.id, { action: 'reject', reason: reasonSelect.value, comment: comment.value }, 'Rejected.', redraw), undefined, state.busy), button('Cancel', 'btn', () => { state.rejecting = false; redraw(); }))
+    : null;
+  return h(
+    'article',
+    { class: 'rv-detail rv-carousel' },
+    h('div', { class: 'rv-slides', role: 'list', 'aria-label': 'The slides, in order' }, ...view.slides.map((slide) => h(
+      'figure',
+      { class: 'rv-slide', role: 'listitem' },
+      slide.versionId ? h('img', { class: 'rv-slide-image', src: imageUrl(slide.versionId), alt: `Slide ${slide.position}: ${slide.headline}`, loading: 'lazy' }) : h('div', { class: 'rv-slide-image rv-slide-missing' }, 'Not made yet'),
+      h('figcaption', {}, h('b', {}, `${slide.position}. `), slide.headline),
+    ))),
+    h('div', { class: 'rv-side' },
+      h('h2', {}, `Carousel of ${view.count} slides`),
+      h('p', { class: `rv-status rv-${view.status === 'incomplete' ? 'blocked' : view.status}` }, CAROUSEL_STATE_TEXT[view.status]),
+      actions,
+      rejectForm,
+      h('h3', {}, 'Captions'),
+      ...view.captions.map((c) => h('div', { class: 'rv-cap' }, h('b', {}, NETWORK_CHOICES.find((n) => n.key === c.network)?.label ?? c.network), h('p', { class: 'rv-caption' }, c.caption))),
+      h('p', { class: 'muted' }, 'All slides go out together as one post on every channel that can show a carousel; Google Business gets the first slide only. To change a slide, reject the carousel with a reason.'),
+    ),
+  );
 }
 
 /** Which logo this poster was branded with, or why none was used: the owner is never left to guess whether a real logo is on it. */
@@ -483,7 +578,7 @@ function detailView(detail: Detail, redraw: () => void): HTMLElement {
 }
 
 function compareView(redraw: () => void): HTMLElement {
-  const batches = groupBatches(state.queue ?? []);
+  const batches = groupBatches(groupCarousels(state.queue ?? []).singles);
   if (batches.length === 0) return h('p', { class: 'empty' }, 'Nothing to compare here yet.');
   return h(
     'div',
@@ -515,7 +610,7 @@ export function reviewPage(redraw: () => void, clients: readonly ClientSummary[]
   const focused = (typing instanceof HTMLInputElement || typing instanceof HTMLTextAreaElement) && typing.closest('.rv') !== null && typing.getAttribute('aria-label') ? { label: typing.getAttribute('aria-label') as string, start: typing.selectionStart, end: typing.selectionEnd } : null;
   if (state.queue === null && !state.error) void loadQueue(redraw);
   const tabs = h('div', { class: 'rv-tabs', role: 'tablist' }, ...REVIEW_FILTERS.map((f) => {
-    const tab = button(f.label, `btn${state.filter === f.key ? ' btn-primary' : ''}`, () => { state.filter = f.key; state.queue = null; state.openId = null; state.detail = null; state.error = null; redraw(); }, f.label);
+    const tab = button(f.label, `btn${state.filter === f.key ? ' btn-primary' : ''}`, () => { state.filter = f.key; state.queue = null; state.openId = null; state.detail = null; state.carouselOpen = null; state.carousel = null; state.error = null; redraw(); }, f.label);
     tab.setAttribute('role', 'tab');
     tab.setAttribute('aria-selected', String(state.filter === f.key));
     return tab;
@@ -525,7 +620,8 @@ export function reviewPage(redraw: () => void, clients: readonly ClientSummary[]
     tab.setAttribute('aria-pressed', String(state.view === view));
     return tab;
   }));
-  const list = h('div', { class: 'rv-list' }, ...(state.queue ?? []).map((p) => card(p, redraw)));
+  const grouped = groupCarousels(state.queue ?? []);
+  const list = h('div', { class: 'rv-list' }, ...grouped.carousels.map((g) => carouselCard(g, redraw)), ...grouped.singles.map((p) => card(p, redraw)));
   const empty = state.queue !== null && state.queue.length === 0 ? h('p', { class: 'empty' }, state.filter === 'pending' ? 'Nothing is waiting for you.' : 'Nothing here yet.') : null;
   const page = h(
     'div',
@@ -540,7 +636,7 @@ export function reviewPage(redraw: () => void, clients: readonly ClientSummary[]
     state.queue === null && !state.error ? h('p', { class: 'empty' }, 'Loading…') : null,
     views,
     state.view === 'compare' && state.queue !== null ? compareView(redraw) : null,
-    h('div', { class: 'rv-grid' }, state.view === 'compare' ? h('div', {}) : h('div', {}, list, empty), state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
+    h('div', { class: 'rv-grid' }, state.view === 'compare' ? h('div', {}) : h('div', {}, list, empty), state.carouselOpen ? (state.carousel ? carouselDetail(state.carousel, state.carouselOpen.brand, redraw) : h('p', { class: 'empty' }, 'Loading…')) : state.openId ? (state.detail ? detailView(state.detail, redraw) : h('p', { class: 'empty' }, 'Loading…')) : h('p', { class: 'empty rv-hint' }, 'Choose a poster to look at it.')),
   );
   if (focused) {
     setTimeout(() => {
