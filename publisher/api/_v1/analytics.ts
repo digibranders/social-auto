@@ -13,6 +13,7 @@ import { apiError, errorResponse } from '../../lib/api-error.js';
 import { parseRange, viewFor } from '../../lib/analytics.js';
 import { json } from '../../lib/http.js';
 import { workspaceFor } from '../../lib/product-workspace.js';
+import { connectedFor } from '../../lib/analytics-channels.js';
 import { loadAnalytics } from '../../lib/store.js';
 import { analyticsEnabled } from '../analytics-collect.js';
 
@@ -25,7 +26,7 @@ export async function GET(request: Request): Promise<Response> {
   if (typeof range === 'string') return apiError(400, 'INVALID_REQUEST', range);
   try {
     const { file } = await loadAnalytics();
-    return json(200, { ...viewFor(file, caller.workspace.brand, range.from, range.to) });
+    return json(200, { ...viewFor(file, caller.workspace.brand, range.from, range.to, await connectedFor(caller.workspace.brand)) });
   } catch (error) {
     return errorResponse(error, 'read the analytics');
   }

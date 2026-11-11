@@ -39,7 +39,8 @@ test('GET /api/v1/analytics gives a customer her own numbers, with a total per p
       const posts = answer.body['posts'] as Array<{ postId: string; total: Record<string, number>; series: unknown[] }>;
       assert.deepEqual(posts.map((p) => [p.postId, p.total, p.series.length]), [['w1', { likes: 8, reach: 200 }, 2]]);
       assert.deepEqual((answer.body['accounts'] as Array<{ needs: string[] }>)[0]?.needs, ['reconnect']);
-      assert.deepEqual(answer.body['hashtags'], [{ tag: 'diwali', posts: 1, avgReach: 200 }]);
+      assert.deepEqual(answer.body['channels'], [], 'no account is connected for this workspace');
+      assert.deepEqual(answer.body['hashtags'], [{ tag: '#diwali', posts: 1, avgReach: 200 }]);
       assert.doesNotMatch(JSON.stringify(answer.body), /secret|someone-else|token/);
 
       assert.equal((await call(analyticsGet, '/api/v1/analytics?externalId=shop-1', { key: OTHER_KEY })).status, 404, 'another product cannot read it');

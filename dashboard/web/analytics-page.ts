@@ -121,7 +121,7 @@ function hashtags(data: AnalyticsData): HTMLElement {
     { class: 'panel-card' },
     data.hashtags.length === 0
       ? h('p', { class: 'empty' }, 'No hashtags used in this period.')
-      : h('div', { class: 'table-scroll' }, h('table', { class: 'cost-table' }, h('thead', {}, h('tr', {}, h('th', {}, 'Hashtag'), h('th', { class: 'num' }, 'Posts'), h('th', { class: 'num' }, 'Average reach'))), h('tbody', {}, ...data.hashtags.map((t) => h('tr', {}, h('td', {}, `#${t.tag}`), h('td', { class: 'num' }, String(t.posts)), h('td', { class: 'num' }, t.avgReach.toLocaleString('en-US'))))))),
+      : h('div', { class: 'table-scroll' }, h('table', { class: 'cost-table' }, h('thead', {}, h('tr', {}, h('th', {}, 'Hashtag'), h('th', { class: 'num' }, 'Posts'), h('th', { class: 'num' }, 'Average reach'))), h('tbody', {}, ...data.hashtags.map((t) => h('tr', {}, h('td', {}, t.tag), h('td', { class: 'num' }, String(t.posts)), h('td', { class: 'num' }, t.avgReach.toLocaleString('en-US'))))))),
     h('p', { class: 'fineprint' }, 'Worked out by us from this client’s own posts: the average reach of the posts that used each hashtag. The networks do not give hashtag numbers themselves.'),
   );
 }

@@ -47,7 +47,7 @@ test('hashtag figures are the average reach of the posts that used the tag, and 
   file = recordPost(file, 'a|instagram:1', base('b', 'instagram:1', '2026-11-05T10:00:00Z', '#diwali'), '2026-11-07', { reach: 100 }, NOW);
   file = recordPost(file, 'b|instagram:1', base('b', 'instagram:1', '2026-11-06T10:00:00Z', '#diwali #mithai'), '2026-11-07', { reach: 300 }, NOW);
   file = recordPost(file, 'c|instagram:1', base('b', 'instagram:1', '2026-11-07T10:00:00Z', '#mithai'), '2026-11-08', { likes: 4 }, NOW);
-  assert.deepEqual(viewFor(file, 'b', '2026-11-01', '2026-11-12').hashtags, [{ tag: 'diwali', posts: 2, avgReach: 200 }, { tag: 'mithai', posts: 2, avgReach: 300 }].sort((a, b) => b.avgReach - a.avgReach));
+  assert.deepEqual(viewFor(file, 'b', '2026-11-01', '2026-11-12').hashtags, [{ tag: '#diwali', posts: 2, avgReach: 200 }, { tag: '#mithai', posts: 2, avgReach: 300 }].sort((a, b) => b.avgReach - a.avgReach));
 });
 
 test('the file survives being saved and read back, and a malformed entry is refused', () => {
@@ -144,4 +144,19 @@ test('one failure does not stop the others, and a disconnected account is forgot
 test('Google without an app set up is reported, not thrown', async () => {
   const { report } = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [gl], posted: {}, key: KEY, googleApp: null, readers: readers([]), now: NOW });
   assert.deepEqual(report.failures, [{ id: 'google:9', reason: 'Google is not set up on this server' }]);
+});
+
+test('each connected channel says where it stands, and Instagram\'s audience says why it is missing', () => {
+  const at = '2026-11-12T08:00:00.000Z';
+  let file: AnalyticsFile = recordAccount(EMPTY_ANALYTICS, 'instagram:1', { brand: 'b', channel: 'instagram:1', platform: 'instagram', label: 'shop', needs: ['followers'], checkedAt: at }, { '2026-11-10': { followers: 60 }, '2026-11-11': { followers: 64 } }, NOW);
+  file = recordAccount(file, 'facebook:7', { brand: 'b', channel: 'facebook:7', platform: 'facebook', label: 'Page', needs: ['reconnect'], checkedAt: at }, {}, NOW);
+  file = recordAccount(file, 'google:9', { brand: 'b', channel: 'google:9', platform: 'google', label: 'Loc', checkedAt: at }, {}, NOW);
+  const connected = [{ id: 'instagram:1', platform: 'instagram', label: 'shop' }, { id: 'facebook:7', platform: 'facebook', label: 'Page' }, { id: 'google:9', platform: 'google', label: 'Loc' }, { id: 'google:10', platform: 'google', label: 'New' }, { id: 'linkedin:3', platform: 'linkedin', label: 'Asha' }];
+  const view = viewFor(file, 'b', '2026-11-01', '2026-11-12', connected);
+  assert.deepEqual(view.channels.map((c) => [c.channel, c.status, c.lastCheckedAt]), [['instagram:1', 'ok', at], ['facebook:7', 'reconnect', at], ['google:9', 'ok', at], ['google:10', 'waiting', null], ['linkedin:3', 'unsupported', null]]);
+  assert.deepEqual(view.audience, { instagram: { status: 'too_few_followers', followers: 64 } });
+  const withAudience = recordAccount(EMPTY_ANALYTICS, 'instagram:1', { brand: 'b', channel: 'instagram:1', platform: 'instagram', label: 'shop', audience: { age: { '18-24': 22, '25-34': 41 }, city: { Delhi: 46 } }, checkedAt: at }, {}, NOW);
+  assert.deepEqual(viewFor(withAudience, 'b', '2026-11-01', '2026-11-12', connected.slice(0, 1)).audience, { instagram: { status: 'ok', age: [{ label: '25-34', value: 41 }, { label: '18-24', value: 22 }], city: [{ label: 'Delhi', value: 46 }] } });
+  assert.deepEqual(viewFor(EMPTY_ANALYTICS, 'b', '2026-11-01', '2026-11-12', connected.slice(0, 1)).audience, { instagram: { status: 'none' } });
+  assert.deepEqual(viewFor(EMPTY_ANALYTICS, 'b', '2026-11-01', '2026-11-12').audience, {}, 'no Instagram connected, no audience entry');
 });

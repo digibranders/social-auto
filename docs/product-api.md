@@ -114,23 +114,27 @@ PATCH { "variants": { "instagram": null, "linkedin": { "caption": "New words." }
 
 ## Analytics
 
-`GET /api/v1/analytics?externalId=[&from=YYYY-MM-DD&to=YYYY-MM-DD]` (default: the last 30 days, at most one year) gives the numbers the networks report for a customer's connected accounts and for the posts we sent. Read only; your own workspaces only (`WORKSPACE_NOT_FOUND` otherwise). A daily check on our side asks each network once a day, so numbers are up to a day old; nothing is ever written to a network.
+`GET /api/v1/analytics?externalId=[&from=YYYY-MM-DD&to=YYYY-MM-DD]` (default: the last 30 days, at most one year) gives the numbers the networks report for a customer's connected accounts and for the posts we sent. Read only; your own workspaces only (`WORKSPACE_NOT_FOUND` otherwise). A daily check on our side asks each network once a day, so numbers are up to a day old; nothing is ever written to a network. While analytics is not switched on the answer is `503 SERVICE_NOT_CONFIGURED`.
 
 ```
-{ "posts":    [{ "postId", "channel", "platform", "permalink", "postedAt", "caption",
+{ "channels": [{ "channel", "platform", "label", "status": "ok" | "waiting" | "reconnect" | "unsupported", "lastCheckedAt" }],
+  "posts":    [{ "postId", "channel", "platform", "permalink", "postedAt", "caption",
                  "total": { "reach", "views", "likes", "comments", "shares", "saves", "clicks" },
                  "series": [{ "date", ...the same numbers, counted since the post went out }] }],
   "accounts": [{ "channel", "platform", "label", "checkedAt",
                  "series": [{ "date", "reach", "views", "profileViews", "followers", "calls", "directions", "websiteClicks" }],
-                 "audience": { "age", "gender", "country", "city" }, "searchTerms": [{ "term", "impressions" }], "needs": ["reconnect" | "followers"] }],
-  "hashtags": [{ "tag", "posts", "avgReach" }], "checkedAt" }
+                 "searchTerms": [{ "term", "impressions" }], "needs": ["reconnect" | "followers"] }],
+  "audience": { "instagram"?: { "status": "ok", "age"?, "gender"?, "country"?, "city"? }
+                            | { "status": "too_few_followers", "followers": 64 | null } | { "status": "reconnect" } | { "status": "none" } },
+  "hashtags": [{ "tag": "#diwali", "posts", "avgReach" }], "checkedAt" }
 ```
 
-- **A number a network does not give is absent, never 0.** Instagram and Facebook give per-post numbers; Google gives account numbers only (`views` = Maps and Search together, `calls`, `directions`, `websiteClicks`, `searchTerms` for the last full month) and nothing per post or audience; LinkedIn is not offered. Only posts we sent to Instagram or Facebook appear in `posts`, from the last 60 days.
-- `total` is a post's latest numbers (each field from the newest day that has it); `series` is one entry per day we checked (daily for the first week, then weekly).
-- `needs`: `"reconnect"`: the customer must connect that account again so it can give us the permission to read its numbers (until then only likes, comments, followers and shares show); `"followers"`: Instagram gives the audience only from 100 followers.
-- `hashtags` is worked out by us: for each hashtag used in the period, how many posts used it and the average reach of those that have a reach number.
-- `checkedAt` is when the last daily check finished (`null` before the first).
+- **`channels`** has one entry for every account connected for the workspace: `ok` (numbers exist), `waiting` (connected, first daily check not done yet), `reconnect` (the customer must connect the account again to give the permission to read its numbers; likes, comments, shares and followers may still show), `unsupported` (this network gives no numbers: LinkedIn). `lastCheckedAt` is that account's last check (`null` before the first); the top-level `checkedAt` is when the last whole daily check finished.
+- **`audience.instagram`** (the workspace's first Instagram account; absent when none is connected): `ok` with lists of `{label, value}` (largest first; `age` and `gender` as percentages of followers, `country` and `city` as Instagram reports them), `too_few_followers` with the follower count (Instagram gives the audience from 100 followers), `reconnect`, or `none` (nothing yet). Facebook gives no audience, nor does Google.
+- **A number a network does not give is absent, never 0.** Instagram and Facebook give per-post numbers; Google gives account numbers only (`views` = Maps and Search together, `calls`, `directions`, `websiteClicks`, `searchTerms` for the last full month) and nothing per post. Only posts we sent to Instagram or Facebook appear in `posts`, from the last 60 days.
+- **Per-post totals:** `total` is the post's numbers since it went out (each field from the newest day that has it). A post is listed when it was made inside the range, and its `series` then covers its whole life so far, not only the range.
+- **Dates** are UTC calendar days (`YYYY-MM-DD`), `from` and `to` inclusive; `postedAt` is an ISO time so you can show it in any time zone. Series are sorted oldest first; a day we have no reading for is simply absent (we read a post daily for its first week, then weekly). `from` after `to`, a bad date or a range over a year answers `400 INVALID_REQUEST`.
+- **`hashtags`** is worked out by us: for each hashtag used by posts made in the range (with the leading `#`), how many posts used it and the average reach of those that have a reach number.
 
 ## Errors
 

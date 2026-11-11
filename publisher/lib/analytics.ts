@@ -235,11 +235,43 @@ export interface HashtagView {
   avgReach: number;
 }
 
+/** Where one connected channel stands: numbers exist, nothing checked yet, the account must connect again, or the network gives no numbers. */
+export type ChannelStatus = 'ok' | 'waiting' | 'reconnect' | 'unsupported';
+
+export interface ChannelState {
+  channel: string;
+  platform: string;
+  label: string;
+  status: ChannelStatus;
+  lastCheckedAt: string | null;
+}
+
+export interface Breakdown {
+  label: string;
+  value: number;
+}
+
+/** Instagram's audience: the numbers, or why there are none. */
+export type InstagramAudience =
+  | { status: 'ok'; age?: Breakdown[]; gender?: Breakdown[]; country?: Breakdown[]; city?: Breakdown[] }
+  | { status: 'too_few_followers'; followers: number | null }
+  | { status: 'reconnect' }
+  | { status: 'none' };
+
 export interface AnalyticsView {
+  channels: ChannelState[];
   posts: PostView[];
   accounts: AccountView[];
+  audience: { instagram?: InstagramAudience };
   hashtags: HashtagView[];
   checkedAt: string | null;
+}
+
+/** A channel connected for the brand, as the caller knows it (including networks that give no numbers). */
+export interface ConnectedChannel {
+  id: string;
+  platform: string;
+  label: string;
 }
 
 /** The latest numbers a post has: for each number, the value on the newest day that has it (totals only grow, so the newest is the total). */
@@ -252,7 +284,7 @@ export function totalOf(series: Record<string, PostNumbers>): PostNumbers {
 const inRange = (day: string, from: string, to: string): boolean => day >= from && day <= to;
 
 /** One brand's numbers between two days (inclusive), newest post first. */
-export function viewFor(file: AnalyticsFile, brand: string, from: string, to: string): AnalyticsView {
+export function viewFor(file: AnalyticsFile, brand: string, from: string, to: string, connected: readonly ConnectedChannel[] = []): AnalyticsView {
   const posts: PostView[] = Object.entries(file.posts)
     .filter(([, p]) => p.brand === brand && inRange(p.postedAt.slice(0, 10), from, to))
     .map(([key, p]) => ({
@@ -278,7 +310,32 @@ export function viewFor(file: AnalyticsFile, brand: string, from: string, to: st
       ...(a.needs && a.needs.length > 0 ? { needs: a.needs } : {}),
       checkedAt: a.checkedAt,
     }));
-  return { posts, accounts, hashtags: hashtagViews(file, brand, from, to), checkedAt: file.checkedAt };
+  const channels = connected.map((c): ChannelState => {
+    const entry = file.accounts[c.id];
+    const status: ChannelStatus = !ANALYTICS_PLATFORMS.includes(c.platform as AnalyticsPlatform) ? 'unsupported' : !entry ? 'waiting' : entry.needs?.includes('reconnect') ? 'reconnect' : 'ok';
+    return { channel: c.id, platform: c.platform, label: c.label, status, lastCheckedAt: entry?.checkedAt ?? null };
+  });
+  const instagram = connected.find((c) => c.platform === 'instagram');
+  const audience = instagram ? audienceFor(file.accounts[instagram.id]) : undefined;
+  return { channels, posts, accounts, audience: audience ? { instagram: audience } : {}, hashtags: hashtagViews(file, brand, from, to), checkedAt: file.checkedAt };
+}
+
+const breakdownList = (values: Record<string, number> | undefined): Breakdown[] | undefined =>
+  values ? Object.entries(values).map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value || a.label.localeCompare(b.label)) : undefined;
+
+/** The Instagram audience of an account, or why there is none. */
+export function audienceFor(account: AccountSeries | undefined): InstagramAudience {
+  if (!account) return { status: 'none' };
+  if (account.needs?.includes('followers')) {
+    const days = Object.keys(account.series).sort().filter((d) => account.series[d]?.followers !== undefined);
+    const last = days[days.length - 1];
+    return { status: 'too_few_followers', followers: last === undefined ? null : (account.series[last]?.followers ?? null) };
+  }
+  const a = account.audience;
+  if (a && (a.age || a.gender || a.country || a.city)) {
+    return { status: 'ok', ...(a.age ? { age: breakdownList(a.age) } : {}), ...(a.gender ? { gender: breakdownList(a.gender) } : {}), ...(a.country ? { country: breakdownList(a.country) } : {}), ...(a.city ? { city: breakdownList(a.city) } : {}) };
+  }
+  return account.needs?.includes('reconnect') ? { status: 'reconnect' } : { status: 'none' };
 }
 
 /** For each hashtag used in the period: how many posts used it and their average reach (posts with no reach number count only towards `posts`). */
@@ -295,7 +352,7 @@ export function hashtagViews(file: AnalyticsFile, brand: string, from: string, t
     }
   }
   return [...by.entries()]
-    .map(([tag, e]) => ({ tag, posts: e.posts, avgReach: e.reach.length === 0 ? 0 : Math.round(e.reach.reduce((a, b) => a + b, 0) / e.reach.length) }))
+    .map(([tag, e]) => ({ tag: `#${tag}`, posts: e.posts, avgReach: e.reach.length === 0 ? 0 : Math.round(e.reach.reduce((a, b) => a + b, 0) / e.reach.length) }))
     .sort((a, b) => b.avgReach - a.avgReach || b.posts - a.posts || a.tag.localeCompare(b.tag))
     .slice(0, 50);
 }

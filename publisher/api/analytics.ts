@@ -6,6 +6,7 @@
  */
 import { parseRange, viewFor } from '../lib/analytics.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
+import { connectedFor } from '../lib/analytics-channels.js';
 import { loadAnalytics, storeConfigured } from '../lib/store.js';
 import { analyticsEnabled } from './analytics-collect.js';
 
@@ -21,7 +22,7 @@ export async function GET(request: Request): Promise<Response> {
   if (typeof range === 'string') return json(400, { error: range });
   try {
     const { file } = await loadAnalytics();
-    return json(200, { enabled: analyticsEnabled(), ...viewFor(file, brand, range.from, range.to) });
+    return json(200, { enabled: analyticsEnabled(), ...viewFor(file, brand, range.from, range.to, await connectedFor(brand)) });
   } catch (error) {
     console.error(describeError(error));
     return json(500, { error: 'could not read the analytics' });
