@@ -569,6 +569,10 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .rv-client-detail { flex: 1 1 100%; margin: 0; }
 .rv-approval { display: grid; gap: 6px; flex: 1 1 100%; }
 .rv-client-pick { flex-wrap: wrap; }
+.rv-signoff { margin: 2px 0; font-size: 0.9em; }
+.rv-signoff-edit { display: grid; gap: 8px; margin: 8px 0; }
+.rv-field { display: grid; gap: 4px; }
+.rv-field .rv-input { flex: none; width: 100%; }
 .rv-net-note { color: var(--muted); }
 .rv-net-on { color: var(--published, #3fb27f); }
 .rv-net-problem { color: var(--due, #e0a84a); }

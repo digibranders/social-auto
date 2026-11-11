@@ -124,8 +124,12 @@ export async function POST(request: Request): Promise<Response> {
     const { postId, network } = body.edit ?? {};
     const headline = words(body.edit?.['headline'], 300);
     const caption = words(body.edit?.['caption'], 4000);
-    if (!batch || typeof postId !== 'string' || !POST_ID.test(postId) || !headline || !caption || (network !== undefined && (typeof network !== 'string' || !NETWORKS.includes(network)))) return json(400, { error: 'Invalid request' });
-    return send(`/review/copy/${batch.brand}/${batch.planFile}/${encodeURIComponent(postId)}/edit`, 'PUT', { headline, caption, ...(network ? { network } : {}) });
+    // The sign-off pieces are optional text; empty means "back to the default". The engine checks what they say.
+    const signoff = (key: string, max: number): string | undefined | null => { const v = body.edit?.[key]; return v === undefined ? undefined : typeof v === 'string' && v.length <= max ? v : null; };
+    const brandName = signoff('brandName', 100);
+    const domain = signoff('domain', 200);
+    if (!batch || typeof postId !== 'string' || !POST_ID.test(postId) || !headline || !caption || brandName === null || domain === null || (network !== undefined && (typeof network !== 'string' || !NETWORKS.includes(network)))) return json(400, { error: 'Invalid request' });
+    return send(`/review/copy/${batch.brand}/${batch.planFile}/${encodeURIComponent(postId)}/edit`, 'PUT', { headline, caption, ...(network ? { network } : {}), ...(brandName !== undefined ? { brandName } : {}), ...(domain !== undefined ? { domain } : {}) });
   }
   if (body.close !== undefined) {
     const batch = batchOf(body.close);

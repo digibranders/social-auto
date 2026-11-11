@@ -149,6 +149,13 @@ test('writing posts for a website, editing, drawing and putting a batch away are
   assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/copy/acme/week-01.json/w01-d1/edit');
   assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', headline: 'New words', caption: 'Better caption', network: 'linkedin' });
   assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'x', caption: '  ' } }))).status, 400);
+  // The sign-off pieces go through as given (empty means the default), and must be text.
+  calls = [];
+  upstream(200, { ok: true });
+  assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'New words', caption: 'Better caption', brandName: 'Acme Labs', domain: '' } }))).status, 200);
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', headline: 'New words', caption: 'Better caption', brandName: 'Acme Labs', domain: '' });
+  assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'x', caption: 'y', brandName: 5 } }))).status, 400);
+  assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'x', caption: 'y', domain: 'a'.repeat(201) } }))).status, 400);
   assert.equal((await POST(post({ edit: { brand: 'acme', planFile: 'week-01.json', postId: 'w01-d1', headline: 'x', caption: 'y', network: 'tiktok' } }))).status, 400);
   calls = [];
   assert.equal((await POST(post({ draw: { brand: 'acme', planFile: 'week-01.json', client: 'acme-foods' } }))).status, 200);

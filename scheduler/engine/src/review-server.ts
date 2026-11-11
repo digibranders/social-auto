@@ -30,7 +30,8 @@ import { acquireLock, LockError } from './file-lock.ts';
 import { listCampaigns } from './campaign-runner.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
-import { editCopy } from './copy-edit.ts';
+import { editCopy, type SignoffDefaults } from './copy-edit.ts';
+import { displayDomain } from './ai-creative.ts';
 import { loadFacts } from './evidence-pipeline.ts';
 import { decideFact, FactsError, factsView } from './facts-view.ts';
 import { JobError, JobStore, type JobState } from './job-store.ts';
@@ -148,6 +149,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       throw new CopyStageError('REJECTED', 'this brand has no website saved, so its pictures cannot be drawn');
     }
   };
+  /** What a poster's sign-off says unless the owner changes it: the brand's name and the website's address. Null when the brand has neither saved. */
+  const signoffDefaultsOf = (brand: string): SignoffDefaults | null => {
+    try {
+      const saved = JSON.parse(readFileSync(join(root, brand, 'brand.json'), 'utf8')) as { name?: unknown; website?: unknown };
+      return typeof saved.name === 'string' && saved.name.trim() !== '' ? { brandName: saved.name, domain: displayDomain(cleanSite(saved.website)) } : null;
+    } catch {
+      return null;
+    }
+  };
   const storeOf = (versionId: string): ReviewStore => storeFor(versionId.split('.')[0] ?? '');
   const brands = (): string[] => readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && BRAND.test(d.name)).map((d) => d.name);
 
@@ -221,7 +231,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const stopped = (brand: string, planFile: string): boolean => jobs.list({ brand }).find((j) => j.kind === 'draw' && j.planFile === planFile)?.state === 'failed';
           const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
+          const plain = batches.map((b) => ({ ...b, ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
@@ -273,7 +283,10 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const headline = typeof body['headline'] === 'string' ? body['headline'] : undefined;
           const caption = typeof body['caption'] === 'string' ? body['caption'] : undefined;
           const network = typeof body['network'] === 'string' ? body['network'] : undefined;
-          return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), by: text(body['by'], 80), facts }) });
+          const brandName = typeof body['brandName'] === 'string' ? body['brandName'] : undefined;
+          const domain = typeof body['domain'] === 'string' ? body['domain'] : undefined;
+          const signoffDefaults = signoffDefaultsOf(brand);
+          return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), ...(brandName !== undefined ? { brandName } : {}), ...(domain !== undefined ? { domain } : {}), ...(signoffDefaults ? { signoffDefaults } : {}), by: text(body['by'], 80), facts }) });
         }
         return send(res, 404, { error: 'Not found' });
       }
