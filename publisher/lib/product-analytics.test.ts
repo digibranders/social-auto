@@ -9,8 +9,8 @@ import { loadAnalytics, saveAnalytics } from './store.ts';
 
 async function withAnalytics(on: boolean, run: () => Promise<void>): Promise<void> {
   const before = process.env['ANALYTICS_ENABLED'];
-  if (on) process.env['ANALYTICS_ENABLED'] = 'true';
-  else delete process.env['ANALYTICS_ENABLED'];
+  if (on) delete process.env['ANALYTICS_ENABLED'];
+  else process.env['ANALYTICS_ENABLED'] = 'false';
   try {
     await run();
   } finally {

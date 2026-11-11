@@ -1,6 +1,6 @@
 /**
  * The daily check of the networks' numbers (see lib/analytics-collect.ts). Read only: nothing is written to any network.
- * Off until ANALYTICS_ENABLED=true is set, so a deploy changes nothing by itself.
+ * On by default; ANALYTICS_ENABLED=false switches it off.
  *
  * GET /api/analytics-collect   (Authorization: Bearer $CRON_SECRET, from the server timer)
  */
@@ -11,7 +11,7 @@ import { accessTokenFor } from '../lib/google.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { loadAnalytics, loadChannels, loadPosted, saveAnalytics, storeConfigured } from '../lib/store.js';
 
-export const analyticsEnabled = (): boolean => process.env['ANALYTICS_ENABLED'] === 'true';
+export const analyticsEnabled = (): boolean => process.env['ANALYTICS_ENABLED'] !== 'false';
 
 const readers: AnalyticsReaders = {
   instagramPost: (id, token) => instagramPost(id, token),
@@ -24,7 +24,7 @@ const readers: AnalyticsReaders = {
 
 export async function GET(request: Request): Promise<Response> {
   if (!isAuthorized(request, process.env['CRON_SECRET'])) return json(401, { error: 'unauthorized' });
-  if (!analyticsEnabled()) return json(200, { skipped: 'analytics is switched off (ANALYTICS_ENABLED is not true)' });
+  if (!analyticsEnabled()) return json(200, { skipped: 'analytics is switched off (ANALYTICS_ENABLED=false)' });
   if (!storeConfigured()) return json(503, { error: 'storage is not set up' });
   try {
     const key = parseKey(process.env['CHANNEL_KEY']);

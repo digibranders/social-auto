@@ -10,7 +10,7 @@ Authorization: Bearer <product key>
 
 | Where | Name | Meaning |
 |---|---|---|
-| publisher | `ANALYTICS_ENABLED` | `true` turns on the daily check of the networks' numbers (`social-analytics.timer`) and `GET /api/v1/analytics`. Off by default: until then the read answers `503 SERVICE_NOT_CONFIGURED` and nothing is collected |
+| publisher | `ANALYTICS_ENABLED` | on by default; `false` switches off the daily check of the networks' numbers and `GET /api/v1/analytics` (which then answers `503 SERVICE_NOT_CONFIGURED`). The daily check itself runs from `social-analytics.timer`, which has to be installed and enabled on the server |
 | publisher | `PRODUCTS` | JSON list: `{id, keyHash (SHA-256 hex of the key), returnUrls[], webhookUrl?, webhookSecret? (16+ chars)}` |
 | publisher + dashboard | `INVITE_SECRET` | 32+ characters, the same value in both; signs connect links |
 | publisher | `DASHBOARD_ORIGIN` | the dashboard's address, where connect links point |
@@ -114,7 +114,7 @@ PATCH { "variants": { "instagram": null, "linkedin": { "caption": "New words." }
 
 ## Analytics
 
-`GET /api/v1/analytics?externalId=[&from=YYYY-MM-DD&to=YYYY-MM-DD]` (default: the last 30 days, at most one year) gives the numbers the networks report for a customer's connected accounts and for the posts we sent. Read only; your own workspaces only (`WORKSPACE_NOT_FOUND` otherwise). A daily check on our side asks each network once a day, so numbers are up to a day old; nothing is ever written to a network. While analytics is not switched on the answer is `503 SERVICE_NOT_CONFIGURED`.
+`GET /api/v1/analytics?externalId=[&from=YYYY-MM-DD&to=YYYY-MM-DD]` (default: the last 30 days, at most one year) gives the numbers the networks report for a customer's connected accounts and for the posts we sent. Read only; your own workspaces only (`WORKSPACE_NOT_FOUND` otherwise). A daily check on our side asks each network once a day, so numbers are up to a day old; nothing is ever written to a network. If analytics is switched off on the server the answer is `503 SERVICE_NOT_CONFIGURED`.
 
 ```
 { "channels": [{ "channel", "platform", "label", "status": "ok" | "waiting" | "reconnect" | "unsupported", "lastCheckedAt" }],
