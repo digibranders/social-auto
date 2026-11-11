@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffView, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -162,4 +162,12 @@ test('each network says whether the chosen client has an account on it, and a ne
   assert.equal(networkState(undefined, 'instagram'), null);
   assert.deepEqual(connectedNetworkKeys(client), ['instagram', 'linkedin']);
   assert.deepEqual(connectedNetworkKeys(clientNamed('empty')), []);
+});
+
+test('a poster\'s sign-off is the brand and website default unless the owner changed it, and says so', () => {
+  const batch = { signoffDefault: { brandName: 'Acme', domain: 'acme.com' } };
+  assert.deepEqual(signoffView(batch, {}), { brandName: 'Acme', domain: 'acme.com', changed: false });
+  assert.deepEqual(signoffView(batch, { signoff: { domain: 'acme.com/pricing' } }), { brandName: 'Acme', domain: 'acme.com/pricing', changed: true });
+  assert.deepEqual(signoffView(batch, { signoff: { brandName: 'Acme', domain: 'acme.com' } }), { brandName: 'Acme', domain: 'acme.com', changed: false });
+  assert.equal(signoffView({}, {}), null, 'without the brand\'s name and website nothing is shown or editable');
 });

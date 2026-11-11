@@ -14,10 +14,61 @@ import { composeVariant, isNetwork, NETWORK_RULES, type Network } from './networ
 import { displayFact, type EvidenceFact } from './evidence.ts';
 
 export const MAX_HEADLINE_CHARS = 60;
+export const MAX_BRAND_NAME_CHARS = 40;
+export const MAX_ADDRESS_CHARS = 60;
 export const MAX_CAPTION_CHARS = 1500;
 
 interface RawVariant { caption?: unknown; hashtags?: unknown; fallback?: unknown }
-interface RawPost { id?: unknown; headline?: unknown; subline?: unknown; caption?: unknown; hashtags?: unknown; factIds?: unknown; variants?: Record<string, RawVariant> }
+interface RawPost { id?: unknown; signoff?: unknown; headline?: unknown; subline?: unknown; caption?: unknown; hashtags?: unknown; factIds?: unknown; variants?: Record<string, RawVariant> }
+
+/** What a poster's sign-off says when the owner has not changed it: the brand's name and the website's address. */
+export interface SignoffDefaults {
+  brandName: string;
+  domain: string;
+}
+
+export interface Signoff {
+  brandName?: string;
+  domain?: string;
+}
+
+const signoffOf = (value: unknown): Signoff => {
+  const v = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>;
+  return { ...(typeof v['brandName'] === 'string' ? { brandName: v['brandName'] } : {}), ...(typeof v['domain'] === 'string' ? { domain: v['domain'] } : {}) };
+};
+
+/**
+ * The sign-off the owner asked for. A piece left out (undefined) stays as it was; an empty one goes back to the default. A name must be short plain text; an
+ * address must be a web address on the client's own website (the website itself, a page of it or a subdomain), never someone else's. Returns only what differs
+ * from the defaults, or null when nothing does.
+ */
+export function checkSignoff(wanted: { brandName?: string; domain?: string }, defaults: SignoffDefaults, current: Signoff): Signoff | null {
+  const next: Signoff = { ...current };
+  if (wanted.brandName !== undefined) {
+    const name = wanted.brandName.replace(/\s+/g, ' ').trim();
+    if (name === '' || name === defaults.brandName) delete next.brandName;
+    else {
+      if (name.length > MAX_BRAND_NAME_CHARS) throw new CopyStageError('REJECTED', `the brand name is ${name.length} characters; a poster can carry at most ${MAX_BRAND_NAME_CHARS}`);
+      if (/["\\|\u0000-\u001f]/.test(name)) throw new CopyStageError('REJECTED', 'the brand name cannot contain quotation marks, | or a backslash');
+      next.brandName = name;
+    }
+  }
+  if (wanted.domain !== undefined) {
+    const raw = wanted.domain.trim().replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '');
+    const slash = raw.indexOf('/');
+    const host = (slash === -1 ? raw : raw.slice(0, slash)).toLowerCase();
+    const address = slash === -1 ? host : `${host}${raw.slice(slash)}`;
+    if (raw === '' || address === defaults.domain) delete next.domain;
+    else {
+      if (address.length > MAX_ADDRESS_CHARS) throw new CopyStageError('REJECTED', `the web address is ${address.length} characters; a poster can carry at most ${MAX_ADDRESS_CHARS}`);
+      if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/[A-Za-z0-9._~\-/]*)?$/.test(address)) throw new CopyStageError('REJECTED', 'that does not look like a web address, such as acme.com or acme.com/pricing');
+      const own = defaults.domain.toLowerCase();
+      if (host !== own && !host.endsWith(`.${own}`)) throw new CopyStageError('REJECTED', `the web address must be on the client's own website (${own}), not another one`);
+      next.domain = address;
+    }
+  }
+  return next.brandName === undefined && next.domain === undefined ? null : next;
+}
 
 export function editCopy(input: {
   brandDir: string;
@@ -29,12 +80,19 @@ export function editCopy(input: {
   caption?: string;
   /** The network whose caption is being changed. Without one, or for Instagram, it is the main caption. */
   network?: string;
+  /** The brand name and the web address as the poster should show them; an empty one goes back to the default. */
+  brandName?: string;
+  domain?: string;
+  /** What the sign-off says when not changed (the brand's name and the website's address); needed to change the sign-off. */
+  signoffDefaults?: SignoffDefaults;
   by: string;
   /** The facts the brand has, to check the new words against the ones this post was written from. */
   facts: readonly EvidenceFact[];
 }): CopyBatch {
   if (!PLAN_FILE.test(input.planFile)) throw new CopyStageError('INVALID', 'that is not a plan file name');
-  if (input.headline === undefined && input.caption === undefined) throw new CopyStageError('INVALID', 'give a headline, a caption or both');
+  const changesSignoff = input.brandName !== undefined || input.domain !== undefined;
+  if (input.headline === undefined && input.caption === undefined && !changesSignoff) throw new CopyStageError('INVALID', 'give a headline, a caption, a brand name or a web address');
+  if (changesSignoff && !input.signoffDefaults) throw new CopyStageError('REJECTED', 'this brand has no name or website saved, so the sign-off cannot be changed');
   const planPath = join(input.brandDir, input.planFile);
   let raw: { posts?: RawPost[] };
   try {
@@ -51,23 +109,29 @@ export function editCopy(input: {
   // A caption for another network is that network's own version; Instagram's is the main caption.
   const variant = network && network !== 'instagram' ? post.variants?.[network] : undefined;
   if (network && network !== 'instagram' && (!variant || typeof variant.caption !== 'string' || !Array.isArray(variant.hashtags))) throw new CopyStageError('NOT_FOUND', `this post has no caption for ${network}`);
-  const headline = (input.headline ?? post.headline).replaceAll('|', '').replace(/\s+/g, ' ').trim();
+  const plainHeadline = (input.headline ?? post.headline).replaceAll('|', '').replace(/\s+/g, ' ').trim();
+  // Only a headline the owner typed loses the writer's emphasis marks; when it is not being changed it stays exactly as it was.
+  const headline = input.headline === undefined ? post.headline : plainHeadline;
   // The caption's own words: a closing run of #tags in what was typed is the hashtags again, which stay as the writer made them (they are not added twice).
   const caption = splitTrailingHashtags((input.caption ?? (variant ? (variant.caption as string) : post.caption)).trim()).body;
-  if (headline === '') throw new CopyStageError('REJECTED', 'the headline cannot be empty');
-  if (headline.length > MAX_HEADLINE_CHARS) throw new CopyStageError('REJECTED', `the headline is ${headline.length} characters; a poster can carry at most ${MAX_HEADLINE_CHARS}`);
+  if (plainHeadline === '') throw new CopyStageError('REJECTED', 'the headline cannot be empty');
+  if (plainHeadline.length > MAX_HEADLINE_CHARS) throw new CopyStageError('REJECTED', `the headline is ${plainHeadline.length} characters; a poster can carry at most ${MAX_HEADLINE_CHARS}`);
   if (caption === '') throw new CopyStageError('REJECTED', 'the caption cannot be empty');
   if (caption.length > (network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS)) throw new CopyStageError('REJECTED', `the caption is ${caption.length} characters; at most ${network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS} are allowed`);
-  const weak = checkCopyQuality({ headline, caption });
+  const weak = checkCopyQuality({ headline: plainHeadline, caption });
   if (weak) throw new CopyStageError('REJECTED', weak);
 
   // The claim gate: every checkable statement must be one of the facts this post was written from.
   const ids = Array.isArray(post.factIds) ? (post.factIds as unknown[]).filter((v): v is string => typeof v === 'string') : [];
   if (ids.length > 0) {
     const evidence = ids.flatMap((id) => { const fact = input.facts.find((f) => f.id === id); return fact ? [displayFact(fact)] : []; });
-    const violations = checkCopy({ headline, subline: typeof post.subline === 'string' ? post.subline : '', caption }, evidence);
+    const violations = checkCopy({ headline: plainHeadline, subline: typeof post.subline === 'string' ? post.subline : '', caption }, evidence);
     if (violations.length > 0) throw new CopyStageError('REJECTED', `the words say something the website does not support: ${violations.map((v) => `${v.field} "${v.sentence.slice(0, 80)}" ${v.reason}`).join('; ')}`);
   }
+
+  const signoff = changesSignoff && input.signoffDefaults
+    ? checkSignoff({ ...(input.brandName !== undefined ? { brandName: input.brandName } : {}), ...(input.domain !== undefined ? { domain: input.domain } : {}) }, input.signoffDefaults, signoffOf(post.signoff))
+    : undefined;
 
   const hashtags = (post.hashtags as unknown[]).filter((h): h is string => typeof h === 'string');
   // What the list shows for the main caption stays the main caption when only another network's caption changes.
@@ -75,8 +139,12 @@ export function editCopy(input: {
   const composed = composeCaption({ caption: mainCaption, hashtags });
   const networkText = variant ? composeVariant({ caption, hashtags: (variant.hashtags as unknown[]).filter((h): h is string => typeof h === 'string') })
     : network === 'instagram' && post.variants?.['instagram'] ? composed : undefined;
-  return new CopyStage(input.brandDir, input.brand).edit(input.planFile, input.postId, { headline, caption: composed, ...(network && networkText !== undefined ? { network, networkCaption: networkText } : {}) }, input.by, () => {
+  return new CopyStage(input.brandDir, input.brand).edit(input.planFile, input.postId, { headline, caption: composed, ...(network && networkText !== undefined ? { network, networkCaption: networkText } : {}), ...(signoff !== undefined ? { signoff } : {}) }, input.by, () => {
     post.headline = headline;
+    if (signoff !== undefined) {
+      if (signoff === null) delete post.signoff;
+      else post.signoff = signoff;
+    }
     if (variant) {
       variant.caption = caption;
       delete variant.fallback;

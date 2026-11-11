@@ -31,6 +31,8 @@ export interface CopyPost {
   captions?: Record<string, { text: string; edited?: boolean; fallback?: boolean }>;
   /** True once the owner has changed the writer's words. */
   edited?: boolean;
+  /** The owner's own sign-off wording for this poster: only what differs from the brand's name and the website's address. */
+  signoff?: { brandName?: string; domain?: string };
   /** A note for the owner, such as "weak headline: it tells the reader nothing specific". Advice only: the owner can still keep the post. */
   advice?: string;
   state: CopyState;
@@ -172,7 +174,7 @@ export class CopyStage {
    * Replaces the words of one post before it is drawn. `applyToPlan` writes the same words into the plan file and runs inside the lock, ahead of this file's own
    * write, so the plan and the list can never disagree; if it throws, nothing changes. The post keeps its choice: a kept post stays kept, with the new words.
    */
-  edit(planFile: string, postId: string, words: { headline: string; caption: string; network?: string; networkCaption?: string }, by: string, applyToPlan: () => void): CopyBatch {
+  edit(planFile: string, postId: string, words: { headline: string; caption: string; network?: string; networkCaption?: string; /** undefined leaves it as it is; null goes back to the brand's name and the website's address. */ signoff?: { brandName?: string; domain?: string } | null }, by: string, applyToPlan: () => void): CopyBatch {
     if (!POST_ID.test(postId)) throw new CopyStageError('INVALID', 'that is not a post id');
     if (by.trim() === '') throw new CopyStageError('INVALID', 'who is editing must be given');
     return this.change(planFile, (batch) => {
@@ -186,6 +188,8 @@ export class CopyStage {
       post.caption = words.caption;
       if (words.network && words.networkCaption !== undefined && post.captions?.[words.network]) post.captions[words.network] = { text: words.networkCaption, edited: true };
       post.contentHash = copyHash(words.headline, words.caption, textsOf(post.captions));
+      if (words.signoff === null) delete post.signoff;
+      else if (words.signoff !== undefined) post.signoff = words.signoff;
       post.edited = true;
       delete post.advice;
       return { batch, result: batch };

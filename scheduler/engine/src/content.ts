@@ -139,11 +139,19 @@ export interface PostArt {
   offer?: PostOffer;
 }
 
+/** The owner's own wording for the sign-off of one poster: only what differs from the brand's name and the website's address. */
+export interface PosterSignoff {
+  brandName?: string;
+  domain?: string;
+}
+
 export interface PlannedPost {
   id: string;
   date: string;
   painPoint: string;
   mode: ImageMode;
+  /** The sign-off wording chosen for this poster in review; absent means the brand's name and the website's address. */
+  signoff?: PosterSignoff;
   /** Text inside |pipes| is rendered in the accent colour. */
   headline: string;
   subline: string;

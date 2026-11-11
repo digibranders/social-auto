@@ -322,3 +322,14 @@ export function networkState(client: Pick<ClientSummary, 'channels'> | undefined
 /** The networks a client has an account on, in the order they are offered; used to tick the right boxes when the client is chosen. */
 export const connectedNetworkKeys = (client: Pick<ClientSummary, 'channels'>): string[] =>
   NETWORK_CHOICES.filter((n) => networkState(client, n.key)?.state !== 'not-connected').map((n) => n.key);
+
+/** What a poster's sign-off says: the brand's name and the website's address, unless the owner changed either for this poster. */
+export interface SignoffView { brandName: string; domain: string; changed: boolean }
+
+export function signoffView(batch: { signoffDefault?: { brandName: string; domain: string } }, post: { signoff?: { brandName?: string; domain?: string } }): SignoffView | null {
+  const base = batch.signoffDefault;
+  if (!base) return null;
+  const brandName = post.signoff?.brandName ?? base.brandName;
+  const domain = post.signoff?.domain ?? base.domain;
+  return { brandName, domain, changed: brandName !== base.brandName || domain !== base.domain };
+}

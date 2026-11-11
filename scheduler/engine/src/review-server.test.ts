@@ -424,3 +424,32 @@ test('jobs: drawing needs a written batch with at least one kept post, is asked 
     await s.done();
   }
 });
+
+test('the sign-off of a written post can be changed over the API: the list shows the default and the choice, a foreign address is refused', async () => {
+  const s = await start();
+  try {
+    const brandDir = join(s.root, 'brands', 'acme');
+    writeFileSync(join(brandDir, 'brand.json'), JSON.stringify({ name: 'Acme', website: 'https://www.acme.com' }));
+    const plan = { brand: 'acme', timezone: '+05:30', posts: [{ id: 'p1', headline: 'Answers from your own docs', subline: '', caption: 'The assistant answers from your pages.', hashtags: ['#acme'] }] };
+    writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify(plan));
+    new CopyStage(brandDir, 'acme').open('week-01.json', [{ postId: 'p1', headline: plan.posts[0]?.headline ?? '', caption: 'The assistant answers from your pages.\n\n#acme' }]);
+    const put = (body: unknown) => s.call('/review/copy/acme/week-01.json/p1/edit', { method: 'PUT', body: JSON.stringify(body) });
+    type Listed = { batches: Array<{ signoffDefault?: { brandName: string; domain: string }; posts: Array<{ headline: string; signoff?: { brandName?: string; domain?: string } }> }> };
+    const before = (await (await s.call('/review/copy')).json()) as Listed;
+    assert.deepEqual(before.batches[0]?.signoffDefault, { brandName: 'Acme', domain: 'acme.com' });
+    assert.equal(before.batches[0]?.posts[0]?.signoff, undefined);
+
+    const ok = await put({ by: 'owner', brandName: 'Acme Labs', domain: 'acme.com/pricing' });
+    assert.equal(ok.status, 200);
+    const after = (await (await s.call('/review/copy')).json()) as Listed;
+    assert.deepEqual(after.batches[0]?.posts[0]?.signoff, { brandName: 'Acme Labs', domain: 'acme.com/pricing' });
+    assert.equal(after.batches[0]?.posts[0]?.headline, 'Answers from your own docs');
+    assert.deepEqual((JSON.parse(readFileSync(join(brandDir, 'week-01.json'), 'utf8')) as { posts: Array<{ signoff?: unknown }> }).posts[0]?.signoff, { brandName: 'Acme Labs', domain: 'acme.com/pricing' });
+
+    const foreign = await put({ by: 'owner', domain: 'rival.com' });
+    assert.equal(foreign.status, 422);
+    assert.match(((await foreign.json()) as { error: string }).error, /own website/);
+  } finally {
+    await s.done();
+  }
+});

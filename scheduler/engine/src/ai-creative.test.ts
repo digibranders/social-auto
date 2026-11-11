@@ -651,3 +651,9 @@ test('a wide run asks the picture model for the wide size and the prompt for a w
     ctx.done();
   }
 });
+
+test('manifestOf draws the owner\'s sign-off wording when one was chosen, else the brand\'s name and the website\'s address', () => {
+  const chosen = { ...post('p', 'Track |tasks|'), signoff: { brandName: 'Oye Chats', domain: 'oyechats.com/pricing' } };
+  assert.deepEqual(manifestOf(chosen, brand), { headline: 'Track tasks', brandName: 'Oye Chats', domain: 'oyechats.com/pricing' });
+  assert.deepEqual(manifestOf({ ...chosen, signoff: { brandName: 'Oye Chats' } }, brand), { headline: 'Track tasks', brandName: 'Oye Chats', domain: 'oyechats.com' });
+});

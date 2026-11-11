@@ -1,7 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
 import { AUTO_WARNING, type ClientSummary } from './clients.ts';
-import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, networkState, NEW_CLIENT, signoffView, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -10,8 +10,8 @@ interface Detail {
   history: ReviewSummary[];
 }
 
-interface CopyPost { postId: string; headline: string; caption: string; captions?: Record<string, { text: string; edited?: boolean }>; edited?: boolean; advice?: string; state: 'pending' | 'kept' | 'dropped' }
-interface CopyBatch { brand: string; planFile: string; posts: CopyPost[]; drawnAt?: string }
+interface CopyPost { postId: string; headline: string; caption: string; captions?: Record<string, { text: string; edited?: boolean }>; edited?: boolean; advice?: string; state: 'pending' | 'kept' | 'dropped'; signoff?: { brandName?: string; domain?: string } }
+interface CopyBatch { brand: string; planFile: string; posts: CopyPost[]; drawnAt?: string; /** The brand's name and the website's address, shown on a poster unless changed. */ signoffDefault?: { brandName: string; domain: string } }
 
 /** What the owner is typing in the "write posts for a website" form; kept here so a redraw does not wipe it. */
 interface StartForm { site: string; page: boolean; networks: string[]; weeks: number; postsPerWeek: number; /** The client the posts are for: a client's name, or NEW_CLIENT for one named after the website. */ client: string }
@@ -34,7 +34,7 @@ interface State {
   jobs: JobView[];
   start: StartForm;
   /** The written post being edited, and which network's caption ('' is the main caption). */
-  editing: { batch: string; postId: string; network: string; draft?: { headline: string; caption: string } } | null;
+  editing: { batch: string; postId: string; network: string; draft?: { headline: string; caption: string; brandName: string; domain: string } } | null;
   /** The client each batch's pictures are drawn for, chosen from the clients list; the client named like the website until the owner picks another. */
   clientFor: Record<string, string>;
   /** The client chosen when the posts were written, by the batch's name (the website's), used until another is picked under the batch. */
@@ -122,8 +122,8 @@ async function startWriting(redraw: () => void): Promise<void> {
   await loadJobs(redraw);
 }
 
-async function saveEdit(batch: CopyBatch, post_: CopyPost, network: string, headline: string, caption: string, redraw: () => void): Promise<void> {
-  const done = await post({ edit: { brand: batch.brand, planFile: batch.planFile, postId: post_.postId, headline, caption, ...(network ? { network } : {}) } }, 'Your change could not be saved. Nothing changed.');
+async function saveEdit(batch: CopyBatch, post_: CopyPost, network: string, words: { headline: string; caption: string; brandName?: string; domain?: string }, redraw: () => void): Promise<void> {
+  const done = await post({ edit: { brand: batch.brand, planFile: batch.planFile, postId: post_.postId, headline: words.headline, caption: words.caption, ...(network ? { network } : {}), ...(words.brandName !== undefined ? { brandName: words.brandName } : {}), ...(words.domain !== undefined ? { domain: words.domain } : {}) } }, 'Your change could not be saved. Nothing changed.');
   if (done.ok) { state.editing = null; state.notice = 'Saved. The words were checked against the website.'; }
   await loadCopy(redraw);
 }
@@ -254,16 +254,28 @@ function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: ()
     const caption = h('textarea', { class: 'rv-input rv-textarea', rows: '6', maxlength: '4000', 'aria-label': `${e.label} caption` });
     caption.value = editing.draft?.caption ?? body;
     // What is typed is kept in the page's state, so a redraw (the page refreshes itself) does not wipe it.
-    const remember = (): void => { editing.draft = { headline: headline.value, caption: caption.value }; };
+    // The sign-off lines of the poster: the brand's name and the website's address, unless changed for this poster.
+    const sign = signoffView(batch, p);
+    const brandName = sign ? h('input', { class: 'rv-input', type: 'text', maxlength: '40', 'aria-label': 'Brand name on the poster' }) : null;
+    const domain = sign ? h('input', { class: 'rv-input', type: 'text', maxlength: '60', 'aria-label': 'Web address on the poster' }) : null;
+    if (brandName && sign) brandName.value = editing.draft?.brandName ?? sign.brandName;
+    if (domain && sign) domain.value = editing.draft?.domain ?? sign.domain;
+    const remember = (): void => { editing.draft = { headline: headline.value, caption: caption.value, brandName: brandName?.value ?? '', domain: domain?.value ?? '' }; };
     headline.addEventListener('input', remember);
     caption.addEventListener('input', remember);
+    brandName?.addEventListener('input', remember);
+    domain?.addEventListener('input', remember);
     // After a redraw the owner carries on typing where they were.
     if (editing.draft) setTimeout(() => { if (caption.isConnected) { caption.focus(); caption.setSelectionRange(caption.value.length, caption.value.length); } }, 0);
     return h('div', { class: 'rv-copy-caption' },
       h('small', { class: 'muted' }, `Editing ${e.label}. The words are checked against the website before they are saved.${hashtags ? ' The hashtags stay as they are.' : ''}`),
       headline, caption,
+      brandName && domain ? h('div', { class: 'rv-signoff-edit' },
+        h('label', { class: 'rv-field' }, 'Brand name on the poster', brandName),
+        h('label', { class: 'rv-field' }, 'Web address on the poster', domain),
+        h('small', { class: 'muted' }, 'The sign-off at the bottom of the poster. With the client\'s real logo on the poster, the logo carries the name and the name is not drawn. The address must be on the client\'s own website. Empty goes back to the default.')) : null,
       h('div', { class: 'rv-actions' },
-        button('Save', 'btn btn-primary', () => void saveEdit(batch, p, e.network, headline.value, caption.value, redraw), 'Save', state.busy),
+        button('Save', 'btn btn-primary', () => void saveEdit(batch, p, e.network, { headline: headline.value, caption: caption.value, ...(brandName && domain ? { brandName: brandName.value, domain: domain.value } : {}) }, redraw), 'Save', state.busy),
         button('Cancel', 'btn', () => { state.editing = null; redraw(); })));
   });
 }
@@ -299,6 +311,7 @@ function copyView(redraw: () => void): HTMLElement | null {
           'div',
           { class: `rv-copy-post rv-copy-${p.state}` },
           h('p', {}, h('b', {}, p.headline), p.edited ? ' (edited by you)' : ''),
+          (() => { const sign = signoffView(batch, p); return sign ? h('p', { class: 'muted rv-signoff' }, `On the poster: ${sign.brandName} | ${sign.domain}${sign.changed ? ' (changed by you)' : ''}`) : null; })(),
           ...postCaptions(batch, p, locked, redraw),
           p.advice ? h('p', { class: 'rv-copy-advice' }, `Suggested drop: ${p.advice}`) : null,
           h('div', { class: 'rv-actions' },

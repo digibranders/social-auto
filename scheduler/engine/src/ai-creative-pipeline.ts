@@ -141,7 +141,7 @@ export function observedPeople(readings: readonly CreativeReview[]): { observed:
 }
 
 export const manifestOf = (post: PlannedPost, brand: Brand, logo?: CreativeRunInput['logo']): TextManifest => ({
-  headline: plainHeadline(post.headline), brandName: brand.name, domain: displayDomain(brand.website),
+  headline: plainHeadline(post.headline), brandName: post.signoff?.brandName ?? brand.name, domain: post.signoff?.domain ?? displayDomain(brand.website),
   // A full logo carries the name, so the name is not drawn beside it; a symbol alone does not, so the name stays.
   ...(logo?.kind === 'wordmark' ? { brandSignoff: 'logo' as const } : {}),
 });

@@ -141,3 +141,45 @@ test('changing Instagram\'s caption changes the main caption and its network ver
     done();
   }
 });
+
+const DEFAULTS = { brandName: 'Acme', domain: 'acme.com' };
+
+test('the brand name and web address of one poster can be changed; the plan and the list follow and an empty one goes back to the default', () => {
+  const { dir, stage, done } = workspace();
+  try {
+    const batch = edit(dir, { brandName: ' Acme   Labs ', domain: 'https://www.Acme.com/Pricing/', signoffDefaults: DEFAULTS });
+    assert.deepEqual(batch.posts[0]?.signoff, { brandName: 'Acme Labs', domain: 'acme.com/Pricing' });
+    assert.equal(batch.posts[0]?.edited, true);
+    const plan = () => JSON.parse(readFileSync(join(dir, 'week-01.json'), 'utf8')) as { posts: Array<{ id: string; headline: string; signoff?: unknown }> };
+    assert.deepEqual(plan().posts[0]?.signoff, { brandName: 'Acme Labs', domain: 'acme.com/Pricing' });
+    assert.equal(plan().posts[0]?.headline, 'Set up in |ten minutes|', 'the words and their emphasis are untouched');
+    assert.equal(plan().posts[1]?.signoff, undefined, 'other posts keep the default');
+    assert.equal(stage.get('week-01.json').posts[1]?.signoff, undefined);
+
+    // Only the piece given changes; saying the default again, or nothing, clears it.
+    assert.deepEqual(edit(dir, { domain: 'shop.acme.com', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: 'Acme Labs', domain: 'shop.acme.com' });
+    assert.deepEqual(edit(dir, { brandName: 'Acme', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { domain: 'shop.acme.com' });
+    const cleared = edit(dir, { domain: '', signoffDefaults: DEFAULTS });
+    assert.equal(cleared.posts[0]?.signoff, undefined);
+    assert.equal(plan().posts[0]?.signoff, undefined);
+  } finally {
+    done();
+  }
+});
+
+test('a brand name or address that is not allowed is refused and nothing changes', () => {
+  const { dir, done } = workspace();
+  try {
+    const before = readFileSync(join(dir, 'week-01.json'), 'utf8');
+    assert.match(refusal(() => edit(dir, { brandName: 'x'.repeat(41), signoffDefaults: DEFAULTS })), /REJECTED.*at most 40/);
+    assert.match(refusal(() => edit(dir, { brandName: 'Acme "Pro"', signoffDefaults: DEFAULTS })), /REJECTED.*quotation marks/);
+    assert.match(refusal(() => edit(dir, { domain: 'not an address', signoffDefaults: DEFAULTS })), /REJECTED.*does not look like a web address/);
+    assert.match(refusal(() => edit(dir, { domain: 'rival.com', signoffDefaults: DEFAULTS })), /REJECTED.*client's own website \(acme\.com\)/);
+    assert.match(refusal(() => edit(dir, { domain: 'acme.com.evil.io', signoffDefaults: DEFAULTS })), /REJECTED.*own website/);
+    assert.match(refusal(() => edit(dir, { domain: `acme.com/${'a'.repeat(60)}`, signoffDefaults: DEFAULTS })), /REJECTED.*at most 60/);
+    assert.match(refusal(() => edit(dir, { brandName: 'Acme Labs' })), /REJECTED.*no name or website saved/);
+    assert.equal(readFileSync(join(dir, 'week-01.json'), 'utf8'), before);
+  } finally {
+    done();
+  }
+});
