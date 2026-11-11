@@ -85,19 +85,19 @@ export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunR
   if (carouselFacts.length < MIN_FACTS) return skip(`a carousel needs at least three verified facts, ${input.brand.name} has ${carouselFacts.length}`);
   if (input.networks.length === 0) return skip('a carousel needs at least one channel to write for');
 
-  log(`Planning a carousel from ${carouselFacts.length} verified facts…`);
+  log(`1/4 Planning a carousel from ${carouselFacts.length} verified facts…`);
   const avoidTopics = history.slice(-AVOID_TOPICS).map((c) => c.topic);
   const draft = await (input.deps?.plan ?? ((request) => planCarousel({ ai: input.ai, brandName: input.brand.name, ...request })))({ facts: carouselFacts, avoidTopics });
   log(`    Topic: ${draft.topic} (${draft.slides.length} slides)`);
 
   const factTexts = [...new Set(draft.slides.flatMap((s) => s.factIds))].map((id) => carouselFacts.find((f) => f.id === id)?.text ?? '').filter((t) => t !== '');
-  log(`Writing a caption for each of ${input.networks.join(', ')}…`);
+  log(`2/4 Writing a caption for each of ${input.networks.join(', ')}…`);
   const closingLine = input.brand.cta?.text ?? `Visit ${displayDomain(input.brand.website)} (link in bio)`;
   const captions = await (input.deps?.captions ?? ((d, texts) => writeCarouselCaptions({ ai: input.ai, topic: d.topic, headlines: d.slides.map((s) => s.headline), facts: texts, closingLine, networks: input.networks })))(draft, factTexts);
 
   const outDir = join(input.outRoot, input.brandSlug, carouselId);
   mkdirSync(outDir, { recursive: true });
-  log('Drawing the slides…');
+  log('3/4 Drawing the slides with the picture model…');
   const slides = await makeCarouselSlides({
     ai: input.ai, brand: input.brand, brandSlug: input.brandSlug, facts: carouselFacts, draft, idPrefix: carouselId, date: input.date, outDir,
     ...(input.logo ? { logo: input.logo } : {}), log: (m) => log(`    ${m}`), ...(input.deps?.slides ? { deps: input.deps.slides } : {}),
@@ -120,6 +120,6 @@ export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunR
   };
   await writeFileAtomic(join(input.brandDir, planFile), `${JSON.stringify(plan, null, 2)}\n`);
   await writeFileAtomic(join(input.brandDir, HISTORY_FILE), `${JSON.stringify({ carousels: [...history, { id: carouselId, topic: draft.topic, createdAt: now().toISOString(), planFile }] }, null, 2)}\n`);
-  log(`The carousel is in the owner's review queue (${planFile}); nothing was scheduled or published.`);
+  log(`4/4 The carousel is in the owner's review queue (${planFile}); nothing was scheduled or published.`);
   return { status: 'queued', carouselId, planFile, topic: draft.topic, ...(captions.fallback.length > 0 ? { fallback: captions.fallback } : {}) };
 }
