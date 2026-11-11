@@ -165,6 +165,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     versionId: item.version.versionId, brand: item.version.brand, postId: item.version.postId, planFile: item.version.planFile, versionNumber: item.version.versionNumber, status: item.status,
     headline: item.version.headline, caption: item.version.caption, createdAt: item.version.createdAt, costUsd: item.version.costUsd,
     ...(item.version.network ? { network: item.version.network } : {}),
+    ...(item.version.carousel ? { carousel: item.version.carousel } : {}),
     ...(item.version.width && item.version.height ? { width: item.version.width, height: item.version.height, shape: item.version.width / item.version.height >= 1.2 ? 'wide' : item.version.width / item.version.height <= 0.83 ? 'tall' : 'square' } : {}),
     ...(item.decision ? { decidedBy: item.decision.by, decidedAt: item.decision.at, reason: item.decision.reason } : {}),
   });
@@ -315,6 +316,28 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (waiting.length === 0) throw new ReviewError('NOT_FOUND', 'nothing is waiting for approval for that topic');
         const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
         return send(res, 200, { decisions });
+      }
+      // A carousel: shown whole, and approved or rejected as one step. Its pictures are served by the ordinary picture route, by each slide's version id.
+      if (parts[0] === 'review' && parts[1] === 'carousels' && (parts.length === 4 || (parts.length === 5 && req.method === 'POST' && (parts[4] === 'approve' || parts[4] === 'reject')))) {
+        const carouselBrand = decodeURIComponent(parts[2] ?? '');
+        const carouselId = decodeURIComponent(parts[3] ?? '');
+        if (!BRAND.test(carouselBrand) || !brands().includes(carouselBrand) || !/^[A-Za-z0-9._-]{1,80}$/.test(carouselId)) throw new ReviewError('NOT_FOUND', 'no such carousel');
+        const carouselStore = storeFor(carouselBrand);
+        if (parts.length === 5) {
+          const body = await readJson(req);
+          const by = text(body['by'], 80);
+          if (parts[4] === 'approve') carouselStore.approveCarousel(carouselId, by);
+          else carouselStore.rejectCarousel(carouselId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
+          return send(res, 200, { status: carouselStore.carouselStatus(carouselId) });
+        }
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        const { count, slides, captions } = carouselStore.carouselSlides(carouselId);
+        return send(res, 200, {
+          id: carouselId, count, status: carouselStore.carouselStatus(carouselId),
+          slides: slides.map((item, index) => (item ? { position: index + 1, ...summary(item) } : { position: index + 1, versionId: null, status: 'missing' })),
+          captions: captions.map(summary),
+          reasons: REJECTION_REASONS,
+        });
       }
       if (parts[0] !== 'review' || parts[1] !== 'posts') return send(res, 404, { error: 'Not found' });
 

@@ -488,3 +488,62 @@ test('the written list also tells the page each network\'s caption rules', async
     await s.done();
   }
 });
+
+function carouselOn(s: Awaited<ReturnType<typeof start>>): void {
+  const store = s.stores.acme;
+  for (const n of [1, 2, 3]) store.addVersion(version(s.pictures(`s${n}.jpg`, `slide ${n}`), { postId: `car1-s${n}`, headline: `Slide ${n}`, caption: '', carousel: { id: 'car1', position: n, count: 3 } }));
+  for (const network of ['instagram', 'linkedin']) store.addVersion(version(s.pictures('cover.jpg', 'slide 1'), { postId: 'car1', network, headline: 'Choosing a curry', caption: `${network} caption`, carousel: { id: 'car1', position: 0, count: 3 } }));
+}
+
+test('the queue says which carousel a version belongs to, and a carousel is shown whole with its slides in order and its captions', async () => {
+  const s = await start();
+  try {
+    carouselOn(s);
+    const list = (await (await s.call('/review/posts')).json()) as { posts: Array<{ postId: string; carousel?: { id: string; position: number; count: number } }> };
+    assert.equal(list.posts.filter((p) => p.carousel?.id === 'car1').length, 5);
+    const view = (await (await s.call('/review/carousels/acme/car1')).json()) as { id: string; count: number; status: string; slides: Array<{ position: number; versionId: string; status: string; headline: string }>; captions: Array<{ network: string; caption: string }> };
+    assert.equal(view.id, 'car1');
+    assert.equal(view.count, 3);
+    assert.equal(view.status, 'pending');
+    assert.deepEqual(view.slides.map((x) => [x.position, x.headline, x.status]), [[1, 'Slide 1', 'pending'], [2, 'Slide 2', 'pending'], [3, 'Slide 3', 'pending']]);
+    assert.deepEqual(view.captions.map((c) => c.network).sort(), ['instagram', 'linkedin']);
+    // The slide's picture is served through the ordinary picture route, by version id.
+    assert.equal(await (await s.call(`/review/posts/${view.slides[1]?.versionId}/image`)).text(), 'slide 2');
+  } finally {
+    await s.done();
+  }
+});
+
+test('one step approves the whole carousel, and then it reads as approved; a rejection withdraws it all', async () => {
+  const s = await start();
+  try {
+    carouselOn(s);
+    const approved = await s.call('/review/carousels/acme/car1/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal(approved.status, 200);
+    assert.equal(((await approved.json()) as { status: string }).status, 'approved');
+    assert.ok(s.stores.acme.list().every((i) => i.status === 'approved'));
+    const rejected = await s.call('/review/carousels/acme/car1/reject', { method: 'POST', body: JSON.stringify({ by: 'owner', reason: 'style', comment: 'not our look' }) });
+    assert.equal(rejected.status, 200);
+    assert.equal(((await rejected.json()) as { status: string }).status, 'rejected');
+  } finally {
+    await s.done();
+  }
+});
+
+test('a carousel that cannot be approved says why, an unknown one is not found, and a name or secret is needed', async () => {
+  const s = await start();
+  try {
+    s.stores.acme.addVersion(version(s.pictures('s1.jpg', 'slide 1'), { postId: 'car1-s1', caption: '', carousel: { id: 'car1', position: 1, count: 3 } }));
+    const missing = await s.call('/review/carousels/acme/car1/approve', { method: 'POST', body: JSON.stringify({ by: 'owner' }) });
+    assert.equal(missing.status, 400);
+    assert.match(((await missing.json()) as { error: string }).error, /slide 2 has no picture yet/);
+    assert.equal(((await (await s.call('/review/carousels/acme/car1')).json()) as { status: string }).status, 'incomplete');
+    assert.equal((await s.call('/review/carousels/acme/nope')).status, 404);
+    assert.equal((await s.call('/review/carousels/nobrand/car1')).status, 404);
+    assert.equal((await s.call('/review/carousels/acme/car1/approve', { method: 'POST', body: JSON.stringify({ by: '' }) })).status, 400);
+    assert.equal((await s.call('/review/carousels/acme/car1', { auth: false })).status, 401);
+    assert.equal((await s.call('/review/carousels/acme/car1/reject', { method: 'POST', body: JSON.stringify({ by: 'owner', reason: 'nonsense' }) })).status, 400);
+  } finally {
+    await s.done();
+  }
+});

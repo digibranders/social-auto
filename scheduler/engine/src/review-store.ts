@@ -418,6 +418,17 @@ export class ReviewStore {
     return { count: first.count, slides, captions };
   }
 
+  /** Where a carousel stands as a whole: waiting for a slide, blocked, rejected, approved (everything, as it is now) or waiting for the owner. */
+  carouselStatus(id: string): 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending' {
+    const { slides, captions } = this.carouselSlides(id);
+    if (slides.some((s) => s === undefined)) return 'incomplete';
+    const all = [...(slides as ReviewItem[]), ...captions];
+    if (all.some((i) => i.status === 'blocked')) return 'blocked';
+    if (all.some((i) => i.status === 'rejected')) return 'rejected';
+    if (captions.length > 0 && all.every((i) => i.status === 'approved')) return 'approved';
+    return 'pending';
+  }
+
   /**
    * Approves a whole carousel in one step: the latest version of every slide and of every network's caption. Everything is checked first and nothing is approved
    * unless all of it can be (every slide present, none blocked or rejected, at least one caption, every picture as it was made).
