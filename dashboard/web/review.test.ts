@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -143,4 +143,13 @@ test('the shown client is the one picked if still offered, else the one named li
   assert.equal(chosenClient(options, 'gone', 'acme')?.value, 'acme');
   assert.equal(chosenClient(options, undefined, 'other')?.value, 'acme');
   assert.equal(chosenClient([], undefined, 'acme'), undefined);
+});
+
+test('the write form offers a new client first, then the existing clients, none of them typed', () => {
+  const options = startClientOptions([clientNamed('zeta'), clientNamed('acme', { approvalMode: 'auto' })]);
+  assert.deepEqual(options.map((o) => o.value), [NEW_CLIENT, 'acme', 'zeta']);
+  assert.equal(options[0]?.label, 'New client (named after the website)');
+  assert.match(options[0]?.detail ?? '', /no accounts connected yet/);
+  assert.match(options[1]?.detail ?? '', /Automatic: .*without you looking at them/);
+  assert.deepEqual(startClientOptions([]).map((o) => o.value), [NEW_CLIENT]);
 });

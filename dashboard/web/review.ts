@@ -270,16 +270,21 @@ export const approvalText = (mode: ClientSummary['approvalMode']): string =>
     ? 'Automatic: posters that pass the automatic checks are approved by the system and published without you looking at them.'
     : 'Manual: you approve each poster in Review before it can be published.';
 
+/** The clients you already have, by name, each with where its posts go and who approves them. */
+export function existingClientOptions(clients: readonly ClientSummary[]): ClientOption[] {
+  return [...clients].sort((a, b) => a.label.localeCompare(b.label)).map((c): ClientOption => ({
+    value: c.brand,
+    label: c.label,
+    detail: `Posts to ${accountsText(c)}. ${approvalText(c.approvalMode)}`,
+  }));
+}
+
 /**
  * The clients a batch's posters can be drawn for. The existing clients come first; when the website's own name is not one of them it is offered
  * first as a new client, which has no accounts yet. Nothing is typed, so a name cannot be mistyped into a different client.
  */
 export function clientOptions(clients: readonly ClientSummary[], batchBrand: string): ClientOption[] {
-  const existing = [...clients].sort((a, b) => a.label.localeCompare(b.label)).map((c): ClientOption => ({
-    value: c.brand,
-    label: c.label,
-    detail: `Posts to ${accountsText(c)}. ${approvalText(c.approvalMode)}`,
-  }));
+  const existing = existingClientOptions(clients);
   if (clients.some((c) => c.brand === batchBrand)) return existing;
   return [{ value: batchBrand, label: `New client: ${batchBrand}`, detail: `${batchBrand} is not one of your clients yet, so it has no accounts connected. Connect accounts on the Clients page before anything can be published.` }, ...existing];
 }
@@ -287,4 +292,13 @@ export function clientOptions(clients: readonly ClientSummary[], batchBrand: str
 /** The choice to show: the one picked earlier if it is still on offer, else the client named like the website, else the first. */
 export function chosenClient(options: readonly ClientOption[], picked: string | undefined, batchBrand: string): ClientOption | undefined {
   return options.find((o) => o.value === picked) ?? options.find((o) => o.value === batchBrand) ?? options[0];
+}
+
+/** The value of the "new client" choice in the write form: the client is named after the website. */
+export const NEW_CLIENT = '';
+
+/** The choices for who the posts are written for: a new client named after the website first, then the existing clients. */
+export function startClientOptions(clients: readonly ClientSummary[]): ClientOption[] {
+  const newClient: ClientOption = { value: NEW_CLIENT, label: 'New client (named after the website)', detail: 'A new client with no accounts connected yet. Connect accounts on the Clients page before anything can be published.' };
+  return [newClient, ...existingClientOptions(clients)];
 }
