@@ -315,3 +315,17 @@ test('a carousel that is not fully approved is not exported at all, never as its
     b.done();
   }
 });
+
+test('a carousel is never sent through the team\'s one shared Instagram account, even when no plan record says where it goes', async () => {
+  const b = carouselBrand();
+  try {
+    rmSync(join(b.brandDir, 'campaigns'), { recursive: true, force: true });
+    b.store.approveCarousel('car1', 'owner');
+    const [post] = await exportToPublisher(b.brandDir, b.publisher, Date.now(), { brand: 'oyechats' });
+    assert.equal(post?.fromPlan, true, 'only the client\'s own connected accounts');
+    assert.deepEqual(post?.channels, ['instagram', 'linkedin']);
+    assert.equal(post?.images?.length, 3);
+  } finally {
+    b.done();
+  }
+});

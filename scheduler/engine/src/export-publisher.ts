@@ -203,7 +203,8 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
         image: slidePaths.length > 0 && slidePaths.every((p) => p !== null) ? slidePaths[0] ?? null : poster,
         ...(slidePaths.length > 0 && slidePaths.every((p): p is string => p !== null) ? { images: slidePaths } : {}),
         // A fully AI poster goes only to the platforms the owner chose (and, when it was made per network, only those approved); every other plan keeps going to every connected channel.
-        ...(approved && channels ? { channels, ...(platforms ? { fromPlan: true as const } : {}) } : {}),
+        // A carousel is only ever sent to the client's own connected accounts, never through the team's one shared Instagram account (which no carousel has been proven on), whether or not a plan record names the platforms.
+        ...(approved && channels ? { channels, ...(platforms || slides ? { fromPlan: true as const } : {}) } : {}),
         ...(Object.keys(variants).length > 0 ? { variants } : {}),
         // A fully AI poster has the time its plan chose; the frequent run sends it then (the daily run would send one set for the afternoon the next morning).
         ...(approved ? { ownTime: true as const } : {}),
