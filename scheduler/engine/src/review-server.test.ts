@@ -547,3 +547,27 @@ test('a carousel that cannot be approved says why, an unknown one is not found, 
     await s.done();
   }
 });
+
+test('jobs: a carousel can be asked for only for a client whose website was already read, needs a channel, and a second ask is the same job', async () => {
+  const s = await start();
+  try {
+    const post = (body: unknown) => s.call('/review/jobs', { method: 'POST', body: JSON.stringify(body) });
+    const ask = { kind: 'carousel', site: 'acme.example.com', networks: ['instagram', 'linkedin'], by: 'owner' };
+    const unread = await post(ask);
+    assert.equal(unread.status, 400);
+    assert.match(((await unread.json()) as { error: string }).error, /not been read yet/);
+    writeFileSync(join(s.root, 'brands', 'acme', 'brand.json'), '{}');
+    const bad = [{ ...ask, networks: [] }, { ...ask, networks: ['tiktok'] }, { ...ask, startDate: '2020-01-01' }, { ...ask, time: '25:99' }, { ...ask, by: ' ' }];
+    for (const body of bad) assert.equal((await post(body)).status, 400, JSON.stringify(body));
+    const day = new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10);
+    const first = await post({ ...ask, startDate: day, time: '11:30' });
+    assert.equal(first.status, 202);
+    const { job } = (await first.json()) as { job: { id: string; kind: string; brand: string; networks: string[]; startDate: string; time: string } };
+    assert.deepEqual([job.kind, job.brand, job.networks, job.startDate, job.time], ['carousel', 'acme', ['instagram', 'linkedin'], day, '11:30']);
+    const again = await post(ask);
+    assert.equal(again.status, 200);
+    assert.equal(((await again.json()) as { job: { id: string } }).job.id, job.id);
+  } finally {
+    await s.done();
+  }
+});
