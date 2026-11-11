@@ -120,6 +120,29 @@ export async function postPhotoFromUrl(pageId: string, pageToken: string, imageU
   return { photoId: textOf(body, 'id', 'photo post'), postId: typeof body['post_id'] === 'string' ? body['post_id'] : null };
 }
 
+/** A post with several pictures holds two to ten of them. */
+export const PHOTOS_MIN = 2;
+export const PHOTOS_MAX = 10;
+
+/**
+ * Posts several pictures as one timeline post: each is uploaded unpublished (Facebook fetches it by address), then one post attaches them all in order.
+ * The words belong to the post, not to any picture.
+ */
+export async function postPhotos(pageId: string, pageToken: string, imageUrls: readonly string[], caption: string): Promise<{ postId: string }> {
+  if (imageUrls.length < PHOTOS_MIN || imageUrls.length > PHOTOS_MAX) {
+    throw new FacebookApiError('photo post', `a post with several pictures needs ${PHOTOS_MIN} to ${PHOTOS_MAX} pictures, not ${imageUrls.length}`);
+  }
+  const photoIds: string[] = [];
+  for (const url of imageUrls) {
+    const uploaded = await graph('photo upload', `/${pageId}/photos`, { method: 'POST', body: new URLSearchParams({ url, published: 'false', access_token: pageToken }) });
+    photoIds.push(textOf(uploaded, 'id', 'photo upload'));
+  }
+  const form = new URLSearchParams({ message: caption, access_token: pageToken });
+  photoIds.forEach((id, i) => form.set(`attached_media[${i}]`, JSON.stringify({ media_fbid: id })));
+  const post = await graph('photo post', `/${pageId}/feed`, { method: 'POST', body: form });
+  return { postId: textOf(post, 'id', 'photo post') };
+}
+
 /** The public address of a post, or null when Facebook does not give one. */
 export async function postLink(postId: string, pageToken: string): Promise<string | null> {
   const params = new URLSearchParams({ fields: 'permalink_url', access_token: pageToken });

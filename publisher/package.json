@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "carousel:e2e": "node --import ./dev/resolver.ts scripts/carousel-local-e2e.ts",
     "test": "node --import ./dev/resolver.ts --test lib/*.test.ts server/*.test.ts"
   },
   "devDependencies": {

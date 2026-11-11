@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { addLinkedInMember, postedKey } from './channels.ts';
 import { parseKey } from './crypto.ts';
 import { sendPost } from './send-post.ts';
@@ -87,4 +87,37 @@ test('a dry run records nothing for a gone account', async () => {
     await sendPost(planPost(['facebook:gone']), 'https://example.test', true);
     assert.deepEqual((await loadPosted()).log, {});
   });
+});
+
+test('a carousel for the team\'s Instagram account is prepared as one container, and a dry run publishes nothing', async () => {
+  const log: string[] = [];
+  let n = 0;
+  const fetchMock = mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('media_publish')) { log.push('PUBLISHED'); return Response.json({ id: 'media1' }); }
+    if (init?.method === 'POST' && url.endsWith('/media')) {
+      const form = new URLSearchParams(String(init.body));
+      n += 1;
+      log.push(form.get('media_type') === 'CAROUSEL' ? `carousel(${form.get('children')})` : `item(${form.get('image_url')})`);
+      return Response.json({ id: `c${n}` });
+    }
+    if (url.includes('fields=status_code')) return Response.json({ status_code: 'FINISHED' });
+    return Response.json({ data: [] });
+  });
+  const before = { token: process.env['INSTAGRAM_TOKEN'], user: process.env['INSTAGRAM_USER_ID'] };
+  process.env['INSTAGRAM_TOKEN'] = 'ig-token';
+  process.env['INSTAGRAM_USER_ID'] = '9';
+  try {
+    await withLocalStore(async () => {
+      const post: ScheduledPost = { brand: 'acme', id: 'c1', date: '2026-11-11T10:00:00+05:30', caption: 'Words.', image: '/posts/acme/1.jpg', images: ['/posts/acme/1.jpg', '/posts/acme/2.jpg', '/posts/acme/3.jpg'] };
+      const outcome = await sendPost(post, 'https://pub.example', true);
+      assert.equal(outcome.instagram['status'], 'dry-run-ready');
+      assert.equal(outcome.instagram['container'], 'c4');
+    });
+  } finally {
+    fetchMock.mock.restore();
+    if (before.token === undefined) delete process.env['INSTAGRAM_TOKEN']; else process.env['INSTAGRAM_TOKEN'] = before.token;
+    if (before.user === undefined) delete process.env['INSTAGRAM_USER_ID']; else process.env['INSTAGRAM_USER_ID'] = before.user;
+  }
+  assert.deepEqual(log, ['item(https://pub.example/posts/acme/1.jpg)', 'item(https://pub.example/posts/acme/2.jpg)', 'item(https://pub.example/posts/acme/3.jpg)', 'carousel(c1,c2,c3)']);
 });

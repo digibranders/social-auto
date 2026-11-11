@@ -259,3 +259,73 @@ test('a plan bound to exact accounts exports its posters to those accounts, and 
     b.done();
   }
 });
+
+function carouselBrand(): { brandDir: string; publisher: string; store: ReviewStore; redraw: () => void; done: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'export-carousel-'));
+  const brandDir = join(root, 'brands', 'oyechats');
+  const publisher = join(root, 'publisher');
+  mkdirSync(join(brandDir, 'campaigns'), { recursive: true });
+  const post = { id: 'car1', date: '2099-11-10T10:00:00+05:30', painPoint: 'p', mode: 'ai', headline: 'Choosing', subline: '', caption: 'Choosing a curry', hashtags: [], imagePrompt: 'a carousel' };
+  writeFileSync(join(brandDir, 'week-01.json'), JSON.stringify({ brand: 'oyechats', timezone: '+05:30', renderMode: 'ai_v1', posts: [post] }));
+  writeFileSync(join(brandDir, 'campaigns', 'abc.json'), JSON.stringify({ id: 'abc', plan: { platforms: ['instagram', 'linkedin'] }, batches: [{ index: 0, dates: ['2099-11-10'], status: 'done', weekFile: 'week-01.json' }] }));
+  const store = new ReviewStore(brandDir, 'oyechats');
+  const base = { planFile: 'week-01.json', ctaUrl: 'https://oyechats.com', factIds: [], evidence: [], validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.016 };
+  const slide = (n: number, text = `slide ${n}`) => {
+    const file = join(root, `s${n}-${text.replace(/\W/g, '')}.jpg`);
+    writeFileSync(file, text);
+    return store.addVersion({ ...base, postId: `car1-s${n}`, headline: `Slide ${n}`, caption: '', imagePath: file, carousel: { id: 'car1', position: n, count: 3 } });
+  };
+  for (const n of [1, 2, 3]) slide(n);
+  const cover = join(root, 'cover.jpg');
+  writeFileSync(cover, 'slide 1');
+  for (const network of ['instagram', 'linkedin']) store.addVersion({ ...base, postId: 'car1', network, headline: 'Choosing', caption: `${network} caption`, imagePath: cover, carousel: { id: 'car1', position: 0, count: 3 } });
+  return { brandDir, publisher, store, redraw: () => void slide(2, 'slide 2 redrawn'), done: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+test('an approved carousel is exported as one post with every slide picture in order, and a caption for each network', async () => {
+  const b = carouselBrand();
+  try {
+    b.store.approveCarousel('car1', 'owner');
+    const posts = await exportToPublisher(b.brandDir, b.publisher);
+    assert.equal(posts.length, 1);
+    const [post] = posts;
+    assert.equal(post?.images?.length, 3);
+    assert.equal(new Set(post?.images).size, 3);
+    assert.equal(post?.image, post?.images?.[0]);
+    assert.ok(post?.images?.every((p) => /^\/posts\/oyechats\/[0-9a-f]{32}\.jpg$/.test(p)));
+    assert.equal(post?.caption, 'instagram caption');
+    assert.deepEqual(post?.variants, { linkedin: { caption: 'linkedin caption' } });
+    assert.deepEqual(post?.channels, ['instagram', 'linkedin']);
+    assert.equal(readdirSync(join(b.publisher, 'public', 'posts', 'oyechats')).length, 3);
+  } finally {
+    b.done();
+  }
+});
+
+test('a carousel that is not fully approved is not exported at all, never as its cover alone', async () => {
+  const b = carouselBrand();
+  try {
+    assert.deepEqual(await exportToPublisher(b.brandDir, b.publisher), [], 'nothing approved');
+    b.store.approveCarousel('car1', 'owner');
+    b.redraw();
+    assert.deepEqual(await exportToPublisher(b.brandDir, b.publisher), [], 'a slide was redrawn after approval and waits for approval again');
+    b.store.approveCarousel('car1', 'owner');
+    assert.equal((await exportToPublisher(b.brandDir, b.publisher))[0]?.images?.length, 3);
+  } finally {
+    b.done();
+  }
+});
+
+test('a carousel is never sent through the team\'s one shared Instagram account, even when no plan record says where it goes', async () => {
+  const b = carouselBrand();
+  try {
+    rmSync(join(b.brandDir, 'campaigns'), { recursive: true, force: true });
+    b.store.approveCarousel('car1', 'owner');
+    const [post] = await exportToPublisher(b.brandDir, b.publisher, Date.now(), { brand: 'oyechats' });
+    assert.equal(post?.fromPlan, true, 'only the client\'s own connected accounts');
+    assert.deepEqual(post?.channels, ['instagram', 'linkedin']);
+    assert.equal(post?.images?.length, 3);
+  } finally {
+    b.done();
+  }
+});

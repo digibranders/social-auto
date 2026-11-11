@@ -65,7 +65,8 @@ Return a single JSON object and nothing else.`;
 
 /** How long a caption should be for the facts a post has: a soft target that follows the evidence, never a floor to pad up to. */
 export function captionTarget(factCount: number): string {
-  return factCount <= 1 ? 'about 100 to 300 characters' : 'about 200 to 500 characters';
+  // Instagram's caption is this one, so what is asked for stays inside the range worth aiming for on Instagram (networks.ts).
+  return factCount <= 1 ? 'about 100 to 300 characters' : 'about 150 to 300 characters';
 }
 
 /** The pillar of each post in the order the model must write them, and the proof point a proof post is built on. */

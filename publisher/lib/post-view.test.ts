@@ -28,3 +28,10 @@ test('one overall state: published only when every channel has it', () => {
   assert.equal(overallState([{ state: 'published' }, { state: 'missed' }], 1, 2), 'missed');
   assert.equal(overallState([], 5, 2), 'scheduled');
 });
+
+test('a carousel is shown with the address of every picture, in order', () => {
+  const carousel = { ...planned, images: ['/posts/c/1.jpg', '/posts/c/2.jpg'] };
+  const view = scheduledView({ ...carousel, image: '/posts/c/1.jpg' }, channels, {}, Date.parse('2026-11-02T05:00:00Z'), 'https://pub.example');
+  assert.deepEqual(view['imageUrls'], ['https://pub.example/posts/c/1.jpg', 'https://pub.example/posts/c/2.jpg']);
+  assert.equal(scheduledView(planned, channels, {}, Date.parse('2026-11-02T05:00:00Z'), 'https://pub.example')['imageUrls'], undefined);
+});

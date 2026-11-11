@@ -67,3 +67,15 @@ test('a time that is not a time, or that has already passed today, is refused in
   assert.equal(readPlan(form({ time: '09:00', startDate: '2026-11-06' }), NOW).problem, null, 'tomorrow is fine at any hour');
 });
 
+
+test('a weekly carousel is part of the plan the form makes, and the summary says how many posts are carousels and what it may cost', () => {
+  const chosen = readPlan(form({ durationId: 'two-weeks', postsPerWeek: 3, startDate: '2026-11-09', carousel: true }), NOW);
+  assert.equal(chosen.problem, null);
+  assert.equal(chosen.plan?.carousel, true);
+  const lines = describePlan(chosen.plan as NonNullable<typeof chosen.plan>);
+  assert.match(lines[0] ?? '', /6 posts \(2 of them a carousel\)/);
+  assert.match(lines.join(' '), /carousel/);
+  assert.equal(readPlan(form({ durationId: 'two-weeks', postsPerWeek: 3, startDate: '2026-11-09' }), NOW).plan?.carousel, undefined);
+  assert.match(readPlan(form({ durationId: 'day', carousel: true }), NOW).problem ?? '', /more than one day/);
+  assert.match(readPlan(form({ durationId: 'two-weeks', postsPerWeek: 1, carousel: true }), NOW).problem ?? '', /at least two posts a week/);
+});

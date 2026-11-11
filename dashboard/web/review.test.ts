@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, signoffText, signoffView, tomorrowIst, visibleJobs, whenProblem, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
+import { BATCH_QUESTION, accountsText, brandingView, chosenClient, clientOptions, connectedNetworkKeys, captionMeter, parseCaptionRules, signoffText, signoffView, tomorrowIst, visibleJobs, whenProblem, DONE_VISIBLE_MS, STOPPED_VISIBLE_MS, networkState, NEW_CLIENT, startClientOptions, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, type JobView } from './review.ts';
 import type { ClientSummary } from './clients.ts';
 import { parseRoute, routeHash } from './route.ts';
 
@@ -234,4 +234,93 @@ test('the day and time of the posts are checked in plain words, with India time 
   assert.match(whenProblem('2026-02-30', '10:00', now) ?? '', /real day/);
   assert.match(whenProblem('2027-06-01', '10:00', now) ?? '', /within 180 days/);
   for (const bad of ['', '9:30', '25:00', '10:60']) assert.match(whenProblem('2026-12-14', bad, now) ?? '', /time of day/, bad);
+});
+
+const LINKEDIN = { maxCaption: 1300, recommendedMin: 400, recommendedMax: 800, visibleChars: 140, maxHashtags: 3 };
+const INSTAGRAM = { maxCaption: 600, recommendedMin: 100, recommendedMax: 300, visibleChars: 125, maxHashtags: 5 };
+
+test('a caption is read against its network: short, a good length, a little long, or too long, with the hashtags left out of the count', () => {
+  const of = (n: number): string => 'word '.repeat(Math.ceil(n / 5)).slice(0, n).trim();
+  assert.equal(captionMeter(of(50), INSTAGRAM, 'Instagram').level, 'short');
+  assert.equal(captionMeter(of(200), INSTAGRAM, 'Instagram').level, 'good');
+  assert.equal(captionMeter(of(450), INSTAGRAM, 'Instagram').level, 'long');
+  assert.equal(captionMeter(of(650), INSTAGRAM, 'Instagram').level, 'over');
+  assert.equal(captionMeter(of(450), LINKEDIN, 'LinkedIn').level, 'good', 'the same words suit a longer network');
+  const over = captionMeter(of(650), INSTAGRAM, 'Instagram');
+  assert.match(over.text, /^\d+ characters \(aim for 100 to 300\)\. Too long for Instagram: at most 600 characters\.$/);
+  // Closing hashtags are sent after the words and are not counted.
+  assert.equal(captionMeter(`${of(200)}\n\n#one #two #three`, INSTAGRAM, 'Instagram').length, of(200).length);
+});
+
+test('what a reader sees first is cut at a whole word where the network folds the caption, and nothing is folded in a short one', () => {
+  const text = 'Setup takes under ten minutes with one script tag and the assistant answers from your own pages and guides without extra work for your team at all today.';
+  const m = captionMeter(text, { ...INSTAGRAM, visibleChars: 40 }, 'Instagram');
+  assert.equal(m.folded, true);
+  assert.equal(m.seen, 'Setup takes under ten minutes with one');
+  assert.ok(text.startsWith(m.seen) && m.seen.length <= 40);
+  const short = captionMeter('A short one.', INSTAGRAM, 'Instagram');
+  assert.deepEqual([short.folded, short.seen], [false, 'A short one.']);
+  // The cut falls exactly on a space: that word is whole.
+  assert.equal(captionMeter('abcd efgh ijkl', { ...INSTAGRAM, visibleChars: 9 }, 'Instagram').seen, 'abcd efgh');
+});
+
+test('the caption rules from the service are kept only where well formed', () => {
+  const ok = { instagram: { ...INSTAGRAM }, linkedin: { ...LINKEDIN } };
+  assert.deepEqual(parseCaptionRules(ok), ok);
+  assert.deepEqual(parseCaptionRules({ instagram: INSTAGRAM, broken: { maxCaption: 'x' }, backwards: { ...INSTAGRAM, recommendedMin: 400 }, tooBig: { ...INSTAGRAM, recommendedMax: 900 } }), { instagram: INSTAGRAM });
+  assert.deepEqual(parseCaptionRules(null), {});
+  assert.deepEqual(parseCaptionRules([]), {});
+});
+
+import { groupCarousels, parseCarousel } from './review.ts';
+
+const slideOf = (n: number, status = 'pending'): Record<string, unknown> => ({ ...good, versionId: `acme.${String(n).padStart(16, '0')}`, postId: `car1-s${n}`, headline: `Slide ${n}`, status, carousel: { id: 'car1', position: n, count: 3 } });
+const captionOf = (network: string): Record<string, unknown> => ({ ...good, versionId: `acme.cccccccccccccc0${network.length}`, postId: 'car1', network, headline: 'Topic', caption: `${network} caption`, carousel: { id: 'car1', position: 0, count: 3 } });
+
+test('the queue keeps the carousel a version belongs to, and drops a malformed one', () => {
+  const parsed = parseQueue({ posts: [slideOf(1), { ...slideOf(2), carousel: { id: 'car1', position: 'x', count: 3 } }, { ...slideOf(3), carousel: { id: '', position: 3, count: 3 } }] });
+  assert.deepEqual(parsed.posts.map((p) => p.carousel), [{ id: 'car1', position: 1, count: 3 }, undefined, undefined]);
+});
+
+test('slides and captions of a carousel are gathered into one card, in slide order, and the rest stay single posters', () => {
+  const posts = parseQueue({ posts: [slideOf(3), good, captionOf('instagram'), slideOf(1), slideOf(2), captionOf('linkedin')] }).posts;
+  const { singles, carousels } = groupCarousels(posts);
+  assert.deepEqual(singles.map((p) => p.postId), ['w01-d1']);
+  assert.equal(carousels.length, 1);
+  assert.deepEqual(carousels[0]?.slides.map((p) => p.postId), ['car1-s1', 'car1-s2', 'car1-s3']);
+  assert.deepEqual(carousels[0]?.captions.map((p) => p.network).sort(), ['instagram', 'linkedin']);
+  assert.equal(carousels[0]?.status, 'pending');
+  assert.equal(carousels[0]?.cover?.versionId, carousels[0]?.slides[0]?.versionId);
+  assert.equal(carousels[0]?.missing, 0);
+});
+
+test('a carousel card says when slides are missing from the list, and shows the least settled status of its parts', () => {
+  const some = groupCarousels(parseQueue({ posts: [slideOf(1, 'approved'), slideOf(3, 'approved')] }).posts).carousels[0];
+  assert.equal(some?.missing, 1);
+  const all = groupCarousels(parseQueue({ posts: [slideOf(1, 'approved'), slideOf(2, 'approved'), slideOf(3, 'approved'), { ...captionOf('instagram'), status: 'approved' }] }).posts).carousels[0];
+  assert.equal(all?.status, 'approved');
+  const mixed = groupCarousels(parseQueue({ posts: [slideOf(1, 'approved'), slideOf(2, 'pending'), slideOf(3, 'approved')] }).posts).carousels[0];
+  assert.equal(mixed?.status, 'pending');
+});
+
+test('a carousel as the service shows it is kept only where it is well formed', () => {
+  const view = parseCarousel({ id: 'car1', count: 3, status: 'pending', slides: [{ position: 1, versionId: 'acme.0000000000000001', status: 'pending', headline: 'Slide 1' }, { position: 2, versionId: null, status: 'missing' }, 'junk'], captions: [{ network: 'instagram', versionId: 'acme.cccccccccccccc09', caption: 'Hello', status: 'pending' }, { network: 5 }], reasons: ['style', 'made_up'] });
+  assert.equal(view?.id, 'car1');
+  assert.deepEqual(view?.slides.map((s) => [s.position, s.versionId, s.headline]), [[1, 'acme.0000000000000001', 'Slide 1'], [2, null, 'Missing']]);
+  assert.deepEqual(view?.captions.map((c) => [c.network, c.caption]), [['instagram', 'Hello']]);
+  assert.deepEqual(view?.reasons, ['style']);
+  assert.equal(parseCarousel({ id: 5 }), null);
+  assert.equal(parseCarousel(null), null);
+  assert.equal(parseCarousel({ id: 'car1', count: 3, status: 'weird', slides: [], captions: [] }), null);
+});
+
+test('a carousel job is kept and described in its own words', () => {
+  const base = { id: 'job-abc123-12345678', brand: 'acme', site: 'https://acme.example.com', state: 'running', finishedAt: undefined };
+  const [job] = parseJobs({ jobs: [{ ...base, kind: 'carousel', step: 3 }] });
+  assert.equal(job?.kind, 'carousel');
+  assert.equal(jobText(job as never), 'Making a carousel for https://acme.example.com: drawing the slides');
+  assert.equal(jobText({ ...(job as object), state: 'queued' } as never), 'Making a carousel for https://acme.example.com: waiting for its turn');
+  assert.equal(jobText({ ...(job as object), state: 'succeeded' } as never), 'Making a carousel for https://acme.example.com: done, the carousel is waiting for you in the list below');
+  assert.match(jobText({ ...(job as object), state: 'failed', error: 'slide 2 was rejected' } as never), /stopped\. slide 2 was rejected\. Nothing was published\.$/);
+  assert.equal(parseJobs({ jobs: [{ ...base, kind: 'banana' }] }).length, 0);
 });

@@ -8,7 +8,12 @@ export type Network = (typeof NETWORKS)[number];
 export const isNetwork = (value: unknown): value is Network => typeof value === 'string' && (NETWORKS as readonly string[]).includes(value);
 
 export interface NetworkRules {
+  /** The longest caption the owner or the writer may use for the network (the words, not the hashtags). Shorter than what the platform itself allows. */
   maxCaption: number;
+  /** The length worth aiming for, in characters: readers of a business post read the start and stop. Advice, never a limit. */
+  recommended: { min: number; max: number };
+  /** About how many characters a reader sees before the platform folds the caption behind "more". An estimate, and the platforms change it. */
+  visibleChars: number;
   maxHashtags: number;
   /** The picture the network gets, in pixels. LinkedIn takes a wide picture; the picture model's nearest wide size is used. */
   picture: { shape: 'square' | 'wide'; width: number; height: number };
@@ -19,10 +24,10 @@ export interface NetworkRules {
 }
 
 export const NETWORK_RULES: Record<Network, NetworkRules> = {
-  instagram: { maxCaption: 1000, maxHashtags: 5, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'short, warm and visual; two or three short lines; hashtags allowed', linkInBio: true },
-  facebook: { maxCaption: 1000, maxHashtags: 3, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'friendly and conversational, a little longer than Instagram; the web address can be written out', linkInBio: false },
-  linkedin: { maxCaption: 1300, maxHashtags: 3, picture: { shape: 'wide', width: 1536, height: 1024 }, voice: 'professional and plain; lead with what the business does for its customers; no slang; few hashtags', linkInBio: false },
-  google: { maxCaption: 1000, maxHashtags: 0, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'plain text, factual, no hashtags and no emoji, as a local business would post on its listing', linkInBio: false },
+  instagram: { maxCaption: 600, recommended: { min: 100, max: 300 }, visibleChars: 125, maxHashtags: 5, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'short, warm and visual; two or three short lines; hashtags allowed', linkInBio: true },
+  facebook: { maxCaption: 600, recommended: { min: 100, max: 250 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'friendly and conversational, a little longer than Instagram; the web address can be written out', linkInBio: false },
+  linkedin: { maxCaption: 1300, recommended: { min: 400, max: 800 }, visibleChars: 140, maxHashtags: 3, picture: { shape: 'wide', width: 1536, height: 1024 }, voice: 'professional and plain; lead with what the business does for its customers; no slang; few hashtags', linkInBio: false },
+  google: { maxCaption: 1000, recommended: { min: 150, max: 300 }, visibleChars: 100, maxHashtags: 0, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'plain text, factual, no hashtags and no emoji, as a local business would post on its listing', linkInBio: false },
 };
 
 /** One network's own version of a post's caption. `caption` includes the closing call to action line; hashtags are separate. */
@@ -67,3 +72,10 @@ export function pictureGroups(posts: ReadonlyArray<{ id: string; variants?: Post
   }
   return [...groups.values()].sort((a, b) => (a.shape.shape === 'square' ? 0 : 1) - (b.shape.shape === 'square' ? 0 : 1)).map((g) => ({ shape: g.shape, networks: [...g.networks], postIds: [...g.postIds] }));
 }
+
+/** The length worth aiming for, in words for the writer, e.g. "about 100 to 300 characters". */
+export const recommendedLengthText = (network: Network): string => `about ${NETWORK_RULES[network].recommended.min} to ${NETWORK_RULES[network].recommended.max} characters`;
+
+/** What the owner's page needs to know about every network's captions. */
+export const captionRulesView = (): Record<Network, { maxCaption: number; recommendedMin: number; recommendedMax: number; visibleChars: number; maxHashtags: number }> =>
+  Object.fromEntries(NETWORKS.map((n) => [n, { maxCaption: NETWORK_RULES[n].maxCaption, recommendedMin: NETWORK_RULES[n].recommended.min, recommendedMax: NETWORK_RULES[n].recommended.max, visibleChars: NETWORK_RULES[n].visibleChars, maxHashtags: NETWORK_RULES[n].maxHashtags }])) as Record<Network, { maxCaption: number; recommendedMin: number; recommendedMax: number; visibleChars: number; maxHashtags: number }>;

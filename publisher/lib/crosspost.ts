@@ -1,13 +1,14 @@
 import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
 import { channelLabel, channelsFor, channelToken, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
 import { isWantedOn } from './schedule.js';
-import type { LinkedInPost, Visibility } from './linkedin.js';
+import type { CarouselImage, LinkedInPost, Visibility } from './linkedin.js';
 import { dueWindowFor } from './schedule.js';
 import { googleSummary, type GooglePost } from './google.js';
 
 /** What the posting code needs from Facebook; the real one is lib/facebook.ts, tests use stubs. */
 export interface FacebookApi {
   postPhotoFromUrl(pageId: string, token: string, imageUrl: string, caption: string): Promise<{ photoId: string; postId: string | null }>;
+  postPhotos(pageId: string, token: string, imageUrls: readonly string[], caption: string): Promise<{ postId: string }>;
   postLink(postId: string, token: string): Promise<string | null>;
   pageHealth(pageId: string, token: string): Promise<{ ok: boolean; error?: string }>;
 }
@@ -17,6 +18,8 @@ export interface LinkedInApi {
   fetchImage(url: string): Promise<Uint8Array>;
   uploadImage(token: string, ownerUrn: string, image: Uint8Array): Promise<string>;
   postImage(token: string, authorUrn: string, assetUrn: string, caption: string, visibility: Visibility): Promise<LinkedInPost>;
+  uploadImageUrn(token: string, ownerUrn: string, image: Uint8Array): Promise<string>;
+  postMultiImage(token: string, authorUrn: string, images: readonly CarouselImage[], caption: string, visibility: Visibility): Promise<LinkedInPost>;
   /** Whether the saved token is still accepted. */
   memberHealth(token: string): Promise<{ ok: boolean; error?: string }>;
 }
@@ -32,6 +35,7 @@ export interface GoogleApi {
 /** What the posting code needs from Instagram; the real one is lib/instagram.ts, tests use stubs. */
 export interface InstagramApi {
   createImageContainer(userId: string, token: string, imageUrl: string, caption: string): Promise<string>;
+  prepareCarousel(userId: string, token: string, imageUrls: readonly string[], caption: string): Promise<{ containerId: string }>;
   waitUntilReady(containerId: string, token: string): Promise<void>;
   publishContainer(userId: string, token: string, containerId: string): Promise<string>;
   permalink(mediaId: string, token: string): Promise<string>;
@@ -46,6 +50,8 @@ export interface PostToSend {
   caption: string;
   /** Path under the deployment, e.g. /posts/x.jpg or /api/edited-image?k=... */
   image: string | null;
+  /** A carousel: every picture in order, the first being `image`. Absent for a post with one picture. */
+  images?: string[];
   /** Where this post is meant to go; missing means every connected channel. */
   channels?: string[];
 }
@@ -62,6 +68,15 @@ export interface CrosspostResult {
 /** A channel counts only posts from the moment it was connected: earlier days were never meant for it. */
 function belongsTo(post: PostToSend, channel: Channel): boolean {
   return Date.parse(post.date) >= Date.parse(channel.connectedAt);
+}
+
+/**
+ * The public addresses of every picture a post carries, the cover first. A post with a list of two or more is a carousel; otherwise it is the one `image`,
+ * or nothing when the poster is gone.
+ */
+export function pictureUrls(post: { image: string | null; images?: string[] }, origin: string): string[] {
+  const paths = post.images && post.images.length > 1 ? post.images : post.image ? [post.image] : [];
+  return paths.map((path) => `${origin}${path}`);
 }
 
 /**
@@ -102,7 +117,10 @@ export async function postToFacebook(options: {
         results.push(health.ok ? { ...base, status: 'dry-run-ready' } : { ...base, status: 'failed', error: health.error ?? 'page check failed' });
         continue;
       }
-      const posted = await api.postPhotoFromUrl(channel.pageId, token, `${options.origin}${post.image}`, post.caption);
+      const urls = pictureUrls(post, options.origin);
+      const posted = urls.length > 1
+        ? { photoId: '', postId: (await api.postPhotos(channel.pageId, token, urls, post.caption)).postId }
+        : await api.postPhotoFromUrl(channel.pageId, token, urls[0] as string, post.caption);
       const remoteId = posted.postId ?? posted.photoId;
       const permalink = await api.postLink(remoteId, token).catch(() => null);
       await options.record(logKey, { remoteId, permalink, postedAt: new Date(options.now).toISOString() });
@@ -154,9 +172,20 @@ export async function postToLinkedIn(options: {
         results.push(health.ok ? { ...base, status: 'dry-run-ready' } : { ...base, status: 'failed', error: health.error ?? 'LinkedIn check failed' });
         continue;
       }
-      const image = await api.fetchImage(`${options.origin}${post.image}`);
-      const asset = await api.uploadImage(token, channel.memberUrn, image);
-      const posted = await api.postImage(token, channel.memberUrn, asset, post.caption, 'PUBLIC');
+      const urls = pictureUrls(post, options.origin);
+      let posted: LinkedInPost;
+      if (urls.length > 1) {
+        const references: CarouselImage[] = [];
+        for (const [i, url] of urls.entries()) {
+          const urn = await api.uploadImageUrn(token, channel.memberUrn, await api.fetchImage(url));
+          references.push({ urn, altText: `Slide ${i + 1} of ${urls.length}` });
+        }
+        posted = await api.postMultiImage(token, channel.memberUrn, references, post.caption, 'PUBLIC');
+      } else {
+        const image = await api.fetchImage(urls[0] as string);
+        const asset = await api.uploadImage(token, channel.memberUrn, image);
+        posted = await api.postImage(token, channel.memberUrn, asset, post.caption, 'PUBLIC');
+      }
       await options.record(logKey, { remoteId: posted.urn, permalink: posted.url, postedAt: new Date(options.now).toISOString() });
       results.push({ ...base, status: 'posted', remoteId: posted.urn, permalink: posted.url });
     } catch (error) {
@@ -255,8 +284,14 @@ export async function postToInstagram(options: {
         results.push(health.ok ? { ...base, status: 'dry-run-ready' } : { ...base, status: 'failed', error: health.error ?? 'Instagram check failed' });
         continue;
       }
-      const container = await api.createImageContainer(channel.userId, token, `${options.origin}${post.image}`, post.caption);
-      await api.waitUntilReady(container, token);
+      const urls = pictureUrls(post, options.origin);
+      let container: string;
+      if (urls.length > 1) {
+        container = (await api.prepareCarousel(channel.userId, token, urls, post.caption)).containerId;
+      } else {
+        container = await api.createImageContainer(channel.userId, token, urls[0] as string, post.caption);
+        await api.waitUntilReady(container, token);
+      }
       const mediaId = await api.publishContainer(channel.userId, token, container);
       const link = await api.permalink(mediaId, token).catch(() => '');
       await options.record(logKey, { remoteId: mediaId, permalink: link || null, postedAt: new Date(options.now).toISOString() });

@@ -119,7 +119,9 @@ export function editCopy(input: {
   if (plainHeadline === '') throw new CopyStageError('REJECTED', 'the headline cannot be empty');
   if (plainHeadline.length > MAX_HEADLINE_CHARS) throw new CopyStageError('REJECTED', `the headline is ${plainHeadline.length} characters; a poster can carry at most ${MAX_HEADLINE_CHARS}`);
   if (caption === '') throw new CopyStageError('REJECTED', 'the caption cannot be empty');
-  if (caption.length > (network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS)) throw new CopyStageError('REJECTED', `the caption is ${caption.length} characters; at most ${network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS} are allowed`);
+  // The length limit applies to a caption the owner is changing, not to one that was already there (the limits were tightened after older batches were written).
+  const wasBody = splitTrailingHashtags(((variant ? (variant.caption as string) : post.caption) ?? '').trim()).body;
+  if (caption !== wasBody && caption.length > (network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS)) throw new CopyStageError('REJECTED', `the caption is ${caption.length} characters; at most ${network ? NETWORK_RULES[network].maxCaption : MAX_CAPTION_CHARS} are allowed`);
   const weak = checkCopyQuality({ headline: plainHeadline, caption });
   if (weak) throw new CopyStageError('REJECTED', weak);
 

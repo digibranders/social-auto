@@ -197,3 +197,35 @@ test('a brand name or address that is not allowed is refused and nothing changes
     done();
   }
 });
+
+test('a caption longer than the network takes is refused when the owner makes it, but one that was already there can still be left as it is', () => {
+  const { dir, done } = workspace();
+  try {
+    // 700 characters is more than Instagram's most (600): refused when typed.
+    const long = [
+      'Setup takes under 10 minutes with one script tag.',
+      'The assistant answers from your own pages and guides.',
+      'Visitors ask in their own words and get a plain reply.',
+      'Your team keeps control of what the assistant may say.',
+      'Questions it cannot answer are passed to a person.',
+      'Everything it reads comes from content you already publish.',
+      'Changes to your pages reach the assistant without extra work.',
+      'It fits the look of your site instead of fighting it.',
+      'Customers find what they need without searching menus.',
+      'Your support inbox stays quiet on the simple questions.',
+      'People who want a human can still reach one quickly.',
+      'The assistant speaks the way your brand does.',
+    ].join(' ');
+    assert.ok(long.length > 600);
+    assert.match(refusal(() => edit(dir, { caption: long, network: 'instagram' })), /REJECTED.*at most 600|REJECTED.*600/);
+    // A caption already in the plan that is over today's most is not refused when only the sign-off is changed (the page sends the caption back as it is).
+    const planPath = join(dir, 'week-01.json');
+    const plan = JSON.parse(readFileSync(planPath, 'utf8')) as { posts: Array<{ id: string; caption: string }> };
+    (plan.posts[0] as { caption: string }).caption = long;
+    writeFileSync(planPath, JSON.stringify(plan));
+    const batch = edit(dir, { caption: long, network: 'instagram', brandName: 'Acme Labs', signoffDefaults: { brandName: 'Acme', domain: 'acme.com' } });
+    assert.equal(batch.posts[0]?.signoff?.brandName, 'Acme Labs');
+  } finally {
+    done();
+  }
+});

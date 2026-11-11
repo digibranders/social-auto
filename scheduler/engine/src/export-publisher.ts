@@ -17,7 +17,7 @@ import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { composeCaption, isPublishable, parseWeekPlan, readJson } from './content.ts';
 import { assertPublishingEnabled } from './publishing-switch.ts';
-import { ReviewStore } from './review-store.ts';
+import { ReviewError, ReviewStore } from './review-store.ts';
 
 const WEEK_FILE = /^week-\d+\.json$/;
 /** Posters are kept for posts from the last 20 hours onwards, so a post due today can still be published. */
@@ -28,8 +28,10 @@ export interface ExportedPost {
   id: string;
   date: string;
   caption: string;
-  /** Poster path in the publisher, or null once the poster was pruned. */
+  /** Poster path in the publisher, or null once the poster was pruned. For a carousel, the first slide. */
   image: string | null;
+  /** A carousel: every slide's picture in order (two to ten); `image` is the first. Absent for a single picture. */
+  images?: string[];
   /** The platforms the owner chose for this client's campaign ("instagram", "facebook", ...); missing means every connected channel. */
   channels?: string[];
   /** Made from a client's posting plan: the publisher sends it only to that client's own connected channels, never to the team's one shared Instagram account. */
@@ -156,6 +158,16 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
     const outDir = resolve('out', site, basename(file, '.json'));
     const store = new ReviewStore(brandDir, site);
     for (const post of plan.posts) {
+      // A carousel goes out only as a whole: every slide approved as it is now. One that is not is skipped, never sent as its cover alone.
+      let slides: ApprovedVersion[] | undefined;
+      if (plan.renderMode === 'ai_v1' && store.isCarousel(post.id)) {
+        try {
+          slides = store.approvedCarousel(post.id).slides;
+        } catch (error) {
+          if (error instanceof ReviewError && error.code === 'NOT_APPROVED') continue;
+          throw error;
+        }
+      }
       // Fully AI posters are exported only as the exact approved version (its picture and its caption); every other plan by its own approval.
       const perNetwork = plan.renderMode === 'ai_v1' ? approvedPerNetwork(store, post.id, platforms) : new Map<string, ApprovedVersion>();
       const approved = plan.renderMode === 'ai_v1' ? (perNetwork.size > 0 ? perNetwork.get(MAIN_NETWORK_ORDER.find((n) => perNetwork.has(n)) ?? '') : store.approvedFor(post.id)) : undefined;
@@ -169,6 +181,7 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
       };
       const mainBytes = approved ? approved.bytes : await readFile(join(outDir, `${post.id}.jpg`));
       const poster = await place(mainBytes);
+      const slidePaths = slides ? await Promise.all(slides.map((slide) => place(slide.bytes))) : [];
       // A post made per network goes only to the networks whose own picture and caption were approved; each keeps its own caption, and its own picture when it differs.
       const variants: NonNullable<ExportedPost['variants']> = {};
       if (approved && perNetwork.size > 0) {
@@ -187,9 +200,11 @@ export async function exportToPublisher(brandDir: string, publisherDir: string, 
         id: `${brand}-${post.id}`,
         date: post.date,
         caption: approved ? approved.version.caption : composeCaption(post),
-        image: poster,
+        image: slidePaths.length > 0 && slidePaths.every((p) => p !== null) ? slidePaths[0] ?? null : poster,
+        ...(slidePaths.length > 0 && slidePaths.every((p): p is string => p !== null) ? { images: slidePaths } : {}),
         // A fully AI poster goes only to the platforms the owner chose (and, when it was made per network, only those approved); every other plan keeps going to every connected channel.
-        ...(approved && channels ? { channels, ...(platforms ? { fromPlan: true as const } : {}) } : {}),
+        // A carousel is only ever sent to the client's own connected accounts, never through the team's one shared Instagram account (which no carousel has been proven on), whether or not a plan record names the platforms.
+        ...(approved && channels ? { channels, ...(platforms || slides ? { fromPlan: true as const } : {}) } : {}),
         ...(Object.keys(variants).length > 0 ? { variants } : {}),
         // A fully AI poster has the time its plan chose; the frequent run sends it then (the daily run would send one set for the afternoon the next morning).
         ...(approved ? { ownTime: true as const } : {}),

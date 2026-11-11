@@ -7,12 +7,15 @@
  *   GET  /api/review?view=detail|image|download|logo&id=<versionId>
  *   GET  /api/review?view=campaigns      what is being made for each client's plans (read only)
  *   POST /api/review   { "id": "<versionId>", "action": "approve" }  or  { "id": "...", "action": "reject", "reason": "...", "comment": "..." }
+ *   GET  /api/review?view=carousel&brand=<brand>&id=<carouselId>   a carousel whole: its slides in order, its captions and where it stands
+ *   POST /api/review   { "carousel": { "brand", "id", "action": "approve" | "reject", "reason"?, "comment"? } }   approve or reject every slide and caption together
  *   GET  /api/review?view=copy                                  the written posts waiting to be kept or dropped (before any picture is bought)
  *   POST /api/review   { "copy": { "brand": "...", "planFile": "week-01.json", "postId": "...", "action": "keep" | "drop" } }
  *   POST /api/review   { "edit": { "brand", "planFile", "postId", "headline", "caption", "network"? } }   change the words of a written post (checked by the service)
  *   POST /api/review   { "close": { "brand", "planFile" } }           put a written batch away without drawing it
  *   POST /api/review   { "draw": { "brand", "planFile", "client"?, "retry"? } }   draw the kept posts of a batch (once only; "retry" after a failed draw draws only the posts that still have no picture)
  *   POST /api/review   { "job": { "site", "page"?, "networks", "weeks"?, "postsPerWeek"? } }   read a website (or one page) and write its posts (answers with the job)
+ *   POST /api/review   { "carousel_job": { "site", "networks", "startDate"?, "time"? } }   make one carousel for a client whose website was already read (answers with the job)
  *   GET  /api/review?view=jobs                                         the jobs, newest first;  GET /api/review?view=job&id=<jobId>   one job
  */
 import { describeError, json } from '../lib/http.js';
@@ -22,6 +25,7 @@ const VERSION_ID = /^[a-z0-9][a-z0-9-]{0,62}\.[0-9a-f]{16}$/;
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const PLAN_FILE = /^week-\d{2,4}\.json$/;
 const POST_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;
+const CAROUSEL_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 const STATUS = /^(open|pending|held|approved|rejected|blocked|superseded|all)$/;
 const TIMEOUT_MS = 25_000;
 const MAX_BODY_BYTES = 16 * 1024;
@@ -69,6 +73,10 @@ export async function GET(request: Request): Promise<Response> {
     const status = query.get('status') ?? 'pending';
     if (!STATUS.test(status)) return json(400, { error: 'Invalid request' });
     path = `/review/posts?status=${status}`;
+  } else if (view === 'carousel') {
+    const brand = query.get('brand') ?? '';
+    if (!BRAND.test(brand) || !CAROUSEL_ID.test(id)) return json(400, { error: 'Invalid request' });
+    path = `/review/carousels/${brand}/${id}`;
   } else if (view === 'campaigns') {
     // What is being made for each client's plans (read only), for the status panel.
     path = '/review/campaigns';
@@ -93,7 +101,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!secret || !process.env['REVIEW_URL']) return json(503, { error: 'The review queue is not configured' });
   if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'That is too large' });
 
-  let body: { id?: unknown; action?: unknown; reason?: unknown; comment?: unknown; copy?: Record<string, unknown>; edit?: Record<string, unknown>; close?: Record<string, unknown>; draw?: Record<string, unknown>; job?: Record<string, unknown> };
+  let body: { carousel_job?: Record<string, unknown>; carousel?: Record<string, unknown>; id?: unknown; action?: unknown; reason?: unknown; comment?: unknown; copy?: Record<string, unknown>; edit?: Record<string, unknown>; close?: Record<string, unknown>; draw?: Record<string, unknown>; job?: Record<string, unknown> };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -113,6 +121,19 @@ export async function POST(request: Request): Promise<Response> {
     return typeof brand === 'string' && BRAND.test(brand) && typeof planFile === 'string' && PLAN_FILE.test(planFile) ? { brand, planFile } : null;
   };
   const words = (value: unknown, max: number): string | null => (typeof value === 'string' && value.trim() !== '' && value.length <= max ? value : null);
+  if (body.carousel_job !== undefined) {
+    const site = words(body.carousel_job['site'], 200);
+    const networks = body.carousel_job['networks'];
+    const { startDate, time } = body.carousel_job;
+    if (!site || !Array.isArray(networks) || networks.length === 0 || !networks.every((n) => typeof n === 'string' && NETWORKS.includes(n))
+      || (startDate !== undefined && (typeof startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(startDate))) || (time !== undefined && (typeof time !== 'string' || !/^\d{2}:\d{2}$/.test(time)))) return json(400, { error: 'Invalid request' });
+    return send('/review/jobs', 'POST', { kind: 'carousel', site, networks, ...(startDate ? { startDate } : {}), ...(time ? { time } : {}) });
+  }
+  if (body.carousel !== undefined) {
+    const { brand, id: carouselId, action, reason, comment } = body.carousel ?? {};
+    if (typeof brand !== 'string' || !BRAND.test(brand) || typeof carouselId !== 'string' || !CAROUSEL_ID.test(carouselId) || (action !== 'approve' && action !== 'reject')) return json(400, { error: 'Invalid request' });
+    return send(`/review/carousels/${brand}/${carouselId}/${action}`, 'POST', action === 'approve' ? {} : { reason: typeof reason === 'string' ? reason : '', ...(typeof comment === 'string' && comment.trim() ? { comment } : {}) });
+  }
   if (body.copy !== undefined) {
     const batch = batchOf(body.copy);
     const { postId, action } = body.copy ?? {};
