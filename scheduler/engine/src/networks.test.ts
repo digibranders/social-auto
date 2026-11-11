@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { composeVariant, NETWORK_RULES, pictureGroups, SQUARE_SHAPE, variantTexts, type PostVariants } from './networks.ts';
+import { captionTarget } from './planner.ts';
+import { captionRulesView, composeVariant, NETWORK_RULES, NETWORKS, pictureGroups, recommendedLengthText, SQUARE_SHAPE, variantTexts, type PostVariants } from './networks.ts';
 
 const v = (caption: string, hashtags: string[] = []) => ({ caption, hashtags });
 
@@ -33,4 +34,27 @@ test('a network caption is its words, then its hashtags; a network with none sho
   assert.equal(composeVariant(v('Words.')), 'Words.');
   assert.equal(variantTexts({}), undefined);
   assert.deepEqual(variantTexts({ variants: { google: v('Plain.') } }), { google: 'Plain.' });
+});
+
+test('each network has a length worth aiming for inside its limit, a cut-off inside that, and the page is told all of it', () => {
+  for (const network of NETWORKS) {
+    const r = NETWORK_RULES[network];
+    assert.ok(r.recommended.min > 0 && r.recommended.min < r.recommended.max, `${network}: a range`);
+    assert.ok(r.recommended.max <= r.maxCaption, `${network}: aim for less than the most`);
+    assert.ok(r.visibleChars > 0 && r.visibleChars < r.recommended.max, `${network}: what is seen first is shorter than the whole`);
+  }
+  assert.equal(recommendedLengthText('instagram'), 'about 100 to 300 characters');
+  assert.equal(recommendedLengthText('linkedin'), 'about 400 to 800 characters');
+  // The shorter channels are held to a shorter most than LinkedIn.
+  assert.ok(NETWORK_RULES.instagram.maxCaption < NETWORK_RULES.linkedin.maxCaption);
+  assert.deepEqual(captionRulesView().google, { maxCaption: 1000, recommendedMin: 150, recommendedMax: 300, visibleChars: 100, maxHashtags: 0 });
+  assert.deepEqual(Object.keys(captionRulesView()), [...NETWORKS]);
+});
+
+test('the main caption, which is Instagram\'s, is asked for inside the range worth aiming for on Instagram', () => {
+  const { min, max } = NETWORK_RULES.instagram.recommended;
+  for (const facts of [1, 2, 3]) {
+    const [low, high] = (/(\d+) to (\d+)/.exec(captionTarget(facts)) ?? []).slice(1).map(Number) as [number, number];
+    assert.ok(low >= min && high <= max, `${facts} fact(s): ${captionTarget(facts)} is inside ${min} to ${max}`);
+  }
 });

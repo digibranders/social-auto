@@ -37,7 +37,7 @@ import { decideFact, FactsError, factsView } from './facts-view.ts';
 import { JobError, JobStore, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
 import { slugFromSite } from './analyze.ts';
-import { isNetwork, NETWORKS } from './networks.ts';
+import { captionRulesView, isNetwork, NETWORKS } from './networks.ts';
 import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
@@ -242,7 +242,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const batches = brands().flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
           const plain = batches.map((b) => ({ ...b, ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
-          return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)) });
+          return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
         if (parts.length === 6 && req.method === 'POST' && (verb === 'keep' || verb === 'drop')) {

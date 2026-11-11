@@ -1,7 +1,7 @@
 /** The review page: the posters the system made, waiting for the owner to approve or reject each one. */
 import { button, h } from './ui.ts';
 import { AUTO_WARNING, type ClientSummary } from './clients.ts';
-import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, DEFAULT_POST_TIME, networkState, NEW_CLIENT, signoffText, signoffView, startClientOptions, tomorrowIst, visibleJobs, whenProblem, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
+import { BATCH_QUESTION, brandingView, chosenClient, clientOptions, connectedNetworkKeys, DEFAULT_POST_TIME, networkState, NEW_CLIENT, parseCaptionRules, signoffText, signoffView, startClientOptions, tomorrowIst, visibleJobs, whenProblem, captionMeter, type CaptionRules, costText, failureText, groupBatches, imageUrl, jobActive, jobText, looksLikeSite, NETWORK_CHOICES, parseBranding, splitHashtags, parseJobs, parseQueue, queryStatus, REASON_LABELS, REVIEW_FILTERS, STATUS_LABELS, type JobView, type ReviewFilter, type ReviewSummary } from './review.ts';
 
 interface Detail {
   version: { versionId: string; headline: string; caption: string; ctaUrl: string; versionNumber: number; attempts: number; costUsd: number; createdAt: string; evidence: Array<{ text: string; quote: string; url: string; context: string }>; validation: { readings: number; defects: string[] }; branding?: unknown };
@@ -37,13 +37,15 @@ interface State {
   editing: { batch: string; postId: string; network: string; draft?: { headline: string; caption: string; brandName: string; domain: string } } | null;
   /** The client each batch's pictures are drawn for, chosen from the clients list; the client named like the website until the owner picks another. */
   clientFor: Record<string, string>;
+  /** What each network takes in a caption (length to aim for, the most, where a reader's view is folded), from the service. */
+  rules: Record<string, CaptionRules>;
   /** The client chosen when the posts were written, by the batch's name (the website's), used until another is picked under the batch. */
   clientForBrand: Record<string, string>;
   /** The clients, from the dashboard's data; null while it is still loading. */
   clients: readonly ClientSummary[] | null;
 }
 
-const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, startDate: '', time: DEFAULT_POST_TIME, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, clients: null };
+const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, startDate: '', time: DEFAULT_POST_TIME, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, rules: {}, clients: null };
 
 /** Saves a client's approval mode (set by the page that owns the data); null means saved, else the problem in words. */
 let saveApprovalMode: (client: ClientSummary, mode: 'manual' | 'auto') => Promise<string | null> = async () => 'Not available here.';
@@ -62,6 +64,7 @@ async function loadCopy(redraw: () => void): Promise<void> {
   const result = await call('/api/review?view=copy').catch(() => null);
   const batches = (result?.body as { batches?: unknown } | null)?.batches;
   if (result?.ok && Array.isArray(batches)) state.copy = batches as CopyBatch[];
+  if (result?.ok) state.rules = parseCaptionRules((result.body as { networkRules?: unknown } | null)?.networkRules);
   redraw();
 }
 
@@ -271,6 +274,20 @@ function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: ()
     const domain = sign ? h('input', { class: 'rv-input', type: 'text', maxlength: '60', 'aria-label': 'Web address on the poster' }) : null;
     if (brandName && sign) brandName.value = editing.draft?.brandName ?? sign.brandName;
     if (domain && sign) domain.value = editing.draft?.domain ?? sign.domain;
+    // How the caption reads against what its network takes: the count, the range worth aiming for, and what a reader sees before the network folds the rest.
+    const rules = state.rules[e.network || 'instagram'];
+    const meter = h('p', { class: 'rv-meter', role: 'status' });
+    const seen = h('p', { class: 'muted rv-seen' });
+    const measure = (): void => {
+      if (!rules) return;
+      // A batch written before captions were made for each network has one caption: it is Instagram's.
+      const m = captionMeter(caption.value, rules, e.network ? e.label : 'Instagram');
+      meter.className = `rv-meter rv-meter-${m.level}`;
+      meter.textContent = m.text;
+      seen.textContent = m.folded ? `Readers see first: \u201c${m.seen}\u2026\u201d and then "more".` : 'All of it shows without "more".';
+    };
+    measure();
+    caption.addEventListener('input', measure);
     const remember = (): void => { editing.draft = { headline: headline.value, caption: caption.value, brandName: brandName?.value ?? '', domain: domain?.value ?? '' }; };
     headline.addEventListener('input', remember);
     caption.addEventListener('input', remember);
@@ -280,7 +297,7 @@ function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: ()
     if (editing.draft) setTimeout(() => { if (caption.isConnected) { caption.focus(); caption.setSelectionRange(caption.value.length, caption.value.length); } }, 0);
     return h('div', { class: 'rv-copy-caption' },
       h('small', { class: 'muted' }, `Editing ${e.label}. The words are checked against the website before they are saved.${hashtags ? ' The hashtags stay as they are.' : ''}`),
-      headline, caption,
+      headline, caption, rules ? meter : null, rules ? seen : null,
       brandName && domain ? h('div', { class: 'rv-signoff-edit' },
         h('label', { class: 'rv-field' }, 'Brand name on the poster', brandName),
         h('label', { class: 'rv-field' }, 'Web address on the poster', domain),
