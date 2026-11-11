@@ -12,6 +12,12 @@ export interface AddedClient {
   product?: string;
   /** The product's own id for this customer, so asking twice never makes two. */
   externalId?: string;
+  /** The product's id for the customer who owns several brands (workspaces) under one login; missing means the workspace's own externalId (a group of one). */
+  group?: string;
+  /** A brand put away by its customer: paused, kept, and no longer counted against the customer's brands. */
+  archived?: true;
+  /** Set when putting the brand away is what paused it (so bringing it back lifts only that pause, never one the team made). */
+  archivedPause?: true;
   /** The name to show, when the slug alone would read badly. */
   name?: string;
   /** The client's own website (plain https address) that posts are planned from. */
@@ -144,9 +150,11 @@ export function parseClientsFile(raw: unknown): ClientsFile {
     clients: list.map((c: Record<string, unknown>, i): AddedClient => {
       if (!isBrandSlug(c['brand'])) throw new Error(`clients[${i}].brand is malformed`);
       if (typeof c['createdAt'] !== 'string') throw new Error(`clients[${i}].createdAt must be a string`);
-      for (const key of ['product', 'externalId', 'name', 'website'] as const) {
+      for (const key of ['product', 'externalId', 'name', 'website', 'group'] as const) {
         if (c[key] !== undefined && typeof c[key] !== 'string') throw new Error(`clients[${i}].${key} must be a string`);
       }
+      if (c['group'] !== undefined && !isExternalId(c['group'])) throw new Error(`clients[${i}].group is malformed`);
+      if ((c['archived'] !== undefined && c['archived'] !== true) || (c['archivedPause'] !== undefined && c['archivedPause'] !== true)) throw new Error(`clients[${i}].archived and archivedPause must be true when present`);
       if (c['weeklyLimit'] !== undefined && (typeof c['weeklyLimit'] !== 'number' || !Number.isInteger(c['weeklyLimit']) || c['weeklyLimit'] < 1 || c['weeklyLimit'] > MAX_WEEKLY_LIMIT)) throw new Error(`clients[${i}].weeklyLimit must be a whole number from 1 to ${MAX_WEEKLY_LIMIT}`);
       if (c['requireAuthenticLogo'] !== undefined && typeof c['requireAuthenticLogo'] !== 'boolean') throw new Error(`clients[${i}].requireAuthenticLogo must be true or false`);
       if (c['approvalMode'] !== undefined && c['approvalMode'] !== 'manual' && c['approvalMode'] !== 'auto') throw new Error(`clients[${i}].approvalMode must be "manual" or "auto"`);
@@ -270,6 +278,8 @@ export function addPlan(file: ClientsFile, brand: string, plan: unknown, now: nu
   const index = file.clients.findIndex((c) => c.brand === brand);
   if (index === -1) throw new EditError('only a client added in the dashboard has a posting plan here', 404);
   const current = file.clients[index] as AddedClient;
+  // A product's customer asks for their own posts when they want them; a plan would make and draw posters on a timetable nobody asked for.
+  if (current.product !== undefined) throw new EditError('this customer asks for their own posts, so a posting plan cannot be added', 409, 'CONFLICT');
   if (!current.website) throw new EditError('add the client\'s website first: the posts are made from it');
   const parsed = parseClientPlan(plan, now);
   const added = connected ? bindPlanChannels(parsed, connected, brand) : parsed;
@@ -327,6 +337,25 @@ export function workspaceBrand(product: string, externalId: string): string {
   return `${product}-${tail ? `${tail}-` : ''}${digest}`;
 }
 
+/** The customer a workspace belongs to: its group, or itself when it has none. Only a product's own workspaces have one. */
+export const groupOf = (client: AddedClient): string | undefined => (client.product === undefined ? undefined : (client.group ?? client.externalId));
+
+/** The file with a brand put away or brought back. `pausedByArchive` says whether putting it away is what paused it. */
+export function setArchived(file: ClientsFile, brand: string, archived: boolean, pausedByArchive: boolean): ClientsFile {
+  if (!file.clients.some((c) => c.brand === brand)) throw new EditError('no such workspace', 404, 'WORKSPACE_NOT_FOUND');
+  return {
+    clients: file.clients.map((c) => {
+      if (c.brand !== brand) return c;
+      const { archived: _a, archivedPause: _p, ...rest } = c;
+      return archived ? { ...rest, archived: true as const, ...(pausedByArchive ? { archivedPause: true as const } : {}) } : rest;
+    }),
+  };
+}
+
+/** The workspaces of one product's customer (group), oldest first. Another product's workspaces are never in it. */
+export const workspacesInGroup = (file: ClientsFile, product: string, group: string): AddedClient[] =>
+  file.clients.filter((c) => c.product === product && groupOf(c) === group).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+
 /** Finds a product's customer by the product's own id. Another product's customers are never found. */
 export const findWorkspace = (file: ClientsFile, product: string, externalId: string): AddedClient | undefined =>
   file.clients.find((c) => c.product === product && c.externalId === externalId);
@@ -338,14 +367,20 @@ export function ensureWorkspace(
   externalId: unknown,
   name: unknown,
   now: number,
+  group?: unknown,
 ): { file: ClientsFile; client: AddedClient; created: boolean } {
   if (!isExternalId(externalId)) throw new EditError('externalId must be 1-64 letters, digits or . _ : -', 400, 'INVALID_EXTERNAL_ID');
+  if (group !== undefined && !isExternalId(group)) throw new EditError('group must be 1-64 letters, digits or . _ : -', 400, 'INVALID_GROUP');
   const shown = typeof name === 'string' ? name.trim().slice(0, MAX_NAME_LENGTH) : '';
   const existing = findWorkspace(file, product, externalId);
-  if (existing) return { file, client: existing, created: false };
+  if (existing) {
+    // A workspace belongs to one customer for good: asking again with another group is a mistake, not a move.
+    if (group !== undefined && group !== groupOf(existing)) throw new EditError('this brand already belongs to another customer', 409, 'GROUP_MISMATCH');
+    return { file, client: existing, created: false };
+  }
   if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many clients', 409, 'OVER_LIMIT');
   const brand = workspaceBrand(product, externalId);
-  const client: AddedClient = { brand, createdAt: new Date(now).toISOString(), product, externalId, ...(shown ? { name: shown } : {}) };
+  const client: AddedClient = { brand, createdAt: new Date(now).toISOString(), product, externalId, ...(group !== undefined && group !== externalId ? { group } : {}), ...(shown ? { name: shown } : {}) };
   return { file: { clients: [...file.clients, client] }, client, created: true };
 }
 
@@ -354,6 +389,8 @@ export function setApprovalMode(file: ClientsFile, brand: string, mode: unknown)
   if (mode !== 'manual' && mode !== 'auto') throw new EditError('the approval mode must be "manual" or "auto"');
   const index = file.clients.findIndex((c) => c.brand === brand);
   if (index === -1) throw new EditError('only a client added in the dashboard has an approval mode here', 404);
+  // A product's customer approves their own posters; nobody, and nothing automatic, approves for them.
+  if (mode === 'auto' && (file.clients[index] as AddedClient).product !== undefined) throw new EditError('this customer approves their own posters, so the approval cannot be made automatic', 409, 'CONFLICT');
   const { approvalMode: _old, ...rest } = file.clients[index] as AddedClient;
   return { clients: file.clients.map((c, i) => (i === index ? { ...rest, ...(mode === 'auto' ? { approvalMode: 'auto' as const } : {}) } : c)) };
 }
@@ -377,6 +414,6 @@ export function clientFeedDetails(c: AddedClient): { name?: string; product?: st
   return {
     ...(c.spendCapUsd !== undefined ? { spendCapUsd: c.spendCapUsd } : {}),
     ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}),
-    ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}), approvalMode: c.approvalMode ?? 'manual',
+    ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}), approvalMode: c.product !== undefined ? 'manual' : (c.approvalMode ?? 'manual'),
   };
 }

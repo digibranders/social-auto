@@ -17,7 +17,13 @@ if (process.env['BLOB_READ_WRITE_TOKEN']) {
   process.exit(1);
 }
 
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { publicFile } from '../server/files.ts';
 import { matchRoute } from '../server/routes.ts';
+
+/** Where released poster pictures are served from, as in the real server (PUBLIC_DIR, else the publisher's own public folder). */
+const PUBLIC_DIR = process.env['PUBLIC_DIR'] ?? join(import.meta.dirname, '..', 'public');
 
 async function toRequest(req: IncomingMessage): Promise<Request> {
   const chunks: Buffer[] = [];
@@ -29,6 +35,14 @@ async function toRequest(req: IncomingMessage): Promise<Request> {
 }
 
 createServer(async (req, res) => {
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    const file = publicFile(PUBLIC_DIR, new URL(req.url ?? '/', `http://${req.headers.host}`).pathname);
+    const bytes = file ? await readFile(file).catch(() => null) : null;
+    if (file && bytes) {
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': bytes.length, 'Cache-Control': 'no-store' });
+      return void res.end(req.method === 'HEAD' ? undefined : bytes);
+    }
+  }
   const match = matchRoute(req.method ?? 'GET', new URL(req.url ?? '/', `http://${req.headers.host}`).pathname);
   if (match.kind !== 'ok') {
     res.statusCode = match.kind === 'not-found' ? 404 : 405;

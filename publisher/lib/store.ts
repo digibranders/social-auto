@@ -1,3 +1,5 @@
+import { NO_BRAND_SETTINGS, parseBrandSettings, type BrandSettings } from './brands.js';
+import { EMPTY_OUTBOX, parseOutbox, type Outbox } from './outbox.js';
 import { NO_ALERTS, parseAlertLog, type AlertLog } from './missed.js';
 import { NO_PAUSES, parsePauses, type PauseFile } from './pauses.js';
 import { createHash } from 'node:crypto';
@@ -186,6 +188,32 @@ export async function loadPauses(): Promise<{ file: PauseFile; etag: string | nu
 
 export function savePauses(file: PauseFile, etag: string | null): Promise<void> {
   return writeJson(PAUSES_PATH, file, etag);
+}
+
+const BRANDS_PATH = 'brands.json';
+
+/** How many brands a customer may have (the default and each customer's own value), with the log of changes. */
+export async function loadBrandSettings(): Promise<{ settings: BrandSettings; etag: string | null }> {
+  if (!storeConfigured()) return { settings: NO_BRAND_SETTINGS, etag: null };
+  const { value, etag } = await readJson(BRANDS_PATH);
+  return { settings: value === null ? NO_BRAND_SETTINGS : parseBrandSettings(value), etag };
+}
+
+export function saveBrandSettings(settings: BrandSettings, etag: string | null): Promise<void> {
+  return writeJson(BRANDS_PATH, settings, etag);
+}
+
+const EVENTS_PATH = 'events.json';
+
+/** The events told to products, with their delivery state (lib/outbox.ts). */
+export async function loadOutbox(): Promise<{ outbox: Outbox; etag: string | null }> {
+  if (!storeConfigured()) return { outbox: EMPTY_OUTBOX, etag: null };
+  const { value, etag } = await readJson(EVENTS_PATH);
+  return { outbox: value === null ? EMPTY_OUTBOX : parseOutbox(value), etag };
+}
+
+export function saveOutbox(outbox: Outbox, etag: string | null): Promise<void> {
+  return writeJson(EVENTS_PATH, outbox, etag);
 }
 
 const ALERTS_PATH = 'alerts.json';

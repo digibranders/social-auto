@@ -10,10 +10,12 @@ import { apiError, channelProblem, errorResponse } from '../../lib/api-error.js'
 import { json } from '../../lib/http.js';
 import { dateNewPostNow } from '../../lib/manual-service.js';
 import { isManualId, toScheduled } from '../../lib/manual.js';
+import { applyOverrides } from '../../lib/overrides.js';
 import { postView, scheduledView } from '../../lib/post-view.js';
 import { productOf } from '../../lib/product-request.js';
+import type { ScheduledPost } from '../../lib/schedule.js';
 import { sendPost } from '../../lib/send-post.js';
-import { loadChannels, loadClients, loadManual, loadPauses, loadPosted, storeConfigured } from '../../lib/store.js';
+import { loadChannels, loadClients, loadManual, loadOverrides, loadPauses, loadPosted, storeConfigured } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 4 * 1024;
 
@@ -34,10 +36,12 @@ export async function POST(request: Request): Promise<Response> {
     if (!workspace) return apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
 
     // Already out on every channel: nothing to send, and sending again would post it twice.
-    const [{ file: manual }, { file: channels }, { log }, { file: pauses }] = await Promise.all([loadManual(), loadChannels(), loadPosted(), loadPauses()]);
+    const [{ file: manual }, { file: channels }, { log }, { file: pauses }, { overrides }] = await Promise.all([loadManual(), loadChannels(), loadPosted(), loadPauses(), loadOverrides()]);
     const existing = manual.posts.find((p) => p.id === postId && p.brand === workspace.brand);
     if (!existing) return apiError(404, 'POST_NOT_FOUND', 'no such post');
-    const before = scheduledView(toScheduled(existing), channels, log, Date.now(), undefined, pauses);
+    // The post as the team has left it: a post they skipped in the dashboard is never sent, and a product's Post now cannot override that.
+    const [asEdited] = applyOverrides([toScheduled(existing)], overrides);
+    const before = scheduledView(asEdited as ScheduledPost, channels, log, Date.now(), undefined, pauses);
     if (before['state'] === 'published') return apiError(409, 'POST_ALREADY_SENT', 'this post has already gone out');
     if (before['state'] === 'skipped') return apiError(409, 'POST_SKIPPED', 'this post was skipped, so it is not being sent');
     if (before['state'] === 'paused') return apiError(409, 'PAUSED', 'this post is paused, so it is not being sent. Resume it first');

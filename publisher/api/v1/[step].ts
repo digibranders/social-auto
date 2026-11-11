@@ -5,12 +5,21 @@
  * POST|GET /api/v1/workspaces      POST /api/v1/connect-link      POST /api/v1/pictures
  * POST /api/v1/send
  * POST|GET|PATCH|DELETE /api/v1/posts
+ * POST|GET /api/v1/site-jobs      POST|GET /api/v1/facts      POST|GET /api/v1/batches
+ * POST|GET /api/v1/posters      GET /api/v1/events      GET /api/v1/topics
  */
 import { json } from '../../lib/http.js';
+import * as batches from '../_v1/batches.js';
 import * as connectLink from '../_v1/connect-link.js';
+import * as events from '../_v1/events.js';
+import * as facts from '../_v1/facts.js';
 import * as pictures from '../_v1/pictures.js';
+import * as posters from '../_v1/posters.js';
 import * as posts from '../_v1/posts.js';
 import * as send from '../_v1/send.js';
+import * as siteJobs from '../_v1/site-jobs.js';
+import * as topics from '../_v1/topics.js';
+import * as workspaceArchive from '../_v1/workspace-archive.js';
 import * as workspaces from '../_v1/workspaces.js';
 
 const stepOf = (request: Request): string => new URL(request.url).pathname.replace(/\/+$/, '').split('/').pop() ?? '';
@@ -21,6 +30,18 @@ export function GET(request: Request): Response | Promise<Response> {
       return workspaces.GET(request);
     case 'posts':
       return posts.GET(request);
+    case 'site-jobs':
+      return siteJobs.GET(request);
+    case 'facts':
+      return facts.GET(request);
+    case 'batches':
+      return batches.GET(request);
+    case 'posters':
+      return posters.GET(request);
+    case 'events':
+      return events.GET(request);
+    case 'topics':
+      return topics.GET(request);
     default:
       return json(404, { error: 'Not found' });
   }
@@ -38,6 +59,16 @@ export function POST(request: Request): Response | Promise<Response> {
       return posts.POST(request);
     case 'send':
       return send.POST(request);
+    case 'archive':
+      return workspaceArchive.POST(request);
+    case 'site-jobs':
+      return siteJobs.POST(request);
+    case 'facts':
+      return facts.POST(request);
+    case 'batches':
+      return batches.POST(request);
+    case 'posters':
+      return posters.POST(request);
     default:
       return json(404, { error: 'Not found' });
   }

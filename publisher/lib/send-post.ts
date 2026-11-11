@@ -9,7 +9,8 @@ import { describeError, requireEnv } from './http.js';
 import { createImageContainer, permalink, prepareCarousel, publishContainer, recentMedia, tokenHealth, waitUntilReady } from './instagram.js';
 import { accessTokenFor, createPost, locationHealth } from './google.js';
 import { parseProducts } from './products.js';
-import { dispatch, eventsForResults } from './webhooks.js';
+import { publishEvents } from './events.js';
+import { eventsForResults } from './webhooks.js';
 import { fetchImage, memberHealth, postImage, postMultiImage, uploadImage, uploadImageUrn } from './linkedin.js';
 import { notify } from './notify.js';
 import { channelLabel, postedKey, type PostedEntry } from './channels.js';
@@ -141,7 +142,7 @@ async function tellProducts(post: ScheduledPost, results: readonly CrosspostResu
     const products = parseProducts(process.env['PRODUCTS']);
     if (products.length === 0) return;
     const { file } = await loadClients();
-    await dispatch(eventsForResults(post.brand ?? 'default', post.id, results, file, Date.now()), products);
+    await publishEvents(eventsForResults(post.brand ?? 'default', post.id, results, file, Date.now()), products);
   } catch (error) {
     console.error(describeError(error));
   }

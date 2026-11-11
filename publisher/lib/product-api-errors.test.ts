@@ -14,7 +14,7 @@ import { addLinkedInMember, postedKey } from './channels.ts';
 import { parseKey } from './crypto.ts';
 import { EditError } from './overrides.ts';
 import { hashKey } from './products.ts';
-import { loadManual, loadPosted, saveChannels, saveManual, savePauses, savePosted } from './store.ts';
+import { loadManual, loadPosted, saveChannels, saveManual, saveOverrides, savePauses, savePosted } from './store.ts';
 
 const KEY = 'test-product-key-0123456789abcdef';
 const CHANNEL_KEY = '33'.repeat(32);
@@ -281,6 +281,39 @@ test('a send to an account whose connection has run out says it must be connecte
       assert.equal(sent.status, 200, JSON.stringify(sent.body));
       assert.equal(sent.body['failed'], true);
       assert.deepEqual(sent.body['problems'], [{ account: 'Test Member', code: 'RECONNECT_NEEDED', error: 'Test Member needs to be connected again.' }]);
+    } finally {
+      console.warn = warned;
+    }
+  });
+});
+
+test('a post the team skipped is never sent, not even by a product\'s Post now; sending works again once it is no longer skipped', async () => {
+  await withProduct(async () => {
+    process.env['PUBLIC_ORIGIN'] = 'http://127.0.0.1:1';
+    const warned = console.warn;
+    console.warn = (): void => undefined;
+    try {
+      const { pictureId, channelId } = await workspaceWithAccount();
+      const day = istDay(3);
+      const made = await call(postsPost, '/api/v1/posts', { json: { externalId: 'shop-1', day, time: '11:30', caption: 'Fresh laddoos.', pictureId, channels: [channelId] } });
+      const postId = String((made.body['post'] as { id: string }).id);
+      const before = ((await loadManual()).file.posts.find((p) => p.id === postId) as { date: string }).date;
+
+      // The team skips it in the dashboard (an edit of the post, kept apart from the post itself).
+      await saveOverrides({ [postId]: { skipped: true, updatedAt: new Date().toISOString() } }, null);
+      const listed = await call(postsGet, `/api/v1/posts?externalId=shop-1&from=${day}&to=${day}`);
+      assert.equal(((listed.body['posts'] as Array<{ id: string; state: string }>).find((p) => p.id === postId) as { state: string }).state, 'skipped', 'the product already sees it as skipped');
+
+      const refused = await call(sendNow, '/api/v1/send', { json: { externalId: 'shop-1', postId } });
+      expectError(refused, 409, 'POST_SKIPPED', 'send a skipped post');
+      assert.deepEqual((await loadPosted()).log, {}, 'nothing was sent to any channel and nothing was recorded');
+      assert.equal(((await loadManual()).file.posts.find((p) => p.id === postId) as { date: string }).date, before, 'the post was not dated now either');
+
+      // No longer skipped: Post now goes ahead again (the channel is unreachable here, so it says so).
+      await saveOverrides({}, (await import('./store.ts').then((m) => m.loadOverrides())).etag);
+      const sent = await call(sendNow, '/api/v1/send', { json: { externalId: 'shop-1', postId } });
+      assert.equal(sent.status, 200, JSON.stringify(sent.body));
+      assert.equal(sent.body['failed'], true);
     } finally {
       console.warn = warned;
     }
