@@ -59,6 +59,8 @@ test('every slide drawn and accepted makes a ready carousel, in order, with one 
     assert.ok(prompts.every((p) => p.includes('flat vector illustration, warm cream background') && p.includes('heavy rounded sans-serif')));
     assert.doesNotMatch(prompts[0] ?? '', /WEB ADDRESS/);
     assert.match(prompts[2] ?? '', /WEB ADDRESS: "currycook.com"/);
+    assert.ok(prompts.every((p) => !p.includes('BRAND NAME')), 'the business name is not on any slide');
+    assert.match(prompts[2] ?? '', /The brand name is not part of the text on this poster/);
   } finally {
     ctx.done();
   }
@@ -118,7 +120,7 @@ test('the real logo is asked for and placed on the last slide only', async () =>
         scene: async (prompt, file) => { prompts.push(prompt); writeFileSync(file, 'x'); },
         // With the logo, the name is inside it and is not drawn: the last slide shows its headline and the address only.
         review: async () => {
-          const seen = reading(shown(draft.slides[Math.min(prompts.length, 3) - 1]?.headline ?? '').filter((t) => t !== 'Curry Cook'));
+          const seen = reading(shown(draft.slides[Math.min(prompts.length, 3) - 1]?.headline ?? ''));
           return { ...seen, regions: seen.regions.map((r) => ({ ...r, box: [100, 600, 900, 700] as [number, number, number, number] })) };
         },
         place: async (input) => {

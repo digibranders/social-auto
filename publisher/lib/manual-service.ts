@@ -15,7 +15,7 @@ async function imageExists(key: string): Promise<boolean> {
 
 /** Checks and stores a picture; answers the key the post will point to. */
 export async function storePicture(bytes: Uint8Array): Promise<string> {
-  if (bytes.length > MAX_IMAGE_BYTES) throw new EditError('picture is too large', 413);
+  if (bytes.length > MAX_IMAGE_BYTES) throw new EditError('picture is too large', 413, 'PICTURE_TOO_LARGE');
   validateJpeg(bytes);
   const imageKey = randomBytes(16).toString('hex');
   await saveImage(imageKey, bytes);
@@ -40,13 +40,13 @@ export interface NewPostInput {
 /** Validates and saves a hand-made post for a client. */
 export async function saveNewPost(input: NewPostInput, now: number): Promise<ManualPost> {
   const [{ file: channels }, { file, etag }] = await Promise.all([loadChannels(), loadManual()]);
-  if (file.posts.length >= MAX_MANUAL_POSTS) throw new EditError('too many extra posts are stored; delete some first');
+  if (file.posts.length >= MAX_MANUAL_POSTS) throw new EditError('too many extra posts are stored; delete some first', 400, 'OVER_LIMIT');
   const connected = channelsFor(channels, input.brand).map((c) => c.id);
   const allowed = [...(input.allowInstagram ? ['instagram'] : []), ...connected];
   const chosen = input.channels === undefined ? connected : input.channels;
   const post = buildManualPost({ brand: input.brand, day: input.day, time: input.time, caption: input.caption, imageKey: input.imageKey, channels: chosen, variants: input.variants }, allowed, now);
   for (const key of [post.imageKey, ...variantKeys(post.variants)]) {
-    if (!(await imageExists(key))) throw new EditError('the picture was not found. Add it again.');
+    if (!(await imageExists(key))) throw new EditError('the picture was not found. Add it again.', 400, 'PICTURE_NOT_FOUND');
   }
   await saveManual({ posts: [...file.posts, post] }, etag);
   return post;
@@ -54,11 +54,11 @@ export async function saveNewPost(input: NewPostInput, now: number): Promise<Man
 
 /** Removes a hand-made post that has not gone out yet. `brand`, when given, must be the post's own client. */
 export async function removeNewPost(id: unknown, now: number, brand?: string): Promise<void> {
-  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required');
+  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required', 400, 'INVALID_REQUEST');
   const { file, etag } = await loadManual();
   const post = file.posts.find((p) => p.id === id);
-  if (!post || (brand !== undefined && post.brand !== brand)) throw new EditError('no such post', 404);
-  if (!isEditable(toScheduled(post), now)) throw new EditError('this post is already due or sent, so it can no longer be deleted', 409);
+  if (!post || (brand !== undefined && post.brand !== brand)) throw new EditError('no such post', 404, 'POST_NOT_FOUND');
+  if (!isEditable(toScheduled(post), now)) throw new EditError('this post is already due or sent, so it can no longer be deleted', 409, 'POST_NOT_EDITABLE');
 
   const remaining = file.posts.filter((p) => p.id !== id);
   await saveManual({ posts: remaining }, etag);
@@ -77,11 +77,11 @@ export async function removeNewPost(id: unknown, now: number, brand?: string): P
  * must be the post's own client. A dashboard edit already on the post is folded in first, so it is not lost.
  */
 export async function updateNewPost(id: unknown, changes: ManualChanges, now: number, brand?: string): Promise<ManualPost> {
-  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required');
+  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required', 400, 'INVALID_REQUEST');
   const [{ file, etag }, { file: channels }, { overrides, etag: overridesEtag }] = await Promise.all([loadManual(), loadChannels(), loadOverrides()]);
   const stored = file.posts.find((p) => p.id === id);
-  if (!stored || (brand !== undefined && stored.brand !== brand)) throw new EditError('no such post', 404);
-  if (!isEditable(toScheduled(stored), now)) throw new EditError('this post is already due or sent, so it can no longer be changed', 409);
+  if (!stored || (brand !== undefined && stored.brand !== brand)) throw new EditError('no such post', 404, 'POST_NOT_FOUND');
+  if (!isEditable(toScheduled(stored), now)) throw new EditError('this post is already due or sent, so it can no longer be changed', 409, 'POST_NOT_EDITABLE');
 
   const dashboardEdit = overrides[id];
   const foldedVariants = mergeVariants(stored.variants, dashboardEdit?.variants);
@@ -89,7 +89,7 @@ export async function updateNewPost(id: unknown, changes: ManualChanges, now: nu
   const connected = channelsFor(channels, stored.brand).map((c) => c.id);
   const edited = editManualPost(current, changes, connected, now);
   for (const key of new Set([...(edited.imageKey !== current.imageKey ? [edited.imageKey] : []), ...variantKeys(edited.variants).filter((k) => !variantKeys(current.variants).includes(k))])) {
-    if (!(await imageExists(key))) throw new EditError('the picture was not found. Add it again.');
+    if (!(await imageExists(key))) throw new EditError('the picture was not found. Add it again.', 400, 'PICTURE_NOT_FOUND');
   }
 
   const posts = file.posts.map((p) => (p.id === id ? edited : p));
@@ -108,10 +108,10 @@ export async function updateNewPost(id: unknown, changes: ManualChanges, now: nu
  * keeps its place in the calendar as today's. `brand`, when given, must be the post's own client.
  */
 export async function dateNewPostNow(id: unknown, now: number, brand?: string): Promise<ManualPost> {
-  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required');
+  if (typeof id !== 'string' || !isManualId(id)) throw new EditError('post is required', 400, 'INVALID_REQUEST');
   const [{ file, etag }, { overrides }] = await Promise.all([loadManual(), loadOverrides()]);
   const stored = file.posts.find((p) => p.id === id);
-  if (!stored || (brand !== undefined && stored.brand !== brand)) throw new EditError('no such post', 404);
+  if (!stored || (brand !== undefined && stored.brand !== brand)) throw new EditError('no such post', 404, 'POST_NOT_FOUND');
   const dashboardEdit = overrides[id];
   const sendingVariants = mergeVariants(stored.variants, dashboardEdit?.variants);
   const sending: ManualPost = { ...stored, date: dateOfNow(now), caption: dashboardEdit?.caption ?? stored.caption, imageKey: dashboardEdit?.imageKey ?? stored.imageKey, ...(sendingVariants ? { variants: sendingVariants } : {}) };

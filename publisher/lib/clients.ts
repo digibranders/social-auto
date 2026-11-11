@@ -339,11 +339,11 @@ export function ensureWorkspace(
   name: unknown,
   now: number,
 ): { file: ClientsFile; client: AddedClient; created: boolean } {
-  if (!isExternalId(externalId)) throw new EditError('externalId must be 1-64 letters, digits or . _ : -');
+  if (!isExternalId(externalId)) throw new EditError('externalId must be 1-64 letters, digits or . _ : -', 400, 'INVALID_EXTERNAL_ID');
   const shown = typeof name === 'string' ? name.trim().slice(0, MAX_NAME_LENGTH) : '';
   const existing = findWorkspace(file, product, externalId);
   if (existing) return { file, client: existing, created: false };
-  if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many clients', 409);
+  if (file.clients.length >= MAX_ADDED_CLIENTS) throw new EditError('too many clients', 409, 'OVER_LIMIT');
   const brand = workspaceBrand(product, externalId);
   const client: AddedClient = { brand, createdAt: new Date(now).toISOString(), product, externalId, ...(shown ? { name: shown } : {}) };
   return { file: { clients: [...file.clients, client] }, client, created: true };

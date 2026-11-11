@@ -111,7 +111,7 @@ async function writeJson(path: string, value: unknown, etag: string | null, conf
   const dir = localDir();
   if (dir) {
     const current = await readJson(path);
-    if (current.etag !== etag) throw new EditError(conflict, 409);
+    if (current.etag !== etag) throw new EditError(conflict, 409, 'CONFLICT');
     const file = join(dir, path);
     await mkdir(dirname(file), { recursive: true });
     await writeFile(`${file}.tmp`, JSON.stringify(value), { mode: 0o600 });
@@ -127,7 +127,7 @@ async function writeJson(path: string, value: unknown, etag: string | null, conf
       ...(etag ? { ifMatch: etag } : {}),
     });
   } catch (error) {
-    if (error instanceof BlobPreconditionFailedError) throw new EditError(conflict, 409);
+    if (error instanceof BlobPreconditionFailedError) throw new EditError(conflict, 409, 'CONFLICT');
     throw error;
   }
 }
