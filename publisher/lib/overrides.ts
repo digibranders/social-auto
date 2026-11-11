@@ -1,3 +1,4 @@
+import type { ErrorCode } from './api-error.js';
 import type { ScheduledPost } from './schedule.js';
 import { mergeViews, parseStoredVariants, toVariants, type StoredVariants } from './variants.js';
 
@@ -24,10 +25,13 @@ export type OverrideMap = Record<string, PostOverride>;
 
 export class EditError extends Error {
   readonly status: number;
-  constructor(message: string, status = 400) {
+  /** What the product API answers as `code` (see api-error.ts); without one the code follows from the status. */
+  readonly code: ErrorCode | undefined;
+  constructor(message: string, status = 400, code?: ErrorCode) {
     super(message);
     this.name = 'EditError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -44,14 +48,14 @@ export function imagePathFor(key: string): string {
 
 /** The caption as it will be posted: trimmed, within Instagram's limits. */
 export function validateCaption(raw: unknown): string {
-  if (typeof raw !== 'string') throw new EditError('caption must be text');
+  if (typeof raw !== 'string') throw new EditError('caption must be text', 400, 'INVALID_REQUEST');
   const caption = raw.replace(/\r\n/g, '\n').trim();
-  if (!caption) throw new EditError('caption cannot be empty');
+  if (!caption) throw new EditError('caption cannot be empty', 400, 'CAPTION_REQUIRED');
   if (caption.length > MAX_CAPTION_LENGTH) {
-    throw new EditError(`caption is ${caption.length} characters; Instagram allows ${MAX_CAPTION_LENGTH}`);
+    throw new EditError(`caption is ${caption.length} characters; Instagram allows ${MAX_CAPTION_LENGTH}`, 400, 'CAPTION_TOO_LONG');
   }
   const hashtags = caption.match(HASHTAG)?.length ?? 0;
-  if (hashtags > MAX_HASHTAGS) throw new EditError(`caption has ${hashtags} hashtags; Instagram allows ${MAX_HASHTAGS}`);
+  if (hashtags > MAX_HASHTAGS) throw new EditError(`caption has ${hashtags} hashtags; Instagram allows ${MAX_HASHTAGS}`, 400, 'TOO_MANY_HASHTAGS');
   return caption;
 }
 
@@ -60,15 +64,15 @@ export function validateCaption(raw: unknown): string {
  * returns its size. Reads the file's own header, never trusting a declared content type.
  */
 export function validateJpeg(bytes: Uint8Array): { width: number; height: number } {
-  if (bytes.length === 0) throw new EditError('no picture was sent');
+  if (bytes.length === 0) throw new EditError('no picture was sent', 400, 'PICTURE_REQUIRED');
   if (bytes.length > MAX_IMAGE_BYTES) {
-    throw new EditError(`picture is ${(bytes.length / 1048576).toFixed(1)} MB; the limit is ${MAX_IMAGE_BYTES / 1048576} MB`, 413);
+    throw new EditError(`picture is ${(bytes.length / 1048576).toFixed(1)} MB; the limit is ${MAX_IMAGE_BYTES / 1048576} MB`, 413, 'PICTURE_TOO_LARGE');
   }
-  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new EditError('picture must be a JPG file');
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new EditError('picture must be a JPG file', 400, 'PICTURE_NOT_JPG');
 
   let i = 2;
   while (i + 8 < bytes.length) {
-    if (bytes[i] !== 0xff) throw new EditError('picture is not a valid JPG file');
+    if (bytes[i] !== 0xff) throw new EditError('picture is not a valid JPG file', 400, 'PICTURE_NOT_JPG');
     const marker = bytes[i + 1] as number;
     if (marker === 0xff) {
       i += 1; // padding
@@ -80,15 +84,15 @@ export function validateJpeg(bytes: Uint8Array): { width: number; height: number
     if (isFrame) {
       const height = ((bytes[i + 5] as number) << 8) | (bytes[i + 6] as number);
       const width = ((bytes[i + 7] as number) << 8) | (bytes[i + 8] as number);
-      if (width < 320 || height < 320) throw new EditError(`picture is ${width}x${height}; it must be at least 320x320`);
-      if (width !== height) throw new EditError(`picture is ${width}x${height}; it must be square, like the other posters`);
-      if (width > 4096) throw new EditError(`picture is ${width}x${height}; it must be at most 4096x4096`);
+      if (width < 320 || height < 320) throw new EditError(`picture is ${width}x${height}; it must be at least 320x320`, 400, 'PICTURE_TOO_SMALL');
+      if (width !== height) throw new EditError(`picture is ${width}x${height}; it must be square, like the other posters`, 400, 'PICTURE_NOT_SQUARE');
+      if (width > 4096) throw new EditError(`picture is ${width}x${height}; it must be at most 4096x4096`, 400, 'PICTURE_TOO_LARGE');
       return { width, height };
     }
     if (marker === 0xd9 || marker === 0xda) break; // end of image / start of scan without a frame header
     i += 2 + length;
   }
-  throw new EditError('picture is not a valid JPG file');
+  throw new EditError('picture is not a valid JPG file', 400, 'PICTURE_NOT_JPG');
 }
 
 export function parseOverrides(raw: unknown): OverrideMap {

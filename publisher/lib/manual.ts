@@ -76,17 +76,17 @@ export function toScheduled(post: ManualPost): ScheduledPost {
  * ahead of now and within 90 days. A post with its own time is sent by the frequent run, within minutes of it.
  */
 export function postDateFor(day: unknown, now: number, time?: unknown): string {
-  if (typeof day !== 'string' || !DAY.test(day)) throw new EditError('choose a day');
-  if (time !== undefined && (typeof time !== 'string' || !TIME.test(time))) throw new EditError('choose a time like 12:05');
+  if (typeof day !== 'string' || !DAY.test(day)) throw new EditError('choose a day', 400, 'INVALID_DAY');
+  if (time !== undefined && (typeof time !== 'string' || !TIME.test(time))) throw new EditError('choose a time like 12:05', 400, 'INVALID_TIME');
   const [year, month, dayOfMonth] = day.split('-').map(Number) as [number, number, number];
   const real = new Date(Date.UTC(year, month - 1, dayOfMonth));
-  if (real.getUTCFullYear() !== year || real.getUTCMonth() !== month - 1 || real.getUTCDate() !== dayOfMonth) throw new EditError('that day does not exist');
+  if (real.getUTCFullYear() !== year || real.getUTCMonth() !== month - 1 || real.getUTCDate() !== dayOfMonth) throw new EditError('that day does not exist', 400, 'INVALID_DAY');
   const date = `${day}T${time ?? DEFAULT_POST_TIME}:00+05:30`;
   const at = Date.parse(date);
   if (at <= now) {
-    throw new EditError(time === undefined ? 'that day has already passed. The next daily run is 10:00 in the morning.' : 'that time has already passed. Choose a later time.');
+    throw new EditError(time === undefined ? 'that day has already passed. The next daily run is 10:00 in the morning.' : 'that time has already passed. Choose a later time.', 400, time === undefined ? 'DAY_PASSED' : 'TIME_PASSED');
   }
-  if (at - now > MAX_DAYS_AHEAD * DAY_MS) throw new EditError(`choose a day within the next ${MAX_DAYS_AHEAD} days`);
+  if (at - now > MAX_DAYS_AHEAD * DAY_MS) throw new EditError(`choose a day within the next ${MAX_DAYS_AHEAD} days`, 400, 'TOO_FAR_AHEAD');
   return date;
 }
 
@@ -108,12 +108,12 @@ export interface NewManualPost {
 export function buildManualPost(input: NewManualPost, allowedChannels: readonly string[], now: number): ManualPost {
   const caption = validateCaption(input.caption);
   const date = postDateFor(input.day, now, input.time);
-  if (!isImageKey(input.imageKey)) throw new EditError('add a picture first');
-  if (!Array.isArray(input.channels) || input.channels.some((c) => typeof c !== 'string')) throw new EditError('choose where to post');
+  if (!isImageKey(input.imageKey)) throw new EditError('add a picture first', 400, 'PICTURE_REQUIRED');
+  if (!Array.isArray(input.channels) || input.channels.some((c) => typeof c !== 'string')) throw new EditError('choose where to post', 400, 'INVALID_CHANNELS');
   const channels = [...new Set(input.channels as string[])];
-  if (channels.length === 0) throw new EditError('choose at least one channel');
+  if (channels.length === 0) throw new EditError('choose at least one channel', 400, 'INVALID_CHANNELS');
   const unknown = channels.find((c) => !allowedChannels.includes(c));
-  if (unknown) throw new EditError('one of the chosen channels is not connected for this client');
+  if (unknown) throw new EditError('one of the chosen channels is not connected for this client', 400, 'CHANNEL_NOT_CONNECTED');
   const variants = input.variants === undefined ? {} : validateVariants(input.variants);
   return {
     id: `manual-${randomBytes(6).toString('hex')}`,
@@ -145,7 +145,7 @@ export interface ManualChanges {
  */
 export function editManualPost(post: ManualPost, changes: ManualChanges, allowedChannels: readonly string[], now: number): ManualPost {
   if (changes.day === undefined && changes.time === undefined && changes.caption === undefined && changes.imageKey === undefined && changes.channels === undefined && changes.variants === undefined) {
-    throw new EditError('nothing to change');
+    throw new EditError('nothing to change', 400, 'NOTHING_TO_CHANGE');
   }
   const edited: ManualPost = { ...post, channels: [...post.channels] };
   const currentDay = post.date.slice(0, 10);
@@ -155,14 +155,14 @@ export function editManualPost(post: ManualPost, changes: ManualChanges, allowed
   }
   if (changes.caption !== undefined) edited.caption = validateCaption(changes.caption);
   if (changes.imageKey !== undefined) {
-    if (!isImageKey(changes.imageKey)) throw new EditError('add a picture first');
+    if (!isImageKey(changes.imageKey)) throw new EditError('add a picture first', 400, 'PICTURE_REQUIRED');
     edited.imageKey = changes.imageKey;
   }
   if (changes.channels !== undefined) {
-    if (!Array.isArray(changes.channels) || changes.channels.some((c) => typeof c !== 'string')) throw new EditError('choose where to post');
+    if (!Array.isArray(changes.channels) || changes.channels.some((c) => typeof c !== 'string')) throw new EditError('choose where to post', 400, 'INVALID_CHANNELS');
     const channels = [...new Set(changes.channels as string[])];
-    if (channels.length === 0) throw new EditError('choose at least one channel');
-    if (channels.some((c) => !allowedChannels.includes(c))) throw new EditError('one of the chosen channels is not connected for this client');
+    if (channels.length === 0) throw new EditError('choose at least one channel', 400, 'INVALID_CHANNELS');
+    if (channels.some((c) => !allowedChannels.includes(c))) throw new EditError('one of the chosen channels is not connected for this client', 400, 'CHANNEL_NOT_CONNECTED');
     edited.channels = channels;
   }
   if (changes.variants !== undefined) {
