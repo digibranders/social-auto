@@ -9,6 +9,7 @@ import type { AiConfig } from './ai.ts';
 import { displayDomain } from './ai-creative.ts';
 import type { CreativeDeps, CreativeRunInput } from './ai-creative-pipeline.ts';
 import { writeFileAtomic } from './art-pipeline.ts';
+import { brandCharacter } from './ai-creative-pipeline.ts';
 import { makeCarouselSlides } from './carousel-make.ts';
 import { writeCarouselCaptions, type CarouselCaptions } from './carousel-copy.ts';
 import { MIN_FACTS, planCarousel, type CarouselDraft, type CarouselFact } from './carousel.ts';
@@ -87,7 +88,7 @@ export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunR
 
   log(`1/4 Planning a carousel from ${carouselFacts.length} verified facts…`);
   const avoidTopics = history.slice(-AVOID_TOPICS).map((c) => c.topic);
-  const draft = await (input.deps?.plan ?? ((request) => planCarousel({ ai: input.ai, brandName: input.brand.name, ...request })))({ facts: carouselFacts, avoidTopics });
+  const draft = await (input.deps?.plan ?? ((request) => planCarousel({ ai: input.ai, brandName: input.brand.name, about: brandCharacter(input.brand), ...request })))({ facts: carouselFacts, avoidTopics });
   log(`    Topic: ${draft.topic} (${draft.slides.length} slides)`);
 
   const factTexts = [...new Set(draft.slides.flatMap((s) => s.factIds))].map((id) => carouselFacts.find((f) => f.id === id)?.text ?? '').filter((t) => t !== '');
