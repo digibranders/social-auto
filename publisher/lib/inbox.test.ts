@@ -139,3 +139,23 @@ test('one failing post does not stop the others, and a disconnected account is f
   assert.equal(report.comments, 1);
   assert.equal(file.items['instagram:gone|old'], undefined);
 });
+
+test('comments on the team Instagram account\'s posts are read with the team token and belong to the client the post belongs to', async () => {
+  const calls: string[] = [];
+  const team = {
+    userId: '555',
+    token: 'team-token',
+    brandOfPost: (id: string) => (id === 'manual-1' ? 'alsonotify' : undefined),
+    discover: async () => [{ postId: 'manual-1', remoteId: 'mediaM', permalink: 'https://ig/p/m', postedAt: new Date(NOW - 3_600_000).toISOString() }],
+  };
+  const { file, report } = await collectInbox({ file: EMPTY_INBOX, channels: [], posted: {}, key: KEY, readers: readers(calls), now: NOW, team });
+  assert.deepEqual(calls, ['ig mediaM team-token']);
+  assert.deepEqual([report.posts, report.comments], [1, 1]);
+  const item = file.items['instagram|c1'];
+  assert.deepEqual([item?.brand, item?.channel, item?.post.id], ['alsonotify', 'instagram', 'manual-1']);
+  assert.equal(viewInbox(file, { brand: 'someone-else' }).items.length, 0, 'another client does not see it');
+  const none = await collectInbox({ file: EMPTY_INBOX, channels: [], posted: {}, key: KEY, readers: readers([]), now: NOW });
+  assert.equal(none.report.posts, 0);
+  const broken = await collectInbox({ file: EMPTY_INBOX, channels: [], posted: {}, key: KEY, readers: readers([]), now: NOW, team: { ...team, discover: async () => { throw new Error('Instagram list media failed: boom'); } } });
+  assert.deepEqual(broken.report.failures, [{ id: 'instagram', reason: 'Instagram list media failed: boom' }]);
+});

@@ -101,3 +101,22 @@ test('the regular check needs the cron secret, reads nothing while switched off,
     assert.equal((await listInbox({ brand: 'b' })).enabled, false);
   });
 });
+
+test('a reply to a comment on the team Instagram account is posted with the team token from the settings', async () => {
+  await withStore(async () => {
+    const before = process.env['INSTAGRAM_TOKEN'];
+    process.env['INSTAGRAM_TOKEN'] = 'team-env-token';
+    try {
+      await saveInbox(addComments((await loadInbox()).file, { brand: 'alsonotify', channel: 'instagram', platform: 'instagram', post: { id: 'manual-1', title: 'Hello', permalink: null } }, [{ remoteId: 't1', author: 'sam', text: 'Nice!', at: new Date(NOW - 60_000).toISOString() }], NOW), (await loadInbox()).etag);
+      const calls: string[] = [];
+      await doInbox({ id: 'instagram|t1', action: 'reply', text: 'Thanks!' }, 'Asha', NOW, { instagramReply: async (id, token, text) => { calls.push(`${id} ${token} ${text}`); return 'r9'; }, facebookReply: async () => null });
+      assert.deepEqual(calls, ['t1 team-env-token Thanks!']);
+      const view = await listInbox({ brand: 'alsonotify' });
+      assert.deepEqual(view.channels.map((c) => [c.channel, c.label]), [['instagram', 'Instagram']], 'the team account shows as a channel of the client it posted for');
+      assert.equal(view.items[0]?.status, 'done');
+    } finally {
+      if (before === undefined) delete process.env['INSTAGRAM_TOKEN'];
+      else process.env['INSTAGRAM_TOKEN'] = before;
+    }
+  });
+});

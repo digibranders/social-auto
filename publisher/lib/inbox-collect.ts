@@ -4,6 +4,7 @@
  */
 import { channelToken, type Channel, type PostedLog } from './channels.js';
 import { dayOf } from './analytics.js';
+import { TEAM_INSTAGRAM_ID, type TeamInstagram } from './analytics-collect.js';
 import { addComments, markChannel, tidy, type InboxFile } from './inbox.js';
 import type { CommentsReading } from './inbox-fetch.js';
 
@@ -31,6 +32,8 @@ export interface InboxCollectInput {
   key: Buffer;
   readers: InboxReaders;
   now: number;
+  /** The team's own Instagram account, when its settings are there. */
+  team?: TeamInstagram | null;
   /** The words a post is called in the list; the default says when it went out. */
   titleOf?: (postId: string, postedAt: string) => string;
 }
@@ -39,18 +42,32 @@ const isSent = (e: PostedLog[string]): boolean => e.skipped !== true && e.duplic
 const reasonOf = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, 200);
 
 export async function collectInbox(input: InboxCollectInput): Promise<{ file: InboxFile; report: InboxCollectReport }> {
-  const { channels, posted, key, readers, now } = input;
+  const { channels, key, readers, now, team } = input;
+  let posted = input.posted;
   const today = dayOf(now);
   const report: InboxCollectReport = { posts: 0, comments: 0, reconnect: [], failures: [] };
   const byId = new Map(channels.filter((c) => c.platform === 'instagram' || c.platform === 'facebook').map((c) => [c.id, c] as const));
-  let file = tidy(input.file, new Set(byId.keys()), now);
+  let file = tidy(input.file, new Set([...byId.keys(), ...(team ? [TEAM_INSTAGRAM_ID] : [])]), now);
+  /** A post of the team's account, treated as a post of an Instagram channel of the client it belongs to. */
+  const teamChannel = (postId: string): Channel | undefined => (team ? { id: TEAM_INSTAGRAM_ID, platform: 'instagram', brand: team.brandOfPost(postId) ?? 'default', userId: team.userId, username: 'Instagram', token: '', expiresAt: '', connectedAt: '' } : undefined);
+  if (team) {
+    try {
+      posted = { ...posted };
+      for (const f of await team.discover(now)) {
+        const logKey = `${f.postId}|${TEAM_INSTAGRAM_ID}`;
+        if (posted[logKey] === undefined || !isSent(posted[logKey] as PostedLog[string])) posted[logKey] = { remoteId: f.remoteId, permalink: f.permalink, postedAt: f.postedAt };
+      }
+    } catch (error) {
+      report.failures.push({ id: TEAM_INSTAGRAM_ID, reason: reasonOf(error) });
+    }
+  }
   /** A channel that was refused is probed with one post per check, so it recovers soon after the account is connected again. */
   const probed = new Set<string>();
 
   for (const [logKey, entry] of Object.entries(posted)) {
     const channelId = logKey.slice(logKey.lastIndexOf('|') + 1);
     const postId = logKey.slice(0, logKey.lastIndexOf('|'));
-    const channel = byId.get(channelId);
+    const channel = byId.get(channelId) ?? (channelId === TEAM_INSTAGRAM_ID ? teamChannel(postId) : undefined);
     if (!channel || !isSent(entry)) continue;
     const age = now - Date.parse(entry.postedAt);
     if (Number.isNaN(age) || age > WATCH_DAYS * DAY_MS) continue;
@@ -60,7 +77,7 @@ export async function collectInbox(input: InboxCollectInput): Promise<{ file: In
       probed.add(channelId);
     }
     try {
-      const token = channelToken(channel, key);
+      const token = team && channel.id === TEAM_INSTAGRAM_ID ? team.token : channelToken(channel, key);
       const reading = channel.platform === 'instagram' ? await readers.instagramComments(entry.remoteId, token) : await readers.facebookComments(entry.remoteId, (channel as Extract<Channel, { platform: 'facebook' }>).pageId, token);
       if (reading.needs) {
         file = markChannel(file, channelId, 'reconnect', now);
