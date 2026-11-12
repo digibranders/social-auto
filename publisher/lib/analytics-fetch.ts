@@ -85,6 +85,8 @@ const put = <T extends object>(target: T, key: keyof T, value: number | undefine
 export async function instagramPost(mediaId: string, token: string, fetcher: Fetch = fetch): Promise<PostReading> {
   const basic = await graph(fetcher, 'Instagram post', `${INSTAGRAM_GRAPH}/${mediaId}?${new URLSearchParams({ fields: 'caption,permalink,like_count,comments_count', access_token: token })}`);
   const numbers: PostNumbers = {};
+  // A refusal on the basic numbers (no permission to read them) leaves nothing to read: say so, instead of saving an empty reading.
+  if (basic.refusal) return { numbers, needs: basic.refusal.permission ? ['reconnect'] : [] };
   put(numbers, 'likes', count(basic.body['like_count']));
   put(numbers, 'comments', count(basic.body['comments_count']));
   const needs: Need[] = [];
@@ -111,6 +113,7 @@ export async function instagramAccount(userId: string, token: string, today: str
   const needs: Need[] = [];
   const numbers: Record<string, AccountNumbers> = {};
   const profile = await graph(fetcher, 'Instagram account', `${INSTAGRAM_GRAPH}/${userId}?${new URLSearchParams({ fields: 'followers_count', access_token: token })}`);
+  if (profile.refusal) return { numbers, needs: profile.refusal.permission ? ['reconnect'] : [] };
   const followers = count(profile.body['followers_count']);
   if (followers !== undefined) numbers[today] = { followers };
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
@@ -154,6 +157,7 @@ export async function instagramAccount(userId: string, token: string, today: str
 export async function facebookPost(postId: string, pageToken: string, fetcher: Fetch = fetch): Promise<PostReading> {
   const basic = await graph(fetcher, 'Facebook post', `${FACEBOOK_GRAPH}/${postId}?${new URLSearchParams({ fields: 'message,permalink_url,shares,reactions.summary(true).limit(0),comments.summary(true).limit(0)', access_token: pageToken })}`);
   const numbers: PostNumbers = {};
+  if (basic.refusal) return { numbers, needs: basic.refusal.permission ? ['reconnect'] : [] };
   const summary = (key: string): number | undefined => count(((basic.body[key] as Json | undefined)?.['summary'] as Json | undefined)?.['total_count']);
   put(numbers, 'likes', summary('reactions'));
   put(numbers, 'comments', summary('comments'));
@@ -183,6 +187,7 @@ export async function facebookAccount(pageId: string, pageToken: string, today: 
   const needs: Need[] = [];
   const numbers: Record<string, AccountNumbers> = {};
   const profile = await graph(fetcher, 'Facebook page', `${FACEBOOK_GRAPH}/${pageId}?${new URLSearchParams({ fields: 'followers_count', access_token: pageToken })}`);
+  if (profile.refusal) return { numbers, needs: profile.refusal.permission ? ['reconnect'] : [] };
   const followers = count(profile.body['followers_count']);
   if (followers !== undefined) numbers[today] = { followers };
   const insights = await graph(fetcher, 'Facebook page insights', `${FACEBOOK_GRAPH}/${pageId}/insights?${new URLSearchParams({ metric: 'page_total_media_view_unique', period: 'day', access_token: pageToken })}`);

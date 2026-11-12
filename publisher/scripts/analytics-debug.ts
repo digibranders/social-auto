@@ -27,7 +27,8 @@ const fields = instagram ? 'caption,permalink,like_count,comments_count' : 'mess
 async function show(label: string, path: string): Promise<void> {
   const response = await fetch(`${base}/${remoteId}${path}${path.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token as string)}`, { signal: AbortSignal.timeout(30_000) });
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  const text = JSON.stringify(body, (k, v) => (k === 'message' || k === 'caption' || k === 'text' ? '<words>' : v));
+  // Nothing secret is printed: the words are hidden, and so is every access token (the network puts one inside its paging links).
+  const text = JSON.stringify(body, (k, v) => (k === 'message' || k === 'caption' || k === 'text' ? '<words>' : v)).replace(/access_token=[^&"\s]+/g, 'access_token=<hidden>').replace(/EAA[A-Za-z0-9]{20,}/g, '<hidden>');
   console.log(`${label}: HTTP ${response.status}; ${text.slice(0, 700)}`);
 }
 
