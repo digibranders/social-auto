@@ -19,12 +19,13 @@ const { file } = await loadChannels();
 const channel = file.channels.find((c) => c.id === channelId);
 const token = channelId === 'instagram' ? process.env['INSTAGRAM_TOKEN'] : channel ? channelToken(channel, parseKey(process.env['CHANNEL_KEY'])) : undefined;
 if (!token) throw new Error(`no token for ${channelId}: is the channel connected, and are INSTAGRAM_TOKEN or CHANNEL_KEY set?`);
+const remoteId = entry.remoteId;
 const instagram = channelId.startsWith('instagram');
 const base = instagram ? `${process.env['INSTAGRAM_GRAPH_URL'] ?? 'https://graph.instagram.com'}/v23.0` : (process.env['FACEBOOK_GRAPH_URL'] ?? 'https://graph.facebook.com/v23.0');
 const fields = instagram ? 'caption,permalink,like_count,comments_count' : 'message,permalink_url,shares,reactions.summary(true).limit(0),comments.summary(true).limit(0)';
 
 async function show(label: string, path: string): Promise<void> {
-  const response = await fetch(`${base}/${entry.remoteId}${path}${path.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token as string)}`, { signal: AbortSignal.timeout(30_000) });
+  const response = await fetch(`${base}/${remoteId}${path}${path.includes('?') ? '&' : '?'}access_token=${encodeURIComponent(token as string)}`, { signal: AbortSignal.timeout(30_000) });
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   const text = JSON.stringify(body, (k, v) => (k === 'message' || k === 'caption' || k === 'text' ? '<words>' : v));
   console.log(`${label}: HTTP ${response.status}; ${text.slice(0, 700)}`);
