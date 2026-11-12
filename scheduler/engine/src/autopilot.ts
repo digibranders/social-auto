@@ -513,6 +513,8 @@ async function main(): Promise<void> {
         log: (m) => console.log(`    ${m}`),
         writeDay: async (day, existing) => {
           const one = await writePlan({ startDate: day, time: values.time, utcOffset: values['utc-offset'], count: 1, weekdays: [weekdayOf(day)] }, {
+            // A different request from the first one on purpose (the paid-call guard refuses an identical one): the day, and the ideas the plan already has.
+            requestNote: `Write ONE post, for ${day}. It must be about a different fact and a different idea from the posts this plan already has: ${existing.slice(0, 20).map((p) => `"${p.headline.replaceAll('|', '')}"`).join('; ')}.`,
             recentHeadlines: [...history.weeks.flatMap((w) => w.headlines ?? []), ...existing.map((p) => p.headline)],
             recentConcepts: [...history.weeks.flatMap((w) => w.concepts ?? []), ...existing.flatMap((p) => { const r = conceptRecordOf(p); return r ? [r] : []; })],
           });
