@@ -10,6 +10,7 @@
  * lettering and its address.
  */
 import { COMPOSITION_BY_NETWORK, type Network, type PictureShape } from './networks.ts';
+import { typeDirectionLine, type TypeLean } from './type-direction.ts';
 import { readFile } from 'node:fs/promises';
 import type { AiConfig } from './ai.ts';
 import { chatJson } from './llm.ts';
@@ -52,6 +53,8 @@ export interface CreativeContext {
   shape?: PictureShape;
   /** The network this picture is drawn for, when each network gets its own: the prompt then asks for a composition of its own, different from the other networks'. */
   network?: Network;
+  /** The traits this picture's headline lettering is gently nudged towards (see type-direction.ts); not used when the creative director already wrote a typography plan. */
+  typeLean?: TypeLean;
 }
 
 /** The words that ask for room for the logo, and say what is not to be drawn in its place. */
@@ -95,6 +98,7 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
           'Do not invent product screenshots, customer quotes, results, endorsements, statistics, prices, offers or any evidence, and do not imply an outcome the fact does not state (no growth arrows, trophies or rising charts unless the fact says so). Any interface you show must be an obvious concept with no text in it. People may appear only as generic illustrated subjects, never as real customers, employees or endorsers.',
         ]),
     ...(context.network ? [`COMPOSITION FOR THIS VERSION. ${COMPOSITION_BY_NETWORK[context.network]}`, 'This picture is one of several versions of the same topic, each made for a different network. The idea, the message and the text stay exactly as given, but the scene, the camera angle and the arrangement must be clearly different from the other versions.'] : []),
+    ...(context.typeLean && context.network && !context.concept?.typography ? [typeDirectionLine({ network: context.network, lean: context.typeLean })] : []),
     ...(context.concept?.typography
       ? [`TYPOGRAPHY (an essential part of the concept, not optional styling): ${context.concept.typography} Execute this as part of the advertisement's design: compose the artwork and the type together, so that the picture leaves the room the type needs and the type belongs to the scene; follow the described scale, weight, colour, position and spatial relationship, including where the web address sits (and the brand name, only when the poster is asked to carry one). Do not automatically place the headline at the top or the brand details at the bottom. Keep the headline's capitalisation and punctuation exactly as given. If a decorative treatment would endanger the spelling or legibility of any letter, simplify its execution, but do not fall back to a large black headline above the artwork.`]
       : []),

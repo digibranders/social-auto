@@ -6,6 +6,7 @@
  * "pending": nothing here approves, schedules or publishes anything.
  */
 import { SQUARE_SHAPE, type Network, type PictureShape } from './networks.ts';
+import { headlineStylesEnabled, leanFor, loadTypeHistory, saveTypeHistory, type LeanRecord } from './type-direction.ts';
 import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AiConfig } from './ai.ts';
@@ -44,6 +45,8 @@ export interface CreativeResult {
   headline?: HeadlineScore;
   /** The picture the creative director chose for this post. */
   concept?: PlannedConcept;
+  /** The weight and character the headline lettering was nudged towards (type-direction.ts), when the picture was drawn for a network. */
+  typeLean?: { weight: string; character: string };
   /** What the plan said about people and what the readers saw in the poster that was kept (or the last one drawn). */
   people?: { planned: boolean; observed: 'none' | 'background' | 'prominent'; description: string };
   /** The file of the accepted poster: with the real logo on it when it carries one. */
@@ -173,6 +176,9 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   const maxAttempts = deps.maxAttempts ?? 2;
   await mkdir(outDir, { recursive: true });
   const report: CreativeReport = { brand: input.brandSlug, generatedAt: (deps.now?.() ?? new Date()).toISOString(), results: [] };
+  // The headline looks this brand was recently nudged towards (only read when pictures are drawn for a network), and the ones this run adds.
+  const pastLeans: LeanRecord[] = input.network && input.brandDir && headlineStylesEnabled(process.env) ? await loadTypeHistory(input.brandDir) : [];
+  const newLeans: LeanRecord[] = [];
 
   const shape = input.shape ?? SQUARE_SHAPE;
   const scene = deps.scene ?? (async (prompt: string, outPath: string, drawShape: PictureShape): Promise<void> => {
@@ -201,7 +207,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
       if (error instanceof BudgetError) {
         report.stoppedBy = `${error.code}: ${error.message}`;
         for (const post of posts) report.results.push({ postId: post.id, manifest: manifestOf(post, brand), status: 'budget_stopped', attempts: [], reason: error.message, costUsd: 0 });
-        await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
         return report;
       }
       // The check could not be made: the posts go on, as they did before the gate existed, with a note in the log. A gate that fails must not stop the engine.
@@ -272,11 +278,17 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     // The ledger counts a poster's calls under the same id.
     const ledgerId = ai.usage.post;
     ai.usage.network = input.network ?? null;
+    // A picture drawn for a network is nudged towards a headline look of its own (type-direction.ts), steering clear of the brand's recent ones; a plain post and a switched-off setting keep the model's own choice.
+    const typeLean = input.network && headlineStylesEnabled(process.env) ? leanFor(post.id, input.network, [...newLeans, ...pastLeans]) : undefined;
+    if (typeLean && input.network) {
+      result.typeLean = typeLean;
+      newLeans.unshift({ ...typeLean, at: report.generatedAt, postId: `${input.brandSlug}-${post.id}`, network: input.network });
+    }
     let note: string | undefined;
     try {
       for (let n = 1; n <= maxAttempts; n++) {
         const imageFile = join(outDir, `${post.id}.attempt${n}.jpg`);
-        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(input.network ? { network: input.network } : {}), ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
+        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(input.network ? { network: input.network } : {}), ...(typeLean ? { typeLean } : {}), ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
         const attempt: CreativeAttempt = { n, prompt, imageFile, readings: [], accepted: false, defects: [] };
         result.attempts.push(attempt);
         log(`${post.id}: attempt ${n}, drawing the poster…`);
@@ -421,6 +433,8 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
   if (director && input.brandDir) {
     await saveConceptHistory(input.brandDir, past, report.results.flatMap((r) => (r.concept ? [{ at: report.generatedAt, postId: `${input.brandSlug}-${r.postId}`, concept: r.concept.concept, typography: r.concept.typography, people: r.concept.people, accepted: r.status === 'accepted' }] : [])));
   }
+  // The brand remembers the looks it just asked for, so its next posters steer clear of them.
+  if (input.brandDir) await saveTypeHistory(input.brandDir, pastLeans, newLeans);
   await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
   ai.usage.network = null;
   return report;
