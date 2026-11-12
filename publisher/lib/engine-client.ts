@@ -207,8 +207,10 @@ export interface WrittenPostView {
 export interface BatchWeekView {
   from: string;
   to: string;
-  state: 'waiting' | 'drawing' | 'drawn' | 'not_drawn' | 'lapsed';
+  state: 'waiting' | 'drawing' | 'drawn' | 'not_drawn' | 'lapsed' | 'empty';
   postIds: string[];
+  /** Days of this week the plan was asked to write a post for and has none (a week with none at all is `empty`). */
+  missingDays?: string[];
   /** Kept topics of the week that got no picture: why, in a fixed code and plain words (`message`). They stay open to change or drop; a retry of the week draws only them. */
   notDrawn?: Array<{ postId: string; code: NotDrawnCode; message: string }>;
 }
@@ -296,9 +298,10 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
   const weeks = Array.isArray(raw['weeks']) ? raw['weeks'].flatMap((w): BatchWeekView[] => {
     if (!isObject(w) || typeof w['from'] !== 'string' || !DAY.test(w['from']) || typeof w['to'] !== 'string' || !DAY.test(w['to']) || !Array.isArray(w['postIds'])) return [];
     const state = w['state'];
-    if (state !== 'waiting' && state !== 'drawing' && state !== 'drawn' && state !== 'not_drawn' && state !== 'lapsed') return [];
+    if (state !== 'waiting' && state !== 'drawing' && state !== 'drawn' && state !== 'not_drawn' && state !== 'lapsed' && state !== 'empty') return [];
+    const missingDays = Array.isArray(w['missingDays']) ? w['missingDays'].filter((d): d is string => typeof d === 'string' && DAY.test(d)).slice(0, 7) : [];
     const notDrawn = Array.isArray(w['notDrawn']) ? w['notDrawn'].flatMap((n): Array<{ postId: string; code: NotDrawnCode; message: string }> => (isObject(n) && typeof n['postId'] === 'string' && PART.test(n['postId']) && typeof n['code'] === 'string' && NOT_DRAWN_CODES.includes(n['code']) ? [{ postId: n['postId'], code: n['code'] as NotDrawnCode, message: NOT_DRAWN_REASON[n['code'] as NotDrawnCode] }] : [])).slice(0, 40) : [];
-    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(notDrawn.length > 0 ? { notDrawn } : {}) }];
+    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(missingDays.length > 0 ? { missingDays } : {}), ...(notDrawn.length > 0 ? { notDrawn } : {}) }];
   }).slice(0, 8) : [];
   return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(weeks.length > 0 ? { weeks } : {}), ...(signoffDefault ? { signoffDefault } : {}), posts };
 }

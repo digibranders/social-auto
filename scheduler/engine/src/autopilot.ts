@@ -45,7 +45,7 @@ import { checkBrandIdentity, checkEvidence, checkLanguage, PreflightError } from
 import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { ReviewStore } from './review-store.ts';
-import { parseWeekdays } from './cadence.ts';
+import { parseWeekdays, weekdayOf } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type PlannedPost, type WeekPlan } from './content.ts';
 import { batchLookAlikes } from './creative-director.ts';
 import { addNetworkToBatch } from './add-network.ts';
@@ -69,7 +69,8 @@ import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { normalizeHeadline } from './hooks.ts';
 import type { ConceptRecord } from './concepts.ts';
-import { conceptRecordOf, planWeek } from './planner.ts';
+import { conceptRecordOf, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
+import { topUpPlan } from './plan-topup.ts';
 import { createArtRenderContext, renderPlan, type PostRenderRecord } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
 
@@ -467,20 +468,14 @@ async function main(): Promise<void> {
       else console.log(`    Poster-worthiness: ${candidates.filter((f) => (result.scores[f.id] ? effectiveTotal(result.scores[f.id] as WorthScore) : 0) >= MIN_WORTH).length} of ${candidates.length} top candidates are worth a post of their own.`);
       worthScores = result.failure ? undefined : result.scores;
     }
-    const plan = await planWeek({
+    const writePlan = (schedule: PlanSchedule, over: Partial<Parameters<typeof planWeek>[0]> = {}): ReturnType<typeof planWeek> => planWeek({
       ai,
       compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
       brand,
       brandSlug: slug,
       weekNumber,
       log: (m) => console.log(`    ${m}`),
-      schedule: {
-        startDate,
-        time: values.time,
-        utcOffset: values['utc-offset'],
-        count: days,
-        ...(weekdays ? { weekdays } : {}),
-      },
+      schedule,
       usedPainPoints: history.weeks.flatMap((w) => w.painPoints),
       recentPillars: history.weeks.flatMap((w) => w.pillars ?? []),
       recentHooks: history.weeks.flatMap((w) => w.hooks ?? []),
@@ -490,7 +485,10 @@ async function main(): Promise<void> {
       // The fully AI route writes more candidates than posts and reviews each with structured verdicts before any picture is bought.
       ...(route === 'ai' && reviewed ? { candidates: { review: modelReviewDeps(ai, ordinaryChecks(brand.name)) } } : {}),
       ...(reviewed ? { evidence: { facts: reviewed.facts, recentFactIds: history.weeks.flatMap((w) => w.factIds ?? []), ...(worthScores ? { worth: Object.fromEntries(Object.entries(worthScores).map(([id, sc]) => [id, effectiveTotal(sc)])) } : {}) } } : {}),
+      ...over,
     });
+    const schedule: PlanSchedule = { startDate, time: values.time, utcOffset: values['utc-offset'], count: days, ...(weekdays ? { weekdays } : {}) };
+    let plan = await writePlan(schedule);
     await verdicts?.save();
     if (plan.candidateReport) {
       await writeFileAtomic(join(brandDir, `candidates-${planFile}`), `${JSON.stringify(plan.candidateReport, null, 2)}\n`);
@@ -501,6 +499,28 @@ async function main(): Promise<void> {
     if (plan.insufficientConcepts) {
       const { requested, produced, reasons } = plan.insufficientConcepts;
       console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);
+    }
+    // The days that were asked for are remembered, and a plan that came out short is topped up (copy-first plans only): empty days are filled from the drafts that passed
+    // review but were not chosen, then by writing the day once more; a day nobody could write stays empty and is told.
+    const requestedDays = scheduleDates(schedule).map((d) => d.slice(0, 10));
+    if (values['copy-first'] && plan.posts.length > 0 && plan.posts.length < requestedDays.length) {
+      const topped = await topUpPlan({
+        posts: plan.posts,
+        requestedDays,
+        reserve: plan.reserveDrafts ?? [],
+        dateOf: (day) => `${day}T${values.time}:00${values['utc-offset']}`,
+        idOf: (i) => `w${String(weekNumber).padStart(2, '0')}-d${i + 1}`,
+        log: (m) => console.log(`    ${m}`),
+        writeDay: async (day, existing) => {
+          const one = await writePlan({ startDate: day, time: values.time, utcOffset: values['utc-offset'], count: 1, weekdays: [weekdayOf(day)] }, {
+            recentHeadlines: [...history.weeks.flatMap((w) => w.headlines ?? []), ...existing.map((p) => p.headline)],
+            recentConcepts: [...history.weeks.flatMap((w) => w.concepts ?? []), ...existing.flatMap((p) => { const r = conceptRecordOf(p); return r ? [r] : []; })],
+          });
+          return one.posts[0] ?? null;
+        },
+      });
+      plan = { ...plan, posts: topped.posts };
+      console.log(`    Topped up: ${topped.fromReserve.length} day${topped.fromReserve.length === 1 ? '' : 's'} from the reserve, ${topped.written.length} written once more, ${topped.stillEmpty.length} still empty.`);
     }
     // A fully AI plan is marked so that nothing can publish from it except an approved version in the review queue.
     let finalPlan: WeekPlan = route === 'ai' ? { ...plan, renderMode: 'ai_v1' } : plan;
@@ -537,7 +557,7 @@ async function main(): Promise<void> {
           console.log(`    The headline check could not run (${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}); no advice is shown.`);
         }
       }
-      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, date: p.date.slice(0, 10), headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })));
+      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, date: p.date.slice(0, 10), headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })), requestedDays);
       console.log(`3/4 Copy first: ${finalPlan.posts.length} posts are waiting for the owner to keep or drop them. No picture was bought. Then: --draw-kept ${planFile}`);
       return;
     }
