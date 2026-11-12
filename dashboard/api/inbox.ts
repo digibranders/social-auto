@@ -6,6 +6,7 @@
  */
 import { parseInbox } from '../shared/inbox.js';
 import { describeError, json } from '../lib/http.js';
+import { PUBLISHING_OFF_MESSAGE, publishingEnabled } from '../lib/publishing.js';
 import { isSameOrigin, isSignedIn } from '../lib/security.js';
 
 const TIMEOUT_MS = 40_000;
@@ -47,6 +48,8 @@ export async function POST(request: Request): Promise<Response> {
   const assignee = body?.['assignee'];
   const by = body?.['by'];
   if (!action || typeof body?.['id'] !== 'string' || !ID.test(body['id']) || typeof by !== 'string' || !by.trim() || by.length > 80 || (text !== undefined && typeof text !== 'string') || (assignee !== undefined && assignee !== null && typeof assignee !== 'string')) return json(400, { error: 'Invalid request' });
+  // A public reply is publishing: refused while the switch is off. Closing, assigning and noting change nothing on a network, so they are always allowed.
+  if (action === 'reply' && !publishingEnabled()) return json(503, { error: PUBLISHING_OFF_MESSAGE });
   try {
     const response = await fetch(new URL('/api/inbox', target), {
       method: 'POST',

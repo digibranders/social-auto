@@ -62,10 +62,11 @@ test('dashboard: the routes that talk to the publisher are exactly the known one
     'dashboard/api/clients.ts',
     'dashboard/api/disconnect.ts',
     'dashboard/api/edit.ts',
+    'dashboard/api/inbox.ts',
     'dashboard/api/manual.ts',
     'dashboard/api/pause.ts',
   ]);
-  for (const file of ['edit.ts', 'manual.ts']) assert.match(text(join(api, file)), /publishingEnabled\(\)/, file);
+  for (const file of ['edit.ts', 'manual.ts', 'inbox.ts']) assert.match(text(join(api, file)), /publishingEnabled\(\)/, file);
 });
 
 test('the weekly client run cannot become the approval-queue route by default', () => {
