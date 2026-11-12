@@ -52,8 +52,8 @@ import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
 import { readConnected } from './connected-networks.ts';
+import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
 import { pageModeBlocked } from './page-mode.ts';
-import { placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
 import { redrawAlike } from './look-alike-check.ts';
 import { classifyNotDrawn } from './not-drawn.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
@@ -322,6 +322,8 @@ async function main(): Promise<void> {
       let queuedTotal = 0;
       let stoppedReason: string | undefined;
       const usageIds: string[] = [];
+      // The real logo, frozen with the decision, goes on every poster that passes the checks. Not in placeholder mode: a placeholder card has no calm corner for it.
+      const drawLogo = logoForDraw(process.env, branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } : undefined);
       type Drawn = { group: (typeof groups)[number]; posts: PlannedPost[]; made: Awaited<ReturnType<typeof makeCreatives>>; outDir: string; suffix: string; network: Network | undefined };
       const drawnGroups: Drawn[] = [];
       const makeFor = (posts: PlannedPost[], outDir: string, group: (typeof groups)[number], network: Network | undefined, over: { startNote?: string; headlineGate?: boolean } = {}): ReturnType<typeof makeCreatives> => makeCreatives({
@@ -329,7 +331,7 @@ async function main(): Promise<void> {
         // Local testing with no picture model (PICTURE_MODE=placeholder and LOCAL_PLACEHOLDER_PICTURES=yes): placeholder pictures, everything after them the normal pipeline.
         ...(placeholderEnabled(process.env) ? { deps: placeholderDeps({ ai }) } : first || over.startNote ? (over.startNote ? { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } } : {}) : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
         // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
-        ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
+        ...(drawLogo ? { logo: drawLogo } : {}),
         factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
       });
       for (const group of groups) {
