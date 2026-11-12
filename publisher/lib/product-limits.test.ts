@@ -167,8 +167,8 @@ test('a kept topic that got no picture is shown per topic and per week with a fi
     });
     const answer = await call(batchesGet, '/api/v1/batches?externalId=shop-1');
     const batch = (answer.body['batches'] as Array<{ weeks: Array<{ notDrawn?: unknown }>; posts: Array<{ id: string; notDrawn?: unknown }> }>)[0];
-    assert.deepEqual(batch?.weeks[0]?.notDrawn, [{ postId: 'w1-d1', code: 'HEADLINE_TOO_WEAK', reason: 'This headline is too weak to draw. Change it or drop it.' }], 'an unknown code is left out and the words are ours');
-    assert.deepEqual(batch?.posts.find((p) => p.id === 'w1-d1')?.notDrawn, { code: 'HEADLINE_TOO_WEAK', reason: 'This headline is too weak to draw. Change it or drop it.' });
+    assert.deepEqual(batch?.weeks[0]?.notDrawn, [{ postId: 'w1-d1', code: 'HEADLINE_TOO_WEAK', message: 'This headline is too weak to draw. Change it or drop it.' }], 'an unknown code is left out and the words are ours');
+    assert.deepEqual(batch?.posts.find((p) => p.id === 'w1-d1')?.notDrawn, { code: 'HEADLINE_TOO_WEAK', message: 'This headline is too weak to draw. Change it or drop it.' });
     assert.equal(batch?.posts.find((p) => p.id === 'w1-d2')?.notDrawn, undefined);
     assert.doesNotMatch(JSON.stringify(answer.body), /home|internal/);
   });

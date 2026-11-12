@@ -111,3 +111,18 @@ test('after a draw that made nothing for a topic, the customer sees why per topi
     await s.done();
   }
 });
+
+test('a week whose draw ran but left every kept topic without a picture is not_drawn, never drawn', async () => {
+  const s = await start();
+  try {
+    assert.equal((await s.call('/review/copy/bb-acme/week-01.json/w1-d1/keep', {})).status, 200);
+    s.copy.markWeekDrawn('week-01.json', W1);
+    s.copy.setNotDrawn('week-01.json', { 'w1-d1': classifyNotDrawn({ status: 'dropped', reason: 'weak headline' }) });
+    const state = async (): Promise<string | undefined> => ((await (await s.call('/review/copy')).json()) as Listed).batches[0]?.weeks?.find((w) => w.from === W1)?.state;
+    assert.equal(await state(), 'not_drawn');
+    s.copy.setNotDrawn('week-01.json', {}, ['w1-d1']);
+    assert.equal(await state(), 'drawn', 'a picture made later makes it drawn');
+  } finally {
+    await s.done();
+  }
+});
