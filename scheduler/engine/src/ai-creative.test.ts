@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aiConfigFromEnv } from './ai.ts';
 import { NETWORK_RULES } from './networks.ts';
+import { leanFor, loadTypeHistory } from './type-direction.ts';
 import { buildCreativePrompt, displayDomain, judgeCreative, plainHeadline, retryNoteFor, reviewCreative, type CreativeReview, type TextManifest } from './ai-creative.ts';
 import { defaultHeadlineGate } from './headline-gate.ts';
 import { makeCreatives, manifestOf } from './ai-creative-pipeline.ts';
@@ -685,6 +686,74 @@ test('each network a post is drawn for gets its own composition, told apart in t
   } finally {
     ctx.done();
   }
+});
+
+test('each network picture is nudged towards a headline look of its own and asked for an original typographic voice; the report records it; a plain post or a switched-off setting asks for none', async () => {
+  const ctx = setup();
+  const before = process.env['HEADLINE_STYLES_ENABLED'];
+  try {
+    const seen: string[] = [];
+    const draw = async (network: 'instagram' | 'facebook' | 'linkedin' | 'google' | undefined, brandDir?: string) => makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', ...(brandDir ? { brandDir } : {}), outDir: join(ctx.dir, `out-${network ?? 'plain'}-${seen.length}`), ...(network ? { shape: NETWORK_RULES[network].picture, network } : {}), factOf: () => 'OyeChats answers from your own documents.',
+      posts: [post('p1', 'Answers from your own docs')],
+      deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, scene: async (prompt, out) => { seen.push(prompt); writeFileSync(out, 'x'); }, review: async () => review(['Answers from your own docs', 'oyechats.com']) },
+    });
+    delete process.env['HEADLINE_STYLES_ENABLED'];
+    const brandDir = join(ctx.dir, 'brandmemory');
+    const reports = [];
+    for (const network of ['instagram', 'facebook', 'linkedin', 'google'] as const) reports.push(await draw(network, brandDir));
+    const leans = seen.map((p) => /lean strongly towards a (\w+) weight, a ([\w -]+?) character and a (\w+) attitude, with ([^,]+?)(?:,| unless)/.exec(p)?.slice(1, 5).join('/'));
+    assert.equal(leans.every((l) => typeof l === 'string'), true);
+    assert.equal(new Set(leans).size, 4, 'four different leans');
+    for (const prompt of seen) {
+      assert.match(prompt, /TYPOGRAPHIC VOICE\. Invent an original typographic voice/);
+      assert.match(prompt, /HEADLINE: "Answers from your own docs"/);
+    }
+    assert.deepEqual(reports.map((r) => r.results[0]?.typeLean), ['instagram', 'facebook', 'linkedin', 'google'].map((n) => leanFor('p1', n as 'instagram')));
+    const remembered = await loadTypeHistory(brandDir);
+    assert.equal(remembered.length, 4, 'the brand remembers the four looks it asked for');
+    // A plain post (no network) keeps the model's own choice and adds nothing to the memory.
+    await draw(undefined, brandDir);
+    assert.doesNotMatch(seen.at(-1) ?? '', /TYPOGRAPHIC VOICE/);
+    assert.equal((await loadTypeHistory(brandDir)).length, 4);
+    // Switched off: no direction, nothing recorded.
+    process.env['HEADLINE_STYLES_ENABLED'] = 'false';
+    const off = await draw('instagram', brandDir);
+    assert.doesNotMatch(seen.at(-1) ?? '', /TYPOGRAPHIC VOICE/);
+    assert.equal(off.results[0]?.typeLean, undefined);
+  } finally {
+    if (before === undefined) delete process.env['HEADLINE_STYLES_ENABLED']; else process.env['HEADLINE_STYLES_ENABLED'] = before;
+    ctx.done();
+  }
+});
+
+test('a brand does not get the same headline look twice in a row: the second draw of the same post steers clear of what the first asked for', async () => {
+  const ctx = setup();
+  const before = process.env['HEADLINE_STYLES_ENABLED'];
+  try {
+    delete process.env['HEADLINE_STYLES_ENABLED'];
+    const brandDir = join(ctx.dir, 'brandmemory2');
+    const looks: string[] = [];
+    for (let i = 0; i < 2; i += 1) {
+      await makeCreatives({
+        ai: ctx.ai, brand, brandSlug: 'oyechats', brandDir, outDir: join(ctx.dir, `again-${i}`), shape: NETWORK_RULES.instagram.picture, network: 'instagram', factOf: () => 'OyeChats answers from your own documents.',
+        posts: [post('p1', 'Answers from your own docs')],
+        deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, scene: async (prompt, out) => { looks.push(/lean strongly towards a (\w+) weight, a ([\w -]+?) character and a (\w+) attitude, with ([^,]+?)(?:,| unless)/.exec(prompt)?.slice(1, 5).join('/') ?? ''); writeFileSync(out, 'x'); }, review: async () => review(['Answers from your own docs', 'oyechats.com']) },
+      });
+    }
+    assert.equal(looks.length, 2);
+    assert.notEqual(looks[0], looks[1]);
+  } finally {
+    if (before === undefined) delete process.env['HEADLINE_STYLES_ENABLED']; else process.env['HEADLINE_STYLES_ENABLED'] = before;
+    ctx.done();
+  }
+});
+
+test('the creative director\'s own typography plan wins: no second typographic voice is added', () => {
+  const manifest = { headline: 'Answers', brandName: '', domain: '' } as TextManifest;
+  const base = { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' }, network: 'instagram' as const, typeLean: { weight: 'bold', character: 'geometric', attitude: 'warm', colour: 'light lettering on a dark area of the picture' } };
+  assert.match(buildCreativePrompt(manifest, base), /TYPOGRAPHIC VOICE/);
+  assert.doesNotMatch(buildCreativePrompt(manifest, { ...base, concept: { concept: 'c', factToPicture: 'x', typography: 'Huge words across the whole poster.' } }), /TYPOGRAPHIC VOICE/);
 });
 
 test('a poster drawn with no network is as before: no version line and the old ledger id', async () => {
