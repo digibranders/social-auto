@@ -187,3 +187,22 @@ test('a run that starts a few seconds after the three-hour mark still reads, so 
   assert.equal(next.report.posts, 1);
   assert.equal(next.report.accounts, 1);
 });
+
+test('the team\'s own Instagram account is read too: its posts get the right client, its account is recorded once, and it is ignored when its settings are missing', async () => {
+  const teamPosted: PostedLog = {
+    'w1-d1|instagram': { remoteId: 'mediaA', permalink: 'https://ig/p/a', postedAt: new Date(NOW - 3 * DAY).toISOString() },
+    'w1-d2|instagram': { remoteId: 'mediaB', permalink: 'https://ig/p/b', postedAt: new Date(NOW - 1 * DAY).toISOString() },
+    'w1-d3|instagram': { remoteId: 'held', permalink: null, postedAt: new Date(NOW - 1 * DAY).toISOString() },
+  };
+  const calls: string[] = [];
+  const team = { userId: '555', token: 'team-token', brandOfPost: (id: string) => (id.startsWith('w1') ? 'brandbasket' : undefined) };
+  const { file, report } = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: teamPosted, key: KEY, googleApp: null, readers: readers(calls), now: NOW, team });
+  assert.deepEqual(calls.sort(), ['igacc 555 2026-11-12', 'igpost mediaA team-token', 'igpost mediaB team-token']);
+  assert.deepEqual([report.posts, report.accounts, report.failures], [2, 1, []]);
+  assert.equal(file.posts['w1-d1|instagram']?.brand, 'brandbasket');
+  assert.equal(file.accounts['instagram']?.brand, 'brandbasket');
+  assert.equal(viewFor(file, 'brandbasket', '2026-11-01', '2026-11-30', [{ id: 'instagram', platform: 'instagram', label: 'Instagram' }]).channels[0]?.status, 'ok');
+  assert.equal(viewFor(file, 'someone-else', '2026-11-01', '2026-11-30').posts.length, 0, 'another client does not see them');
+  const none = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: teamPosted, key: KEY, googleApp: null, readers: readers([]), now: NOW });
+  assert.deepEqual([none.report.posts, none.report.accounts], [0, 0]);
+});

@@ -30,6 +30,17 @@ export interface CollectReport {
   failures: Array<{ id: string; reason: string }>;
 }
 
+/** The team's own Instagram account, set in the server's settings rather than connected as a channel; its posts are logged under the id "instagram". */
+export interface TeamInstagram {
+  userId: string;
+  /** The account's token, already in the clear (it is read from the environment, not from the channel file). */
+  token: string;
+  /** Which client a post belongs to, since one account serves several. */
+  brandOfPost(postId: string): string | undefined;
+}
+
+export const TEAM_INSTAGRAM_ID = 'instagram';
+
 export interface CollectInput {
   file: AnalyticsFile;
   channels: readonly Channel[];
@@ -38,6 +49,7 @@ export interface CollectInput {
   googleApp: GoogleApp | null;
   readers: AnalyticsReaders;
   now: number;
+  team?: TeamInstagram | null;
 }
 
 const reasonOf = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, 200);
@@ -60,11 +72,14 @@ function postIsDue(lastDay: string | undefined, lastReadAt: string | undefined, 
 }
 
 export async function collectAnalytics(input: CollectInput): Promise<{ file: AnalyticsFile; report: CollectReport }> {
-  const { channels, posted, key, googleApp, readers, now } = input;
+  const { channels, posted, key, googleApp, readers, now, team } = input;
   const today = dayOf(now);
   const report: CollectReport = { posts: 0, accounts: 0, failures: [] };
   const byId = new Map(channels.map((c) => [c.id, c] as const));
-  let file = keepChannels(input.file ?? EMPTY_ANALYTICS, new Set(byId.keys()));
+  let file = keepChannels(input.file ?? EMPTY_ANALYTICS, new Set([...byId.keys(), ...(team ? [TEAM_INSTAGRAM_ID] : [])]));
+  /** A post of the team's account, treated as a post of an Instagram channel of the client it belongs to. */
+  const teamChannel = (postId: string): Channel | undefined => (team ? { id: TEAM_INSTAGRAM_ID, platform: 'instagram', brand: team.brandOfPost(postId) ?? 'default', userId: team.userId, username: 'Instagram', token: '', expiresAt: '', connectedAt: '' } : undefined);
+  const tokenOf = (c: Channel): string => (team && c.id === TEAM_INSTAGRAM_ID ? team.token : channelToken(c, key));
 
   for (const channel of channels) {
     const prior = file.accounts[channel.id];
@@ -104,9 +119,25 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
     }
   }
 
+  if (team) {
+    const newest = Object.entries(posted).filter(([k, e]) => k.endsWith(`|${TEAM_INSTAGRAM_ID}`) && isSent(e)).sort(([, a], [, b]) => b.postedAt.localeCompare(a.postedAt))[0];
+    const brand = newest ? team.brandOfPost(newest[0].slice(0, newest[0].lastIndexOf('|'))) : undefined;
+    const prior = file.accounts[TEAM_INSTAGRAM_ID];
+    if (brand && !(prior && now - Date.parse(prior.checkedAt) < MIN_REREAD_MS)) {
+      try {
+        const reading = await readers.instagramAccount(team.userId, team.token, today);
+        file = recordAccount(file, TEAM_INSTAGRAM_ID, { brand, channel: TEAM_INSTAGRAM_ID, platform: 'instagram', label: 'Instagram', ...(reading.audience ? { audience: reading.audience } : prior?.audience ? { audience: prior.audience } : {}), ...(reading.needs.length > 0 ? { needs: reading.needs } : {}), checkedAt: new Date(now).toISOString() }, reading.numbers, now);
+        report.accounts += 1;
+      } catch (error) {
+        report.failures.push({ id: TEAM_INSTAGRAM_ID, reason: reasonOf(error) });
+      }
+    }
+  }
+
   for (const [logKey, entry] of Object.entries(posted)) {
     const channelId = logKey.slice(logKey.lastIndexOf('|') + 1);
-    const channel = byId.get(channelId);
+    const postId = logKey.slice(0, logKey.lastIndexOf('|'));
+    const channel = byId.get(channelId) ?? (channelId === TEAM_INSTAGRAM_ID ? teamChannel(postId) : undefined);
     if (!channel || (channel.platform !== 'instagram' && channel.platform !== 'facebook') || !isSent(entry)) continue;
     const postedMs = Date.parse(entry.postedAt);
     if (Number.isNaN(postedMs) || now - postedMs > POST_WATCH_DAYS * DAY_MS) continue;
@@ -114,7 +145,7 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
     const lastDay = before ? Object.keys(before.series).sort().pop() : undefined;
     if (!postIsDue(lastDay, file.postsRead?.[logKey], postedMs, now)) continue;
     try {
-      const token = channelToken(channel, key);
+      const token = tokenOf(channel);
       const reading = channel.platform === 'instagram' ? await readers.instagramPost(entry.remoteId, token) : await readers.facebookPost(entry.remoteId, token);
       const caption = (reading.caption ?? before?.caption ?? '').slice(0, CAPTION_KEEP);
       file = recordPost(
