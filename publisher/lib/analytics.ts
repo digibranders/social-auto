@@ -71,6 +71,8 @@ export interface AnalyticsFile {
   accounts: Record<string, AccountSeries>;
   /** When the last full check finished. */
   checkedAt: string | null;
+  /** When each post (by posted-log key) was last read, so a post is not read again within MIN_REREAD_MS. */
+  postsRead?: Record<string, string>;
 }
 
 export const EMPTY_ANALYTICS: AnalyticsFile = { posts: {}, accounts: {}, checkedAt: null };
@@ -157,7 +159,8 @@ export function parseAnalytics(raw: unknown): AnalyticsFile {
       checkedAt: a['checkedAt'],
     };
   }
-  return { posts, accounts, checkedAt: typeof file['checkedAt'] === 'string' ? file['checkedAt'] : null };
+  const postsRead = Object.fromEntries(Object.entries((file['postsRead'] ?? {}) as Record<string, unknown>).filter(([, v]) => typeof v === 'string' && !Number.isNaN(Date.parse(v)))) as Record<string, string>;
+  return { posts, accounts, checkedAt: typeof file['checkedAt'] === 'string' ? file['checkedAt'] : null, ...(Object.keys(postsRead).length > 0 ? { postsRead } : {}) };
 }
 
 /** The hashtags of some words, lower case, without the "#", each once. */
@@ -197,8 +200,10 @@ export function forgetBrand(file: AnalyticsFile, brand: string): AnalyticsFile {
 
 /** Forgets posts and accounts of channels that are no longer connected, so numbers of a removed account are not kept. */
 export function keepChannels(file: AnalyticsFile, channelIds: ReadonlySet<string>): AnalyticsFile {
+  const postsRead = Object.fromEntries(Object.entries(file.postsRead ?? {}).filter(([key]) => channelIds.has(key.slice(key.lastIndexOf('|') + 1))));
   return {
     ...file,
+    postsRead,
     posts: Object.fromEntries(Object.entries(file.posts).filter(([, p]) => channelIds.has(p.channel))),
     accounts: Object.fromEntries(Object.entries(file.accounts).filter(([, a]) => channelIds.has(a.channel))),
   };

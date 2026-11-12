@@ -45,12 +45,15 @@ const reasonOf = (error: unknown): string => (error instanceof Error ? error.mes
 /** A log entry that is a real post on the network (not held, repeated or dropped because the account was gone). */
 const isSent = (entry: PostedLog[string]): boolean => entry.skipped !== true && entry.duplicateOf === undefined && entry.reason === undefined && entry.remoteId !== '' && !['held', 'duplicate', 'account-disconnected'].includes(entry.remoteId);
 
-function postIsDue(lastDay: string | undefined, postedMs: number, now: number): boolean {
-  const today = dayOf(now);
+/** Nothing is read again sooner than this, so a check run by hand an hour after the last one costs the networks nothing, and one a few hours later shows the newest numbers. */
+export const MIN_REREAD_MS = 3 * 3_600_000;
+
+function postIsDue(lastDay: string | undefined, lastReadAt: string | undefined, postedMs: number, now: number): boolean {
   if (lastDay === undefined) return true;
-  if (lastDay >= today) return false;
+  if (lastReadAt !== undefined && now - Date.parse(lastReadAt) < MIN_REREAD_MS) return false;
+  const today = dayOf(now);
   if (now - postedMs <= DAILY_DAYS * DAY_MS) return true;
-  return Date.parse(`${today}T00:00:00Z`) - Date.parse(`${lastDay}T00:00:00Z`) >= 7 * DAY_MS;
+  return lastDay < today && Date.parse(`${today}T00:00:00Z`) - Date.parse(`${lastDay}T00:00:00Z`) >= 7 * DAY_MS;
 }
 
 export async function collectAnalytics(input: CollectInput): Promise<{ file: AnalyticsFile; report: CollectReport }> {
@@ -62,7 +65,7 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
 
   for (const channel of channels) {
     const prior = file.accounts[channel.id];
-    if (prior && prior.checkedAt.slice(0, 10) === today) continue;
+    if (prior && now - Date.parse(prior.checkedAt) < MIN_REREAD_MS) continue;
     try {
       let reading: AccountReading;
       if (channel.platform === 'instagram') reading = await readers.instagramAccount(channel.userId, channelToken(channel, key), today);
@@ -106,7 +109,7 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
     if (Number.isNaN(postedMs) || now - postedMs > POST_WATCH_DAYS * DAY_MS) continue;
     const before = file.posts[logKey];
     const lastDay = before ? Object.keys(before.series).sort().pop() : undefined;
-    if (!postIsDue(lastDay, postedMs, now)) continue;
+    if (!postIsDue(lastDay, file.postsRead?.[logKey], postedMs, now)) continue;
     try {
       const token = channelToken(channel, key);
       const reading = channel.platform === 'instagram' ? await readers.instagramPost(entry.remoteId, token) : await readers.facebookPost(entry.remoteId, token);
@@ -127,6 +130,7 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
         reading.numbers,
         now,
       );
+      file = { ...file, postsRead: { ...(file.postsRead ?? {}), [logKey]: new Date(now).toISOString() } };
       report.posts += 1;
     } catch (error) {
       report.failures.push({ id: logKey, reason: reasonOf(error) });
