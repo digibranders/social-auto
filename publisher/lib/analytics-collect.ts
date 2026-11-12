@@ -55,6 +55,10 @@ export interface CollectInput {
   readers: AnalyticsReaders;
   now: number;
   team?: TeamInstagram | null;
+  /** Read again anything last read longer ago than this (default MIN_REREAD_MS); a person asking to refresh uses a few minutes. */
+  minRereadMs?: number;
+  /** Read only this client's accounts and posts. */
+  onlyBrand?: string;
 }
 
 const reasonOf = (error: unknown): string => (error instanceof Error ? error.message : String(error)).slice(0, 200);
@@ -68,16 +72,17 @@ const isSent = (entry: PostedLog[string]): boolean => entry.skipped !== true && 
  */
 export const MIN_REREAD_MS = 170 * 60_000;
 
-function postIsDue(lastDay: string | undefined, lastReadAt: string | undefined, postedMs: number, now: number): boolean {
+function postIsDue(lastDay: string | undefined, lastReadAt: string | undefined, postedMs: number, now: number, gap: number): boolean {
   if (lastDay === undefined) return true;
-  if (lastReadAt !== undefined && now - Date.parse(lastReadAt) < MIN_REREAD_MS) return false;
+  if (lastReadAt !== undefined && now - Date.parse(lastReadAt) < gap) return false;
   const today = dayOf(now);
   if (now - postedMs <= DAILY_DAYS * DAY_MS) return true;
   return lastDay < today && Date.parse(`${today}T00:00:00Z`) - Date.parse(`${lastDay}T00:00:00Z`) >= 7 * DAY_MS;
 }
 
 export async function collectAnalytics(input: CollectInput): Promise<{ file: AnalyticsFile; report: CollectReport }> {
-  const { channels, key, googleApp, readers, now, team } = input;
+  const { channels, key, googleApp, readers, now, team, onlyBrand } = input;
+  const gap = input.minRereadMs ?? MIN_REREAD_MS;
   let posted = input.posted;
   const today = dayOf(now);
   const report: CollectReport = { posts: 0, accounts: 0, failures: [] };
@@ -89,7 +94,8 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
 
   for (const channel of channels) {
     const prior = file.accounts[channel.id];
-    if (prior && now - Date.parse(prior.checkedAt) < MIN_REREAD_MS) continue;
+    if (onlyBrand !== undefined && channel.brand !== onlyBrand) continue;
+    if (prior && now - Date.parse(prior.checkedAt) < gap) continue;
     try {
       let reading: AccountReading;
       if (channel.platform === 'instagram') reading = await readers.instagramAccount(channel.userId, channelToken(channel, key), today);
@@ -142,7 +148,7 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
     const newest = Object.entries(posted).filter(([k, e]) => k.endsWith(`|${TEAM_INSTAGRAM_ID}`) && isSent(e)).sort(([, a], [, b]) => b.postedAt.localeCompare(a.postedAt))[0];
     const brand = newest ? team.brandOfPost(newest[0].slice(0, newest[0].lastIndexOf('|'))) : undefined;
     const prior = file.accounts[TEAM_INSTAGRAM_ID];
-    if (brand && !(prior && now - Date.parse(prior.checkedAt) < MIN_REREAD_MS)) {
+    if (brand && (onlyBrand === undefined || brand === onlyBrand) && !(prior && now - Date.parse(prior.checkedAt) < gap)) {
       try {
         const reading = await readers.instagramAccount(team.userId, team.token, today);
         file = recordAccount(file, TEAM_INSTAGRAM_ID, { brand, channel: TEAM_INSTAGRAM_ID, platform: 'instagram', label: 'Instagram', ...(reading.audience ? { audience: reading.audience } : prior?.audience ? { audience: prior.audience } : {}), ...(reading.needs.length > 0 ? { needs: reading.needs } : {}), checkedAt: new Date(now).toISOString() }, reading.numbers, now);
@@ -162,7 +168,8 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
     if (Number.isNaN(postedMs) || now - postedMs > POST_WATCH_DAYS * DAY_MS) continue;
     const before = file.posts[logKey];
     const lastDay = before ? Object.keys(before.series).sort().pop() : undefined;
-    if (!postIsDue(lastDay, file.postsRead?.[logKey], postedMs, now)) continue;
+    if (onlyBrand !== undefined && channel.brand !== onlyBrand) continue;
+    if (!postIsDue(lastDay, file.postsRead?.[logKey], postedMs, now, gap)) continue;
     try {
       const token = tokenOf(channel);
       const reading = channel.platform === 'instagram' ? await readers.instagramPost(entry.remoteId, token) : await readers.facebookPost(entry.remoteId, token);
