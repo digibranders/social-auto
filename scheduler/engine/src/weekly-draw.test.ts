@@ -7,7 +7,7 @@ import { CopyStage, weeksOf } from './copy-stage.ts';
 import { JobStore } from './job-store.ts';
 import { ProductBrands } from './product-brands.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
-import { drawDueMs, neededPictures, runWeeklyDraws, weekEndMs, weekStartMs, WEEKLY_DRAW_BY, type WeeklyDeps } from './weekly-draw.ts';
+import { drawDueMs, neededPictures, runCatchUpDraws, runWeeklyDraws, weekEndMs, weekStartMs, WEEKLY_DRAW_BY, type CatchUpDeps, type WeeklyDeps } from './weekly-draw.ts';
 
 const W1 = '2026-11-16';
 const W2 = '2026-11-23';
@@ -130,6 +130,65 @@ test('the connected networks are kept beside the brand, only the four networks a
     assert.deepEqual(writeConnected(s.dir, ['instagram', 'facebook']), { changed: false });
     assert.deepEqual(writeConnected(s.dir, []), { changed: true });
     assert.equal((readConnected(s.dir) as Set<string>).size, 0, 'no network connected: nothing is drawn');
+  } finally {
+    s.done();
+  }
+});
+
+const catchUp = (s: ReturnType<typeof setup>, now: string, made: string[], over: Partial<CatchUpDeps> = {}): CatchUpDeps => ({
+  brandsRoot: join(s.root, 'brands'), jobs: s.jobs, owners: new ProductBrands(join(s.root, 'brands')), now: new Date(now), made: () => new Set(made), roomFor: () => null, siteOf: () => 'https://acme.example', ...over,
+});
+
+test('a drawn topic that lacks a picture for a connected channel is drawn as room allows, soonest topic first, once, and never from a past day', () => {
+  const s = setup();
+  try {
+    for (const id of ['w1-d1', 'w2-d1', 'w2-d2']) s.stage.decide('week-01.json', id, 'kept', 'u');
+    s.stage.markWeekDrawn('week-01.json', W1);
+    s.stage.markWeekDrawn('week-01.json', W2);
+    const made = ['w1-d1|instagram', 'w2-d1|instagram', 'w2-d2|instagram'];
+    // Only Instagram has pictures; the topics are also written for Facebook. Room for two Facebook pictures.
+    const first = runCatchUpDraws(catchUp(s, '2026-11-13T05:00:00Z', made, { roomFor: (_b, n) => (n === 'facebook' ? 2 : null) }));
+    assert.deepEqual(first.map((a) => `${a.postId}|${a.network}`), ['w1-d1|facebook', 'w2-d1|facebook'], 'the soonest two');
+    const queued = s.jobs.list({ brand: 'bb-acme' }).filter((j) => j.kind === 'newnet');
+    assert.deepEqual(queued.map((j) => [j.postId, j.network, j.by, j.auto]).sort(), [['w1-d1', 'facebook', WEEKLY_DRAW_BY, true], ['w2-d1', 'facebook', WEEKLY_DRAW_BY, true]]);
+    // The next pass, with room again, takes the next one and never asks for those waiting twice.
+    const second = runCatchUpDraws(catchUp(s, '2026-11-13T05:30:00Z', made, { roomFor: () => 5 }));
+    assert.deepEqual(second.map((a) => `${a.postId}|${a.network}`), ['w2-d2|facebook']);
+    // Topics whose day has passed get none.
+    const past = setup();
+    try {
+      for (const id of ['w1-d1', 'w2-d1']) past.stage.decide('week-01.json', id, 'kept', 'u');
+      past.stage.markWeekDrawn('week-01.json', W1);
+      past.stage.markWeekDrawn('week-01.json', W2);
+      assert.deepEqual(runCatchUpDraws(catchUp(past, '2026-11-25T05:00:00Z', ['w1-d1|instagram', 'w2-d1|instagram'], { roomFor: () => 5 })), []);
+    } finally {
+      past.done();
+    }
+  } finally {
+    s.done();
+  }
+});
+
+test('the catch-up leaves alone a try that failed for another reason, retries one that only hit the limit, skips networks not connected, undrawn weeks, and topics with a note', () => {
+  const s = setup();
+  try {
+    for (const id of ['w1-d1', 'w2-d1', 'w2-d2', 'w3-d1']) s.stage.decide('week-01.json', id, 'kept', 'u');
+    s.stage.markWeekDrawn('week-01.json', W1);
+    s.stage.markWeekDrawn('week-01.json', W2);
+    s.stage.setNotDrawn('week-01.json', { 'w2-d2': { code: 'NO_PICTURE', reason: 'x' } });
+    const made = ['w1-d1|instagram', 'w2-d1|instagram', 'w2-d2|instagram', 'w3-d1|instagram'];
+    const fail = (postId: string, code: string) => {
+      const { job } = s.jobs.enqueue({ kind: 'newnet', brand: 'bb-acme', site: 'https://acme.example', by: 'u', planFile: 'week-01.json', postId, network: 'facebook' });
+      s.jobs.claim(1, 1);
+      s.jobs.update(job.id, { state: 'failed', error: { code, message: 'x' } });
+    };
+    fail('w1-d1', 'NOTHING_DRAWN');
+    fail('w2-d1', 'PICTURE_LIMIT_REACHED');
+    const run = runCatchUpDraws(catchUp(s, '2026-11-13T05:00:00Z', made, { roomFor: () => 5 }));
+    assert.deepEqual(run.map((a) => `${a.postId}|${a.network}`), ['w2-d1|facebook'], 'w1-d1 failed for another reason, w2-d1 only hit the limit, w2-d2 has a note, w3-d1 is in a week not drawn yet');
+    // Facebook not connected: nothing is drawn for it.
+    writeConnected(join(s.root, 'brands', 'bb-acme'), ['instagram']);
+    assert.deepEqual(runCatchUpDraws(catchUp(s, '2026-11-13T06:00:00Z', made, { roomFor: () => 5 })), []);
   } finally {
     s.done();
   }

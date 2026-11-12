@@ -41,7 +41,8 @@ import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
-import { neededPictures, runWeeklyDraws } from './weekly-draw.ts';
+import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
+import { pictureRoomFor } from './picture-room.ts';
 import type { NotDrawn } from './not-drawn.ts';
 import { channelPicturesUsed, pictureLimitMessage, PictureLimitError, pictureWeek, weeklyLimitFromEnv, type PictureWeek } from './picture-limit.ts';
 import { splitTrailingHashtags } from './caption-text.ts';
@@ -429,12 +430,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const batch = new CopyStage(join(root, netBrand), netBrand).get(netPlan);
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
           if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
-          // On a batch already drawn the new network's picture is drawn for every kept topic: the week must have room for them all.
-          if (batch.drawnAt !== undefined || batch.weekDrawn !== undefined) {
-            const today = new Date((options.now ?? (() => new Date()))().getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
-            const drawnPosts = madeFor(netBrand, netPlan);
-            assertPictureRoom(netBrand, { [network]: batch.posts.filter((p) => p.state === 'kept' && (p.date === undefined || p.date >= today) && [...drawnPosts].some((k) => k.startsWith(`${p.postId}|`))).length });
-          }
+          // Never refused for lack of pictures: the words are written for every topic, the pictures are drawn for the soonest topics that fit in this week's room, and the weekly catch-up draws the rest as room comes.
           const { job, created } = jobs.enqueue({ kind: 'network', brand: netBrand, site: siteOf(netBrand), by: scope.by(body['by']), planFile: netPlan, network });
           return send(res, created ? 202 : 200, { job, created });
         }
@@ -712,6 +708,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           },
           register: (brand, planFile, site) => { registerManualRelease({ brandDir: join(root, brand), siteBrand: brand, client: brand, site, planFile }); },
           onLapse: (brand, planFile, week) => { recordExpiry(root, (options.now ?? (() => new Date()))(), { brand, kind: 'week', planFile, week }); },
+        });
+        // Pictures a drawn topic still lacks for a connected channel (added later, or no room at the time): drawn as this week's room allows.
+        runCatchUpDraws({
+          brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(), made: madeFor,
+          roomFor: (brand, network) => { const limit = weeklyLimitOf(brand); return limit === undefined ? null : pictureRoomFor({ ledgerFile, brand, network, limit, now: (options.now ?? (() => new Date()))() }); },
+          siteOf: (brand) => { try { return siteOf(brand); } catch { return null; } },
         });
       } catch (error) {
         console.error(`weekly draw failed: ${error instanceof Error ? error.message : String(error)}`);

@@ -10,6 +10,9 @@ import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { JobStore, scrub, type Job, type NetworkResult } from './job-store.ts';
+import { pictureRoomFor } from './picture-room.ts';
+import { weeklyLimitFromEnv } from './picture-limit.ts';
+import { ProductBrands } from './product-brands.ts';
 
 export const COPY_TIMEOUT_MS = 30 * 60_000;
 export const DRAW_TIMEOUT_MS = 45 * 60_000;
@@ -74,7 +77,12 @@ export const execEngine = (cwd: string): Exec => (args, onLine, timeoutMs) =>
   });
 
 /** Runs one claimed job to its end and records the result. */
-export async function runJob(store: JobStore, job: Job, exec: Exec): Promise<Job> {
+/** What a runner knows beyond the job: how many more pictures a channel may have this week (null: no limit, a client of ours). */
+export interface RunHooks {
+  room?: (brand: string, network: string) => number | null;
+}
+
+export async function runJob(store: JobStore, job: Job, exec: Exec, hooks: RunHooks = {}): Promise<Job> {
   const tail: string[] = [];
   let step: number | undefined;
   let planFileMade: string | undefined = job.kind !== 'copy' ? job.planFile : undefined;
@@ -111,9 +119,13 @@ export async function runJob(store: JobStore, job: Job, exec: Exec): Promise<Job
   if (code === 0 && !timedOut) {
     if (!networkResult) return store.update(job.id, { ...base, state: 'succeeded' });
     // A topic that has no picture of the new network's shape gets its own draw, one picture, queued now so the product can follow it.
+    // Only as many as the channel has room for this week, soonest first (the topics are in plan order); the rest are drawn later by the weekly catch-up as room comes.
+    let room = hooks.room?.(job.brand, networkResult.network) ?? Number.POSITIVE_INFINITY;
     const topics = networkResult.topics.map((topic) => {
       const { needsDraw, ...rest } = topic;
       if (!needsDraw || !job.planFile) return rest;
+      if (room <= 0) return rest;
+      room -= 1;
       const queued = store.enqueue({ kind: 'newnet', brand: job.brand, site: job.site, by: job.by, planFile: job.planFile, postId: topic.postId, network: networkResult?.network ?? '' });
       return { ...rest, drawJobId: queued.job.id };
     });
@@ -146,13 +158,16 @@ if (import.meta.main) {
   const max = Math.max(1, Number(process.env['JOBS_CONCURRENCY'] ?? 2) || 2);
   const exec = execEngine(resolve('.'));
   const active = new Set<Promise<unknown>>();
+  const brandsRoot = resolve(process.env['BRANDS_ROOT'] ?? 'brands');
+  const owners = new ProductBrands(brandsRoot);
+  const roomHook = (brand: string, network: string): number | null => (owners.has(brand) ? pictureRoomFor({ ledgerFile: resolve(process.env['PAID_LEDGER_FILE'] || join(brandsRoot, '..', 'ledger', 'paid-calls.jsonl')), brand, network, limit: weeklyLimitFromEnv(process.env), now: new Date() }) : null);
   let stopping = false;
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => (stopping = true));
   console.log(`job runner started: up to ${max} at a time, jobs in ${join(resolve(process.env['JOBS_ROOT'] ?? 'jobs'))}`);
   store.recover((p) => p !== process.pid && alive(p));
   while (!stopping) {
     for (let job = store.claim(max, process.pid); job; job = store.claim(max, process.pid)) {
-      const work = runJob(store, job, exec).finally(() => active.delete(work));
+      const work = runJob(store, job, exec, { room: roomHook }).finally(() => active.delete(work));
       active.add(work);
     }
     await new Promise((wake) => setTimeout(wake, 3000));

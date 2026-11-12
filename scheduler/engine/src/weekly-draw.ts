@@ -107,3 +107,74 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
   }
   return actions;
 }
+
+export interface CatchUpDeps {
+  brandsRoot: string;
+  jobs: JobStore;
+  owners: ProductBrands;
+  now: Date;
+  /** The pictures already made for a plan (`<postId>|<network>`). */
+  made: (brand: string, planFile: string) => ReadonlySet<string>;
+  /** How many more pictures a channel may have this week (null: no limit). */
+  roomFor: (brand: string, network: Network) => number | null;
+  siteOf: (brand: string) => string | null;
+}
+
+export interface CatchUpAction {
+  brand: string;
+  planFile: string;
+  postId: string;
+  network: Network;
+}
+
+/**
+ * Pictures a drawn topic still lacks for a connected network: a channel added later when this week had no room for all of them, or connected after the draw. They are drawn
+ * as room comes, soonest topic first, up to the room left this week. A topic whose day has passed gets none. A try that failed for another reason than the limit is not asked
+ * for again by the system (the customer decides), and one that is waiting or running is left alone.
+ */
+export function runCatchUpDraws(deps: CatchUpDeps): CatchUpAction[] {
+  const actions: CatchUpAction[] = [];
+  const today = new Date(deps.now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+  for (const brand of deps.owners.all()) {
+    const brandDir = join(deps.brandsRoot, brand);
+    let batches: CopyBatch[];
+    try {
+      batches = new CopyStage(brandDir, brand).list();
+    } catch {
+      continue;
+    }
+    const connected = readConnected(brandDir);
+    const jobs = deps.jobs.list({ brand }).filter((j) => j.kind === 'newnet');
+    const wanting = new Map<Network, Array<{ planFile: string; postId: string; date: string }>>();
+    for (const batch of batches) {
+      if (batch.closedAt) continue;
+      const made = deps.made(brand, batch.planFile);
+      for (const post of batch.posts) {
+        const week = weekOfPost(post);
+        if (post.state !== 'kept' || !post.date || post.date < today || week === undefined || batch.weekDrawn?.[week] === undefined) continue;
+        if (batch.notDrawn?.[post.postId] !== undefined) continue;
+        if (![...made].some((k) => k.startsWith(`${post.postId}|`))) continue;
+        for (const net of Object.keys(post.captions ?? {})) {
+          if (!isNetwork(net) || (connected !== null && !connected.has(net)) || made.has(`${post.postId}|${net}`)) continue;
+          const tries = jobs.filter((j) => j.planFile === batch.planFile && j.postId === post.postId && j.network === net);
+          if (tries.some((j) => j.state === 'queued' || j.state === 'running')) continue;
+          if (tries.some((j) => j.state === 'failed' && j.error?.code !== 'PICTURE_LIMIT_REACHED')) continue;
+          if (tries.some((j) => j.state === 'succeeded')) continue;
+          (wanting.get(net) ?? wanting.set(net, []).get(net) as Array<{ planFile: string; postId: string; date: string }>).push({ planFile: batch.planFile, postId: post.postId, date: post.date });
+        }
+      }
+    }
+    for (const [network, list] of wanting) {
+      let room = deps.roomFor(brand, network) ?? Number.POSITIVE_INFINITY;
+      const site = deps.siteOf(brand);
+      if (site === null) continue;
+      for (const topic of list.sort((a, b) => a.date.localeCompare(b.date) || a.postId.localeCompare(b.postId))) {
+        if (room <= 0) break;
+        room -= 1;
+        deps.jobs.enqueue({ kind: 'newnet', brand, site, by: WEEKLY_DRAW_BY, planFile: topic.planFile, postId: topic.postId, network, auto: true });
+        actions.push({ brand, planFile: topic.planFile, postId: topic.postId, network });
+      }
+    }
+  }
+  return actions;
+}

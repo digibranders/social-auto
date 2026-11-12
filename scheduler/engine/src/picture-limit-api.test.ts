@@ -114,7 +114,7 @@ test('a draw is refused whole when any channel has too few left, counting only t
   }
 });
 
-test('adding a network to a drawn batch is refused when the new channel has too few left for every kept topic, and is not refused on a batch not yet drawn', async () => {
+test('adding a network to a drawn batch is never refused for lack of pictures: the words are written, and the pictures are drawn as room allows', async () => {
   const s = await start();
   try {
     const stage = new CopyStage(join(s.brandsRoot, 'bb-acme'), 'bb-acme');
@@ -126,14 +126,12 @@ test('adding a network to a drawn batch is refused when the new channel has too 
     s.jobs.claim(1, 1);
     s.jobs.update(((await waiting.json()) as { job: { id: string } }).job.id, { state: 'failed', error: { code: 'X', message: 'x' } });
     stage.markDrawn('week-01.json');
-    // The topic has a picture (Instagram's), so the new channel needs one drawn for it.
     const store = new ReviewStore(join(s.brandsRoot, 'bb-acme'), 'bb-acme');
     const picture = join(s.root, 'ig.jpg');
     writeFileSync(picture, 'ig');
     store.addVersion({ postId: 'w01-d1', planFile: 'week-01.json', network: 'instagram', width: 1080, height: 1080, headline: 'Answers', caption: 'C', ctaUrl: 'https://bb-acme.example', factIds: ['f1'], evidence: [{ factId: 'f1', text: 't', quote: 'q', url: 'https://bb-acme.example/', context: 'c' }], imagePath: picture, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.016 });
     const drawn = await s.call('/review/copy/bb-acme/week-01.json/networks', { network: 'google' });
-    assert.equal(drawn.status, 429);
-    assert.equal(((await drawn.json()) as { channel: string }).channel, 'google');
+    assert.equal(drawn.status, 202, 'Google has no pictures left this week, and the request is still accepted');
   } finally {
     await s.done();
   }
