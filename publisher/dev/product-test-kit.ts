@@ -66,6 +66,7 @@ export interface FakeJob {
   finishedAt?: string;
   planFile?: string;
   week?: string;
+  auto?: boolean;
   error?: { code: string; message: string };
   result?: unknown;
 }
@@ -127,12 +128,14 @@ export interface FakeEngine {
   weekly: { limit: number; used: Record<string, number>; week: { from: string; to: string; restart: string } };
   /** When set, a request that draws pictures (draw, redraw, add a network) is refused like a channel with none left. */
   refusePictures: { channel: string; restart: string; error: string } | null;
+  /** The networks the product API told the engine the customer has connected (null: never told). */
+  connected: string[] | null;
   close: () => Promise<void>;
 }
 
 /** A pretend review service: it keeps jobs, runs none, and answers a second ask for a brand with a job already waiting by returning that job (as the real one does). */
 export async function fakeEngine(): Promise<FakeEngine> {
-  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, close: async () => undefined };
+  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, connected: null, close: async () => undefined };
   let counter = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -152,6 +155,10 @@ export async function fakeEngine(): Promise<FakeEngine> {
       if (!secrets.some((s) => header('authorization') === `Bearer ${s}`)) return send(401, { error: 'Unauthorized' });
       const caller = header('x-brand') ?? '';
       if (!/^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,79}$/.test(header('x-actor') ?? '') || caller === '') return send(400, { error: 'X-Brand and X-Actor are needed' });
+      if (req.method === 'PUT' && url.pathname === '/review/connected' && body) {
+        engine.connected = Array.isArray(body['networks']) ? body['networks'].map(String) : [];
+        return send(200, { changed: true });
+      }
       if (req.method === 'GET' && url.pathname === '/review/limits') {
         return send(200, { brand: caller, week: engine.weekly.week, limit: engine.weekly.limit, channels: Object.entries(engine.weekly.used).map(([network, used]) => ({ network, limit: engine.weekly.limit, used, left: Math.max(0, engine.weekly.limit - used) })) });
       }

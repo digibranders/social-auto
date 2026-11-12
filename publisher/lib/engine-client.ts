@@ -124,6 +124,8 @@ export interface JobView {
   batchId?: string;
   /** For a draw of one week of a batch: the Monday of that week (YYYY-MM-DD). */
   week?: string;
+  /** True for a draw the system started by itself (the weekly draw); it is not one of the customer's own asks. */
+  auto?: boolean;
   state: 'queued' | 'running' | 'done' | 'failed';
   step?: number;
   /** For a failed job: a fixed code (for example NOTHING_WRITTEN), never the engine's own words. */
@@ -153,6 +155,7 @@ function jobView(raw: unknown): { view: JobView; brand: string } | null {
   if (typeof finishedAt === 'string') view.finishedAt = finishedAt;
   if (JOB_KIND[kind] !== 'write' && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
   if (JOB_KIND[kind] === 'draw' && typeof raw['week'] === 'string' && DAY.test(raw['week'])) view.week = raw['week'];
+  if (raw['auto'] === true) view.auto = true;
   const error = raw['error'];
   if (view.state === 'failed' && isObject(error) && typeof error['code'] === 'string' && CODE.test(error['code'])) view.failure = error['code'];
   const result = raw['result'];
@@ -471,6 +474,15 @@ export class WorkspaceEngine {
   async decideFact(factId: string, verb: 'confirm' | 'remove' | 'restore', actor: string): Promise<FactsView> {
     if (!FACT_ID.test(factId)) throw new EngineError(404, 'not found');
     return factsViewOf(await this.call('POST', `/review/brands/${this.brand}/facts/${factId}/${verb}`, actor, {}));
+  }
+
+  /** Tells the poster service which networks the customer has connected accounts for, so no picture is bought for any other. Best effort: never throws. */
+  async setConnected(networks: readonly string[], actor: string): Promise<void> {
+    try {
+      await this.call('PUT', '/review/connected', actor, { networks: [...networks] });
+    } catch {
+      // The draw then goes by the networks the posts were written for, as before.
+    }
   }
 
   /** What the customer has drawn this week for each channel and what is left. */

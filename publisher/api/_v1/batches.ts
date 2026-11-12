@@ -24,6 +24,7 @@ import { json } from '../../lib/http.js';
 import type { JobView } from '../../lib/engine-client.js';
 import { archivedAnswer, engineFor, workspaceFor } from '../../lib/product-workspace.js';
 import { loadChannels } from '../../lib/store.js';
+import { syncConnected } from '../../lib/connected-sync.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network'] as const;
@@ -43,6 +44,7 @@ export async function GET(request: Request): Promise<Response> {
     const engine = engineFor(found.product.id, found.workspace.brand);
     if (engine instanceof Response) return engine;
     const by = engineActor(found.product.id, request.headers.has('x-social-actor') ? actorOf(request) : null);
+    await syncConnected(engine, found.workspace.brand, by);
     const view = await engine.listBatches(by);
     // A written batch nobody decided on in time is put away and no longer listed; it is shown here for a while so the customer can be told.
     const since = new Date(Date.now() - (EXPIRY_DAYS * 2 + 30) * 86_400_000).toISOString();
@@ -104,10 +106,13 @@ export async function POST(request: Request): Promise<Response> {
       const retry = body['retry'] === true;
       if (body['week'] !== undefined && (typeof body['week'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body['week']))) return apiError(400, 'INVALID_REQUEST', 'week must be the Monday of a week, like 2026-11-16');
       // A batch written for several weeks is drawn one week at a time: the week asked for, else the first one not settled (waiting or being drawn), so asking again never starts the next week by accident.
+      await syncConnected(engine, found.workspace.brand, by);
       const written = (await engine.listBatches(by)).batches.find((b) => b.id === batchId);
       const week: string | undefined = typeof body['week'] === 'string' ? body['week'] : written?.weeks?.find((w) => w.state === 'waiting' || w.state === 'drawing')?.from;
-      const draws: JobView[] = (await engine.listJobs(by)).filter((j) => j.kind === 'draw');
-      const latest = draws.find((j) => j.batchId === batchId && j.week === week);
+      const allDraws: JobView[] = (await engine.listJobs(by)).filter((j) => j.kind === 'draw');
+      const latest = allDraws.find((j) => j.batchId === batchId && j.week === week);
+      // What the system drew by itself (the weekly draw) is not one of the customer's own asks.
+      const draws = allDraws.filter((j) => j.auto !== true);
       if (!latest || retry) {
         const since = (ms: number): number => draws.filter((j) => Date.now() - Date.parse(j.createdAt) < ms).length;
         if (since(DAY_MS) >= MAX_DRAWS_PER_DAY) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_DAY} times a day; try again tomorrow`);

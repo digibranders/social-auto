@@ -40,6 +40,8 @@ import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
 import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
+import { readConnected, writeConnected } from './connected-networks.ts';
+import { neededPictures, runWeeklyDraws } from './weekly-draw.ts';
 import { channelPicturesUsed, pictureLimitMessage, PictureLimitError, pictureWeek, weeklyLimitFromEnv, type PictureWeek } from './picture-limit.ts';
 import { splitTrailingHashtags } from './caption-text.ts';
 import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
@@ -74,6 +76,8 @@ export interface ReviewServerOptions {
   weeklyPictureLimit?: number;
   /** The clock (tests set it). */
   now?: () => Date;
+  /** How often the weekly draw looks for a week that is due (10 minutes by default; 0 turns it off). AUTO_WEEK_DRAW=false turns it off too. */
+  weeklyDrawEveryMs?: number;
 }
 
 const JOB_STATES: readonly JobState[] = ['queued', 'running', 'succeeded', 'failed'];
@@ -191,6 +195,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       throw new ReviewError('LOCKED', 'the pictures used this week could not be counted just now, try again shortly');
     }
   };
+  /** The pictures already made for a plan (`<postId>|<network>`), so a draw that finishes what a failed one began is not asked to pay twice. */
+  const madeFor = (brand: string, planFile: string): Set<string> => new Set(new ReviewStore(join(root, brand), brand).list().filter((i) => i.version.planFile === planFile).map((i) => `${i.version.postId}|${i.version.network ?? ''}`));
   const assertPictureRoom = (brand: string, needed: Partial<Record<Network, number>>): void => {
     const limit = weeklyLimitOf(brand);
     if (limit === undefined) return;
@@ -447,9 +453,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (!latest && weekDone) throw new CopyStageError('ALREADY_DRAWN', week === undefined ? 'this batch was already drawn' : 'this week was already drawn');
           if (!batch.posts.some((p) => p.state === 'kept' && inWeek(p))) throw new CopyStageError('REJECTED', 'keep at least one post before drawing');
           // A product's customer may draw only so many pictures a channel a week: one for every kept post for every network it is written for, less what a failed draw already made.
-          const made = new Set(new ReviewStore(join(root, drawBrand), drawBrand).list().filter((i) => i.version.planFile === drawPlan).map((i) => `${i.version.postId}|${i.version.network ?? ''}`));
-          const needed: Partial<Record<Network, number>> = {};
-          for (const post of batch.posts.filter((p) => p.state === 'kept' && inWeek(p))) for (const net of Object.keys(post.captions ?? {})) if (isNetwork(net) && !made.has(`${post.postId}|${net}`)) needed[net] = (needed[net] ?? 0) + 1;
+          const needed = neededPictures(batch, week, madeFor(drawBrand, drawPlan), readConnected(join(root, drawBrand)));
           assertPictureRoom(drawBrand, needed);
           const drawSite = siteOf(drawBrand);
           // Approved posters of this batch reach the calendar through the campaign runner's release pass, for this client and only the networks written for.
@@ -483,6 +487,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), ...(brandName !== undefined ? { brandName } : {}), ...(domain !== undefined ? { domain } : {}), ...(signoffDefaults ? { signoffDefaults } : {}), by: scope.by(body['by']), facts }) });
         }
         return send(res, 404, { error: 'Not found' });
+      }
+      // The networks the customer has connected accounts for, written by the product API whenever it looks at her channels: the draw buys no picture for any other.
+      if (parts[0] === 'review' && parts[1] === 'connected' && parts.length === 2) {
+        if (req.method !== 'PUT') return send(res, 405, { error: 'Method not allowed' });
+        if (caller.role !== 'product') return send(res, 404, { error: 'Not found' });
+        const body = await readJson(req);
+        if (!Array.isArray(body['networks'])) throw new ReviewError('INVALID', 'networks must be a list');
+        if (!brands().includes(caller.brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+        return send(res, 200, writeConnected(join(root, caller.brand), body['networks'] as unknown[], (options.now ?? (() => new Date()))()));
       }
       // What a product's customer has drawn this week for each channel and what is left (read only). Staff may read a product brand's with ?brand=.
       if (parts[0] === 'review' && parts[1] === 'limits' && parts.length === 2) {
@@ -653,6 +666,40 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     timer.unref();
     server.on('listening', sweep);
     server.on('close', () => clearInterval(timer));
+  }
+  // The weekly draw: a later week of a customer's batch is drawn by the system on the Thursday before it begins; a week that passed undrawn is given up.
+  const weeklyEvery = options.weeklyDrawEveryMs ?? 600_000;
+  if (weeklyEvery > 0 && process.env['AUTO_WEEK_DRAW'] !== 'false') {
+    const weekly = (): void => {
+      try {
+        runWeeklyDraws({
+          brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(), made: madeFor,
+          room: (brand, needed) => {
+            try {
+              assertPictureRoom(brand, needed);
+              return null;
+            } catch (error) {
+              if (error instanceof PictureLimitError) return error.message;
+              throw error;
+            }
+          },
+          siteOf: (brand) => {
+            try {
+              return siteOf(brand);
+            } catch {
+              return null;
+            }
+          },
+          register: (brand, planFile, site) => { registerManualRelease({ brandDir: join(root, brand), siteBrand: brand, client: brand, site, planFile }); },
+        });
+      } catch (error) {
+        console.error(`weekly draw failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    const weeklyTimer = setInterval(weekly, weeklyEvery);
+    weeklyTimer.unref();
+    server.on('listening', weekly);
+    server.on('close', () => clearInterval(weeklyTimer));
   }
   return server;
 }
