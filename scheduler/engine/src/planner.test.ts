@@ -240,3 +240,50 @@ test('when the writer gives no valid answer for any chunk the plan still fails, 
     fetchFn: (async () => new Response(JSON.stringify({ choices: [{ message: { content: 'not json' } }] }), { status: 200 })) as typeof fetch,
   }), (error: Error) => error instanceof InsufficientConceptsError && /gave no valid answer twice/.test(error.message + JSON.stringify((error as { reasons?: unknown }).reasons ?? '')));
 });
+
+test('a second request for the same posts is different from the first, so the paid-call guard (which refuses an identical request in a job) lets it through; an identical one is still refused', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { PaidLedger, defaultBudgetLimits, BudgetError } = await import('./paid-ledger.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'planner-ledger-'));
+  try {
+    const guarded = aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' });
+    guarded.ledger = new PaidLedger(join(dir, 'ledger.jsonl'), { ...defaultBudgetLimits }, { jobId: 'job', tenantId: 'o', brandId: 'acme' });
+    const bodies: string[] = [];
+    const m = model();
+    const fetchFn = (async (url: string, init?: RequestInit) => { bodies.push(String(init?.body)); return m.fetchFn(url, init); }) as typeof fetch;
+    const base = { ai: guarded, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 1 }, usedPainPoints: [] as string[], fetchFn };
+    await planWeek({ ...base, requestNote: 'Write ONE post, for 2026-12-08. It must be about a different idea from: "A"' });
+    await planWeek({ ...base, requestNote: 'Write ONE post, for 2026-12-09. It must be about a different idea from: "A"; "B"' });
+    assert.equal(bodies.length, 2);
+    assert.notEqual(bodies[0], bodies[1]);
+    assert.match(bodies[0] ?? '', /2026-12-08/);
+    assert.match(bodies[1] ?? '', /2026-12-09/);
+    // The same request again in the same job is still refused: nothing is paid for twice by accident.
+    await assert.rejects(planWeek({ ...base, requestNote: 'Write ONE post, for 2026-12-08. It must be about a different idea from: "A"' }), (error: unknown) => error instanceof BudgetError && error.code === 'REPLAY_BLOCKED');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a chunk the writer cannot get right is asked for again with a different request, so the paid-call guard does not stop the second try', async () => {
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { PaidLedger, defaultBudgetLimits } = await import('./paid-ledger.ts');
+  const dir = mkdtempSync(join(tmpdir(), 'planner-ledger-'));
+  try {
+    const guarded = aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' });
+    guarded.ledger = new PaidLedger(join(dir, 'ledger.jsonl'), { ...defaultBudgetLimits }, { jobId: 'job', tenantId: 'o', brandId: 'acme' });
+    const bodies: string[] = [];
+    const fetchFn = (async (_url: string, init?: RequestInit) => { bodies.push(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: 'not json' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200 }); }) as typeof fetch;
+    await assert.rejects(planWeek({ ai: guarded, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 2 }, usedPainPoints: [], fetchFn }), (error: Error) => error instanceof InsufficientConceptsError && /gave no valid answer twice/.test(JSON.stringify((error as { reasons?: unknown }).reasons ?? '') + error.message));
+    // The first request is corrected once inside the call (2 bodies), then asked for again as a different request (2 more); none was refused as a repeat.
+    assert.equal(bodies.length, 4);
+    assert.notEqual(bodies[0], bodies[2], 'the second request is not the same text as the first');
+    assert.match(bodies[2] ?? '', /could not be used.*from scratch/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

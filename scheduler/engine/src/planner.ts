@@ -309,6 +309,11 @@ export async function planWeek(options: {
   weekNumber: number;
   schedule: PlanSchedule;
   usedPainPoints: string[];
+  /**
+   * A line added to the end of the request to the writer. It makes a second request different from the first on purpose: the paid-call guard refuses an identical request
+   * in the same job (so an accidental repeat is never paid for), and a request asked again must therefore say something new (the day, the ideas already in the plan).
+   */
+  requestNote?: string;
   /** Ask the picture for room where the layout puts its text (off by default; see IMAGE_COMPOSITION_HINT). */
   compositionHints?: boolean;
   /** The pillars of the posts written in earlier weeks, oldest first, so the mix carries on where it stopped. */
@@ -393,11 +398,11 @@ export async function planWeek(options: {
     // still repeats an earlier idea is left out of the plan (fewer posts, never a repeat); or the plan fails.
     let attempt = 0;
     let droppedHere: string[] = [];
-    const writeChunk = (): Promise<PlannedPost[]> => chatJson({
+    const writeChunk = (retryNote?: string): Promise<PlannedPost[]> => chatJson({
       ai: options.ai,
       ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
       system: SYSTEM_PROMPT,
-      user: userPrompt(brand, chunkDates.length, usedPainPoints, plans.slice(offset, offset + chunkDates.length), [...recentConcepts, ...acceptedRecords], evidenceMode ? factsPerPost.slice(offset, offset + chunkDates.length) : undefined),
+      user: userPrompt(brand, chunkDates.length, usedPainPoints, plans.slice(offset, offset + chunkDates.length), [...recentConcepts, ...acceptedRecords], evidenceMode ? factsPerPost.slice(offset, offset + chunkDates.length) : undefined) + [options.requestNote, retryNote].filter((n): n is string => n !== undefined && n !== '').map((n) => `\n\n${n}`).join(''),
       parse: (value) => {
         attempt += 1;
         droppedHere = [];
@@ -492,7 +497,7 @@ export async function planWeek(options: {
       attempt = 0;
       droppedHere = [];
       try {
-        chunk = await writeChunk();
+        chunk = await writeChunk('The first answer for these posts could not be used (it failed the writing checks). Write them again from scratch, as a fresh set, and check each caption against the writing rules before answering.');
       } catch (second) {
         if (!isNoValidAnswer(second)) throw second;
         dropped.push(`${oversample ? 'candidates' : 'posts'} ${offset + 1}-${offset + chunkDates.length}: the writer gave no valid answer twice, so they are left out (${(second as Error).message.replace(/^No valid response\.\s*/, '').slice(0, 200)})`);
