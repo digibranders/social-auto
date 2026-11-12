@@ -3,6 +3,7 @@
  * The week runs from Monday 00:00 to Sunday 24:00 India time, so it restarts every Monday. Only pictures actually bought count (a try the provider failed
  * does not), and every one counts: the first draw, a redraw and the picture of a network added later. Staff clients are not limited this way.
  */
+import { join, resolve } from 'node:path';
 import { NETWORKS, type Network } from './networks.ts';
 import type { PaidCall } from './paid-ledger.ts';
 
@@ -18,6 +19,11 @@ export function weeklyLimitFromEnv(env: Record<string, string | undefined>): num
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 1 || value > PICTURES_PER_CHANNEL_WEEK_CEILING) throw new Error(`PRODUCT_PICTURES_PER_CHANNEL_WEEK must be a whole number from 1 to ${PICTURES_PER_CHANNEL_WEEK_CEILING}`);
   return value;
+}
+
+/** Where the paid-call ledger is read: PAID_LEDGER_FILE, else beside the brands folder, as the engine does. */
+export function ledgerPathFor(brandsRoot: string, env: Record<string, string | undefined>): string {
+  return resolve(env['PAID_LEDGER_FILE'] || join(brandsRoot, '..', 'ledger', 'paid-calls.jsonl'));
 }
 
 const IST_OFFSET_MS = 5.5 * 3_600_000;
