@@ -194,10 +194,10 @@ test('limits come from settings, and a value that is not a positive number is an
   assert.throws(() => budgetLimitsFromEnv({ BUDGET_POSTER_USD: '0' }), /BUDGET_POSTER_USD/);
 });
 
-test('a brand may buy 40 pictures a month: pictures are counted, not topics or dollars, across jobs and days, per brand and per UTC month', () => {
+test('a brand may buy as many pictures a month as its limit says: pictures are counted, not topics or dollars, across jobs and days, per brand and per UTC month', () => {
   const { file, done } = workspace();
   try {
-    assert.equal(defaultBudgetLimits.maxPicturesPerBrandMonth, 40);
+    assert.equal(defaultBudgetLimits.maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING, 'the default is the backstop, not a limit');
     const limits = { maxPicturesPerBrandMonth: 3, maxImagesPerPoster: 2, perBrandMonthUsd: 50, perBrandDayUsd: 50, globalDayUsd: 50, perRunUsd: 50, perPosterUsd: 50 };
     const buy = (ledger: PaidLedger, key: string, postId: string) => ledger.complete(ledger.reserve({ operation: 'image', model: 'img', postId, requestKey: key, maxCostUsd: 0.02 }), { actualCostUsd: 0.02 });
     const first = open(file, limits, { jobId: 'job-1', now: new Date('2026-11-03T09:00:00Z') });
@@ -239,10 +239,71 @@ test('a draw that needs more pictures than are left this month is refused whole,
 });
 
 test('the picture limit can be set from the environment but never above the ceiling in code, and a bad value is an error', () => {
-  assert.equal(budgetLimitsFromEnv({}).maxPicturesPerBrandMonth, 40);
+  assert.equal(budgetLimitsFromEnv({}).maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING);
   assert.equal(budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: '25' }).maxPicturesPerBrandMonth, 25);
   assert.equal(budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: String(MAX_PICTURES_PER_BRAND_MONTH_CEILING) }).maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING);
   assert.throws(() => budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: String(MAX_PICTURES_PER_BRAND_MONTH_CEILING + 1) }), BudgetError);
   assert.throws(() => budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: '0' }), BudgetError);
   assert.throws(() => budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: '2.5' }), BudgetError);
+});
+
+test('a weekly limit per channel refuses the sixth Instagram picture while Facebook still has room, and the week restarts on Monday', () => {
+  const { file, done } = workspace();
+  try {
+    const wide = { perBrandMonthUsd: 50, perBrandDayUsd: 50, globalDayUsd: 50, perRunUsd: 50, perPosterUsd: 50, maxImagesPerPoster: 5, maxPicturesPerChannelWeek: 2 };
+    const buy = (ledger: PaidLedger, key: string, network: 'instagram' | 'facebook') => ledger.complete(ledger.reserve({ operation: 'image', model: 'img', postId: `p-${key}`, network, requestKey: key, maxCostUsd: 0.02 }), { actualCostUsd: 0.02 });
+    const thursday = new Date('2026-11-12T06:30:00Z');
+    const first = open(file, wide, { jobId: 'job-1', now: thursday });
+    buy(first, 'a', 'instagram');
+    buy(first, 'b', 'instagram');
+    const later = open(file, wide, { jobId: 'job-2', now: new Date('2026-11-14T06:30:00Z') });
+    try {
+      buy(later, 'c', 'instagram');
+      assert.fail('the third Instagram picture of the week was not refused');
+    } catch (error) {
+      assert.ok(error instanceof BudgetError);
+      assert.equal(error.code, 'PICTURE_LIMIT_REACHED');
+      assert.deepEqual(error.channel, { network: 'instagram', restart: '2026-11-16' });
+      assert.match(error.message, /used your 2 Instagram pictures for this week.*Monday 16 November/);
+    }
+    buy(later, 'd', 'facebook');
+    assert.deepEqual(later.channelUsage().used, { instagram: 2, facebook: 1, linkedin: 0, google: 0 });
+    // A failed try is not a picture bought.
+    const failed = later.reserve({ operation: 'image', model: 'img', postId: 'p-f', network: 'facebook', requestKey: 'f', maxCostUsd: 0.02 });
+    later.fail(failed, 'the provider refused');
+    assert.equal(later.channelUsage().used.facebook, 1);
+    // Monday: a new week.
+    const monday = open(file, wide, { jobId: 'job-3', now: new Date('2026-11-16T04:30:00Z') });
+    buy(monday, 'e', 'instagram');
+    assert.equal(monday.channelUsage().used.instagram, 1);
+  } finally {
+    done();
+  }
+});
+
+test('a draw that needs more pictures for a channel than the week has left is refused whole and names the channel', () => {
+  const { file, done } = workspace();
+  try {
+    const ledger = open(file, { maxPicturesPerChannelWeek: 3, perBrandMonthUsd: 50, perBrandDayUsd: 50, globalDayUsd: 50, perRunUsd: 50, perPosterUsd: 50 }, { now: new Date('2026-11-12T06:30:00Z') });
+    ledger.assertChannelPicturesFit({ instagram: 3, facebook: 3, linkedin: 0 });
+    ledger.complete(ledger.reserve({ operation: 'image', model: 'img', postId: 'p1', network: 'linkedin', requestKey: 'a', maxCostUsd: 0.02 }), { actualCostUsd: 0.02 });
+    assert.throws(() => ledger.assertChannelPicturesFit({ instagram: 3, linkedin: 3 }), (error: unknown) => error instanceof BudgetError && error.code === 'PICTURE_LIMIT_REACHED' && error.channel?.network === 'linkedin' && /2 of your 3 LinkedIn pictures left/.test(error.message));
+    assert.equal(ledger.calls().length, 1, 'the check buys and records nothing');
+    // With no weekly limit set (a staff client) nothing is checked.
+    open(file, { perBrandMonthUsd: 50 }).assertChannelPicturesFit({ instagram: 99 });
+  } finally {
+    done();
+  }
+});
+
+test('a picture with no channel, and any picture of a client with no weekly limit, is never held back by the weekly limit', () => {
+  const { file, done } = workspace();
+  try {
+    const limited = open(file, { maxPicturesPerChannelWeek: 1, maxImagesPerPoster: 9, perBrandMonthUsd: 50, perBrandDayUsd: 50, globalDayUsd: 50, perRunUsd: 50, perPosterUsd: 50 });
+    for (const key of ['a', 'b', 'c']) limited.complete(limited.reserve({ operation: 'image', model: 'img', postId: `plain-${key}`, requestKey: key, maxCostUsd: 0.02 }), { actualCostUsd: 0.02 });
+    const staff = open(file, { maxImagesPerPoster: 9, perBrandMonthUsd: 50, perBrandDayUsd: 50, globalDayUsd: 50, perRunUsd: 50, perPosterUsd: 50 }, { brandId: 'staffco' });
+    for (const key of ['x', 'y']) staff.complete(staff.reserve({ operation: 'image', model: 'img', postId: `s-${key}`, network: 'instagram', requestKey: key, maxCostUsd: 0.02 }), { actualCostUsd: 0.02 });
+  } finally {
+    done();
+  }
 });

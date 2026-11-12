@@ -62,17 +62,22 @@ export class EngineError extends Error {
   readonly reason: string | undefined;
   /** The engine's own stable code (HELD, ALREADY_DRAWN, ...), used only to choose the product API's code; never shown. */
   readonly engineCode: string | undefined;
-  constructor(status: number, message: string, reason?: string, engineCode?: string) {
+  /** For a channel that has used its pictures for the week: which channel and the day (YYYY-MM-DD) it starts again. */
+  readonly pictureLimit: { channel: string; restart: string } | undefined;
+  constructor(status: number, message: string, reason?: string, engineCode?: string, pictureLimit?: { channel: string; restart: string }) {
     super(message);
     this.name = 'EngineError';
     this.status = status;
     this.reason = reason;
     this.engineCode = engineCode;
+    this.pictureLimit = pictureLimit;
   }
 
   /** The code the product API answers with. */
   get code(): ErrorCode {
     switch (this.status) {
+      case 429:
+        return 'PICTURE_LIMIT_REACHED';
       case 404:
         return 'NOT_FOUND';
       case 400:
@@ -193,6 +198,13 @@ export interface BatchView {
   networks: string[];
   signoffDefault?: { brandName?: string; domain?: string };
   posts: WrittenPostView[];
+}
+
+/** The pictures a customer may still draw this week, for each channel. The week runs Monday to Sunday in India time. */
+export interface LimitsView {
+  week: { from: string; to: string; restart: string };
+  limit: number;
+  channels: Array<{ network: string; limit: number; used: number; left: number }>;
 }
 
 export interface BatchesView {
@@ -321,6 +333,8 @@ const STATUS_NOTICE: Record<string, string> = {
 /** The hash of each picture's image, kept off the views so it never reaches a product; it is only used to tell which pictures are the same drawing. */
 const IMAGE_HASH = new WeakMap<PosterView, string>();
 const NETWORK_ORDER = ['instagram', 'facebook', 'linkedin', 'google'];
+/** The sentence the engine writes when a channel has no pictures left, in exactly this shape. */
+const PICTURE_LIMIT_SENTENCE = /^You have (?:used your \d{1,2}|\d{1,2} of your \d{1,2}) (?:Instagram|Facebook|LinkedIn|Google) pictures (?:for|left) this week[^<>]{0,120}\.$/;
 
 /**
  * Marks, on every current picture, the other networks that share its drawing. "Current" is the newest version of a network of a post that has not been
@@ -434,6 +448,28 @@ export class WorkspaceEngine {
   async decideFact(factId: string, verb: 'confirm' | 'remove' | 'restore', actor: string): Promise<FactsView> {
     if (!FACT_ID.test(factId)) throw new EngineError(404, 'not found');
     return factsViewOf(await this.call('POST', `/review/brands/${this.brand}/facts/${factId}/${verb}`, actor, {}));
+  }
+
+  /** What the customer has drawn this week for each channel and what is left. */
+  async limits(actor: string): Promise<LimitsView> {
+    const answer = await this.call('GET', '/review/limits', actor);
+    const week = isObject(answer) && isObject(answer['week']) ? answer['week'] : null;
+    const date = (v: unknown): string | null => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+    const from = week ? date(week['from']) : null;
+    const to = week ? date(week['to']) : null;
+    const restart = week ? date(week['restart']) : null;
+    const count = (v: unknown): number | null => (typeof v === 'number' && Number.isInteger(v) && v >= 0 && v <= 1000 ? v : null);
+    const limit = isObject(answer) ? count(answer['limit']) : null;
+    const rows = isObject(answer) && Array.isArray(answer['channels']) ? answer['channels'] : [];
+    const channels = rows.flatMap((row) => {
+      if (!isObject(row) || typeof row['network'] !== 'string' || !NETWORK_ORDER.includes(row['network'])) return [];
+      const chLimit = count(row['limit']);
+      const used = count(row['used']);
+      const left = count(row['left']);
+      return chLimit === null || used === null || left === null ? [] : [{ network: row['network'], limit: chLimit, used, left }];
+    });
+    if (!from || !to || !restart || limit === null || channels.length === 0) throw unavailable();
+    return { week: { from, to, restart }, limit, channels };
   }
 
   /** The written batches waiting for this customer's decision. */
@@ -639,6 +675,13 @@ export class WorkspaceEngine {
     if (response.ok) return response;
     const answer: unknown = await response.json().catch(() => null);
     if (response.status === 404) throw new EngineError(404, 'not found');
+    // A channel with no pictures left this week: the engine's sentence is shown only when it has exactly the fixed shape the engine writes; anything else is replaced.
+    if (response.status === 429 && isObject(answer) && answer['code'] === 'PICTURE_LIMIT_REACHED') {
+      const channel = typeof answer['channel'] === 'string' && NETWORK_ORDER.includes(answer['channel']) ? answer['channel'] : undefined;
+      const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
+      const sentence = typeof answer['error'] === 'string' && PICTURE_LIMIT_SENTENCE.test(answer['error']) ? answer['error'] : 'You have used the pictures you can draw for this channel this week. Try again next week.';
+      throw new EngineError(429, sentence, 'refused', 'PICTURE_LIMIT_REACHED', channel && restart ? { channel, restart } : undefined);
+    }
     if (response.status === 400 || response.status === 403 || response.status === 409 || response.status === 422) {
       let engineCode = isObject(answer) && typeof answer['code'] === 'string' ? answer['code'] : undefined;
       // The engine answers REJECTED for several things; only the sentence tells "nothing kept" apart. It is read here and never passed on.

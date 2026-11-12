@@ -38,7 +38,9 @@ import { checkCopyWords, checkNewWords } from './copy-edit.ts';
 import { JobError, JobStore, keyOf, type Job, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
 import { slugFromSite } from './analyze.ts';
-import { captionRulesView, composeVariant, isNetwork, NETWORKS } from './networks.ts';
+import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
+import { foldLedgerFile } from './paid-ledger.ts';
+import { channelPicturesUsed, pictureLimitMessage, PictureLimitError, pictureWeek, weeklyLimitFromEnv, type PictureWeek } from './picture-limit.ts';
 import { splitTrailingHashtags } from './caption-text.ts';
 import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
 import { ProductBrands, PRODUCT_ID } from './product-brands.ts';
@@ -66,6 +68,12 @@ export interface ReviewServerOptions {
   expiryDays?: number;
   /** How often the service looks for such things (an hour by default). */
   sweepEveryMs?: number;
+  /** The engine's paid-call ledger, read (never written) to count what a product's customer has drawn this week. PAID_LEDGER_FILE, else beside the brands folder, as the engine does. */
+  ledgerFile?: string;
+  /** Pictures a product's customer may draw for each channel in a Monday-to-Sunday week (India time); PRODUCT_PICTURES_PER_CHANNEL_WEEK, else 5. */
+  weeklyPictureLimit?: number;
+  /** The clock (tests set it). */
+  now?: () => Date;
 }
 
 const JOB_STATES: readonly JobState[] = ['queued', 'running', 'succeeded', 'failed'];
@@ -97,6 +105,7 @@ const JOB_STATUS: Record<JobError['code'], number> = { NOT_FOUND: 404, INVALID: 
 const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503, FORBIDDEN: 403, CONFLICT: 409, LIMIT: 409 };
 
 function fail(res: ServerResponse, error: unknown): void {
+  if (error instanceof PictureLimitError) return send(res, 429, { error: error.message, code: 'PICTURE_LIMIT_REACHED', channel: error.network, restart: error.restart });
   if (error instanceof JobError) return send(res, JOB_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof FactsError) return send(res, FACTS_STATUS[error.code], { error: error.message, code: error.code });
   if (error instanceof CopyStageError) return send(res, COPY_STATUS[error.code], { error: error.message, code: error.code });
@@ -170,6 +179,26 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   };
   const jobs = new JobStore(resolve(options.jobsRoot ?? join(root, '..', 'jobs')));
   const owners = new ProductBrands(root);
+  // The weekly picture limit of a product's customer. The engine enforces it when it draws; the service checks it first so a request that cannot be drawn is refused
+  // at once, before a job is queued, with the channel and the day the week starts again.
+  const ledgerFile = resolve(options.ledgerFile ?? (process.env['PAID_LEDGER_FILE'] || join(root, '..', 'ledger', 'paid-calls.jsonl')));
+  const weeklyLimitOf = (brand: string): number | undefined => (owners.has(brand) ? options.weeklyPictureLimit ?? weeklyLimitFromEnv(process.env) : undefined);
+  const pictureUsage = (brand: string): { week: PictureWeek; used: Record<Network, number> } => {
+    const week = pictureWeek((options.now ?? (() => new Date()))());
+    try {
+      return { week, used: channelPicturesUsed(foldLedgerFile(ledgerFile).values(), brand, week) };
+    } catch {
+      throw new ReviewError('LOCKED', 'the pictures used this week could not be counted just now, try again shortly');
+    }
+  };
+  const assertPictureRoom = (brand: string, needed: Partial<Record<Network, number>>): void => {
+    const limit = weeklyLimitOf(brand);
+    if (limit === undefined) return;
+    const { week, used } = pictureUsage(brand);
+    for (const [network, count] of Object.entries(needed) as Array<[Network, number]>) {
+      if (count > 0 && used[network] + count > limit) throw new PictureLimitError(network, week.restart, pictureLimitMessage(network, limit, used[network], count, week.restart));
+    }
+  };
   const products = options.products ?? [];
   for (const p of products) {
     if (!PRODUCT_ID.test(p.id) || p.secret.length < 16 || p.secret === options.secret) throw new Error('each product needs a lowercase id and its own secret of at least 16 characters');
@@ -377,6 +406,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const batch = new CopyStage(join(root, netBrand), netBrand).get(netPlan);
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
           if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
+          // On a batch already drawn the new network's picture is drawn for every kept topic: the week must have room for them all.
+          if (batch.drawnAt) assertPictureRoom(netBrand, { [network]: batch.posts.filter((p) => p.state === 'kept').length });
           const { job, created } = jobs.enqueue({ kind: 'network', brand: netBrand, site: siteOf(netBrand), by: scope.by(body['by']), planFile: netPlan, network });
           return send(res, created ? 202 : 200, { job, created });
         }
@@ -398,6 +429,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (latest && !retry) return send(res, 200, { job: latest, created: false });
           if (!latest && batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn');
           if (!batch.posts.some((p) => p.state === 'kept')) throw new CopyStageError('REJECTED', 'keep at least one post before drawing');
+          // A product's customer may draw only so many pictures a channel a week: one for every kept post for every network it is written for, less what a failed draw already made.
+          const made = new Set(new ReviewStore(join(root, drawBrand), drawBrand).list().filter((i) => i.version.planFile === drawPlan).map((i) => `${i.version.postId}|${i.version.network ?? ''}`));
+          const needed: Partial<Record<Network, number>> = {};
+          for (const post of batch.posts.filter((p) => p.state === 'kept')) for (const net of Object.keys(post.captions ?? {})) if (isNetwork(net) && !made.has(`${post.postId}|${net}`)) needed[net] = (needed[net] ?? 0) + 1;
+          assertPictureRoom(drawBrand, needed);
           const drawSite = siteOf(drawBrand);
           // Approved posters of this batch reach the calendar through the campaign runner's release pass, for this client and only the networks written for.
           // The record is made first: a draw that is queued without it would buy pictures that could never be released.
@@ -430,6 +466,16 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), ...(brandName !== undefined ? { brandName } : {}), ...(domain !== undefined ? { domain } : {}), ...(signoffDefaults ? { signoffDefaults } : {}), by: scope.by(body['by']), facts }) });
         }
         return send(res, 404, { error: 'Not found' });
+      }
+      // What a product's customer has drawn this week for each channel and what is left (read only). Staff may read a product brand's with ?brand=.
+      if (parts[0] === 'review' && parts[1] === 'limits' && parts.length === 2) {
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        const limitBrand = caller.role === 'product' ? caller.brand : url.searchParams.get('brand') ?? '';
+        scope.guard(limitBrand, false);
+        const limit = weeklyLimitOf(limitBrand);
+        if (limit === undefined) throw new ReviewError('NOT_FOUND', 'no such brand');
+        const { week, used } = pictureUsage(limitBrand);
+        return send(res, 200, { brand: limitBrand, week: { from: week.from, to: week.to, restart: week.restart }, limit, channels: NETWORKS.map((network) => ({ network, limit, used: used[network], left: Math.max(0, limit - used[network]) })) });
       }
       // What was put away because nobody decided in time (read only): a product sees its own brand's, staff see all.
       if (parts[0] === 'review' && parts[1] === 'expiry' && parts.length === 2 && req.method === 'GET') {
@@ -561,6 +607,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const active = earlier.find((j) => j.state === 'queued' || j.state === 'running');
         if (active) return send(res, 200, { job: active, created: false });
         if (earlier.filter(countsAgainstCap).length >= redrawCap) throw new ReviewError('LIMIT', 'this poster has already been drawn again as many times as is allowed');
+        if (v.network && isNetwork(v.network)) assertPictureRoom(v.brand, { [v.network]: 1 });
         const { job, created } = jobs.enqueue(spec);
         return send(res, created ? 202 : 200, { job, created });
       }

@@ -6,7 +6,7 @@
  * POST /api/v1/send
  * POST|GET|PATCH|DELETE /api/v1/posts
  * POST|GET /api/v1/site-jobs      POST|GET /api/v1/facts      POST|GET /api/v1/batches
- * POST|GET /api/v1/posters      GET /api/v1/events      GET /api/v1/topics      GET /api/v1/analytics
+ * POST|GET /api/v1/posters      GET /api/v1/events      GET /api/v1/topics      GET /api/v1/analytics      GET /api/v1/limits
  */
 import { json } from '../../lib/http.js';
 import * as analytics from '../_v1/analytics.js';
@@ -15,6 +15,7 @@ import * as connectLink from '../_v1/connect-link.js';
 import * as events from '../_v1/events.js';
 import * as facts from '../_v1/facts.js';
 import * as pictures from '../_v1/pictures.js';
+import * as limits from '../_v1/limits.js';
 import * as posters from '../_v1/posters.js';
 import * as posts from '../_v1/posts.js';
 import * as send from '../_v1/send.js';
@@ -43,6 +44,8 @@ export function GET(request: Request): Response | Promise<Response> {
       return events.GET(request);
     case 'topics':
       return topics.GET(request);
+    case 'limits':
+      return limits.GET(request);
     case 'analytics':
       return analytics.GET(request);
     default:

@@ -15,6 +15,8 @@
  */
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
+import { channelPicturesUsed, pictureLimitMessage, pictureWeek } from './picture-limit.ts';
+import type { Network } from './networks.ts';
 import { dirname } from 'node:path';
 import { appendDurable, LockError, withFileLock } from './file-lock.ts';
 
@@ -32,6 +34,8 @@ export interface BudgetLimits {
   globalDayUsd: number;
   /** Picture purchases (attempts, including failed ones) per poster. There is no automatic regeneration. */
   maxImagesPerPoster: number;
+  /** Pictures one brand may buy for each channel in a Monday-to-Sunday week (India time). Off unless set: only a product's customers are limited this way (see picture-limit.ts). */
+  maxPicturesPerChannelWeek?: number;
   /** Pictures one brand may buy in a UTC calendar month: pictures bought (an attempt the provider failed is not counted), never topics. Never above MAX_PICTURES_PER_BRAND_MONTH_CEILING. */
   maxPicturesPerBrandMonth: number;
   /** What a picture may cost, counted when it is reserved. */
@@ -52,20 +56,23 @@ export const defaultBudgetLimits: BudgetLimits = {
   globalDayUsd: 2.0,
   // One picture, and one more only when the first was rejected for a defect a new instruction can fix (see ai-creative-pipeline.ts).
   maxImagesPerPoster: 2,
-  // Each network of a topic gets its own picture, so this counts pictures (the owner's limit for a customer is 40 a month).
-  maxPicturesPerBrandMonth: 40,
+  // A backstop for every brand, not a limit anyone should reach: a product's customers are limited per channel per week instead (picture-limit.ts), staff clients by the dollar caps.
+  maxPicturesPerBrandMonth: MAX_PICTURES_PER_BRAND_MONTH_CEILING,
   // An upper bound near the published price of a medium picture, not the usual bill (about $0.03): the reservation must never be lower than what the call may cost.
   imageReserveUsd: 0.05,
 };
 
-export type BudgetRefusal = 'POSTER_BUDGET' | 'RUN_BUDGET' | 'BRAND_DAY_BUDGET' | 'BRAND_MONTH_BUDGET' | 'BRAND_MONTH_PICTURES' | 'GLOBAL_DAY_BUDGET' | 'IMAGE_LIMIT' | 'REPLAY_BLOCKED' | 'KILL_SWITCH';
+export type BudgetRefusal = 'POSTER_BUDGET' | 'RUN_BUDGET' | 'BRAND_DAY_BUDGET' | 'BRAND_MONTH_BUDGET' | 'BRAND_MONTH_PICTURES' | 'PICTURE_LIMIT_REACHED' | 'GLOBAL_DAY_BUDGET' | 'IMAGE_LIMIT' | 'REPLAY_BLOCKED' | 'KILL_SWITCH';
 
 export class BudgetError extends Error {
   readonly code: BudgetRefusal;
-  constructor(code: BudgetRefusal, message: string) {
+  /** For a channel's weekly picture limit: which channel ran out and the day the week starts again (YYYY-MM-DD). */
+  readonly channel?: { network: Network; restart: string };
+  constructor(code: BudgetRefusal, message: string, channel?: { network: Network; restart: string }) {
     super(message);
     this.name = 'BudgetError';
     this.code = code;
+    if (channel) this.channel = channel;
   }
 }
 
@@ -75,6 +82,8 @@ export interface PaidCall {
   tenantId: string;
   brandId: string;
   postId?: string;
+  /** The channel a picture was drawn for (pictures only); the weekly picture limit counts by it. */
+  network?: string;
   operation: PaidOperation;
   model: string;
   requestHash: string;
@@ -106,6 +115,8 @@ export interface ReserveRequest {
   operation: PaidOperation;
   model: string;
   postId?: string;
+  /** The channel the picture is drawn for, when it is drawn for one. */
+  network?: Network;
   /** What the call would send, so the same request is recognised again. */
   requestKey: string;
   /** The most the call may cost. */
@@ -131,6 +142,36 @@ export function withLock<T>(lockPath: string, work: () => T, timeoutMs?: number)
     if (error instanceof LockError) throw new BudgetError('KILL_SWITCH', `the paid-call ledger is locked (${error.message}), so nothing is spent`);
     throw error;
   }
+}
+
+/**
+ * The calls in a ledger file as the log folds them, read only: it writes nothing and takes no lock, so a service that only needs to look (what a
+ * customer has used this week) can read the file the engine writes. A file that is missing is empty; a damaged one is refused.
+ */
+export function foldLedgerFile(file: string): Map<string, PaidCall> {
+  const calls = new Map<string, PaidCall>();
+  let text = '';
+  try {
+    text = readFileSync(file, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new BudgetError('KILL_SWITCH', `the paid-call ledger ${file} could not be read (${(error as Error).message}), so nothing is spent`);
+  }
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    let event: Event;
+    try {
+      event = JSON.parse(line) as Event;
+    } catch {
+      // A damaged record in the middle of the log means what was spent can no longer be trusted: nothing is spent until a person looks at the file.
+      throw new BudgetError('KILL_SWITCH', `the paid-call ledger ${file} has a damaged record, so nothing is spent until it is checked`);
+    }
+    if (event.type === 'reserve') calls.set(event.call.callId, event.call);
+    else {
+      const found = calls.get(event.callId);
+      if (found) calls.set(event.callId, { ...found, ...event.patch });
+    }
+  }
+  return calls;
 }
 
 export class PaidLedger {
@@ -164,29 +205,7 @@ export class PaidLedger {
   }
 
   private load(): Map<string, PaidCall> {
-    const calls = new Map<string, PaidCall>();
-    let text = '';
-    try {
-      text = readFileSync(this.file, 'utf8');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new BudgetError('KILL_SWITCH', `the paid-call ledger ${this.file} could not be read (${(error as Error).message}), so nothing is spent`);
-    }
-    for (const line of text.split('\n')) {
-      if (line.trim() === '') continue;
-      let event: Event;
-      try {
-        event = JSON.parse(line) as Event;
-      } catch {
-        // A damaged record in the middle of the log means what was spent can no longer be trusted: nothing is spent until a person looks at the file.
-        throw new BudgetError('KILL_SWITCH', `the paid-call ledger ${this.file} has a damaged record, so nothing is spent until it is checked`);
-      }
-      if (event.type === 'reserve') calls.set(event.call.callId, event.call);
-      else {
-        const found = calls.get(event.callId);
-        if (found) calls.set(event.callId, { ...found, ...event.patch });
-      }
-    }
-    return calls;
+    return foldLedgerFile(this.file);
   }
 
   private append(event: Event): void {
@@ -232,6 +251,25 @@ export class PaidLedger {
     if (used + needed > limit) throw new BudgetError('BRAND_MONTH_PICTURES', `this draw needs ${needed} picture${needed === 1 ? '' : 's'} and this brand has bought ${used} of its ${limit} for this month`);
   }
 
+  /** What this brand has bought in the current week for each channel, and the week itself. */
+  channelUsage(): { week: ReturnType<typeof pictureWeek>; used: Record<Network, number> } {
+    const week = pictureWeek(this.now());
+    return { week, used: channelPicturesUsed(this.load().values(), this.context.brandId, week) };
+  }
+
+  /**
+   * Refuses, before anything is bought, a draw that needs more pictures for a channel than the week has left, so a batch is never half drawn.
+   * Does nothing when no weekly limit is set (a staff client). `needed` is the pictures wanted for each channel.
+   */
+  assertChannelPicturesFit(needed: Partial<Record<Network, number>>): void {
+    const limit = this.limits.maxPicturesPerChannelWeek;
+    if (limit === undefined) return;
+    const { week, used } = this.channelUsage();
+    for (const [network, count] of Object.entries(needed) as Array<[Network, number]>) {
+      if (count > 0 && used[network] + count > limit) throw new BudgetError('PICTURE_LIMIT_REACHED', pictureLimitMessage(network, limit, used[network], count, week.restart), { network, restart: week.restart });
+    }
+  }
+
   /** The calls so far, as the log folds them. */
   calls(): PaidCall[] {
     return [...this.load().values()];
@@ -260,6 +298,11 @@ export class PaidLedger {
         if (attempts >= limits.maxImagesPerPoster) throw new BudgetError('IMAGE_LIMIT', `this poster has already used its ${limits.maxImagesPerPoster} picture purchase${limits.maxImagesPerPoster === 1 ? '' : 's'}; pictures are never regenerated automatically`);
       }
       if (request.operation === 'image' && used.brandMonthPictures + 1 > Math.min(limits.maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING)) throw new BudgetError('BRAND_MONTH_PICTURES', `this brand has already bought ${used.brandMonthPictures} pictures this month, as many as its limit of ${Math.min(limits.maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING)} allows`);
+      if (request.operation === 'image' && request.network !== undefined && limits.maxPicturesPerChannelWeek !== undefined) {
+        const week = pictureWeek(this.now());
+        const usedNow = channelPicturesUsed(calls.values(), context.brandId, week)[request.network];
+        if (usedNow + 1 > limits.maxPicturesPerChannelWeek) throw new BudgetError('PICTURE_LIMIT_REACHED', pictureLimitMessage(request.network, limits.maxPicturesPerChannelWeek, usedNow, 1, week.restart), { network: request.network, restart: week.restart });
+      }
       if (request.postId !== undefined && used.poster + cost > limits.perPosterUsd + 1e-9) throw new BudgetError('POSTER_BUDGET', `this poster would spend $${(used.poster + cost).toFixed(4)}, over its $${limits.perPosterUsd.toFixed(3)} limit`);
       if (used.run + cost > limits.perRunUsd + 1e-9) throw new BudgetError('RUN_BUDGET', `this run would spend $${(used.run + cost).toFixed(4)}, over its $${limits.perRunUsd.toFixed(3)} limit`);
       if (used.brandDay + cost > limits.perBrandDayUsd + 1e-9) throw new BudgetError('BRAND_DAY_BUDGET', `this brand would spend $${(used.brandDay + cost).toFixed(4)} today, over its $${limits.perBrandDayUsd.toFixed(2)} daily limit`);
@@ -268,6 +311,7 @@ export class PaidLedger {
       const call: PaidCall = {
         callId: randomUUID(), jobId: context.jobId, tenantId: context.tenantId, brandId: context.brandId,
         ...(request.postId !== undefined ? { postId: request.postId } : {}),
+        ...(request.operation === 'image' && request.network !== undefined ? { network: request.network } : {}),
         operation: request.operation, model: request.model, requestHash, status: 'reserved', reservedCostUsd: cost, createdAt,
       };
       this.append({ type: 'reserve', call });
