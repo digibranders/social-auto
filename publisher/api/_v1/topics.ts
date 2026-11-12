@@ -23,7 +23,9 @@ export async function GET(request: Request): Promise<Response> {
     const by = engineActor(found.product.id, request.headers.has('x-social-actor') ? actorOf(request) : null);
     const [posters, batches, { file }] = await Promise.all([engine.listPosters('all', by), engine.listBatches(by), loadChannels()]);
     const connected = [...new Set(channelsFor(file, found.workspace.brand).map((c) => c.platform))];
-    return json(200, { topics: topicsOf(posters, batches.batches, connected), connected });
+    // What is left of this week's pictures for each channel, so a topic with no picture can say it has none left; best effort.
+    const limits = await engine.limits(by).then((l) => l.channels).catch(() => null);
+    return json(200, { topics: topicsOf(posters, batches.batches, connected, { limits }), connected });
   } catch (error) {
     return errorResponse(error, 'read the topics');
   }
