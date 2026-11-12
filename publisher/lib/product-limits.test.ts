@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { GET as limitsGet } from '../api/_v1/limits.ts';
 import { GET as batchesGet, POST as batchesPost } from '../api/_v1/batches.ts';
 import { POST as postersPost } from '../api/_v1/posters.ts';
+import { POST as siteJobsPost } from '../api/_v1/site-jobs.ts';
 import { POST as workspacesPost } from '../api/_v1/workspaces.ts';
 import { call, CHANNEL_KEY, fakeEngine, OTHER_KEY, withProducts, type FakeEngine, type FakeJob, type FakePoster } from '../dev/product-test-kit.ts';
 import { addLinkedInMember } from './channels.ts';
@@ -185,5 +186,45 @@ test('a week with no posts is shown as empty, with the days that are missing', a
     const answer = await call(batchesGet, '/api/v1/batches?externalId=shop-1');
     const weeks = (answer.body['batches'] as Array<{ weeks: Array<{ state: string; missingDays?: string[] }> }>)[0]?.weeks;
     assert.deepEqual(weeks?.map((w) => [w.state, w.missingDays]), [['waiting', ['2026-11-17']], ['empty', ['2026-11-23', '2026-11-24']]], 'a bad day is left out');
+  });
+});
+
+test('a refused or failed telling of the connected networks is tried again on the next call and is said, not swallowed; once told it is not told again; a new job tells it', async () => {
+  await withEngine(async (engine) => {
+    forgetConnected();
+    const one = await workspace('shop-1');
+    const { file, etag } = await loadChannels();
+    await saveChannels(addLinkedInMember(file, one, { urn: 'urn:li:person:abcdefabc', name: 'T' }, 'token', 5_000_000, parseKey(CHANNEL_KEY), Date.now() - 3_600_000), etag);
+    const puts = (): number => engine.seen.filter((r) => r.method === 'PUT' && r.url === '/review/connected').length;
+    const said: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { said.push(args.map(String).join(' ')); };
+    try {
+      engine.connectedRefusals = 1;
+      await call(batchesGet, '/api/v1/batches?externalId=shop-1');
+      assert.equal(engine.connected, null, 'the first telling was refused');
+      assert.ok(said.some((m) => /could not tell the poster service which networks are connected: 404/.test(m)), said.join(' | '));
+      await call(batchesGet, '/api/v1/batches?externalId=shop-1');
+      assert.deepEqual(engine.connected, ['linkedin'], 'the next call tells it again, because the first was not remembered');
+      assert.equal(puts(), 2);
+      await call(batchesGet, '/api/v1/batches?externalId=shop-1');
+      assert.equal(puts(), 2, 'told, so not told again');
+    } finally {
+      console.error = original;
+    }
+  });
+});
+
+test('starting the first job tells the poster service which networks are connected, before anything is drawn', async () => {
+  await withEngine(async (engine) => {
+    forgetConnected();
+    const one = await workspace('shop-1');
+    const { file, etag } = await loadChannels();
+    await saveChannels(addLinkedInMember(file, one, { urn: 'urn:li:person:abcdefabc', name: 'T' }, 'token', 5_000_000, parseKey(CHANNEL_KEY), Date.now() - 3_600_000), etag);
+    const started = await call(siteJobsPost, '/api/v1/site-jobs', { headers: { 'x-social-actor': 'user_42' }, json: { externalId: 'shop-1', site: 'acme.example.com', networks: ['linkedin', 'instagram'] } });
+    assert.equal(started.status, 202, JSON.stringify(started.body));
+    assert.deepEqual(engine.connected, ['linkedin'], 'only the connected one, though two were asked for');
+    const order = engine.seen.filter((r) => (r.method === 'POST' && r.url === '/review/jobs') || (r.method === 'PUT' && r.url === '/review/connected')).map((r) => r.method);
+    assert.deepEqual(order, ['POST', 'PUT'], 'after the job that makes the brand the product\'s');
   });
 });

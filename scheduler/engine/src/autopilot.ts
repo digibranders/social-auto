@@ -51,7 +51,7 @@ import { batchLookAlikes } from './creative-director.ts';
 import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
-import { readConnected } from './connected-networks.ts';
+import { ConnectedUnknownError, connectedForDraw, readConnected } from './connected-networks.ts';
 import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
 import { pageModeBlocked } from './page-mode.ts';
 import { redrawAlike } from './look-alike-check.ts';
@@ -398,6 +398,8 @@ async function main(): Promise<void> {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
       const copy = new CopyStage(brandDir, slug);
       const stored = parseWeekPlan(await readJson(join(brandDir, keptFile)), keptFile);
+      // A product's customer is drawn for only after the poster service was told which networks she has connected; nothing is bought for a network with no account.
+      connectedForDraw(brandDir, new ProductBrands(BRANDS_ROOT).has(slug));
       const drawWeek = values['draw-week'];
       if (drawWeek !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(drawWeek)) throw new Error('--draw-week must be the Monday of the week, like 2026-11-16');
       const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })), drawWeek);
@@ -644,6 +646,7 @@ if (import.meta.main) {
     else if (error instanceof PageModeError) console.error(`PAGE_MODE_UNAVAILABLE: ${error.message}`);
     else if (error instanceof CopyStageError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
+    else if (error instanceof ConnectedUnknownError) console.error(`CONNECTED_UNKNOWN: ${error.message}`);
     else if (error instanceof PreflightError) console.error(`${error.code}: ${error.message}. No posters were made.`);
     else console.error(error instanceof Error ? `${error.name}: ${error.message}` : error);
     process.exitCode = 1;

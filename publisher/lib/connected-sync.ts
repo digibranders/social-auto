@@ -14,10 +14,11 @@ export async function syncConnected(engine: WorkspaceEngine, brand: string, acto
     const networks = [...new Set(channelsFor(file, brand).map((c) => c.platform))].sort();
     const key = networks.join(',');
     if (last.get(brand) === key) return;
-    await engine.setConnected(networks, actor);
-    last.set(brand, key);
-  } catch {
-    // Never in the way of the call that triggered it.
+    // Remembered only when the poster service took it: a refusal (for example before the brand's first job exists) is tried again on the next call.
+    if (await engine.setConnected(networks, actor)) last.set(brand, key);
+  } catch (error) {
+    // Never in the way of the call that triggered it, but never silent either.
+    console.error(`could not read the connected networks of ${brand}: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

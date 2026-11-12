@@ -32,3 +32,21 @@ export function writeConnected(brandDir: string, networks: readonly unknown[], n
   renameSync(temp, file);
   return { changed: true };
 }
+
+/** Thrown when a product's customer is drawn for before the poster service was told which networks she has connected: nothing is bought blind. */
+export class ConnectedUnknownError extends Error {
+  constructor() {
+    super('the poster service has not been told which networks are connected for this customer, so no picture was bought (it is told when she looks at her written posts or asks for pictures)');
+    this.name = 'ConnectedUnknownError';
+  }
+}
+
+/**
+ * The connected networks a draw must go by. A product's customer must have them recorded: without them a picture could be bought for a network that has no account,
+ * so the draw stops (the product API tells us before every draw). A client of ours has no record and draws for every network its posts were written for.
+ */
+export function connectedForDraw(brandDir: string, productOwned: boolean): ReadonlySet<Network> | null {
+  const connected = readConnected(brandDir);
+  if (connected === null && productOwned) throw new ConnectedUnknownError();
+  return connected;
+}

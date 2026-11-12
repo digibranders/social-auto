@@ -24,6 +24,7 @@ function setup() {
   owners.claim('bb-acme', 'brandbasket', () => false);
   const stage = new CopyStage(dir, 'bb-acme');
   stage.open('week-01.json', posts);
+  writeConnected(dir, ['instagram', 'facebook', 'linkedin']);
   const jobs = new JobStore(join(root, 'jobs'));
   const registered: string[] = [];
   const deps = (now: string, over: Partial<WeeklyDeps> = {}): WeeklyDeps => ({
@@ -124,6 +125,7 @@ test('pictures are counted for the networks the customer has connected only, and
 test('the connected networks are kept beside the brand, only the four networks are accepted, and an unchanged list writes nothing', () => {
   const s = setup();
   try {
+    rmSync(join(s.dir, 'connected.json'));
     assert.equal(readConnected(s.dir), null);
     assert.deepEqual(writeConnected(s.dir, ['facebook', 'instagram', 'myspace', 'facebook', 7]), { changed: true });
     assert.deepEqual([...(readConnected(s.dir) as Set<string>)].sort(), ['facebook', 'instagram']);
@@ -189,6 +191,22 @@ test('the catch-up leaves alone a try that failed for another reason, retries on
     // Facebook not connected: nothing is drawn for it.
     writeConnected(join(s.root, 'brands', 'bb-acme'), ['instagram']);
     assert.deepEqual(runCatchUpDraws(catchUp(s, '2026-11-13T06:00:00Z', made, { roomFor: () => 5 })), []);
+  } finally {
+    s.done();
+  }
+});
+
+test('nothing is drawn for a product customer until the poster service was told which networks are connected, by the weekly draw or the catch-up', () => {
+  const s = setup();
+  try {
+    rmSync(join(s.dir, 'connected.json'));
+    for (const id of ['w1-d1', 'w2-d1']) s.stage.decide('week-01.json', id, 'kept', 'u');
+    s.stage.markWeekDrawn('week-01.json', W1);
+    assert.deepEqual(runWeeklyDraws(s.deps('2026-11-19T05:00:00Z')), [], 'week 2 is due, but the connected networks are not known');
+    assert.equal(s.jobs.list({ brand: 'bb-acme' }).length, 0);
+    assert.deepEqual(runCatchUpDraws(catchUp(s, '2026-11-13T05:00:00Z', ['w1-d1|instagram'], { roomFor: () => 5 })), []);
+    writeConnected(s.dir, ['instagram']);
+    assert.deepEqual(runWeeklyDraws(s.deps('2026-11-19T05:00:00Z')).map((a) => a.action), ['drawing'], 'known now: the draw goes ahead');
   } finally {
     s.done();
   }

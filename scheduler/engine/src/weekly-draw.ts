@@ -72,6 +72,8 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
       continue;
     }
     const connected = readConnected(brandDir);
+    // Not told yet which networks are connected: nothing is drawn for this customer until it is.
+    if (connected === null) continue;
     for (const batch of batches) {
       if (batch.closedAt || batch.drawnAt) continue;
       weeksOf(batch).forEach((week, index) => {
@@ -144,6 +146,7 @@ export function runCatchUpDraws(deps: CatchUpDeps): CatchUpAction[] {
       continue;
     }
     const connected = readConnected(brandDir);
+    if (connected === null) continue;
     const jobs = deps.jobs.list({ brand }).filter((j) => j.kind === 'newnet');
     const wanting = new Map<Network, Array<{ planFile: string; postId: string; date: string }>>();
     for (const batch of batches) {
@@ -155,7 +158,7 @@ export function runCatchUpDraws(deps: CatchUpDeps): CatchUpAction[] {
         if (batch.notDrawn?.[post.postId] !== undefined) continue;
         if (![...made].some((k) => k.startsWith(`${post.postId}|`))) continue;
         for (const net of Object.keys(post.captions ?? {})) {
-          if (!isNetwork(net) || (connected !== null && !connected.has(net)) || made.has(`${post.postId}|${net}`)) continue;
+          if (!isNetwork(net) || !connected.has(net) || made.has(`${post.postId}|${net}`)) continue;
           const tries = jobs.filter((j) => j.planFile === batch.planFile && j.postId === post.postId && j.network === net);
           if (tries.some((j) => j.state === 'queued' || j.state === 'running')) continue;
           if (tries.some((j) => j.state === 'failed' && j.error?.code !== 'PICTURE_LIMIT_REACHED')) continue;
