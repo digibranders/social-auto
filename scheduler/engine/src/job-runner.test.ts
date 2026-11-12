@@ -154,3 +154,21 @@ test('a carousel job starts the carousel command with the site, the channels and
     done();
   }
 });
+
+test('an add-a-network job queues a picture only for as many topics as the channel has room for, soonest first, and leaves the rest for the weekly catch-up', async () => {
+  const { s, done } = fresh();
+  try {
+    const job = s.enqueue(spec({ kind: 'network', planFile: 'week-01.json', network: 'facebook' })).job;
+    const claimed = s.claim(5, 1) as Job;
+    const result = { network: 'facebook', topics: ['w01-d1', 'w01-d2', 'w01-d3'].map((postId) => ({ postId, outcome: 'written', needsDraw: true })) };
+    const asked: Array<[string, string]> = [];
+    const done1 = await runJob(s, claimed, fake([[`ADD_NETWORK_RESULT ${JSON.stringify(result)}`, 'out']]), { room: (brand, network) => { asked.push([brand, network]); return 2; } });
+    assert.equal(done1.state, 'succeeded');
+    assert.deepEqual(asked, [['acme', 'facebook']]);
+    assert.deepEqual(s.list().filter((j) => j.kind === 'newnet').map((j) => j.postId).sort(), ['w01-d1', 'w01-d2']);
+    assert.deepEqual(done1.result?.topics.map((t) => [t.postId, t.drawJobId !== undefined]), [['w01-d1', true], ['w01-d2', true], ['w01-d3', false]]);
+    void job;
+  } finally {
+    done();
+  }
+});
