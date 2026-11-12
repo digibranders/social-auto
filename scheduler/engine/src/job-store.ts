@@ -50,6 +50,8 @@ export interface JobSpec {
   /** The one post, and the one network of it, to draw a new picture for (redraw only; the batch was already drawn). */
   postId?: string;
   network?: string;
+  /** The week of the batch to draw, as its Monday YYYY-MM-DD (draw only). A batch of one piece has none. */
+  week?: string;
 }
 
 /** What an add-a-network job found, per topic of the batch. */
@@ -90,8 +92,8 @@ const LOG_LINE_CHARS = 300;
 /** A key that looks like one of ours must never be shown, whatever the engine printed. */
 export const scrub = (line: string): string => line.replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{10,}/g, '[key removed]').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{10,}/gi, 'Bearer [removed]').slice(0, LOG_LINE_CHARS);
 
-export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network'>): string =>
-  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
+export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network' | 'week'>): string =>
+  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
 
 export class JobStore {
   private readonly dir: string;
@@ -162,6 +164,7 @@ export class JobStore {
         ...(spec.time ? { time: spec.time } : {}),
         ...(spec.planFile ? { planFile: spec.planFile } : {}),
         ...(spec.postId ? { postId: spec.postId } : {}),
+        ...(spec.week ? { week: spec.week } : {}),
         ...(spec.network ? { network: spec.network } : {}),
         state: 'queued',
         createdAt: stamp.toISOString(),

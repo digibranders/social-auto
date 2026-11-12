@@ -29,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
 import { listCampaigns } from './campaign-runner.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
-import { CopyStage, CopyStageError } from './copy-stage.ts';
+import { CopyStage, CopyStageError, weekOfPost, weeksOf } from './copy-stage.ts';
 import { editCopy, type SignoffDefaults } from './copy-edit.ts';
 import { displayDomain } from './ai-creative.ts';
 import { loadFacts } from './evidence-pipeline.ts';
@@ -218,8 +218,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     by: (given: unknown): string => (caller.role === 'product' ? caller.actor : text(given, 80)),
   });
   /** Once drawing has been asked for, the batch's choices and words are final: the runner may start at any moment, and a change in between would be lost or fail the draw. */
-  const refuseIfDrawAsked = (brand: string, planFile: string): void => {
-    if (jobs.list({ brand }).some((j) => j.kind === 'draw' && j.planFile === planFile)) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch\'s choices and words are final');
+  const refuseIfDrawAsked = (brand: string, planFile: string, postId?: string): void => {
+    const asked = jobs.list({ brand }).filter((j) => j.kind === 'draw' && j.planFile === planFile);
+    // A draw of one week of a batch locks only that week's posts; a draw with no week (a batch of one piece), or a call about the whole batch, locks everything.
+    const week = postId === undefined ? undefined : weekOfPost(new CopyStage(join(root, brand), brand).get(planFile).posts.find((p) => p.postId === postId) ?? {});
+    if (asked.some((j) => j.week === undefined || week === undefined || j.week === week)) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch\'s choices and words are final');
   };
   const siteOf = (brand: string): string => {
     try {
@@ -372,8 +375,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           // A batch that was drawn is no longer waiting for choices, unless its draw stopped before it finished: it stays listed so the draw can be asked for again.
           const stopped = (brand: string, planFile: string): boolean => jobs.list({ brand }).find((j) => j.kind === 'draw' && j.planFile === planFile)?.state === 'failed';
           const batches = scope.visible(brands()).flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
+          // The weeks of a batch written for several weeks: when each starts and ends, its posts, and whether its pictures are waiting, being drawn, drawn or given up.
+          const weeksView = (b: { brand: string; planFile: string; posts: Array<{ postId: string; date?: string }>; weekDrawn?: Record<string, string>; weekLapsed?: Record<string, string> }): { weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'drawn' | 'lapsed'; postIds: string[] }> } => {
+            const mondays = weeksOf(b);
+            if (mondays.length === 0) return {};
+            const running = jobs.list({ brand: b.brand }).filter((j) => j.kind === 'draw' && j.planFile === b.planFile && (j.state === 'queued' || j.state === 'running'));
+            return { weeks: mondays.map((from) => ({ from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state: b.weekLapsed?.[from] !== undefined ? 'lapsed' as const : b.weekDrawn?.[from] !== undefined ? 'drawn' as const : running.some((j) => j.week === from) ? 'drawing' as const : 'waiting' as const, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId) })) };
+          };
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })) }));
+          const plain = batches.map((b) => ({ ...b, networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })), ...weeksView(b) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
@@ -381,7 +391,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           scope.guard(brand, true);
           if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const by = scope.by((await readJson(req))['by']);
-          refuseIfDrawAsked(brand, planFile);
+          refuseIfDrawAsked(brand, planFile, postId);
           const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
           return send(res, 200, { batch });
         }
@@ -422,23 +432,30 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (!CLIENT_NAME.test(client)) throw new ReviewError('INVALID', 'client must be lowercase letters, digits and dashes');
           const batch = new CopyStage(join(root, drawBrand), drawBrand).get(drawPlan);
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
-          // A batch already asked for (or drawn) answers with its job; a draw buys pictures, so it is only ever started once. After a draw has failed,
+          // A batch of several weeks is drawn one week at a time: the week asked for (its Monday), else the first one not drawn yet.
+          const weeks = weeksOf(batch);
+          const askedWeek = drawBody['week'];
+          if (askedWeek !== undefined && (typeof askedWeek !== 'string' || !weeks.includes(askedWeek))) throw new ReviewError('INVALID', 'week must be the Monday of one of this batch\'s weeks');
+          const week: string | undefined = weeks.length === 0 ? undefined : (askedWeek as string | undefined) ?? weeks.find((w) => batch.weekDrawn?.[w] === undefined && batch.weekLapsed?.[w] === undefined) ?? weeks[0];
+          const inWeek = (post: { date?: string }): boolean => week === undefined || weekOfPost(post) === week;
+          // A batch (or a week of it) already asked for or drawn answers with its job; a draw buys pictures, so it is only ever started once. After a draw has failed,
           // "retry" asks for one more that draws only the kept posts that still have no picture.
-          const latest = jobs.list({ brand: drawBrand }).find((j) => j.kind === 'draw' && j.planFile === drawPlan);
+          const latest = jobs.list({ brand: drawBrand }).find((j) => j.kind === 'draw' && j.planFile === drawPlan && j.week === week);
           const retry = drawBody['retry'] === true && latest?.state === 'failed';
           if (latest && !retry) return send(res, 200, { job: latest, created: false });
-          if (!latest && batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn');
-          if (!batch.posts.some((p) => p.state === 'kept')) throw new CopyStageError('REJECTED', 'keep at least one post before drawing');
+          const weekDone = week === undefined ? batch.drawnAt !== undefined : batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined || (batch.drawnAt !== undefined && weeks.length === 1);
+          if (!latest && weekDone) throw new CopyStageError('ALREADY_DRAWN', week === undefined ? 'this batch was already drawn' : 'this week was already drawn');
+          if (!batch.posts.some((p) => p.state === 'kept' && inWeek(p))) throw new CopyStageError('REJECTED', 'keep at least one post before drawing');
           // A product's customer may draw only so many pictures a channel a week: one for every kept post for every network it is written for, less what a failed draw already made.
           const made = new Set(new ReviewStore(join(root, drawBrand), drawBrand).list().filter((i) => i.version.planFile === drawPlan).map((i) => `${i.version.postId}|${i.version.network ?? ''}`));
           const needed: Partial<Record<Network, number>> = {};
-          for (const post of batch.posts.filter((p) => p.state === 'kept')) for (const net of Object.keys(post.captions ?? {})) if (isNetwork(net) && !made.has(`${post.postId}|${net}`)) needed[net] = (needed[net] ?? 0) + 1;
+          for (const post of batch.posts.filter((p) => p.state === 'kept' && inWeek(p))) for (const net of Object.keys(post.captions ?? {})) if (isNetwork(net) && !made.has(`${post.postId}|${net}`)) needed[net] = (needed[net] ?? 0) + 1;
           assertPictureRoom(drawBrand, needed);
           const drawSite = siteOf(drawBrand);
           // Approved posters of this batch reach the calendar through the campaign runner's release pass, for this client and only the networks written for.
           // The record is made first: a draw that is queued without it would buy pictures that could never be released.
           registerManualRelease({ brandDir: join(root, drawBrand), siteBrand: drawBrand, client, site: drawSite, planFile: drawPlan });
-          const { job, created } = jobs.enqueue({ kind: 'draw', brand: drawBrand, site: drawSite, by, planFile: drawPlan, ...(retry ? { retry: true } : {}) });
+          const { job, created } = jobs.enqueue({ kind: 'draw', brand: drawBrand, site: drawSite, by, planFile: drawPlan, ...(week ? { week } : {}), ...(retry ? { retry: true } : {}) });
           return send(res, created ? 202 : 200, { job, created });
         }
         // Runs the checks of an edit on words that are not saved: nothing changes, and it works after a draw too.
@@ -454,7 +471,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           scope.guard(brand, true);
           if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const body = await readJson(req);
-          refuseIfDrawAsked(brand, planFile);
+          refuseIfDrawAsked(brand, planFile, postId);
           const brandDir = join(root, brand);
           const facts = (await loadFacts(brandDir))?.facts ?? [];
           const headline = typeof body['headline'] === 'string' ? body['headline'] : undefined;

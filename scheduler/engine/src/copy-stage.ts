@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { LockError, syncDir, withFileLock } from './file-lock.ts';
+import { mondayOf } from './picture-limit.ts';
 
 export type CopyState = 'pending' | 'kept' | 'dropped';
 
@@ -29,6 +30,8 @@ export interface CopyPost {
   contentHash: string;
   /** The caption of each network the post is written for (the main caption is Instagram's); `fallback` marks one that is the main caption adapted. */
   captions?: Record<string, { text: string; edited?: boolean; fallback?: boolean }>;
+  /** The day the post goes out (YYYY-MM-DD, India time). It decides the post's week; a batch written before this was recorded has none and is drawn as one piece. */
+  date?: string;
   /** True once the owner has changed the writer's words. */
   edited?: boolean;
   /** The owner's own sign-off wording for this poster: only what differs from the brand's name and the website's address; an empty string leaves that line off. */
@@ -45,12 +48,28 @@ export interface CopyBatch {
   planFile: string;
   createdAt: string;
   posts: CopyPost[];
-  /** Set when the kept posts have been sent to be drawn: from then on the choices are final. */
+  /** Set when the kept posts have been sent to be drawn: from then on the choices are final. A batch of several weeks gets it once every week is drawn or lapsed. */
   drawnAt?: string;
+  /** The weeks (their Mondays) whose kept posts were sent to be drawn, with the time. From then on the choices and words of that week's posts are final. */
+  weekDrawn?: Record<string, string>;
+  /** The weeks (their Mondays) that were left undrawn because their time passed or nothing was kept in them. Nothing of them is drawn any more. */
+  weekLapsed?: Record<string, string>;
   /** Set when the owner put the whole batch away without drawing it: it is no longer listed and its posts cannot be drawn. */
   closedAt?: string;
   closedBy?: string;
 }
+
+/** The weeks a batch covers (Mondays, in order), from the days of its posts. A batch whose posts have no day is one piece: no weeks. */
+export const weeksOf = (batch: { posts: ReadonlyArray<Pick<CopyPost, 'date'>> }): string[] => [...new Set(batch.posts.flatMap((p) => (p.date ? [mondayOf(p.date)] : [])))].sort();
+
+/** The week (Monday) of a post, or undefined when the post has no day. */
+export const weekOfPost = (post: Pick<CopyPost, 'date'>): string | undefined => (post.date ? mondayOf(post.date) : undefined);
+
+/** Whether a post's choices and words are final: its week was drawn or lapsed, or the whole batch was drawn. */
+export const postLocked = (batch: CopyBatch, post: CopyPost): boolean => {
+  const week = weekOfPost(post);
+  return batch.drawnAt !== undefined || (week !== undefined && (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined));
+};
 
 export const PLAN_FILE = /^week-\d{2,4}\.json$/;
 const POST_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;
@@ -105,14 +124,14 @@ export class CopyStage {
   }
 
   /** Records a freshly written batch. Opening the same batch again changes nothing (decisions already made stay). */
-  open(planFile: string, posts: ReadonlyArray<{ postId: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>): CopyBatch {
+  open(planFile: string, posts: ReadonlyArray<{ postId: string; date?: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>): CopyBatch {
     return this.change(planFile, (existing) => {
       if (existing) return { batch: existing, result: existing };
       const batch: CopyBatch = {
         brand: this.brand,
         planFile,
         createdAt: this.now().toISOString(),
-        posts: posts.map((p) => ({ postId: p.postId, headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
+        posts: posts.map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
       };
       return { batch, result: batch };
     });
@@ -133,10 +152,10 @@ export class CopyStage {
     if (by.trim() === '') throw new CopyStageError('INVALID', 'who is deciding must be given');
     return this.change(planFile, (batch) => {
       if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
-      if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already sent to be drawn, so its choices are final');
       if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so its choices are final');
       const post = batch.posts.find((p) => p.postId === postId);
       if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
+      if (postLocked(batch, post)) throw new CopyStageError('ALREADY_DRAWN', 'this post was already sent to be drawn, so its choices are final');
       post.state = state;
       post.decidedBy = by.trim().slice(0, 80);
       post.decidedAt = this.now().toISOString();
@@ -148,11 +167,11 @@ export class CopyStage {
    * The posts to draw: kept, and still exactly the words that were kept. `current` is the plan as it is now; a post whose words changed
    * since the choice is left out and named in `changed`.
    */
-  toDraw(planFile: string, current: ReadonlyArray<{ postId: string; headline: string; caption: string; captions?: Record<string, string> }>): { postIds: string[]; changed: string[] } {
+  toDraw(planFile: string, current: ReadonlyArray<{ postId: string; headline: string; caption: string; captions?: Record<string, string> }>, week?: string): { postIds: string[]; changed: string[] } {
     const batch = this.read(planFile);
     const postIds: string[] = [];
     const changed: string[] = [];
-    for (const post of batch.posts.filter((p) => p.state === 'kept')) {
+    for (const post of batch.posts.filter((p) => p.state === 'kept' && (week === undefined || weekOfPost(p) === week))) {
       const now = current.find((c) => c.postId === post.postId);
       if (now && copyHash(now.headline, now.caption, now.captions) === post.contentHash) postIds.push(post.postId);
       else changed.push(post.postId);
@@ -171,6 +190,36 @@ export class CopyStage {
   }
 
   /**
+   * Makes the choices of one week final once its kept posts are about to be drawn. The whole batch counts as drawn (`drawnAt`) once every week of it is drawn or lapsed.
+   * A week drawn twice is refused, so a crash part-way can never make a second run buy the same pictures again.
+   */
+  markWeekDrawn(planFile: string, week: string): void {
+    this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
+      if (!weeksOf(batch).includes(week)) throw new CopyStageError('NOT_FOUND', 'no such week in this batch');
+      if (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined) throw new CopyStageError('ALREADY_DRAWN', 'this week was already drawn once; a second run would buy the pictures again');
+      return { batch: this.settled({ ...batch, weekDrawn: { ...(batch.weekDrawn ?? {}), [week]: this.now().toISOString() } }), result: undefined };
+    });
+  }
+
+  /** Gives a week up: its time passed, or nothing was kept in it. Nothing of it is drawn any more, and its posts are final. */
+  markWeekLapsed(planFile: string, week: string): void {
+    this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (!weeksOf(batch).includes(week)) throw new CopyStageError('NOT_FOUND', 'no such week in this batch');
+      if (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined) return { batch, result: undefined };
+      return { batch: this.settled({ ...batch, weekLapsed: { ...(batch.weekLapsed ?? {}), [week]: this.now().toISOString() } }), result: undefined };
+    });
+  }
+
+  /** The batch with `drawnAt` set once every one of its weeks is drawn or lapsed. */
+  private settled(batch: CopyBatch): CopyBatch {
+    const done = weeksOf(batch).every((w) => batch.weekDrawn?.[w] !== undefined || batch.weekLapsed?.[w] !== undefined);
+    return done && batch.drawnAt === undefined ? { ...batch, drawnAt: this.now().toISOString() } : batch;
+  }
+
+  /**
    * Replaces the words of one post before it is drawn. `applyToPlan` writes the same words into the plan file and runs inside the lock, ahead of this file's own
    * write, so the plan and the list can never disagree; if it throws, nothing changes. The post keeps its choice: a kept post stays kept, with the new words.
    */
@@ -179,10 +228,10 @@ export class CopyStage {
     if (by.trim() === '') throw new CopyStageError('INVALID', 'who is editing must be given');
     return this.change(planFile, (batch) => {
       if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
-      if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already sent to be drawn, so its words are final');
       if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so its words are final');
       const post = batch.posts.find((p) => p.postId === postId);
       if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
+      if (postLocked(batch, post)) throw new CopyStageError('ALREADY_DRAWN', 'this post was already sent to be drawn, so its words are final');
       applyToPlan();
       post.headline = words.headline;
       post.caption = words.caption;

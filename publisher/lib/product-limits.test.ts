@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GET as limitsGet } from '../api/_v1/limits.ts';
-import { POST as batchesPost } from '../api/_v1/batches.ts';
+import { GET as batchesGet, POST as batchesPost } from '../api/_v1/batches.ts';
 import { POST as postersPost } from '../api/_v1/posters.ts';
 import { POST as workspacesPost } from '../api/_v1/workspaces.ts';
 import { call, fakeEngine, OTHER_KEY, withProducts, type FakeEngine, type FakePoster } from '../dev/product-test-kit.ts';
@@ -77,5 +77,44 @@ test('the engine\'s own words are shown only when they have the fixed shape of t
     assert.equal(draw.body['code'], 'PICTURE_LIMIT_REACHED');
     assert.match(String(draw.body['error']), /^You have used the pictures you can draw for this channel this week/);
     assert.doesNotMatch(JSON.stringify(draw.body), /home|ledger|jsonl/);
+  });
+});
+
+const sha = (n: number): string => n.toString(16).padStart(16, '0');
+
+test('a batch written for several weeks is drawn one week at a time: the week asked for, else the first not settled; a week asked twice is the same job', async () => {
+  await withEngine(async (engine) => {
+    const one = await workspace('shop-1');
+    const post = (id: string, date: string) => ({ postId: id, date, headline: `H ${id}`, caption: 'C', state: 'kept', captions: { instagram: { text: 'ig' } } });
+    engine.batches.push({
+      brand: one, planFile: 'week-01.json', createdAt: '2026-11-11T07:54:27.999Z',
+      weeks: [{ from: '2026-11-16', to: '2026-11-22', state: 'waiting', postIds: ['w1-d1'] }, { from: '2026-11-23', to: '2026-11-29', state: 'waiting', postIds: ['w2-d1'] }],
+      posts: [post('w1-d1', '2026-11-16'), post('w2-d1', '2026-11-23')],
+    });
+    const draw = (json: Record<string, unknown> = {}) => call(batchesPost, '/api/v1/batches', { headers: act, json: { externalId: 'shop-1', batchId: 'week-01.json', action: 'draw', ...json } });
+    const batches = await call(batchesGet, '/api/v1/batches?externalId=shop-1');
+    const listed = (batches.body['batches'] as Array<{ weeks: unknown[]; posts: Array<{ date: string }> }>)[0];
+    assert.deepEqual(listed?.weeks, [{ from: '2026-11-16', to: '2026-11-22', state: 'waiting', postIds: ['w1-d1'] }, { from: '2026-11-23', to: '2026-11-29', state: 'waiting', postIds: ['w2-d1'] }]);
+    assert.equal(listed?.posts[0]?.date, '2026-11-16');
+
+    const first = await draw();
+    assert.equal(first.status, 202, JSON.stringify(first.body));
+    const job = first.body['job'] as { id: string; week: string; batchId: string };
+    assert.deepEqual([job.week, job.batchId], ['2026-11-16', 'week-01.json'], 'no week asked for: the first one waiting');
+    assert.equal(engine.seen.at(-1)?.body?.['week'], '2026-11-16');
+    const again = await draw({ week: '2026-11-16' });
+    assert.equal(again.status, 200);
+    assert.equal((again.body['job'] as { id: string }).id, job.id);
+    const nothing = await draw();
+    assert.equal(nothing.status, 200, 'asking again with no week never starts the next week by accident: it is the first week\'s job');
+    assert.equal((nothing.body['job'] as { id: string }).id, job.id);
+    const next = await draw({ week: '2026-11-23' });
+    assert.equal(next.status, 202, 'a later week is drawn only when it is asked for');
+    assert.equal((next.body['job'] as { week: string }).week, '2026-11-23');
+    const bad = await draw({ week: 'soon' });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.body['code'], 'INVALID_REQUEST');
+    const unknown = await draw({ week: '2026-12-07' });
+    assert.equal(unknown.status, 400, 'a week the batch does not have is refused by the poster service');
   });
 });
