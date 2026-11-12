@@ -6,6 +6,8 @@ import { button, h, logo } from './ui.ts';
 export interface AnalyticsContext {
   /** Asks the server for this client's numbers for the last `days` days. */
   loadAnalytics(brand: string, days: number): Promise<AnalyticsData>;
+  /** Asks the server to read this client's numbers from the networks again now; resolves to an explanation when it could not. */
+  refreshAnalytics(brand: string): Promise<string | null>;
 }
 
 const RANGES = [7, 30, 90] as const;
@@ -132,6 +134,8 @@ export function analyticsPage(client: ClientSummary, ctx: AnalyticsContext): HTM
   looking.set(client.brand, state);
   let data: AnalyticsData | null = null;
   let problem: string | null = null;
+  let refreshing = false;
+  let refreshNote: string | null = null;
 
   const draw = (): void => {
     const head = h(
@@ -140,6 +144,7 @@ export function analyticsPage(client: ClientSummary, ctx: AnalyticsContext): HTM
       h('h3', {}, 'Analytics'),
       h('span', { class: 'an-controls' },
         ...(['instagram', 'facebook', 'google'] as const).map((p) => button(PLATFORM_LABEL[p], `chip${state.off.has(p) ? '' : ' chip-on'}`, () => { if (state.off.has(p)) state.off.delete(p); else state.off.add(p); draw(); }, `Show ${PLATFORM_LABEL[p]}`)),
+        button(refreshing ? 'Refreshing…' : 'Refresh now', 'btn', () => void refresh(), 'Read the numbers from the networks again now', refreshing),
         ...RANGES.map((d) => button(`${d} days`, `chip${state.days === d ? ' chip-on' : ''}`, () => { state.days = d; void load(); })),
       ),
     );
@@ -153,7 +158,26 @@ export function analyticsPage(client: ClientSummary, ctx: AnalyticsContext): HTM
       : data.accounts.length === 0
         ? h('div', { class: 'panel-card' }, h('p', { class: 'empty' }, 'No numbers yet.'), h('p', { class: 'muted' }, 'They appear after the first daily check, once this client has an Instagram, Facebook or Google account connected.'))
         : state.section === 'overview' ? overview(data, accounts, posts) : state.section === 'posts' ? postsTable(posts) : state.section === 'audience' ? audience(accounts) : hashtags(data);
-    root.replaceChildren(head, ...(data.enabled ? reconnectNotes(accounts) : []), tabs, body, h('p', { class: 'fineprint' }, data.checkedAt ? `Numbers come from each network once a day. Last check: ${data.checkedAt.replace('T', ' ').slice(0, 16)} UTC.` : 'Numbers come from each network once a day.'));
+    root.replaceChildren(head, ...(refreshNote ? [h('p', { class: 'banner banner-ok', role: 'status' }, refreshNote)] : []), ...(data.enabled ? reconnectNotes(accounts) : []), tabs, body, h('p', { class: 'fineprint' }, data.checkedAt ? `Numbers come from each network once a day. Last check: ${data.checkedAt.replace('T', ' ').slice(0, 16)} UTC.` : 'Numbers come from each network once a day.'));
+  };
+
+  /** Reads the numbers again on the server (it skips anything read in the last few minutes), then shows what it has. */
+  const refresh = async (): Promise<void> => {
+    if (refreshing) return;
+    refreshing = true;
+    refreshNote = null;
+    draw();
+    const problemText = await ctx.refreshAnalytics(client.brand);
+    refreshing = false;
+    if (problemText) {
+      refreshNote = null;
+      problem = problemText;
+      draw();
+      return;
+    }
+    await load();
+    refreshNote = 'Numbers refreshed. Anything the networks already gave in the last few minutes was not asked again.';
+    draw();
   };
 
   const load = async (): Promise<void> => {

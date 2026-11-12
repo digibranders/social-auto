@@ -29,6 +29,7 @@ export const routes: Record<string, { method: string; load: () => Promise<Handle
   '/api/facebook-connect': { method: 'POST', load: () => import('../api/_connect/facebook.js').then((m) => m.POST) },
   '/api/instagram-connect': { method: 'POST', load: () => import('../api/_connect/instagram.js').then((m) => m.POST) },
   '/api/analytics': { method: 'GET', load: () => import('../api/analytics.js').then((m) => m.GET) },
+  '/api/analytics-refresh': { method: 'POST', load: () => import('../api/analytics-refresh.js').then((m) => m.POST) },
   '/api/analytics-collect': { method: 'GET', load: () => import('../api/analytics-collect.js').then((m) => m.GET) },
   '/api/inbox': { method: 'ANY', load: async () => { const m = await import('../api/inbox.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
   '/api/inbox-collect': { method: 'GET', load: () => import('../api/inbox-collect.js').then((m) => m.GET) },
