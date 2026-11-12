@@ -101,3 +101,12 @@ test('a metric Meta has retired is not the customer\'s doing: the other numbers 
   const account = await facebookAccount('7', 'tok', '2026-11-12', fakeFetch([[/\/7\/insights/, 400, retired], [/\/7\?/, 200, { followers_count: 9 }]]));
   assert.deepEqual(account, { numbers: { '2026-11-12': { followers: 9 } }, needs: [] });
 });
+
+test('a refusal on the basic numbers is "reconnect", not an empty reading that looks like zero posts of nothing', async () => {
+  const fb = await facebookPost('7_1', 'tok', fakeFetch([[/\/7_1\?/, 400, refusal]]));
+  assert.deepEqual(fb, { numbers: {}, needs: ['reconnect'] });
+  const ig = await instagramPost('m1', 'tok', fakeFetch([[/\/m1\?/, 400, refusal]]));
+  assert.deepEqual(ig, { numbers: {}, needs: ['reconnect'] });
+  assert.deepEqual(await facebookAccount('7', 'tok', '2026-11-12', fakeFetch([[/\/7\?/, 400, refusal]])), { numbers: {}, needs: ['reconnect'] });
+  assert.deepEqual(await instagramAccount('1', 'tok', '2026-11-12', fakeFetch([[/\/1\?/, 400, refusal]])), { numbers: {}, needs: ['reconnect'] });
+});
