@@ -1106,6 +1106,18 @@ async function actInbox(command: { id: string; action: string; text?: string; as
   }
 }
 
+/** Asks the publisher, through the dashboard's server, to read this client's numbers again now; resolves to an explanation when it could not. */
+async function refreshAnalytics(brand: string): Promise<string | null> {
+  try {
+    const response = await fetch('/api/analytics-refresh', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ brand }) });
+    if (response.ok) return null;
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    return response.status === 401 ? 'You were signed out. Reload the page and sign in again.' : (body.error ?? 'The numbers could not be refreshed.');
+  } catch {
+    return 'The dashboard could not be reached. Try again.';
+  }
+}
+
 /** This client's numbers for the last `days` days, read through the dashboard's server (which holds the secret). */
 async function loadAnalytics(brand: string, days: number): Promise<AnalyticsData> {
   const to = new Date().toISOString().slice(0, 10);
@@ -1225,6 +1237,7 @@ const clientsContext: ClientsContext = {
   removeClient: (client) => void removeClient(client),
   saveWebsite,
   loadAnalytics,
+  refreshAnalytics,
   addPlan,
   removePlan,
   setLimit,

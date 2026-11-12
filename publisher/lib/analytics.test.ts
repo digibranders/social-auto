@@ -226,3 +226,19 @@ test('a post the team account published but never logged is found from the accou
   const broken = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: {}, key: KEY, googleApp: null, readers: readers([]), now: NOW, team: { ...team, discover: async () => { throw new Error('Instagram list media failed: boom'); } } });
   assert.deepEqual(broken.report.failures, [{ id: 'instagram', reason: 'Instagram list media failed: boom' }]);
 });
+
+test('a refresh reads one client only and reads again anything older than a few minutes, while a second press right after reads nothing', async () => {
+  const igOther: Channel = { ...ig, id: 'instagram:2', brand: 'other', userId: '2' };
+  const log2: PostedLog = { ...posted(1), 'p9|instagram:2': { remoteId: 'media9', permalink: null, postedAt: new Date(NOW - DAY).toISOString() } };
+  const first = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [ig, igOther], posted: log2, key: KEY, googleApp: null, readers: readers([]), now: NOW });
+  assert.equal(first.report.accounts, 2);
+  const calls: string[] = [];
+  // Ten minutes later: the normal rule (about three hours) reads nothing, but a refresh that accepts anything older than five minutes reads this client only.
+  const normal = await collectAnalytics({ file: first.file, channels: [ig, igOther], posted: log2, key: KEY, googleApp: null, readers: readers(calls), now: NOW + 600_000 });
+  assert.deepEqual([normal.report.posts, normal.report.accounts], [0, 0]);
+  const mine = await collectAnalytics({ file: first.file, channels: [ig, igOther], posted: log2, key: KEY, googleApp: null, readers: readers(calls), now: NOW + 600_000, minRereadMs: 300_000, onlyBrand: 'b' });
+  assert.deepEqual([mine.report.posts, mine.report.accounts], [1, 1]);
+  assert.deepEqual(calls.sort(), ['igacc 1 2026-11-12', 'igpost media1 ig-token']);
+  const again = await collectAnalytics({ file: mine.file, channels: [ig, igOther], posted: log2, key: KEY, googleApp: null, readers: readers([]), now: NOW + 660_000, minRereadMs: 300_000, onlyBrand: 'b' });
+  assert.deepEqual([again.report.posts, again.report.accounts], [0, 0], 'a second press a minute later asks the networks for nothing');
+});
