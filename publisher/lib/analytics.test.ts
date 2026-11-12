@@ -167,3 +167,16 @@ test('a Google connection the network withdrew is recorded as "reconnect" instea
   assert.deepEqual(file.accounts['google:9']?.needs, ['reconnect']);
   assert.equal(viewFor(file, 'b', '2026-11-01', '2026-11-12', [{ id: 'google:9', platform: 'google', label: 'Shop' }]).channels[0]?.status, 'reconnect');
 });
+
+test('a check a few hours later reads again the same day, so a new like shows; one within three hours reads nothing', async () => {
+  const first = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [ig], posted: posted(2), key: KEY, googleApp: null, readers: readers([]), now: NOW });
+  const soon: string[] = [];
+  await collectAnalytics({ file: first.file, channels: [ig], posted: posted(2), key: KEY, googleApp: null, readers: readers(soon), now: NOW + 2 * 3_600_000 });
+  assert.deepEqual(soon, [], 'two hours later: nothing asked');
+  const later: string[] = [];
+  const again = await collectAnalytics({ file: first.file, channels: [ig], posted: posted(2), key: KEY, googleApp: null, readers: readers(later, { instagramPost: async () => ({ numbers: { likes: 5, reach: 120 }, caption: 'Hi', needs: [] }) }), now: NOW + 4 * 3_600_000 });
+  assert.equal(again.report.posts, 1, 'four hours later the post is read again');
+  assert.equal(again.report.accounts, 1);
+  assert.equal(again.file.posts['p1|instagram:1']?.series['2026-11-12']?.likes, 5, 'the new reading replaces the old one for the day');
+  assert.ok(again.file.postsRead?.['p1|instagram:1']);
+});
