@@ -51,6 +51,8 @@ export interface WeeklyDeps {
   siteOf: (brand: string) => string | null;
   /** Makes sure approved pictures of the plan can reach the calendar (the same record the customer's own draw makes). */
   register: (brand: string, planFile: string, site: string) => void;
+  /** Called when a week is given up, so the product can tell the customer (written to the expiry log). */
+  onLapse?: (brand: string, planFile: string, week: string) => void;
 }
 
 export const WEEKLY_DRAW_BY = 'system:weekly-draw';
@@ -80,6 +82,7 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
           if (now >= weekEndMs(week) && !asked) {
             stage.markWeekLapsed(batch.planFile, week);
             actions.push({ brand, planFile: batch.planFile, week, action: 'lapsed' });
+            deps.onLapse?.(brand, batch.planFile, week);
             return;
           }
           // The first week is the customer's to ask for; the later ones are drawn on the Thursday before they begin.
