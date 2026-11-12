@@ -45,8 +45,11 @@ const reasonOf = (error: unknown): string => (error instanceof Error ? error.mes
 /** A log entry that is a real post on the network (not held, repeated or dropped because the account was gone). */
 const isSent = (entry: PostedLog[string]): boolean => entry.skipped !== true && entry.duplicateOf === undefined && entry.reason === undefined && entry.remoteId !== '' && !['held', 'duplicate', 'account-disconnected'].includes(entry.remoteId);
 
-/** Nothing is read again sooner than this, so a check run by hand an hour after the last one costs the networks nothing, and one a few hours later shows the newest numbers. */
-export const MIN_REREAD_MS = 3 * 3_600_000;
+/**
+ * Nothing is read again sooner than this, so a check run by hand an hour after the last one costs the networks nothing. It is a little under the three hours
+ * between the timer's runs, so a run that starts a few seconds late is never mistaken for "too soon" and skipped.
+ */
+export const MIN_REREAD_MS = 170 * 60_000;
 
 function postIsDue(lastDay: string | undefined, lastReadAt: string | undefined, postedMs: number, now: number): boolean {
   if (lastDay === undefined) return true;
