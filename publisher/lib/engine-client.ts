@@ -213,13 +213,14 @@ export interface BatchWeekView {
   notDrawn?: Array<{ postId: string; code: NotDrawnCode; message: string }>;
 }
 
-export type NotDrawnCode = 'HEADLINE_TOO_WEAK' | 'NO_PICTURE' | 'PICTURE_LIMIT_REACHED';
-const NOT_DRAWN_CODES: readonly string[] = ['HEADLINE_TOO_WEAK', 'NO_PICTURE', 'PICTURE_LIMIT_REACHED'];
+export type NotDrawnCode = 'HEADLINE_TOO_WEAK' | 'NO_PICTURE' | 'PICTURE_LIMIT_REACHED' | 'FACT_OUT_OF_DATE';
+const NOT_DRAWN_CODES: readonly string[] = ['HEADLINE_TOO_WEAK', 'NO_PICTURE', 'PICTURE_LIMIT_REACHED', 'FACT_OUT_OF_DATE'];
 /** The fixed sentence for each code: the product is told these words, never anything the poster service wrote. */
 export const NOT_DRAWN_REASON: Record<NotDrawnCode, string> = {
   HEADLINE_TOO_WEAK: 'This headline is too weak to draw. Change it or drop it.',
   NO_PICTURE: 'No picture passed our checks this time. Try again, or change the words.',
   PICTURE_LIMIT_REACHED: 'There were no pictures left this week for one of the channels. It can be tried again later.',
+  FACT_OUT_OF_DATE: 'A fact this post is built on is out of date or was taken out, so no picture was drawn. Drop this topic, or put the fact back.',
 };
 
 export interface BatchView {
