@@ -155,3 +155,21 @@ test('the product API tells the poster service which networks the customer has c
     assert.equal(puts(), 1, 'nothing changed, so it is not told again');
   });
 });
+
+test('a kept topic that got no picture is shown per topic and per week with a fixed code and the customer\'s words, and the engine\'s own text is never passed on', async () => {
+  await withEngine(async (engine) => {
+    const one = await workspace('shop-1');
+    const post = (id: string, date: string, extra: Record<string, unknown> = {}) => ({ postId: id, date, headline: `H ${id}`, caption: 'C', state: 'kept', captions: { instagram: { text: 'ig' } }, ...extra });
+    engine.batches.push({
+      brand: one, planFile: 'week-01.json', createdAt: '2026-11-11T07:54:27.999Z',
+      weeks: [{ from: '2026-11-16', to: '2026-11-22', state: 'drawn', postIds: ['w1-d1', 'w1-d2'], notDrawn: [{ postId: 'w1-d1', code: 'HEADLINE_TOO_WEAK', reason: 'internal: /home/social/x weak headline' }, { postId: 'w1-d2', code: 'SOMETHING_ELSE', reason: 'x' }] } as never],
+      posts: [post('w1-d1', '2026-11-16', { notDrawn: { code: 'HEADLINE_TOO_WEAK', reason: 'internal: /home/social/x' } }), post('w1-d2', '2026-11-17')],
+    });
+    const answer = await call(batchesGet, '/api/v1/batches?externalId=shop-1');
+    const batch = (answer.body['batches'] as Array<{ weeks: Array<{ notDrawn?: unknown }>; posts: Array<{ id: string; notDrawn?: unknown }> }>)[0];
+    assert.deepEqual(batch?.weeks[0]?.notDrawn, [{ postId: 'w1-d1', code: 'HEADLINE_TOO_WEAK', message: 'This headline is too weak to draw. Change it or drop it.' }], 'an unknown code is left out and the words are ours');
+    assert.deepEqual(batch?.posts.find((p) => p.id === 'w1-d1')?.notDrawn, { code: 'HEADLINE_TOO_WEAK', message: 'This headline is too weak to draw. Change it or drop it.' });
+    assert.equal(batch?.posts.find((p) => p.id === 'w1-d2')?.notDrawn, undefined);
+    assert.doesNotMatch(JSON.stringify(answer.body), /home|internal/);
+  });
+});
