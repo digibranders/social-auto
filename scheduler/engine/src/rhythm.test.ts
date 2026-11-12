@@ -42,3 +42,16 @@ test('a start day makes the first post fall on it, and the day and time are chec
   assert.equal(checkTime('23:59'), '23:59');
   for (const bad of ['24:00', '9:30', '10:60', '10.30', '', 10, undefined]) assert.throws(() => checkTime(bad), RhythmError, String(bad));
 });
+
+test('a monthly plan starting on a Monday posts Monday to Friday, as approved; other start days keep the first post on that day', () => {
+  const monday = '2026-11-16';
+  assert.deepEqual([...weeklyRhythm({ weeks: 4, postsPerWeek: 5, startDate: monday }).weekdays], ['mon', 'tue', 'wed', 'thu', 'fri']);
+  assert.equal(weeklyRhythm({ weeks: 4, postsPerWeek: 5, startDate: monday }).days, 20);
+  assert.deepEqual([...weeklyRhythm({ postsPerWeek: 2, startDate: monday }).weekdays], ['mon', 'thu'], 'two a week from a Monday is unchanged');
+  assert.deepEqual([...weeklyRhythm({ postsPerWeek: 3, startDate: monday }).weekdays], ['mon', 'wed', 'fri']);
+  assert.deepEqual([...weeklyRhythm({ postsPerWeek: 4, startDate: monday }).weekdays], ['mon', 'tue', 'thu', 'fri'], 'four from a Monday no longer reaches into Saturday');
+  assert.deepEqual([...weeklyRhythm({ postsPerWeek: 5 }).weekdays], ['mon', 'tue', 'wed', 'thu', 'fri'], 'with no start day, as before');
+  // Not a Monday: the first post is on the start day and the rest are spread from it.
+  assert.equal(weeklyRhythm({ postsPerWeek: 2, startDate: '2026-11-18' }).weekdays[0], 'wed');
+  assert.deepEqual([...weeklyRhythm({ postsPerWeek: 2, startDate: '2026-11-18' }).weekdays], ['wed', 'sat']);
+});
