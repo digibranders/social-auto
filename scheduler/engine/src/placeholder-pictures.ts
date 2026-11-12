@@ -32,6 +32,14 @@ export const PLACEHOLDER_COLOURS: Record<Network | 'plain', { bg: string; ink: s
 
 export const placeholderEnabled = (env: Record<string, string | undefined>): boolean => env['PICTURE_MODE'] === 'placeholder' && env['LOCAL_PLACEHOLDER_PICTURES'] === 'yes';
 
+/**
+ * The real logo is not put on a placeholder: the card is only a stand-in with no calm corner to judge, so the logo-placement check would reject every one. In placeholder
+ * mode the logo is left off; otherwise it is passed on unchanged.
+ */
+export function logoForDraw<T>(env: Record<string, string | undefined>, logo: T | undefined): T | undefined {
+  return placeholderEnabled(env) ? undefined : logo;
+}
+
 /** The texts a picture is asked to carry, read from the prompt the pipeline built: the headline, the brand name and the web address. */
 export function textsOfPrompt(prompt: string): string[] {
   const found = (label: string): string[] => [...prompt.matchAll(new RegExp(`\\d+\\. ${label}: "([^"]*)"`, 'g'))].map((m) => m[1] as string);
