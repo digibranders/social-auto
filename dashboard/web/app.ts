@@ -565,6 +565,25 @@ function banner(kind: 'warn' | 'error', message: string): HTMLElement {
   return h('div', { class: `banner banner-${kind}`, role: 'alert' }, message);
 }
 
+/** Warnings the person has dismissed, kept in this browser. A warning comes back when its words change (a new problem, a different count). */
+const DISMISSED_KEY = 'dismissed-banners';
+function dismissedBanners(): Set<string> {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? '[]');
+    return new Set(Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+function saveDismissed(keys: Set<string>): void {
+  try {
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...keys].slice(-100)));
+  } catch {
+    /* the warning is hidden for this visit only */
+  }
+}
+let showDismissed = false;
+
 function banners(): HTMLElement[] {
   const out: HTMLElement[] = [];
   if (state.notice) {
@@ -596,13 +615,46 @@ function banners(): HTMLElement[] {
       ),
     );
   }
+  const warnings: string[] = [];
   for (const channel of data.channels) {
     if (channel.ok) continue;
     const who = channel.account ? ` (${channel.account})` : '';
-    out.push(banner('error', `${platformLabel(channel.platform)}${who} connection problem: ${shorten(channel.error ?? 'unknown error', 220)}. Posting may fail until this is fixed.`));
+    warnings.push(`${platformLabel(channel.platform)}${who} connection problem: ${shorten(channel.error ?? 'unknown error', 220)}. Posting may fail until this is fixed.`);
   }
   const missed = data.posts.filter((p) => p.state === 'missed').length;
-  if (missed) out.push(banner('error', `${missed} post${missed === 1 ? ' was' : 's were'} missed. Open it to see the details.`));
+  if (missed) warnings.push(`${missed} post${missed === 1 ? ' was' : 's were'} missed. Open it to see the details.`);
+  const dismissed = dismissedBanners();
+  let hidden = 0;
+  for (const text of warnings) {
+    if (dismissed.has(text) && !showDismissed) {
+      hidden += 1;
+      continue;
+    }
+    out.push(
+      h(
+        'div',
+        { class: 'banner banner-error banner-notice', role: 'status' },
+        h('span', {}, text),
+        button('Dismiss', 'btn btn-quiet banner-dismiss', () => {
+          saveDismissed(new Set([...dismissedBanners(), text]));
+          render();
+        }),
+      ),
+    );
+  }
+  if (hidden > 0 || (showDismissed && warnings.some((w) => dismissed.has(w)))) {
+    out.push(
+      h(
+        'p',
+        { class: 'muted' },
+        showDismissed ? 'Showing the notices you dismissed. ' : `${hidden} dismissed notice${hidden === 1 ? '' : 's'} hidden. `,
+        button(showDismissed ? 'Hide them again' : 'Show them', 'link-button', () => {
+          showDismissed = !showDismissed;
+          render();
+        }),
+      ),
+    );
+  }
   return out;
 }
 
