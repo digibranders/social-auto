@@ -9,6 +9,7 @@ let asked: Call[] = [];
 const firstCall = (): Call | undefined => asked[0];
 
 beforeEach(() => {
+  process.env['SOCIAL_PUBLISHING_ENABLED'] = 'true';
   process.env['SESSION_SECRET'] = 'session-secret';
   process.env['STATUS_URL'] = 'http://127.0.0.1:4021/api/status';
   process.env['STATUS_SECRET'] = 'status-secret-0123456789';
@@ -20,7 +21,7 @@ beforeEach(() => {
     return new Response(JSON.stringify({ enabled: true, items: [], channels: [], counts: { todo: 0, done: 0, unread: 0 }, checkedAt: null, secret: 'leak', ok: true }), { status: 200 });
   }) as typeof fetch;
 });
-afterEach(() => { globalThis.fetch = originalFetch; });
+afterEach(() => { globalThis.fetch = originalFetch; delete process.env['SOCIAL_PUBLISHING_ENABLED']; });
 
 const cookie = `${SESSION_COOKIE}=${createSession('session-secret', Date.now())}`;
 const get = (query: string, signedIn = true): Request => new Request(`https://dash.example/api/inbox?${query}`, { headers: signedIn ? { cookie } : {} });
@@ -53,4 +54,15 @@ test('what the publisher says about a refused change is shown, and an unexpected
   assert.match(((await refused.json()) as { error: string }).error, /permission/);
   globalThis.fetch = (async () => new Response('x', { status: 500 })) as typeof fetch;
   assert.equal((await inboxPost(post({ id: 'a', action: 'done', by: 'A' }))).status, 502);
+});
+
+test('while publishing is switched off a public reply is refused and nothing is passed on, but closing, assigning and noting still work', async () => {
+  delete process.env['SOCIAL_PUBLISHING_ENABLED'];
+  const refused = await inboxPost(post({ id: 'instagram:1|c1', action: 'reply', text: 'Hi', by: 'A' }));
+  assert.equal(refused.status, 503);
+  assert.match(((await refused.json()) as { error: string }).error, /switched off/);
+  assert.deepEqual(asked, []);
+  for (const action of ['done', 'reopen', 'read'] as const) assert.equal((await inboxPost(post({ id: 'instagram:1|c1', action, by: 'A' }))).status, 200, action);
+  assert.equal((await inboxPost(post({ id: 'instagram:1|c1', action: 'note', text: 'x', by: 'A' }))).status, 200);
+  assert.equal(asked.length, 4);
 });
