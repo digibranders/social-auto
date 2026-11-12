@@ -192,6 +192,8 @@ export interface WrittenPostView {
   id: string;
   /** The day the post goes out (YYYY-MM-DD, India time), when the batch records it. */
   date?: string;
+  /** Set when the post was kept but got no picture in its week's draw. */
+  notDrawn?: { code: NotDrawnCode; reason: string };
   headline: string;
   caption: string;
   captions: Record<string, NetworkCaption>;
@@ -207,7 +209,18 @@ export interface BatchWeekView {
   to: string;
   state: 'waiting' | 'drawing' | 'drawn' | 'lapsed';
   postIds: string[];
+  /** Kept topics of the week that got no picture: why, in a fixed code and plain words. They stay open to change or drop; a retry of the week draws only them. */
+  notDrawn?: Array<{ postId: string; code: NotDrawnCode; reason: string }>;
 }
+
+export type NotDrawnCode = 'HEADLINE_TOO_WEAK' | 'NO_PICTURE' | 'PICTURE_LIMIT_REACHED';
+const NOT_DRAWN_CODES: readonly string[] = ['HEADLINE_TOO_WEAK', 'NO_PICTURE', 'PICTURE_LIMIT_REACHED'];
+/** The fixed sentence for each code: the product is told these words, never anything the poster service wrote. */
+export const NOT_DRAWN_REASON: Record<NotDrawnCode, string> = {
+  HEADLINE_TOO_WEAK: 'This headline is too weak to draw. Change it or drop it.',
+  NO_PICTURE: 'No picture passed our checks this time. Try again, or change the words.',
+  PICTURE_LIMIT_REACHED: 'There were no pictures left this week for one of the channels. It can be tried again later.',
+};
 
 export interface BatchView {
   id: string;
@@ -272,7 +285,8 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
     const signoff = signoffOf(p['signoff']);
     const advice = str(p['advice'], 300);
     const date = typeof p['date'] === 'string' && DAY.test(p['date']) ? p['date'] : undefined;
-    return [{ id: p['postId'], ...(date ? { date } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}) }];
+    const nd = isObject(p['notDrawn']) && typeof p['notDrawn']['code'] === 'string' && NOT_DRAWN_CODES.includes(p['notDrawn']['code']) ? (p['notDrawn']['code'] as NotDrawnCode) : undefined;
+    return [{ id: p['postId'], ...(date ? { date } : {}), ...(nd ? { notDrawn: { code: nd, reason: NOT_DRAWN_REASON[nd] } } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}) }];
   });
   // The list names the networks; an answer to a decision does not, so they are read from the captions then.
   const named = Array.isArray(raw['networks']) ? raw['networks'].filter((n): n is string => typeof n === 'string').slice(0, 10) : [];
@@ -282,7 +296,8 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
     if (!isObject(w) || typeof w['from'] !== 'string' || !DAY.test(w['from']) || typeof w['to'] !== 'string' || !DAY.test(w['to']) || !Array.isArray(w['postIds'])) return [];
     const state = w['state'];
     if (state !== 'waiting' && state !== 'drawing' && state !== 'drawn' && state !== 'lapsed') return [];
-    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40) }];
+    const notDrawn = Array.isArray(w['notDrawn']) ? w['notDrawn'].flatMap((n): Array<{ postId: string; code: NotDrawnCode; reason: string }> => (isObject(n) && typeof n['postId'] === 'string' && PART.test(n['postId']) && typeof n['code'] === 'string' && NOT_DRAWN_CODES.includes(n['code']) ? [{ postId: n['postId'], code: n['code'] as NotDrawnCode, reason: NOT_DRAWN_REASON[n['code'] as NotDrawnCode] }] : [])).slice(0, 40) : [];
+    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(notDrawn.length > 0 ? { notDrawn } : {}) }];
   }).slice(0, 8) : [];
   return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(weeks.length > 0 ? { weeks } : {}), ...(signoffDefault ? { signoffDefault } : {}), posts };
 }
