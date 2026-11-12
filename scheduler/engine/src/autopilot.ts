@@ -51,6 +51,7 @@ import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
 import { readConnected } from './connected-networks.ts';
+import { placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
 import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
@@ -298,6 +299,7 @@ async function main(): Promise<void> {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
       // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
       const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
+      if (placeholderEnabled(process.env)) console.log('    PLACEHOLDER PICTURES: no picture model is called; these are plain stand-ins for local testing, never for a real customer.');
       console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
       const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
       ai.usage.purpose = 'writing';
@@ -325,7 +327,8 @@ async function main(): Promise<void> {
         if (network) console.log(`    Drawing the ${group.shape.shape} picture for ${network}…`);
         const made = await makeCreatives({
           ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape, ...(network ? { network } : {}),
-          ...(first ? {} : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
+          // Local testing with no picture model (PICTURE_MODE=placeholder and LOCAL_PLACEHOLDER_PICTURES=yes): placeholder pictures, everything after them the normal pipeline.
+          ...(placeholderEnabled(process.env) ? { deps: placeholderDeps({ ai }) } : first ? {} : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
           // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
           ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
           factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
