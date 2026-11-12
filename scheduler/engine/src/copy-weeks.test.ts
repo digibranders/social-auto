@@ -107,7 +107,7 @@ test('a draw job carries its week to the engine, and the key keeps the weeks of 
 
 const PRODUCT = 'brandbasket-secret-0123456789';
 
-async function start() {
+async function start(at = '2026-11-12T06:30:00Z', everyMs = 0) {
   const root = mkdtempSync(join(tmpdir(), 'draw-weeks-'));
   const brandsRoot = join(root, 'brands');
   const dir = join(brandsRoot, 'bb-acme');
@@ -117,7 +117,7 @@ async function start() {
   new ProductBrands(brandsRoot).claim('bb-acme', 'brandbasket', () => false);
   const copy = new CopyStage(dir, 'bb-acme');
   copy.open('week-01.json', posts);
-  const server = createReviewServer({ brandsRoot, secret: 'staff-secret-0123456789', jobsRoot: join(root, 'jobs'), products: [{ id: 'brandbasket', secret: PRODUCT }], ledgerFile: join(root, 'none.jsonl'), now: () => new Date('2026-11-12T06:30:00Z') });
+  const server = createReviewServer({ brandsRoot, secret: 'staff-secret-0123456789', jobsRoot: join(root, 'jobs'), products: [{ id: 'brandbasket', secret: PRODUCT }], ledgerFile: join(root, 'none.jsonl'), now: () => new Date(at), weeklyDrawEveryMs: everyMs });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (path: string, body?: unknown, method?: string): Promise<Response> => fetch(`${base}${path}`, { method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { Authorization: `Bearer ${PRODUCT}`, 'X-Brand': 'bb-acme', 'X-Actor': 'brandbasket:user-42', 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -169,6 +169,38 @@ test('a week with nothing kept is not drawn, and a week already settled answers 
     const done = await s.call('/review/copy/bb-acme/week-01.json/draw', { week: W1 });
     assert.equal(done.status, 409);
     assert.equal(((await done.json()) as { code: string }).code, 'ALREADY_DRAWN');
+  } finally {
+    await s.done();
+  }
+});
+
+test('the review service draws a later week by itself when it is due, for the connected networks only, and never twice', async () => {
+  const s = await start('2026-11-19T05:00:00Z', 40);
+  try {
+    // Thursday 19 November, after 10:00 India time: week 2 is due. Keep a post of it; the service's own pass asks for the draw.
+    assert.equal((await s.call('/review/copy/bb-acme/week-01.json/w2-d1/keep', {})).status, 200);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const drawn = s.jobs.list({ brand: 'bb-acme' }).filter((j) => j.kind === 'draw');
+    assert.equal(drawn.length, 1, 'asked once, however many passes ran');
+    assert.deepEqual([drawn[0]?.week, drawn[0]?.by, drawn[0]?.auto], [W2, 'system:weekly-draw', true]);
+    const listed = (await (await s.call('/review/copy')).json()) as Listed;
+    assert.equal(listed.batches[0]?.weeks?.find((w) => w.from === W2)?.state, 'drawing');
+    assert.equal(listed.batches[0]?.weeks?.find((w) => w.from === W1)?.state, 'waiting', 'week 1 waits for the customer');
+  } finally {
+    await s.done();
+  }
+});
+
+test('the product records its connected networks; only a product may, only the four networks count, and a draw is asked for just those', async () => {
+  const s = await start();
+  try {
+    const put = (body: unknown): Promise<Response> => s.call('/review/connected', body, 'PUT');
+    assert.deepEqual(await (await put({ networks: ['instagram', 'myspace'] })).json(), { changed: true });
+    assert.deepEqual(await (await put({ networks: ['instagram'] })).json(), { changed: false });
+    assert.equal((await put({ networks: 'instagram' })).status, 400);
+    assert.equal((await put({})).status, 400);
+    const staff = await fetch(`${(await s.call('/review/limits')).url.split('/review')[0]}/review/connected`, { method: 'PUT', headers: { Authorization: 'Bearer staff-secret-0123456789', 'Content-Type': 'application/json' }, body: JSON.stringify({ networks: ['facebook'] }) });
+    assert.equal(staff.status, 404, 'staff do not write it');
   } finally {
     await s.done();
   }

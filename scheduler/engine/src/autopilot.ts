@@ -50,6 +50,7 @@ import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } fr
 import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
+import { readConnected } from './connected-networks.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
 import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
@@ -302,7 +303,9 @@ async function main(): Promise<void> {
       ai.usage.purpose = 'writing';
       // Every network gets a picture of its own (square for Instagram, Facebook and Google, wide for LinkedIn), each its own run with its own composition and ledger id;
       // the editorial check of the headlines is made once (in the first run), and a post it dropped is not drawn again for another network.
-      const groups = pictureGroups(finalPlan.posts).filter((g) => onlyNetwork === undefined || g.networks.includes(onlyNetwork));
+      // No picture is bought for a network the customer has no account for (when the product API has told us which are connected).
+      const connected = readConnected(brandDir);
+      const groups = pictureGroups(finalPlan.posts).filter((g) => (onlyNetwork === undefined || g.networks.includes(onlyNetwork)) && (connected === null || g.networks.length === 0 || g.networks.every((n) => connected.has(n))));
       // One picture per post per network: the brand's monthly picture limit is checked for the whole draw before the first one is bought.
       ai.ledger?.assertPicturesFit(groups.reduce((sum, g) => sum + g.postIds.length, 0));
       // The same draw, channel by channel, against the week's limit for a product's customer: refused whole, naming the channel that has no room.

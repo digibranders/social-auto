@@ -52,6 +52,8 @@ export interface JobSpec {
   network?: string;
   /** The week of the batch to draw, as its Monday YYYY-MM-DD (draw only). A batch of one piece has none. */
   week?: string;
+  /** Set when the system asked for it (the weekly draw), not a person. Such a draw is not counted against what a customer may ask for. */
+  auto?: boolean;
 }
 
 /** What an add-a-network job found, per topic of the batch. */
@@ -165,6 +167,7 @@ export class JobStore {
         ...(spec.planFile ? { planFile: spec.planFile } : {}),
         ...(spec.postId ? { postId: spec.postId } : {}),
         ...(spec.week ? { week: spec.week } : {}),
+        ...(spec.auto ? { auto: true as const } : {}),
         ...(spec.network ? { network: spec.network } : {}),
         state: 'queued',
         createdAt: stamp.toISOString(),

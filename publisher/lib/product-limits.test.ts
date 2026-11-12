@@ -4,7 +4,11 @@ import { GET as limitsGet } from '../api/_v1/limits.ts';
 import { GET as batchesGet, POST as batchesPost } from '../api/_v1/batches.ts';
 import { POST as postersPost } from '../api/_v1/posters.ts';
 import { POST as workspacesPost } from '../api/_v1/workspaces.ts';
-import { call, fakeEngine, OTHER_KEY, withProducts, type FakeEngine, type FakePoster } from '../dev/product-test-kit.ts';
+import { call, CHANNEL_KEY, fakeEngine, OTHER_KEY, withProducts, type FakeEngine, type FakeJob, type FakePoster } from '../dev/product-test-kit.ts';
+import { addLinkedInMember } from './channels.ts';
+import { forgetConnected } from './connected-sync.ts';
+import { parseKey } from './crypto.ts';
+import { loadChannels, saveChannels } from './store.ts'; 
 
 async function withEngine(run: (engine: FakeEngine) => Promise<void>): Promise<void> {
   await withProducts(async () => {
@@ -116,5 +120,38 @@ test('a batch written for several weeks is drawn one week at a time: the week as
     assert.equal(bad.body['code'], 'INVALID_REQUEST');
     const unknown = await draw({ week: '2026-12-07' });
     assert.equal(unknown.status, 400, 'a week the batch does not have is refused by the poster service');
+  });
+});
+
+const drawJob = (brand: string, n: number, over: Partial<FakeJob> = {}): FakeJob => ({ id: `job-x${n.toString(36).padStart(5, '0')}-0123abcd`, key: `draw:${brand}:week-0${n}.json`, kind: 'draw', brand, site: 'https://acme.example', by: 'brandbasket:user_42', networks: [], planFile: `week-0${n}.json`, state: 'succeeded', createdAt: new Date().toISOString(), ...over });
+
+test('what the system draws by itself each week is not one of the customer\'s asks: three of her own asks a day stop her, three automatic draws do not', async () => {
+  await withEngine(async (engine) => {
+    const one = await workspace('shop-1');
+    engine.batches.push({ brand: one, planFile: 'week-09.json', createdAt: '2026-11-11T07:54:27.999Z', posts: [{ postId: 'w1-d1', headline: 'H', caption: 'C', state: 'kept', captions: { instagram: { text: 'ig' } } }] });
+    const ask = () => call(batchesPost, '/api/v1/batches', { headers: act, json: { externalId: 'shop-1', batchId: 'week-09.json', action: 'draw' } });
+    engine.jobs.push(...[1, 2, 3].map((n) => drawJob(one, n, { auto: true, by: 'system:weekly-draw' })));
+    assert.equal((await ask()).status, 202, 'three automatic draws do not count');
+    engine.jobs.length = 0;
+    engine.batches[0]!.drawnAt = undefined;
+    engine.jobs.push(...[1, 2, 3].map((n) => drawJob(one, n)));
+    const stopped = await ask();
+    assert.equal(stopped.status, 429);
+    assert.equal(stopped.body['code'], 'DRAW_LIMIT_REACHED');
+  });
+});
+
+test('the product API tells the poster service which networks the customer has connected, once, and again only when they change', async () => {
+  await withEngine(async (engine) => {
+    forgetConnected();
+    const one = await workspace('shop-1');
+    const { file, etag } = await loadChannels();
+    await saveChannels(addLinkedInMember(file, one, { urn: 'urn:li:person:abcdefabc', name: 'T' }, 'token', 5_000_000, parseKey(CHANNEL_KEY), Date.now() - 3_600_000), etag);
+    const puts = (): number => engine.seen.filter((r) => r.method === 'PUT' && r.url === '/review/connected').length;
+    assert.equal((await call(batchesGet, '/api/v1/batches?externalId=shop-1')).status, 200);
+    assert.deepEqual(engine.connected, ['linkedin']);
+    assert.equal(puts(), 1);
+    await call(batchesGet, '/api/v1/batches?externalId=shop-1');
+    assert.equal(puts(), 1, 'nothing changed, so it is not told again');
   });
 });

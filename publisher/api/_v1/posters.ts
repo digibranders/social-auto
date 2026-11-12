@@ -135,7 +135,7 @@ export async function POST(request: Request): Promise<Response> {
       const poster = await engine.getPoster(version, by);
       if (poster.status === 'approved') return apiError(409, 'CONFLICT', 'withdraw the approval first, then ask for another picture');
       if (!poster.canRedraw && poster.redrawsLeft === 0) return apiError(409, 'REDRAW_LIMIT_REACHED', 'this picture was already drawn again as often as is allowed');
-      const draws = (await engine.listJobs(by)).filter((j) => j.kind === 'draw');
+      const draws = (await engine.listJobs(by)).filter((j) => j.kind === 'draw' && j.auto !== true);
       const since = (ms: number): number => draws.filter((j) => Date.now() - Date.parse(j.createdAt) < ms).length;
       if (since(DAY_MS) >= MAX_DRAWS_PER_DAY) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_DAY} times a day; try again tomorrow`);
       if (since(30 * DAY_MS) >= MAX_DRAWS_PER_MONTH) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_MONTH} times a month; try again later`);
