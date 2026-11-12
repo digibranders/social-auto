@@ -1,5 +1,6 @@
 /** The calendar page. Every piece of text goes into the page as text, never as HTML. */
 import type { AnalyticsData } from '../shared/analytics.ts';
+import type { InboxData } from '../shared/inbox.ts';
 import { NO_PAUSES, parseStatus, PLATFORMS, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
 import {
   addDays,
@@ -42,6 +43,7 @@ import { clientOption, dropdown } from './dropdown.ts';
 import { makeDraggable, type DragRules } from './drag.ts';
 import { newPostForm } from './new-post.ts';
 import { startMakeStatus } from './make-status.ts';
+import { inboxIcon, inboxPage } from './inbox-page.ts';
 import { parseRoute, routeHash, type Route } from './route.ts';
 
 type View = 'day' | 'week' | 'month' | 'list';
@@ -842,13 +844,13 @@ function go(route: Route): void {
 }
 
 /** The page a route belongs to, for the menu: a client's folder counts as Clients. */
-const sectionOf = (route: Route): 'clients' | 'calendar' | 'review' | 'help' => (route.page === 'client' ? 'clients' : route.page);
+const sectionOf = (route: Route): 'clients' | 'calendar' | 'review' | 'inbox' | 'help' => (route.page === 'client' ? 'clients' : route.page);
 
 function rail(): HTMLElement {
   const section = sectionOf(state.route);
-  const item = (name: 'clients' | 'calendar' | 'review' | 'help', iconName: string, label: string): HTMLElement => {
-    const route: Route = name === 'help' ? { page: 'help', channel: 'facebook' } : { page: name };
-    return button([icon(iconName), h('span', {}, label)], `rail-item rail-button${section === name ? ' rail-on' : ''}`, () => go(route), label);
+  const item = (name: 'clients' | 'calendar' | 'review' | 'inbox' | 'help', iconName: string | SVGSVGElement, label: string): HTMLElement => {
+    const route: Route = name === 'help' ? { page: 'help', channel: 'facebook' } : name === 'inbox' ? { page: 'inbox', brand: null } : { page: name };
+    return button([typeof iconName === 'string' ? icon(iconName) : iconName, h('span', {}, label)], `rail-item rail-button${section === name ? ' rail-on' : ''}`, () => go(route), label);
   };
   return h(
     'nav',
@@ -857,13 +859,14 @@ function rail(): HTMLElement {
     item('clients', 'folder', 'Clients'),
     item('calendar', 'calendar', 'Calendar'),
     item('review', 'review', 'Review'),
+    item('inbox', inboxIcon(), 'Inbox'),
     h('span', { class: 'rail-spacer' }),
     item('help', 'help', 'Help'),
     button([icon('logout'), h('span', {}, 'Sign out')], 'rail-item rail-button', () => void signOut(), 'Sign out'),
   );
 }
 
-const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', review: 'Review posters', help: 'Help · Connect a channel' } as const;
+const TITLES = { clients: 'Clients', client: 'Clients', calendar: 'Calendar', review: 'Review posters', inbox: 'Inbox', help: 'Help · Connect a channel' } as const;
 
 function clientPicker(): HTMLElement {
   const clients = summarizeClients(state.data ?? { generatedAt: '', pauses: NO_PAUSES, channels: [], posts: [], runway: [], costs: [] }, Date.now());
@@ -1029,6 +1032,28 @@ function openAddClient(): void {
 }
 
 /** Saves the website of a client added in the dashboard (empty clears it). Resolves to an explanation when it could not be saved. */
+/** A client's comments, read through the dashboard's server (which holds the secrets). */
+async function loadInbox(brand: string): Promise<InboxData> {
+  const response = await fetch(`/api/inbox?${new URLSearchParams({ brand, status: 'all' })}`, { credentials: 'same-origin', cache: 'no-store' });
+  if (response.status === 401) throw new Error('You were signed out. Reload the page and sign in again.');
+  const body = (await response.json().catch(() => ({}))) as { error?: string };
+  if (!response.ok) throw new Error(body.error ?? 'The comments could not be loaded.');
+  return body as unknown as InboxData;
+}
+
+/** Answers, closes, assigns or notes a message; resolves to an explanation when it could not be done. */
+async function actInbox(command: { id: string; action: string; text?: string; assignee?: string | null }): Promise<string | null> {
+  const by = (() => { try { return localStorage.getItem('inbox-name'); } catch { return null; } })() ?? 'Team';
+  try {
+    const response = await fetch('/api/inbox', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...command, by }) });
+    if (response.ok) return null;
+    const body = (await response.json().catch(() => ({}))) as { error?: string };
+    return response.status === 401 ? 'You were signed out. Reload the page and sign in again.' : (body.error ?? 'That could not be done.');
+  } catch {
+    return 'The dashboard could not be reached. Try again.';
+  }
+}
+
 /** This client's numbers for the last `days` days, read through the dashboard's server (which holds the secret). */
 async function loadAnalytics(brand: string, days: number): Promise<AnalyticsData> {
   const to = new Date().toISOString().slice(0, 10);
@@ -1168,6 +1193,11 @@ function screen(): HTMLElement {
   const route = state.route;
   if (route.page === 'help') {
     return helpPage(route.channel, (channel) => go({ page: 'help', channel }), render);
+  }
+  if (route.page === 'inbox') {
+    if (!data) return h('p', { class: 'empty' }, state.error ? 'Could not load the clients.' : 'Loading…');
+    const withComments = summarizeClients(data, Date.now()).filter((c) => c.channels.some((ch) => ch.platform === 'instagram' || ch.platform === 'facebook')).map((c) => ({ brand: c.brand, label: c.label }));
+    return inboxPage({ clients: withComments, brand: route.brand, go: (brand) => go({ page: 'inbox', brand }), load: loadInbox, act: actInbox, refresh: render });
   }
   if (route.page === 'review') return reviewPage(render, data ? summarizeClients(data, Date.now()) : null, setApprovalMode);
   if (route.page === 'clients' || route.page === 'client') {

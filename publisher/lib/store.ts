@@ -1,5 +1,6 @@
 import { NO_BRAND_SETTINGS, parseBrandSettings, type BrandSettings } from './brands.js';
 import { EMPTY_ANALYTICS, parseAnalytics, type AnalyticsFile } from './analytics.js';
+import { EMPTY_INBOX, parseInbox, type InboxFile } from './inbox.js';
 import { EMPTY_OUTBOX, parseOutbox, type Outbox } from './outbox.js';
 import { NO_ALERTS, parseAlertLog, type AlertLog } from './missed.js';
 import { NO_PAUSES, parsePauses, type PauseFile } from './pauses.js';
@@ -241,4 +242,17 @@ export async function loadAnalytics(): Promise<{ file: AnalyticsFile; etag: stri
 
 export function saveAnalytics(file: AnalyticsFile, etag: string | null): Promise<void> {
   return writeJson(ANALYTICS_PATH, file, etag);
+}
+
+const INBOX_PATH = 'inbox.json';
+
+/** The comments waiting to be answered (lib/inbox.ts). */
+export async function loadInbox(): Promise<{ file: InboxFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: EMPTY_INBOX, etag: null };
+  const { value, etag } = await readJson(INBOX_PATH);
+  return { file: value === null ? EMPTY_INBOX : parseInbox(value), etag };
+}
+
+export function saveInbox(file: InboxFile, etag: string | null): Promise<void> {
+  return writeJson(INBOX_PATH, file, etag);
 }
