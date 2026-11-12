@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { writeConnected } from './connected-networks.ts';
 import { CopyStage } from './copy-stage.ts';
 import { dayEndMs, readExpiry, recordExpiry, sweepExpired } from './expiry.ts';
 import { JobStore } from './job-store.ts';
@@ -17,6 +18,7 @@ function setup() {
   const brandsRoot = join(root, 'brands');
   const dir = join(brandsRoot, 'bb-one');
   mkdirSync(dir, { recursive: true });
+  writeConnected(dir, ['instagram', 'facebook', 'linkedin']);
   const owners = new ProductBrands(brandsRoot);
   owners.claim('bb-one', 'brandbasket', () => false);
   const picture = join(root, 'p.jpg');

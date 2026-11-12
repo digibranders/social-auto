@@ -17,6 +17,7 @@ import { EngineError, type JobView } from '../../lib/engine-client.js';
 import { json } from '../../lib/http.js';
 import { EditError } from '../../lib/overrides.js';
 import { archivedAnswer, engineFor, workspaceFor } from '../../lib/product-workspace.js';
+import { syncConnected } from '../../lib/connected-sync.js';
 import { nextMonday } from '../../lib/plan-days.js';
 import { loadChannels, loadClients, saveClients } from '../../lib/store.js';
 
@@ -118,6 +119,8 @@ export async function POST(request: Request): Promise<Response> {
     }
     try {
       const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks, postsPerWeek, startDate, actor: by });
+      // The brand is the product's from its first job on: the poster service is told which networks are connected now, before anything is drawn.
+      await syncConnected(engine, workspace.brand, by);
       return json(made.created ? 202 : 200, { job: made.job, created: made.created });
     } catch (error) {
       // A job that never started must not leave the customer tied to this website.

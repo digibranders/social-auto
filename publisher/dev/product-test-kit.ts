@@ -130,6 +130,8 @@ export interface FakeEngine {
   refusePictures: { channel: string; restart: string; error: string } | null;
   /** The networks the product API told the engine the customer has connected (null: never told). */
   connected: string[] | null;
+  /** How many of the next PUT /review/connected calls are refused (404), as before the brand's first job exists. */
+  connectedRefusals: number;
   /** Where the customer's plan starts and ends, as the engine's plan read answers. */
   plan: { startsOn: string | null; endsOn: string | null };
   close: () => Promise<void>;
@@ -137,7 +139,7 @@ export interface FakeEngine {
 
 /** A pretend review service: it keeps jobs, runs none, and answers a second ask for a brand with a job already waiting by returning that job (as the real one does). */
 export async function fakeEngine(): Promise<FakeEngine> {
-  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, connected: null, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
+  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
   let counter = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -158,6 +160,10 @@ export async function fakeEngine(): Promise<FakeEngine> {
       const caller = header('x-brand') ?? '';
       if (!/^[A-Za-z0-9][A-Za-z0-9:_.@-]{0,79}$/.test(header('x-actor') ?? '') || caller === '') return send(400, { error: 'X-Brand and X-Actor are needed' });
       if (req.method === 'GET' && url.pathname === '/review/plan') return send(200, { brand: caller, ...engine.plan });
+      if (req.method === 'PUT' && url.pathname === '/review/connected' && body && engine.connectedRefusals > 0) {
+        engine.connectedRefusals -= 1;
+        return send(404, { error: 'no such brand', code: 'NOT_FOUND' });
+      }
       if (req.method === 'PUT' && url.pathname === '/review/connected' && body) {
         engine.connected = Array.isArray(body['networks']) ? body['networks'].map(String) : [];
         return send(200, { changed: true });

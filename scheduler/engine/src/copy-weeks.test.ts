@@ -10,6 +10,7 @@ import { ProductBrands } from './product-brands.ts';
 import { JobStore } from './job-store.ts';
 import { engineArgs } from './job-runner.ts';
 import { mondayOf } from './picture-limit.ts';
+import { ConnectedUnknownError, connectedForDraw, readConnected, writeConnected } from './connected-networks.ts';
 
 const W1 = '2026-11-16';
 const W2 = '2026-11-23';
@@ -117,11 +118,12 @@ async function start(at = '2026-11-12T06:30:00Z', everyMs = 0) {
   new ProductBrands(brandsRoot).claim('bb-acme', 'brandbasket', () => false);
   const copy = new CopyStage(dir, 'bb-acme');
   copy.open('week-01.json', posts);
+  writeConnected(dir, ['instagram', 'facebook']);
   const server = createReviewServer({ brandsRoot, secret: 'staff-secret-0123456789', jobsRoot: join(root, 'jobs'), products: [{ id: 'brandbasket', secret: PRODUCT }], ledgerFile: join(root, 'none.jsonl'), now: () => new Date(at), weeklyDrawEveryMs: everyMs });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (path: string, body?: unknown, method?: string): Promise<Response> => fetch(`${base}${path}`, { method: method ?? (body === undefined ? 'GET' : 'POST'), headers: { Authorization: `Bearer ${PRODUCT}`, 'X-Brand': 'bb-acme', 'X-Actor': 'brandbasket:user-42', 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-  return { call, copy, jobs: new JobStore(join(root, 'jobs')), done: async () => { await new Promise((resolve) => server.close(resolve)); rmSync(root, { recursive: true, force: true }); } };
+  return { call, copy, root, base, jobs: new JobStore(join(root, 'jobs')), done: async () => { await new Promise((resolve) => server.close(resolve)); rmSync(root, { recursive: true, force: true }); } };
 }
 
 type Listed = { batches: Array<{ weeks?: Array<{ from: string; to: string; state: string; postIds: string[] }>; posts: Array<{ postId: string; date?: string }> }> };
@@ -235,5 +237,38 @@ test('a week the plan was asked for and got no post is listed as empty, with the
     assert.deepEqual(weeks?.map((w) => [w.from, w.state, w.postIds, w.missingDays]), [['2026-11-23', 'waiting', ['x-d1', 'x-d2'], ['2026-11-25', '2026-11-26', '2026-11-27']], ['2026-11-30', 'empty', [], ['2026-11-30', '2026-12-01']]]);
   } finally {
     await s.done();
+  }
+});
+
+test('the product can tell the poster service its connected networks before the brand\'s first job has made its folder; another product\'s brand, or one nobody owns, is refused', async () => {
+  const s = await start();
+  try {
+    const bare = mkdtempSync(join(tmpdir(), 'connected-bare-'));
+    rmSync(bare, { recursive: true, force: true });
+    // bb-acme's folder exists; claim another brand for the same product with no folder, as it is right after the first job is asked for.
+    const owners = new ProductBrands(join(s.root, 'brands'));
+    owners.claim('bb-new', 'brandbasket', () => false);
+    const asNew = (networks: unknown): Promise<Response> => fetch(`${s.base}/review/connected`, { method: 'PUT', headers: { Authorization: `Bearer ${PRODUCT}`, 'X-Brand': 'bb-new', 'X-Actor': 'brandbasket:u', 'Content-Type': 'application/json' }, body: JSON.stringify({ networks }) });
+    const told = await asNew(['instagram', 'facebook']);
+    assert.equal(told.status, 200, JSON.stringify(await told.clone().json()));
+    assert.deepEqual([...(readConnected(join(s.root, 'brands', 'bb-new')) as Set<string>)].sort(), ['facebook', 'instagram']);
+    const nobody = await fetch(`${s.base}/review/connected`, { method: 'PUT', headers: { Authorization: `Bearer ${PRODUCT}`, 'X-Brand': 'bb-stranger', 'X-Actor': 'brandbasket:u', 'Content-Type': 'application/json' }, body: JSON.stringify({ networks: ['instagram'] }) });
+    assert.equal(nobody.status, 404, 'a brand nobody owns is not made by this call');
+  } finally {
+    await s.done();
+  }
+});
+
+test('a draw for a product customer stops when the connected networks were never recorded, and a client of ours is not stopped', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'connected-known-'));
+  try {
+    assert.throws(() => connectedForDraw(dir, true), ConnectedUnknownError);
+    assert.equal(connectedForDraw(dir, false), null, 'ours: every network the posts were written for, as before');
+    writeConnected(dir, ['instagram']);
+    assert.deepEqual([...(connectedForDraw(dir, true) as Set<string>)], ['instagram']);
+    writeConnected(dir, []);
+    assert.equal((connectedForDraw(dir, true) as Set<string>).size, 0, 'recorded as none connected: nothing is drawn, and nothing is refused as unknown');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

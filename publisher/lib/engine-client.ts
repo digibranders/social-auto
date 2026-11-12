@@ -506,12 +506,15 @@ export class WorkspaceEngine {
     return { startsOn: day(answer['startsOn']), endsOn: day(answer['endsOn']) };
   }
 
-  /** Tells the poster service which networks the customer has connected accounts for, so no picture is bought for any other. Best effort: never throws. */
-  async setConnected(networks: readonly string[], actor: string): Promise<void> {
+  /** Tells the poster service which networks the customer has connected accounts for, so no picture is bought for any other. Answers whether it was told; never throws. */
+  async setConnected(networks: readonly string[], actor: string): Promise<boolean> {
     try {
       await this.call('PUT', '/review/connected', actor, { networks: [...networks] });
-    } catch {
-      // The draw then goes by the networks the posts were written for, as before.
+      return true;
+    } catch (error) {
+      // Said, never silent: without the list the poster service buys no picture for this customer.
+      console.error(`could not tell the poster service which networks are connected: ${error instanceof EngineError ? `${error.status} ${error.message}` : 'it was not reachable'}`);
+      return false;
     }
   }
 

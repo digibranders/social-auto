@@ -23,7 +23,7 @@
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
@@ -512,7 +512,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (caller.role !== 'product') return send(res, 404, { error: 'Not found' });
         const body = await readJson(req);
         if (!Array.isArray(body['networks'])) throw new ReviewError('INVALID', 'networks must be a list');
-        if (!brands().includes(caller.brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+        // The brand's folder is made by its first job, which may not have run yet when the product first looks at her channels: a brand the product owns is told anyway.
+        if (!brands().includes(caller.brand)) {
+          if (owners.get(caller.brand)?.productId !== caller.productId) throw new ReviewError('NOT_FOUND', 'no such brand');
+          mkdirSync(join(root, caller.brand), { recursive: true });
+        }
         return send(res, 200, writeConnected(join(root, caller.brand), body['networks'] as unknown[], (options.now ?? (() => new Date()))()));
       }
       // What a product's customer has drawn this week for each channel and what is left (read only). Staff may read a product brand's with ?brand=.
