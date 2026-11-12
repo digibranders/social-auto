@@ -195,7 +195,7 @@ test('the team\'s own Instagram account is read too: its posts get the right cli
     'w1-d3|instagram': { remoteId: 'held', permalink: null, postedAt: new Date(NOW - 1 * DAY).toISOString() },
   };
   const calls: string[] = [];
-  const team = { userId: '555', token: 'team-token', brandOfPost: (id: string) => (id.startsWith('w1') ? 'brandbasket' : undefined) };
+  const team = { userId: '555', token: 'team-token', brandOfPost: (id: string) => (id.startsWith('w1') ? 'brandbasket' : undefined), discover: async () => [] };
   const { file, report } = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: teamPosted, key: KEY, googleApp: null, readers: readers(calls), now: NOW, team });
   assert.deepEqual(calls.sort(), ['igacc 555 2026-11-12', 'igpost mediaA team-token', 'igpost mediaB team-token']);
   assert.deepEqual([report.posts, report.accounts, report.failures], [2, 1, []]);
@@ -205,4 +205,24 @@ test('the team\'s own Instagram account is read too: its posts get the right cli
   assert.equal(viewFor(file, 'someone-else', '2026-11-01', '2026-11-30').posts.length, 0, 'another client does not see them');
   const none = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: teamPosted, key: KEY, googleApp: null, readers: readers([]), now: NOW });
   assert.deepEqual([none.report.posts, none.report.accounts], [0, 0]);
+});
+
+test('a post the team account published but never logged is found from the account itself, matched to the post we sent, and read', async () => {
+  const calls: string[] = [];
+  const team = {
+    userId: '555',
+    token: 'team-token',
+    brandOfPost: (id: string) => (id === 'manual-1' ? 'alsonotify' : undefined),
+    discover: async () => [{ postId: 'manual-1', remoteId: 'mediaM', permalink: 'https://ig/p/m', postedAt: new Date(NOW - 3_600_000).toISOString() }],
+  };
+  const { file, report } = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: {}, key: KEY, googleApp: null, readers: readers(calls), now: NOW, team });
+  assert.deepEqual(calls.sort(), ['igacc 555 2026-11-12', 'igpost mediaM team-token']);
+  assert.deepEqual([report.posts, report.accounts], [1, 1]);
+  assert.equal(file.posts['manual-1|instagram']?.brand, 'alsonotify');
+  assert.equal(file.posts['manual-1|instagram']?.permalink, 'https://ig/p/1', 'the network\'s own link wins when it gives one');
+  const held: PostedLog = { 'manual-1|instagram': { remoteId: 'held', permalink: null, postedAt: new Date(NOW - 7_200_000).toISOString(), skipped: true } };
+  const over = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: held, key: KEY, googleApp: null, readers: readers([]), now: NOW, team });
+  assert.equal(over.report.posts, 1, 'a held record does not hide a post that really is on the account');
+  const broken = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [], posted: {}, key: KEY, googleApp: null, readers: readers([]), now: NOW, team: { ...team, discover: async () => { throw new Error('Instagram list media failed: boom'); } } });
+  assert.deepEqual(broken.report.failures, [{ id: 'instagram', reason: 'Instagram list media failed: boom' }]);
 });
