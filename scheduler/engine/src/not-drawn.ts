@@ -3,7 +3,7 @@
  * open: keep, drop and edit work again for it, the week lists it with a fixed code and a plain sentence, and a retry of the week draws only such topics. The system
  * never retries by itself, so the customer decides (and nothing is bought twice).
  */
-export type NotDrawnCode = 'HEADLINE_TOO_WEAK' | 'NO_PICTURE' | 'PICTURE_LIMIT_REACHED';
+export type NotDrawnCode = 'HEADLINE_TOO_WEAK' | 'NO_PICTURE' | 'PICTURE_LIMIT_REACHED' | 'FACT_OUT_OF_DATE';
 
 export interface NotDrawn {
   code: NotDrawnCode;
@@ -15,6 +15,7 @@ export const NOT_DRAWN_REASON: Record<NotDrawnCode, string> = {
   HEADLINE_TOO_WEAK: 'This headline is too weak to draw. Change it or drop it.',
   NO_PICTURE: 'No picture passed our checks this time. Try again, or change the words.',
   PICTURE_LIMIT_REACHED: 'There were no pictures left this week for one of the channels. It can be tried again later.',
+  FACT_OUT_OF_DATE: 'A fact this post is built on is out of date or was taken out, so no picture was drawn. Drop this topic, or put the fact back.',
 };
 
 /** What a post's result in a draw says about why it has no picture. */
