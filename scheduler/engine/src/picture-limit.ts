@@ -6,7 +6,8 @@
 import { NETWORKS, type Network } from './networks.ts';
 import type { PaidCall } from './paid-ledger.ts';
 
-export const PICTURES_PER_CHANNEL_PER_WEEK = 5;
+/** 5 for the week's posts and 2 spare, for a redraw or a channel added in the week. */
+export const PICTURES_PER_CHANNEL_PER_WEEK = 7;
 /** The most a setting may ask for; a number above it is an error, never accepted. */
 export const PICTURES_PER_CHANNEL_WEEK_CEILING = 20;
 
@@ -34,6 +35,12 @@ export interface PictureWeek {
 }
 
 const indiaDate = (ms: number): string => new Date(ms + IST_OFFSET_MS).toISOString().slice(0, 10);
+
+/** The Monday (YYYY-MM-DD) of the week a plain day falls in. A week is Monday to Sunday. */
+export function mondayOf(ymd: string): string {
+  const day = new Date(`${ymd}T00:00:00Z`);
+  return new Date(day.getTime() - ((day.getUTCDay() + 6) % 7) * DAY_MS).toISOString().slice(0, 10);
+}
 
 /** The Monday-to-Sunday week (India time) that contains `now`. */
 export function pictureWeek(now: Date): PictureWeek {

@@ -122,6 +122,8 @@ export interface JobView {
   kind: 'write' | 'draw' | 'network';
   /** The written batch a draw or an added network is for. */
   batchId?: string;
+  /** For a draw of one week of a batch: the Monday of that week (YYYY-MM-DD). */
+  week?: string;
   state: 'queued' | 'running' | 'done' | 'failed';
   step?: number;
   /** For a failed job: a fixed code (for example NOTHING_WRITTEN), never the engine's own words. */
@@ -134,6 +136,7 @@ export interface JobView {
 
 const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network' };
 const CODE = /^[A-Z][A-Z_]{1,40}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 const STATE: Record<string, JobView['state']> = { queued: 'queued', running: 'running', succeeded: 'done', failed: 'failed' };
 
@@ -149,6 +152,7 @@ function jobView(raw: unknown): { view: JobView; brand: string } | null {
   if (typeof step === 'number' && Number.isInteger(step) && step >= 1 && step <= 4) view.step = step;
   if (typeof finishedAt === 'string') view.finishedAt = finishedAt;
   if (JOB_KIND[kind] !== 'write' && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
+  if (JOB_KIND[kind] === 'draw' && typeof raw['week'] === 'string' && DAY.test(raw['week'])) view.week = raw['week'];
   const error = raw['error'];
   if (view.state === 'failed' && isObject(error) && typeof error['code'] === 'string' && CODE.test(error['code'])) view.failure = error['code'];
   const result = raw['result'];
@@ -183,6 +187,8 @@ export type NetworkCaption = { text: string; edited?: boolean; fallback?: boolea
 
 export interface WrittenPostView {
   id: string;
+  /** The day the post goes out (YYYY-MM-DD, India time), when the batch records it. */
+  date?: string;
   headline: string;
   caption: string;
   captions: Record<string, NetworkCaption>;
@@ -192,10 +198,20 @@ export interface WrittenPostView {
   advice?: string;
 }
 
+/** One week of a batch written for several weeks: its first and last day, and whether its pictures wait, are being drawn, are drawn, or were given up. */
+export interface BatchWeekView {
+  from: string;
+  to: string;
+  state: 'waiting' | 'drawing' | 'drawn' | 'lapsed';
+  postIds: string[];
+}
+
 export interface BatchView {
   id: string;
   createdAt: string;
   networks: string[];
+  /** Present for a batch written for several weeks; each week is drawn on its own. */
+  weeks?: BatchWeekView[];
   signoffDefault?: { brandName?: string; domain?: string };
   posts: WrittenPostView[];
 }
@@ -252,13 +268,20 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
     }
     const signoff = signoffOf(p['signoff']);
     const advice = str(p['advice'], 300);
-    return [{ id: p['postId'], headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}) }];
+    const date = typeof p['date'] === 'string' && DAY.test(p['date']) ? p['date'] : undefined;
+    return [{ id: p['postId'], ...(date ? { date } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}) }];
   });
   // The list names the networks; an answer to a decision does not, so they are read from the captions then.
   const named = Array.isArray(raw['networks']) ? raw['networks'].filter((n): n is string => typeof n === 'string').slice(0, 10) : [];
   const networks = named.length > 0 ? named : [...new Set(posts.flatMap((p) => Object.keys(p.captions)))].sort();
   const signoffDefault = signoffOf(raw['signoffDefault']);
-  return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(signoffDefault ? { signoffDefault } : {}), posts };
+  const weeks = Array.isArray(raw['weeks']) ? raw['weeks'].flatMap((w): BatchWeekView[] => {
+    if (!isObject(w) || typeof w['from'] !== 'string' || !DAY.test(w['from']) || typeof w['to'] !== 'string' || !DAY.test(w['to']) || !Array.isArray(w['postIds'])) return [];
+    const state = w['state'];
+    if (state !== 'waiting' && state !== 'drawing' && state !== 'drawn' && state !== 'lapsed') return [];
+    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40) }];
+  }).slice(0, 8) : [];
+  return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(weeks.length > 0 ? { weeks } : {}), ...(signoffDefault ? { signoffDefault } : {}), posts };
 }
 
 function rulesOf(raw: unknown): BatchesView['networkRules'] {
@@ -520,10 +543,10 @@ export class WorkspaceEngine {
   }
 
   /** Asks for pictures for the kept posts of a batch. Asking twice answers the same job; the engine allows one draw per batch (and one more after a failed one). */
-  async startDraw(batchId: string, retry: boolean, actor: string): Promise<{ job: JobView; created: boolean }> {
+  async startDraw(batchId: string, retry: boolean, actor: string, week?: string): Promise<{ job: JobView; created: boolean }> {
     if (!PART.test(batchId)) throw new EngineError(404, 'not found');
     try {
-      const answer = await this.call('POST', `/review/copy/${this.brand}/${batchId}/draw`, actor, retry ? { retry: true } : {});
+      const answer = await this.call('POST', `/review/copy/${this.brand}/${batchId}/draw`, actor, { ...(retry ? { retry: true } : {}), ...(week ? { week } : {}) });
       const job = this.own(isObject(answer) ? answer['job'] : undefined);
       if (!job) throw unavailable();
       return { job, created: isObject(answer) && answer['created'] === true };

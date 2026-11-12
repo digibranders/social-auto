@@ -45,7 +45,7 @@ type Limits = { brand: string; week: { from: string; to: string; restart: string
 test('a customer reads what is left for each channel this week; failed tries, other weeks, other brands and carousel slides are not counted', async () => {
   const s = await start();
   try {
-    for (let i = 0; i < 5; i += 1) s.bought('bb-acme', 'instagram');
+    for (let i = 0; i < 7; i += 1) s.bought('bb-acme', 'instagram');
     for (let i = 0; i < 2; i += 1) s.bought('bb-acme', 'facebook');
     s.bought('bb-acme', 'facebook', { status: 'failed' });
     s.bought('bb-acme', 'linkedin', { createdAt: '2026-11-08T18:29:00Z' });
@@ -55,8 +55,8 @@ test('a customer reads what is left for each channel this week; failed tries, ot
     assert.equal(answer.status, 200);
     const limits = (await answer.json()) as Limits;
     assert.deepEqual(limits.week, { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' });
-    assert.equal(limits.limit, 5);
-    assert.deepEqual(limits.channels.map((c) => [c.network, c.used, c.left]), [['instagram', 5, 0], ['facebook', 2, 3], ['linkedin', 0, 5], ['google', 0, 5]]);
+    assert.equal(limits.limit, 7);
+    assert.deepEqual(limits.channels.map((c) => [c.network, c.used, c.left]), [['instagram', 7, 0], ['facebook', 2, 5], ['linkedin', 0, 7], ['google', 0, 7]]);
   } finally {
     await s.done();
   }
@@ -80,10 +80,10 @@ test('a redraw of a channel that has used its pictures is refused before a job i
     const make = (network: string) => store.addVersion({ postId: 'w01-d1', planFile: 'week-01.json', network, width: 1080, height: 1080, headline: 'Answers', caption: 'C', ctaUrl: 'https://bb-acme.example', factIds: ['f1'], evidence: [{ factId: 'f1', text: 't', quote: 'q', url: 'https://bb-acme.example/', context: 'c' }], imagePath: (() => { const p = join(s.root, `${network}.jpg`); writeFileSync(p, network); return p; })(), validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.016 });
     const ig = make('instagram');
     const fb = make('facebook');
-    for (let i = 0; i < 5; i += 1) s.bought('bb-acme', 'instagram');
+    for (let i = 0; i < 7; i += 1) s.bought('bb-acme', 'instagram');
     const refused = await s.call(`/review/posts/${ig.versionId}/redraw`, {});
     assert.equal(refused.status, 429);
-    assert.deepEqual(await refused.json(), { error: 'You have used your 5 Instagram pictures for this week. You can draw more from Monday 16 November.', code: 'PICTURE_LIMIT_REACHED', channel: 'instagram', restart: '2026-11-16' });
+    assert.deepEqual(await refused.json(), { error: 'You have used your 7 Instagram pictures for this week. You can draw more from Monday 16 November.', code: 'PICTURE_LIMIT_REACHED', channel: 'instagram', restart: '2026-11-16' });
     assert.equal(s.jobs.list({ brand: 'bb-acme' }).length, 0, 'nothing was queued');
     assert.equal((await s.call(`/review/posts/${fb.versionId}/redraw`, {})).status, 202);
   } finally {
@@ -97,7 +97,7 @@ test('a draw is refused whole when any channel has too few left, counting only t
     const stage = new CopyStage(join(s.brandsRoot, 'bb-acme'), 'bb-acme');
     stage.open('week-01.json', [{ postId: 'w01-d1', headline: 'Answers', caption: 'Hook.', captions: { instagram: { text: 'ig' }, facebook: { text: 'fb' } } }]);
     stage.decide('week-01.json', 'w01-d1', 'kept', 'u');
-    for (let i = 0; i < 5; i += 1) s.bought('bb-acme', 'facebook');
+    for (let i = 0; i < 7; i += 1) s.bought('bb-acme', 'facebook');
     const refused = await s.call('/review/copy/bb-acme/week-01.json/draw', {});
     assert.equal(refused.status, 429);
     assert.deepEqual(((await refused.json()) as { code: string; channel: string }).channel, 'facebook');
@@ -120,7 +120,7 @@ test('adding a network to a drawn batch is refused when the new channel has too 
     const stage = new CopyStage(join(s.brandsRoot, 'bb-acme'), 'bb-acme');
     stage.open('week-01.json', [{ postId: 'w01-d1', headline: 'Answers', caption: 'Hook.', captions: { instagram: { text: 'ig' } } }]);
     stage.decide('week-01.json', 'w01-d1', 'kept', 'u');
-    for (let i = 0; i < 5; i += 1) s.bought('bb-acme', 'google');
+    for (let i = 0; i < 7; i += 1) s.bought('bb-acme', 'google');
     const waiting = await s.call('/review/copy/bb-acme/week-01.json/networks', { network: 'google' });
     assert.equal(waiting.status, 202, 'only words are written for a batch not yet drawn');
     s.jobs.claim(1, 1);

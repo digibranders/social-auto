@@ -65,6 +65,7 @@ export interface FakeJob {
   step?: number;
   finishedAt?: string;
   planFile?: string;
+  week?: string;
   error?: { code: string; message: string };
   result?: unknown;
 }
@@ -85,6 +86,8 @@ export interface FakeBatch {
   createdAt: string;
   drawnAt?: string;
   closedAt?: string;
+  /** The weeks of a batch written for several weeks (as the review service lists them). */
+  weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'drawn' | 'lapsed'; postIds: string[] }>;
   posts: Array<Record<string, unknown> & { postId: string; headline: string; caption: string; state: string }>;
 }
 
@@ -240,15 +243,21 @@ export async function fakeEngine(): Promise<FakeEngine> {
         const found = engine.batches.find((b) => b.brand === brand && b.planFile === planFile);
         if (brand !== caller || !found) return send(404, { error: 'no such brand', code: 'NOT_FOUND' });
         if (found.closedAt) return send(409, { error: 'this batch was put away', code: 'CLOSED' });
-        const latest = engine.jobs.find((j) => j.brand === brand && j.kind === 'draw' && j.planFile === planFile);
+        const week = typeof body?.['week'] === 'string' ? body['week'] : undefined;
+        if (week !== undefined && !found.weeks?.some((w) => w.from === week)) return send(400, { error: 'week must be the Monday of one of this batch\'s weeks', code: 'INVALID' });
+        const latest = engine.jobs.find((j) => j.brand === brand && j.kind === 'draw' && j.planFile === planFile && j.week === week);
         const retry = body?.['retry'] === true && latest?.state === 'failed';
         if (latest && !retry) return send(200, { job: latest, created: false });
         if (!found.posts.some((p) => p.state === 'kept')) return send(422, { error: 'keep at least one post before drawing /home/social/x', code: 'REJECTED' });
         if (found.posts.some((p) => p.noSite === true)) return send(422, { error: 'this brand has no website saved /home/social/x', code: 'REJECTED' });
         counter += 1;
-        const job: FakeJob = { id: `job-d${counter.toString(36).padStart(5, '0')}-0123abcd`, key: `draw:${brand}`, kind: 'draw', brand, site: 'https://acme.example', by: header('x-actor') ?? '', networks: [], planFile, state: 'queued', createdAt: new Date().toISOString() };
+        const job: FakeJob = { id: `job-d${counter.toString(36).padStart(5, '0')}-0123abcd`, key: `draw:${brand}`, kind: 'draw', brand, site: 'https://acme.example', by: header('x-actor') ?? '', networks: [], planFile, ...(week ? { week } : {}), state: 'queued', createdAt: new Date().toISOString() };
         engine.jobs.unshift(job);
-        found.drawnAt = new Date().toISOString();
+        if (week) {
+          const row = found.weeks?.find((w) => w.from === week);
+          if (row) row.state = 'drawing';
+          if (found.weeks?.every((w) => w.state !== 'waiting')) found.drawnAt = new Date().toISOString();
+        } else found.drawnAt = new Date().toISOString();
         return send(202, { job, created: true });
       }
       if (req.method === 'GET' && url.pathname === '/review/posts') {

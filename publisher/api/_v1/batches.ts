@@ -102,14 +102,18 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'draw') {
       if (body['retry'] !== undefined && typeof body['retry'] !== 'boolean') return apiError(400, 'INVALID_REQUEST', 'retry must be true or false');
       const retry = body['retry'] === true;
+      if (body['week'] !== undefined && (typeof body['week'] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(body['week']))) return apiError(400, 'INVALID_REQUEST', 'week must be the Monday of a week, like 2026-11-16');
+      // A batch written for several weeks is drawn one week at a time: the week asked for, else the first one not settled (waiting or being drawn), so asking again never starts the next week by accident.
+      const written = (await engine.listBatches(by)).batches.find((b) => b.id === batchId);
+      const week: string | undefined = typeof body['week'] === 'string' ? body['week'] : written?.weeks?.find((w) => w.state === 'waiting' || w.state === 'drawing')?.from;
       const draws: JobView[] = (await engine.listJobs(by)).filter((j) => j.kind === 'draw');
-      const latest = draws.find((j) => j.batchId === batchId);
+      const latest = draws.find((j) => j.batchId === batchId && j.week === week);
       if (!latest || retry) {
         const since = (ms: number): number => draws.filter((j) => Date.now() - Date.parse(j.createdAt) < ms).length;
         if (since(DAY_MS) >= MAX_DRAWS_PER_DAY) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_DAY} times a day; try again tomorrow`);
         if (since(30 * DAY_MS) >= MAX_DRAWS_PER_MONTH) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_MONTH} times a month; try again later`);
       }
-      const made = await engine.startDraw(batchId, retry, by);
+      const made = await engine.startDraw(batchId, retry, by, week);
       return json(made.created ? 202 : 200, { job: { ...made.job }, created: made.created });
     }
     const post = typeof postId === 'string' ? postId : '';

@@ -162,6 +162,7 @@ async function main(): Promise<void> {
       'copy-first': { type: 'boolean', default: false },
       page: { type: 'boolean', default: false },
       'draw-kept': { type: 'string' },
+      'draw-week': { type: 'string' },
       'redraw-missing': { type: 'boolean', default: false },
       'redraw-post': { type: 'string' },
       'add-network': { type: 'string' },
@@ -349,7 +350,9 @@ async function main(): Promise<void> {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
       const copy = new CopyStage(brandDir, slug);
       const stored = parseWeekPlan(await readJson(join(brandDir, keptFile)), keptFile);
-      const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })));
+      const drawWeek = values['draw-week'];
+      if (drawWeek !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(drawWeek)) throw new Error('--draw-week must be the Monday of the week, like 2026-11-16');
+      const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })), drawWeek);
       for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
       if (postIds.length === 0) throw new Error(`${keptFile} has no kept posts to draw: keep at least one in the dashboard first`);
       if (values['redraw-post']) {
@@ -374,8 +377,9 @@ async function main(): Promise<void> {
         for (const id of postIds.filter((id) => made.has(id))) console.log(`    ${id}: already has its pictures, so it is not drawn again.`);
         if (drawIds.length === 0) throw new Error(`every kept post of ${keptFile} already has its pictures: nothing is left to draw`);
       } else {
-        // The batch is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
-        copy.markDrawn(keptFile);
+        // The batch (or the week of it) is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
+        if (drawWeek !== undefined) copy.markWeekDrawn(keptFile, drawWeek);
+        else copy.markDrawn(keptFile);
       }
       console.log(`3/4 Drawing ${drawIds.length} kept post${drawIds.length === 1 ? '' : 's'} of ${keptFile}…`);
       const drawn = await drawPosters({ ...stored, renderMode: 'ai_v1', posts: stored.posts.filter((p) => drawIds.includes(p.id)) }, keptFile);
@@ -470,7 +474,7 @@ async function main(): Promise<void> {
           console.log(`    The headline check could not run (${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}); no advice is shown.`);
         }
       }
-      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })));
+      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, date: p.date.slice(0, 10), headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })));
       console.log(`3/4 Copy first: ${finalPlan.posts.length} posts are waiting for the owner to keep or drop them. No picture was bought. Then: --draw-kept ${planFile}`);
       return;
     }

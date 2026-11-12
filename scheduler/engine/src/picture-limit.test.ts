@@ -37,8 +37,8 @@ test('the customer is told in plain words which channel is out and when it start
   assert.equal(pictureLimitMessage('linkedin', 5, 3, 4, '2026-11-16'), 'You have 2 of your 5 LinkedIn pictures left this week, and this needs 4. You can draw more from Monday 16 November.');
 });
 
-test('the weekly limit is 5 a channel unless a setting lowers or raises it, within a ceiling, and a bad value is an error', () => {
-  assert.equal(weeklyLimitFromEnv({}), 5);
+test('the weekly limit is 7 a channel unless a setting lowers or raises it, within a ceiling, and a bad value is an error', () => {
+  assert.equal(weeklyLimitFromEnv({}), 7);
   assert.equal(weeklyLimitFromEnv({ PRODUCT_PICTURES_PER_CHANNEL_WEEK: '3' }), 3);
   for (const bad of ['0', '21', '2.5', 'many']) assert.throws(() => weeklyLimitFromEnv({ PRODUCT_PICTURES_PER_CHANNEL_WEEK: bad }), /whole number from 1 to 20/);
 });
