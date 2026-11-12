@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFile
 import { join } from 'node:path';
 import { LockError, syncDir, withFileLock } from './file-lock.ts';
 import { mondayOf } from './picture-limit.ts';
+import type { NotDrawn } from './not-drawn.ts';
 
 export type CopyState = 'pending' | 'kept' | 'dropped';
 
@@ -52,6 +53,8 @@ export interface CopyBatch {
   drawnAt?: string;
   /** The weeks (their Mondays) whose kept posts were sent to be drawn, with the time. From then on the choices and words of that week's posts are final. */
   weekDrawn?: Record<string, string>;
+  /** Kept topics that got no picture in their week's draw, with why. They stay open for keep, drop and edit; a retry of the week draws only them. */
+  notDrawn?: Record<string, NotDrawn>;
   /** The weeks (their Mondays) that were left undrawn because their time passed or nothing was kept in them. Nothing of them is drawn any more. */
   weekLapsed?: Record<string, string>;
   /** Set when the owner put the whole batch away without drawing it: it is no longer listed and its posts cannot be drawn. */
@@ -68,6 +71,8 @@ export const weekOfPost = (post: Pick<CopyPost, 'date'>): string | undefined => 
 /** Whether a post's choices and words are final: its week was drawn or lapsed, or the whole batch was drawn. */
 export const postLocked = (batch: CopyBatch, post: CopyPost): boolean => {
   const week = weekOfPost(post);
+  // A topic that got no picture in its week's draw is open again (unless its week was given up): there is nothing drawn to keep final.
+  if (batch.notDrawn?.[post.postId] !== undefined && (week === undefined || batch.weekLapsed?.[week] === undefined)) return false;
   return batch.drawnAt !== undefined || (week !== undefined && (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined));
 };
 
@@ -157,6 +162,12 @@ export class CopyStage {
       if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
       if (postLocked(batch, post)) throw new CopyStageError('ALREADY_DRAWN', 'this post was already sent to be drawn, so its choices are final');
       post.state = state;
+      // A topic she drops is no longer waiting for a picture.
+      if (state === 'dropped' && batch.notDrawn?.[postId] !== undefined) {
+        const { [postId]: _gone, ...left } = batch.notDrawn;
+        if (Object.keys(left).length > 0) batch.notDrawn = left;
+        else delete batch.notDrawn;
+      }
       post.decidedBy = by.trim().slice(0, 80);
       post.decidedAt = this.now().toISOString();
       return { batch, result: batch };
@@ -210,6 +221,20 @@ export class CopyStage {
       if (!weeksOf(batch).includes(week)) throw new CopyStageError('NOT_FOUND', 'no such week in this batch');
       if (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined) return { batch, result: undefined };
       return { batch: this.settled({ ...batch, weekLapsed: { ...(batch.weekLapsed ?? {}), [week]: this.now().toISOString() } }), result: undefined };
+    });
+  }
+
+  /**
+   * Records which kept topics of a draw got no picture, and forgets the ones that now have one. `missing` replaces the entries of the posts it names; `made` lists
+   * posts that have pictures now.
+   */
+  setNotDrawn(planFile: string, missing: Readonly<Record<string, NotDrawn>>, made: readonly string[] = []): void {
+    this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      const next: Record<string, NotDrawn> = { ...(batch.notDrawn ?? {}), ...missing };
+      for (const id of made) delete next[id];
+      const { notDrawn: _old, ...rest } = batch;
+      return { batch: Object.keys(next).length > 0 ? { ...rest, notDrawn: next } : rest, result: undefined };
     });
   }
 
