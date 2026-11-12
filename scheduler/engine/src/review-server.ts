@@ -492,6 +492,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         }
         return send(res, 404, { error: 'Not found' });
       }
+      // Where the customer's plan ends: the last post day of every batch not put away (drawn ones included), so the product can offer the next month in time.
+      if (parts[0] === 'review' && parts[1] === 'plan' && parts.length === 2) {
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        const planBrand = caller.role === 'product' ? caller.brand : url.searchParams.get('brand') ?? '';
+        scope.guard(planBrand, false);
+        if (!brands().includes(planBrand) || weeklyLimitOf(planBrand) === undefined) throw new ReviewError('NOT_FOUND', 'no such brand');
+        const days = new CopyStage(join(root, planBrand), planBrand).list().filter((b) => !b.closedAt).flatMap((b) => b.posts.flatMap((p) => (p.date ? [p.date] : []))).sort();
+        return send(res, 200, { brand: planBrand, endsOn: days.at(-1) ?? null, startsOn: days[0] ?? null });
+      }
       // The networks the customer has connected accounts for, written by the product API whenever it looks at her channels: the draw buys no picture for any other.
       if (parts[0] === 'review' && parts[1] === 'connected' && parts.length === 2) {
         if (req.method !== 'PUT') return send(res, 405, { error: 'Method not allowed' });

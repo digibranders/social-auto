@@ -205,3 +205,21 @@ test('the product records its connected networks; only a product may, only the f
     await s.done();
   }
 });
+
+test('the plan read says where the customer\'s plan ends, counting drawn batches and not put-away ones', async () => {
+  const s = await start();
+  try {
+    const plan = async (): Promise<Record<string, unknown>> => (await (await s.call('/review/plan')).json()) as Record<string, unknown>;
+    assert.deepEqual(await plan(), { brand: 'bb-acme', endsOn: '2026-11-24', startsOn: '2026-11-16' });
+    s.copy.markWeekDrawn('week-01.json', W1);
+    s.copy.markWeekDrawn('week-01.json', W2);
+    assert.equal((await plan())['endsOn'], '2026-11-24', 'a drawn batch still counts');
+    s.copy.open('week-02.json', [post('x-d1', '2026-12-07')]);
+    assert.equal((await plan())['endsOn'], '2026-12-07');
+    s.copy.close('week-02.json', 'u');
+    assert.equal((await plan())['endsOn'], '2026-11-24', 'a batch put away does not count');
+    assert.equal((await fetch(`${(await s.call('/review/limits')).url.split('/review')[0]}/review/plan?brand=bb-acme`, { headers: { Authorization: 'Bearer staff-secret-0123456789' } })).status, 200, 'staff may read a product brand\'s plan');
+  } finally {
+    await s.done();
+  }
+});
