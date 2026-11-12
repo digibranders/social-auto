@@ -185,6 +185,15 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
 }
 
 /** The caption without the brand's own verified call to action, which is an invitation and not a claim the facts must support. */
+/**
+ * A rewritten caption with the engine's own closing line put back: the new body, a blank line, then the closing line. The closing line is never run on to the
+ * last sentence ("...your business.Explore our services at acme.com (link in bio)"), whatever whitespace the old caption had at that spot.
+ */
+export function recomposeCaption(body: string, tail: string): string {
+  const closing = tail.trim();
+  return closing === '' ? body : `${body.replace(/\s+$/, '')}\n\n${closing}`;
+}
+
 export function withoutCta(caption: string, cta: string): string {
   const text = cta.trim();
   if (text === '') return caption;
@@ -498,7 +507,7 @@ export async function planWeek(options: {
     posts.forEach((p, i) => {
       const o = outcomes[i] as ReviewOutcome;
       if (o.status === 'dropped') { dropped.push(`${p.id}: ${o.reasons.join('; ')} [headline: "${p.headline}"]`); return; }
-      const rewritten = o.rewritten ? { headline: o.draft.headline, subline: o.draft.subline, caption: `${o.draft.caption}${split(p).tail}` } : {};
+      const rewritten = o.rewritten ? { headline: o.draft.headline, subline: o.draft.subline, caption: recomposeCaption(o.draft.caption, split(p).tail) } : {};
       survivors.push({ ...p, ...rewritten, evidenceChecks: [...(p.evidenceChecks ?? []).filter((c) => c !== 'semantic_support_unverified'), o.rewritten ? 'semantic_support_rewritten_once' : 'semantic_support_structured_verdict'] });
     });
     const candidatesOut: Candidate[] = survivors.map((p) => ({ id: p.id, factId: (p.factIds ?? [''])[0] as string, headline: p.headline.replace(/\|/g, ''), proposition: p.painPoint, ...(worth?.[(p.factIds ?? [''])[0] as string] !== undefined ? { worth: worth?.[(p.factIds ?? [''])[0] as string] as number } : {}) }));

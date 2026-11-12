@@ -217,3 +217,29 @@ test('a workspace read shows its channels and, once a job was started, the custo
     }
   });
 });
+
+test('a customer who gives one page to read gets that page read: the page address goes to the poster service, the saved website stays the host alone', async () => {
+  await withProducts(async () => {
+    const engine = await fakeEngine();
+    try {
+      const brand = await workspace('shop-1', true);
+      const made = await start('shop-1', { site: 'https://www.acme.example.com/services/?utm=x#top', page: true });
+      assert.equal(made.status, 202, JSON.stringify(made.body));
+      const sent = engine.seen.find((s) => s.method === 'POST' && s.url === '/review/jobs');
+      assert.equal(sent?.body?.['site'], 'https://www.acme.example.com/services', 'the path is kept, the query and the anchor are not');
+      assert.equal(sent?.body?.['page'], true);
+      assert.equal((await loadClients()).file.clients.find((c) => c.brand === brand)?.website, 'https://www.acme.example.com', 'the workspace keeps the host only');
+      // Without page the path is dropped, as before.
+      engine.jobs.length = 0;
+      engine.seen.length = 0;
+      assert.equal((await start('shop-1', { site: 'https://www.acme.example.com/services' })).status, 202);
+      assert.equal(engine.seen.find((s) => s.method === 'POST' && s.url === '/review/jobs')?.body?.['site'], 'https://www.acme.example.com');
+      // The same checks apply to a page address; another website is still refused.
+      engine.jobs.length = 0;
+      expectError(await start('shop-1', { site: 'https://different.example.net/page', page: true }), 400, 'SITE_MISMATCH', 'another website');
+      expectError(await start('shop-1', { site: 'http://127.0.0.1/page', page: true }), 400, 'INVALID_SITE', 'a local address');
+    } finally {
+      await engine.close();
+    }
+  });
+});

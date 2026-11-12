@@ -203,3 +203,13 @@ test('a one-product brand can reuse its subject across a week when the angles, m
 test('older posts without a concept are simply not compared', () => {
   assert.equal(conceptRecordOf({ id: 'x', date: '2026-01-01T00:00:00Z', painPoint: 'p', mode: 'template', headline: 'h', subline: 's', caption: 'c', hashtags: [] }), undefined);
 });
+
+test('a rewritten caption gets its closing line back on a line of its own, never run on to the last sentence', async () => {
+  const { recomposeCaption } = await import('./planner.ts');
+  const body = 'Ready to grow your business.';
+  assert.equal(recomposeCaption(body, '\n\nExplore our services at digibranders.com (link in bio)'), 'Ready to grow your business.\n\nExplore our services at digibranders.com (link in bio)');
+  assert.equal(recomposeCaption(body, 'Explore our services at digibranders.com (link in bio)'), 'Ready to grow your business.\n\nExplore our services at digibranders.com (link in bio)', 'a tail with no leading break, the exact bug');
+  assert.equal(recomposeCaption(`${body}  \n`, ' Explore our services at digibranders.com (link in bio)'), 'Ready to grow your business.\n\nExplore our services at digibranders.com (link in bio)');
+  assert.equal(recomposeCaption(body, ''), body, 'no closing line: the new body alone');
+  assert.equal(recomposeCaption(body, '  \n'), body);
+});

@@ -51,6 +51,7 @@ import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
 import { readConnected } from './connected-networks.ts';
+import { pageModeBlocked } from './page-mode.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
 import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
@@ -201,7 +202,7 @@ async function main(): Promise<void> {
 
   // One page, not the whole site: only the address given is read. It is for a website that has no saved profile yet; one that has is already read, and its facts are used.
   if (values.page) {
-    if (await fileExists(join(BRANDS_ROOT, values.brand ?? slugFromSite(values.site), 'brand.json'))) throw new PageModeError('this website already has a saved profile, so it is not read again from a single page');
+    if (await pageModeBlocked(join(BRANDS_ROOT, values.brand ?? slugFromSite(values.site)))) throw new PageModeError('this website already has a saved profile with its facts, so it is not read again from a single page');
     process.env['CRAWL_ONLY_THIS_PAGE'] = 'true';
   }
 

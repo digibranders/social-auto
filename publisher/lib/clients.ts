@@ -226,6 +226,19 @@ export function normalizeWebsite(input: unknown): string {
   return `https://${host}`;
 }
 
+/**
+ * The address of one page of a website, for a customer who gave a single page to read: the website's host and the page's own path, never the query or the anchor.
+ * What a website address may not be, a page address may not be either. The customer's saved website stays the host alone (normalizeWebsite).
+ */
+export function normalizePage(input: unknown): string {
+  const site = normalizeWebsite(input);
+  const text = (input as string).trim();
+  const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(text) ? text : `https://${text}`);
+  const path = url.pathname.replace(/\/+$/, '');
+  if (`${site}${path}`.length > 200) throw new EditError('that page address is too long');
+  return `${site}${path}`;
+}
+
 /** Adds a client, refusing a name that is already a client (planned or added). */
 export function addClient(file: ClientsFile, name: unknown, existing: ReadonlySet<string>, now: number, website?: unknown, plan?: unknown, requireAuthenticLogo?: unknown): { file: ClientsFile; brand: string } {
   const brand = slugFor(name);
