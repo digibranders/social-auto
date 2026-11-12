@@ -2,10 +2,14 @@
  * Nobody decided in time. For a brand a product owns, written posts that were never drawn and pictures that are still waiting are put away after a number
  * of days, with no one acting: a batch is closed, a waiting picture is rejected with the reason "expired". Our own brands are never touched.
  * Each thing put away is recorded in one small log, so the product can tell its customer.
+ *
+ * A batch written for several weeks (its posts have days) does not expire by age: each of its topics lives until its own post day, and a week that passes undrawn is
+ * given up by the weekly draw (recorded here as a `week`). A picture waiting for a decision expires 14 days after it was drawn, or at the end of its post day,
+ * whichever comes first: a picture for a day that has passed can no longer be posted.
  */
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CopyStage } from './copy-stage.ts';
+import { CopyStage, weeksOf } from './copy-stage.ts';
 import type { ProductBrands } from './product-brands.ts';
 import { EXPIRED_REASON, ReviewStore } from './review-store.ts';
 
@@ -16,14 +20,26 @@ const DAY_MS = 86_400_000;
 export interface ExpiryEvent {
   at: string;
   brand: string;
-  kind: 'batch' | 'poster';
+  kind: 'batch' | 'poster' | 'week';
   planFile: string;
+  /** For a `week`: its Monday (YYYY-MM-DD). */
+  week?: string;
   postId?: string;
   network?: string;
   versionId?: string;
 }
 
 const logFile = (brandsRoot: string): string => join(brandsRoot, '.expiry.jsonl');
+const IST_OFFSET_MS = 5.5 * 3_600_000;
+/** The moment a post's day is over: the next midnight India time. */
+export const dayEndMs = (ymd: string): number => Date.parse(`${ymd}T00:00:00Z`) - IST_OFFSET_MS + DAY_MS;
+
+/** Writes one thing that was put away to the log. */
+export function recordExpiry(brandsRoot: string, now: Date, event: Omit<ExpiryEvent, 'at'>): ExpiryEvent {
+  const full: ExpiryEvent = { at: now.toISOString(), ...event };
+  appendFileSync(logFile(brandsRoot), `${JSON.stringify(full)}\n`);
+  return full;
+}
 
 /** What was put away, oldest first; a product reads only its own brand and may ask for what came after a time it already saw. */
 export function readExpiry(brandsRoot: string, filter: { brand?: string; since?: string } = {}): ExpiryEvent[] {
@@ -51,7 +67,8 @@ export function sweepExpired(input: { brandsRoot: string; owners: ProductBrands;
     if (!existsSync(dir)) continue;
     const stage = new CopyStage(dir, brand);
     for (const batch of stage.list()) {
-      if (batch.closedAt || batch.drawnAt || !stale(batch.createdAt)) continue;
+      // A batch of several weeks is not closed by age: its weeks are given up one by one by the weekly draw.
+      if (batch.closedAt || batch.drawnAt || weeksOf(batch).length > 0 || !stale(batch.createdAt)) continue;
       try {
         stage.close(batch.planFile, EXPIRY_BY);
         record({ brand, kind: 'batch', planFile: batch.planFile });
@@ -60,8 +77,10 @@ export function sweepExpired(input: { brandsRoot: string; owners: ProductBrands;
       }
     }
     const store = new ReviewStore(dir, brand, undefined, input.lockTimeoutMs);
+    const postDay = new Map(stage.list().flatMap((b) => b.posts.flatMap((p) => (p.date ? [[`${b.planFile}|${p.postId}`, p.date] as const] : []))));
     for (const item of store.list()) {
-      if (item.status !== 'pending' || !stale(item.version.createdAt)) continue;
+      const day = postDay.get(`${item.version.planFile}|${item.version.postId}`);
+      if (item.status !== 'pending' || !(stale(item.version.createdAt) || (day !== undefined && input.now.getTime() >= dayEndMs(day)))) continue;
       try {
         store.reject(item.version.versionId, EXPIRY_BY, EXPIRED_REASON);
         record({ brand, kind: 'poster', planFile: item.version.planFile, postId: item.version.postId, versionId: item.version.versionId, ...(item.version.network ? { network: item.version.network } : {}) });

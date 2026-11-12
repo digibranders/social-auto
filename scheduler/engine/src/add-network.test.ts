@@ -159,3 +159,22 @@ test('a network added after a draw reaches the schedule once its own drawn pictu
     s.done();
   }
 });
+
+test('on a batch written for several weeks only a topic whose day has not passed needs a picture drawn for the new network; one whose day passed, or whose week is not drawn yet, needs none', async () => {
+  const s = setup(true);
+  try {
+    // w01-d1 is on 17 November and has pictures; w01-d2 is on 10 November (passed) and has one too.
+    const file = join(s.dir, 'copy-first', 'week-01.json');
+    const batch = JSON.parse(readFileSync(file, 'utf8')) as { posts: Array<{ postId: string; date?: string }> };
+    batch.posts[0]!.date = '2026-11-17';
+    batch.posts[1]!.date = '2026-11-10';
+    writeFileSync(file, JSON.stringify(batch));
+    const result = await addNetworkToBatch({ brandDir: s.dir, brand: 'bb-acme', planFile: 'week-01.json', network: 'facebook', facts: [FACT], write: writer(), today: '2026-11-12' });
+    const [d1, d2] = result.topics;
+    assert.equal(d1?.needsDraw, true, 'the day is ahead: its picture for the new network is drawn now');
+    assert.equal(d2?.needsDraw, undefined, 'its day has passed');
+    assert.deepEqual(result.topics.map((t) => t.outcome), ['written', 'written'], 'the words are written for every topic');
+  } finally {
+    s.done();
+  }
+});

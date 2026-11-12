@@ -46,7 +46,7 @@ import { channelPicturesUsed, pictureLimitMessage, PictureLimitError, pictureWee
 import { splitTrailingHashtags } from './caption-text.ts';
 import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
 import { ProductBrands, PRODUCT_ID } from './product-brands.ts';
-import { EXPIRY_DAYS, readExpiry, sweepExpired } from './expiry.ts';
+import { EXPIRY_DAYS, readExpiry, recordExpiry, sweepExpired } from './expiry.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
@@ -423,7 +423,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
           if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
           // On a batch already drawn the new network's picture is drawn for every kept topic: the week must have room for them all.
-          if (batch.drawnAt) assertPictureRoom(netBrand, { [network]: batch.posts.filter((p) => p.state === 'kept').length });
+          if (batch.drawnAt !== undefined || batch.weekDrawn !== undefined) {
+            const today = new Date((options.now ?? (() => new Date()))().getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+            const drawnPosts = madeFor(netBrand, netPlan);
+            assertPictureRoom(netBrand, { [network]: batch.posts.filter((p) => p.state === 'kept' && (p.date === undefined || p.date >= today) && [...drawnPosts].some((k) => k.startsWith(`${p.postId}|`))).length });
+          }
           const { job, created } = jobs.enqueue({ kind: 'network', brand: netBrand, site: siteOf(netBrand), by: scope.by(body['by']), planFile: netPlan, network });
           return send(res, created ? 202 : 200, { job, created });
         }
@@ -691,6 +695,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             }
           },
           register: (brand, planFile, site) => { registerManualRelease({ brandDir: join(root, brand), siteBrand: brand, client: brand, site, planFile }); },
+          onLapse: (brand, planFile, week) => { recordExpiry(root, (options.now ?? (() => new Date()))(), { brand, kind: 'week', planFile, week }); },
         });
       } catch (error) {
         console.error(`weekly draw failed: ${error instanceof Error ? error.message : String(error)}`);
