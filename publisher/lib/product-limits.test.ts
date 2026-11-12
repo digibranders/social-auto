@@ -173,3 +173,17 @@ test('a kept topic that got no picture is shown per topic and per week with a fi
     assert.doesNotMatch(JSON.stringify(answer.body), /home|internal/);
   });
 });
+
+test('a week with no posts is shown as empty, with the days that are missing', async () => {
+  await withEngine(async (engine) => {
+    const one = await workspace('shop-1');
+    engine.batches.push({
+      brand: one, planFile: 'week-01.json', createdAt: '2026-11-11T07:54:27.999Z',
+      weeks: [{ from: '2026-11-16', to: '2026-11-22', state: 'waiting', postIds: ['a'], missingDays: ['2026-11-17', 'soon'] } as never, { from: '2026-11-23', to: '2026-11-29', state: 'empty', postIds: [], missingDays: ['2026-11-23', '2026-11-24'] } as never],
+      posts: [{ postId: 'a', date: '2026-11-16', headline: 'H a', caption: 'C', state: 'kept', captions: { instagram: { text: 'ig' } } }],
+    });
+    const answer = await call(batchesGet, '/api/v1/batches?externalId=shop-1');
+    const weeks = (answer.body['batches'] as Array<{ weeks: Array<{ state: string; missingDays?: string[] }> }>)[0]?.weeks;
+    assert.deepEqual(weeks?.map((w) => [w.state, w.missingDays]), [['waiting', ['2026-11-17']], ['empty', ['2026-11-23', '2026-11-24']]], 'a bad day is left out');
+  });
+});

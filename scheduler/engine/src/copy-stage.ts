@@ -53,6 +53,8 @@ export interface CopyBatch {
   drawnAt?: string;
   /** The weeks (their Mondays) whose kept posts were sent to be drawn, with the time. From then on the choices and words of that week's posts are final. */
   weekDrawn?: Record<string, string>;
+  /** The days the plan was asked to write posts for (YYYY-MM-DD), so a week or a day that came out empty can be told. Absent on a batch written before this was recorded. */
+  requestedDays?: string[];
   /** Kept topics that got no picture in their week's draw, with why. They stay open for keep, drop and edit; a retry of the week draws only them. */
   notDrawn?: Record<string, NotDrawn>;
   /** The weeks (their Mondays) that were left undrawn because their time passed or nothing was kept in them. Nothing of them is drawn any more. */
@@ -129,7 +131,7 @@ export class CopyStage {
   }
 
   /** Records a freshly written batch. Opening the same batch again changes nothing (decisions already made stay). */
-  open(planFile: string, posts: ReadonlyArray<{ postId: string; date?: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>): CopyBatch {
+  open(planFile: string, posts: ReadonlyArray<{ postId: string; date?: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>, requestedDays?: readonly string[]): CopyBatch {
     return this.change(planFile, (existing) => {
       if (existing) return { batch: existing, result: existing };
       const batch: CopyBatch = {
@@ -137,6 +139,7 @@ export class CopyStage {
         planFile,
         createdAt: this.now().toISOString(),
         posts: posts.map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
+        ...(requestedDays && requestedDays.length > 0 ? { requestedDays: [...new Set(requestedDays)].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort() } : {}),
       };
       return { batch, result: batch };
     });

@@ -223,3 +223,17 @@ test('the plan read says where the customer\'s plan ends, counting drawn batches
     await s.done();
   }
 });
+
+test('a week the plan was asked for and got no post is listed as empty, with the days that are missing in the weeks that have posts', async () => {
+  const s = await start();
+  try {
+    // The plan asked for Monday to Friday of three weeks; week 2 got posts on two days only, week 3 on none.
+    s.copy.close('week-01.json', 'u');
+    s.copy.open('week-02.json', [post('x-d1', '2026-11-23'), post('x-d2', '2026-11-24')], ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27', '2026-11-30', '2026-12-01']);
+    const listed = (await (await s.call('/review/copy')).json()) as { batches: Array<{ planFile: string; weeks?: Array<{ from: string; state: string; postIds: string[]; missingDays?: string[] }> }> };
+    const weeks = listed.batches.find((b) => b.planFile === 'week-02.json')?.weeks;
+    assert.deepEqual(weeks?.map((w) => [w.from, w.state, w.postIds, w.missingDays]), [['2026-11-23', 'waiting', ['x-d1', 'x-d2'], ['2026-11-25', '2026-11-26', '2026-11-27']], ['2026-11-30', 'empty', [], ['2026-11-30', '2026-12-01']]]);
+  } finally {
+    await s.done();
+  }
+});
