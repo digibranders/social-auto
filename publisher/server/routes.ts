@@ -30,6 +30,8 @@ export const routes: Record<string, { method: string; load: () => Promise<Handle
   '/api/instagram-connect': { method: 'POST', load: () => import('../api/_connect/instagram.js').then((m) => m.POST) },
   '/api/analytics': { method: 'GET', load: () => import('../api/analytics.js').then((m) => m.GET) },
   '/api/analytics-collect': { method: 'GET', load: () => import('../api/analytics-collect.js').then((m) => m.GET) },
+  '/api/inbox': { method: 'ANY', load: async () => { const m = await import('../api/inbox.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
+  '/api/inbox-collect': { method: 'GET', load: () => import('../api/inbox-collect.js').then((m) => m.GET) },
   '/api/refresh': { method: 'GET', load: () => import('../api/refresh.js').then((m) => m.GET) },
   '/api/google-connect': { method: 'POST', load: () => import('../api/_connect/google.js').then((m) => m.POST) },
   '/api/linkedin-connect': { method: 'POST', load: () => import('../api/_connect/linkedin.js').then((m) => m.POST) },

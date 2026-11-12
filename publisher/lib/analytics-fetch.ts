@@ -19,14 +19,14 @@ type Fetch = typeof fetch;
 type Json = Record<string, unknown>;
 
 /** A refusal from Meta because the app was not given a permission (or the account is too small), as opposed to a real failure. */
-interface Refusal {
+export interface Refusal {
   permission: boolean;
   followers: boolean;
   /** Meta no longer knows the metric asked for (they retire metrics): the number is simply not available, which is not the customer's doing. */
   retired: boolean;
 }
 
-function refusalOf(body: Json): Refusal | null {
+export function refusalOf(body: Json): Refusal | null {
   const error = body['error'];
   if (typeof error !== 'object' || error === null) return null;
   const e = error as Json;
@@ -38,7 +38,7 @@ function refusalOf(body: Json): Refusal | null {
   return permission || followers || retired ? { permission, followers, retired } : null;
 }
 
-async function graph(fetcher: Fetch, source: string, url: string): Promise<{ body: Json; refusal: Refusal | null }> {
+export async function graph(fetcher: Fetch, source: string, url: string): Promise<{ body: Json; refusal: Refusal | null }> {
   const response = await fetcher(url, { signal: AbortSignal.timeout(30_000) });
   const body = (await response.json().catch(() => ({}))) as Json;
   if (response.ok && !body['error']) return { body, refusal: null };
