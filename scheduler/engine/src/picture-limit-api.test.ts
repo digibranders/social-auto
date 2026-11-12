@@ -138,3 +138,25 @@ test('adding a network to a drawn batch is refused when the new channel has too 
     await s.done();
   }
 });
+
+test('a ledger that cannot be found while the brand already has pictures is refused instead of showing 7 of 7, and a brand with no pictures yet reads as untouched', async () => {
+  const s = await start();
+  try {
+    // No ledger file and no pictures yet: nothing has been drawn, so every channel is untouched.
+    const fresh = await s.call('/review/limits');
+    assert.equal(fresh.status, 200);
+    // A picture exists but the ledger the service looks at does not: the engine writes somewhere else.
+    const store = new ReviewStore(join(s.brandsRoot, 'bb-acme'), 'bb-acme');
+    const picture = join(s.root, 'p.jpg');
+    writeFileSync(picture, 'p');
+    store.addVersion({ postId: 'w01-d1', planFile: 'week-01.json', network: 'instagram', width: 1080, height: 1080, headline: 'Answers', caption: 'C', ctaUrl: 'https://bb-acme.example', factIds: ['f1'], evidence: [{ factId: 'f1', text: 't', quote: 'q', url: 'https://bb-acme.example/', context: 'c' }], imagePath: picture, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.016 });
+    const refused = await s.call('/review/limits');
+    assert.equal(refused.status, 503);
+    assert.match(((await refused.json()) as { error: string }).error, /ledger was not found where the poster service looks/);
+    // Once the ledger exists the count is read as usual.
+    s.bought('bb-acme', 'instagram');
+    assert.equal((await s.call('/review/limits')).status, 200);
+  } finally {
+    await s.done();
+  }
+});

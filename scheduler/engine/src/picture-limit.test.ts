@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { channelPicturesUsed, pictureLimitMessage, pictureWeek, plainDate, weeklyLimitFromEnv } from './picture-limit.ts';
+import { channelPicturesUsed, ledgerPathFor, pictureLimitMessage, pictureWeek, plainDate, weeklyLimitFromEnv } from './picture-limit.ts';
 import type { PaidCall } from './paid-ledger.ts';
 
 const call = (over: Partial<PaidCall>): PaidCall => ({ callId: 'c', jobId: 'j', tenantId: 'owner', brandId: 'bb-acme', operation: 'image', model: 'm', requestHash: 'h', status: 'completed', reservedCostUsd: 0.02, createdAt: '2026-11-12T08:00:00Z', network: 'instagram', ...over });
@@ -41,4 +41,10 @@ test('the weekly limit is 7 a channel unless a setting lowers or raises it, with
   assert.equal(weeklyLimitFromEnv({}), 7);
   assert.equal(weeklyLimitFromEnv({ PRODUCT_PICTURES_PER_CHANNEL_WEEK: '3' }), 3);
   for (const bad of ['0', '21', '2.5', 'many']) assert.throws(() => weeklyLimitFromEnv({ PRODUCT_PICTURES_PER_CHANNEL_WEEK: bad }), /whole number from 1 to 20/);
+});
+
+test('the ledger is read where PAID_LEDGER_FILE says, else beside the brands folder as the engine does', () => {
+  assert.equal(ledgerPathFor('/srv/engine/brands', {}), '/srv/engine/ledger/paid-calls.jsonl');
+  assert.equal(ledgerPathFor('/srv/engine/brands', { PAID_LEDGER_FILE: '/var/lib/x/calls.jsonl' }), '/var/lib/x/calls.jsonl');
+  assert.equal(ledgerPathFor('/srv/engine/brands', { PAID_LEDGER_FILE: '' }), '/srv/engine/ledger/paid-calls.jsonl', 'an empty setting is not a path');
 });
