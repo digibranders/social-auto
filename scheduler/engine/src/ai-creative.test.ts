@@ -687,6 +687,24 @@ test('each network a post is drawn for gets its own composition, told apart in t
   }
 });
 
+test('a picture drawn again because it looked like another network\'s is told so in its first prompt, and an ordinary run is not', async () => {
+  const ctx = setup();
+  try {
+    const seen: string[] = [];
+    const run = (startNote?: string) => makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, `out-${seen.length}`), network: 'facebook', factOf: () => 'OyeChats answers from your own documents.', ...(startNote ? { startNote } : {}),
+      posts: [post('p1', 'Answers from your own docs')],
+      deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, scene: async (prompt, out) => { seen.push(prompt); writeFileSync(out, 'x'); }, review: async () => review(['Answers from your own docs', 'oyechats.com']) },
+    });
+    await run();
+    await run('The first picture for this network looked too much like the picture made for instagram. Choose a clearly different scene.');
+    assert.doesNotMatch(seen[0] ?? '', /looked too much like/);
+    assert.match(seen[1] ?? '', /looked too much like the picture made for instagram/);
+  } finally {
+    ctx.done();
+  }
+});
+
 test('a poster drawn with no network is as before: no version line and the old ledger id', async () => {
   const ctx = setup();
   try {
