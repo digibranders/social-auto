@@ -680,6 +680,7 @@ test('each network a post is drawn for gets its own composition, told apart in t
       assert.match(prompt, /HEADLINE: "Answers from your own docs"/);
       assert.match(prompt, /OyeChats answers from your own documents\./);
       assert.match(prompt, /different network/);
+      assert.match(prompt, /about what the brand does and who it is for.*Never an unrelated subject/);
     }
     assert.deepEqual(ids, ['oyechats-p1-instagram', 'oyechats-p1-facebook', 'oyechats-p1-google', 'oyechats-p1-linkedin']);
     assert.match(seen[3] ?? '', /wide landscape \(3:2/);

@@ -19,10 +19,10 @@ test('a topic lists the networks it has and the connected networks it lacks', ()
     ['linkedin', 'instagram', 'facebook', 'google'],
   );
   const by = (id: string) => topics.find((t) => t.postId === id);
-  assert.deepEqual(by('w01-d1')?.networks, [{ network: 'instagram', status: 'pending' }, { network: 'linkedin', status: 'pending' }], 'the newest picture of a network decides its status');
+  assert.deepEqual(by('w01-d1')?.networks, [{ network: 'instagram', status: 'pending', pictureState: 'ready' }, { network: 'linkedin', status: 'pending', pictureState: 'ready' }], 'the newest picture of a network decides its status');
   assert.deepEqual(by('w01-d1')?.missing, ['facebook', 'google']);
   assert.deepEqual(by('w01-d2')?.missing, [], 'a topic put away unanswered offers nothing');
-  assert.deepEqual(by('w02-d1')?.networks, [{ network: 'instagram', status: 'written' }]);
+  assert.deepEqual(by('w02-d1')?.networks, [{ network: 'instagram', status: 'written', pictureState: 'waiting' }]);
   assert.deepEqual(by('w02-d1')?.missing, ['linkedin', 'facebook', 'google']);
   assert.deepEqual(topicsOf([], [], ['instagram']), []);
   assert.deepEqual(topicsOf([poster()], [], ['instagram', 'myspace']).map((t) => t.missing), [[]], 'only the four networks are offered');
@@ -58,4 +58,30 @@ test('GET /api/v1/topics answers from the posters, the waiting batches and her c
     assert.equal((await call(topicsGet, '/api/v1/topics?externalId=shop-1', { key: OTHER_KEY })).status, 404);
     assert.equal((await call(topicsGet, '/api/v1/topics?externalId=nobody')).status, 404);
   });
+});
+
+test('each channel of a topic says what its picture is doing: ready, approved, needs a connection, being drawn, no pictures left, not drawn, or waiting for a day', () => {
+  const week = (from: string, state: 'waiting' | 'drawing' | 'drawn', postIds: string[]) => ({ from, to: from, state, postIds });
+  const written = (id: string, extra: Record<string, unknown> = {}) => ({ id, headline: `H ${id}`, caption: 'c', captions: { instagram: { text: 'i' }, facebook: { text: 'f' }, linkedin: { text: 'l' } }, state: 'kept', ...extra });
+  const batchV = batch({
+    id: 'week-05.json',
+    weeks: [week('2026-11-16', 'waiting', ['a']), week('2026-11-23', 'waiting', ['b']), week('2026-11-30', 'drawing', ['c'])],
+    posts: [written('a'), written('b'), written('c'), written('d', { notDrawn: { code: 'HEADLINE_TOO_WEAK', message: 'This headline is too weak to draw. Change it or drop it.' } })],
+  });
+  const topics = topicsOf([], [batchV], ['instagram', 'facebook'], { limits: [{ network: 'instagram', left: 3 }, { network: 'facebook', left: 0 }] });
+  const state = (post: string, network: string) => topics.find((t) => t.postId === post)?.networks.find((n) => n.network === network);
+  assert.equal(state('a', 'linkedin')?.pictureState, 'needs_connection', 'LinkedIn is not connected');
+  assert.equal(state('a', 'instagram')?.pictureState, 'waiting');
+  assert.equal(state('a', 'instagram')?.drawsOn, undefined, 'the first week is her button, not a day');
+  assert.equal(state('a', 'facebook')?.pictureState, 'limit_reached', 'no Facebook pictures left this week');
+  assert.deepEqual([state('b', 'instagram')?.pictureState, state('b', 'instagram')?.drawsOn], ['waiting', '2026-11-19'], 'week 2 is drawn on the Thursday before it');
+  assert.equal(state('c', 'instagram')?.pictureState, 'drawing');
+  assert.deepEqual(state('d', 'instagram')?.notDrawn, { code: 'HEADLINE_TOO_WEAK', message: 'This headline is too weak to draw. Change it or drop it.' });
+  assert.equal(state('d', 'instagram')?.pictureState, 'not_drawn');
+  // A picture replaces the state of its channel.
+  const drawn = topicsOf([poster({ postId: 'a', batchId: 'week-05.json', network: 'instagram', status: 'approved' })], [batchV], ['instagram', 'facebook']);
+  const ig = drawn.find((t) => t.postId === 'a')?.networks.find((n) => n.network === 'instagram');
+  assert.deepEqual([ig?.status, ig?.pictureState, ig?.drawsOn], ['approved', 'approved', undefined]);
+  // With no limits read, nothing is called limit_reached.
+  assert.equal(topicsOf([], [batchV], ['instagram', 'facebook']).find((t) => t.postId === 'a')?.networks.find((n) => n.network === 'facebook')?.pictureState, 'waiting');
 });

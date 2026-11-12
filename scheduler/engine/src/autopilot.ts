@@ -55,7 +55,8 @@ import { readConnected } from './connected-networks.ts';
 import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
 import { pageModeBlocked } from './page-mode.ts';
 import { redrawAlike } from './look-alike-check.ts';
-import { classifyNotDrawn } from './not-drawn.ts';
+import { classifyNotDrawn, NOT_DRAWN_REASON } from './not-drawn.ts';
+import { drawableFactIds, DRAW_FACT_MAX_AGE_DAYS, postsWithOutdatedFacts } from './fact-recheck.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
 import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
@@ -401,6 +402,19 @@ async function main(): Promise<void> {
       if (drawWeek !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(drawWeek)) throw new Error('--draw-week must be the Monday of the week, like 2026-11-16');
       const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })), drawWeek);
       for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
+      // The facts are looked at again now: a plan is written at once and drawn weeks later, so a price or an offer can have gone stale, or a fact can have been taken out.
+      let outdatedAny = false;
+      const factsNow = await loadFacts(brandDir, { maxAgeDays: DRAW_FACT_MAX_AGE_DAYS });
+      if (factsNow && !values['redraw-post']) {
+        const outdated = postsWithOutdatedFacts(stored.posts.filter((p) => postIds.includes(p.id)), drawableFactIds(factsNow.facts, await loadReview(brandDir)));
+        if (outdated.length > 0) {
+          outdatedAny = true;
+          for (const id of outdated) console.log(`    ${id}: a fact it is built on is out of date or was taken out, so it is not drawn.`);
+          copy.setNotDrawn(keptFile, Object.fromEntries(outdated.map((id) => [id, { code: 'FACT_OUT_OF_DATE' as const, reason: NOT_DRAWN_REASON.FACT_OUT_OF_DATE }])));
+          postIds.splice(0, postIds.length, ...postIds.filter((id) => !outdated.includes(id)));
+        }
+      }
+      if (postIds.length === 0 && outdatedAny) throw new NothingDrawnError('every kept post rests on a fact that is out of date or was taken out, so nothing was drawn');
       if (postIds.length === 0) throw new Error(`${keptFile} has no kept posts to draw: keep at least one in the dashboard first`);
       if (values['redraw-post']) {
         // One more picture for one post (and one network of it) that already has pictures: only that network's picture is replaced, and every other network of the post keeps the one it has.

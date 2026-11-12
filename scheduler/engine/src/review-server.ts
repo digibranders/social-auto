@@ -41,9 +41,10 @@ import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
-import { neededPictures, runWeeklyDraws } from './weekly-draw.ts';
+import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
+import { pictureRoomFor } from './picture-room.ts';
 import type { NotDrawn } from './not-drawn.ts';
-import { channelPicturesUsed, pictureLimitMessage, PictureLimitError, mondayOf, pictureWeek, weeklyLimitFromEnv, type PictureWeek } from './picture-limit.ts';
+import { channelPicturesUsed, ledgerPathFor, pictureLimitMessage, PictureLimitError, mondayOf, pictureWeek, weeklyLimitFromEnv, type PictureWeek } from './picture-limit.ts';
 import { splitTrailingHashtags } from './caption-text.ts';
 import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
 import { ProductBrands, PRODUCT_ID } from './product-brands.ts';
@@ -186,7 +187,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   const owners = new ProductBrands(root);
   // The weekly picture limit of a product's customer. The engine enforces it when it draws; the service checks it first so a request that cannot be drawn is refused
   // at once, before a job is queued, with the channel and the day the week starts again.
-  const ledgerFile = resolve(options.ledgerFile ?? (process.env['PAID_LEDGER_FILE'] || join(root, '..', 'ledger', 'paid-calls.jsonl')));
+  const ledgerFile = resolve(options.ledgerFile ?? ledgerPathFor(root, process.env));
   const weeklyLimitOf = (brand: string): number | undefined => (owners.has(brand) ? options.weeklyPictureLimit ?? weeklyLimitFromEnv(process.env) : undefined);
   const pictureUsage = (brand: string): { week: PictureWeek; used: Record<Network, number> } => {
     const week = pictureWeek((options.now ?? (() => new Date()))());
@@ -431,12 +432,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const batch = new CopyStage(join(root, netBrand), netBrand).get(netPlan);
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
           if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
-          // On a batch already drawn the new network's picture is drawn for every kept topic: the week must have room for them all.
-          if (batch.drawnAt !== undefined || batch.weekDrawn !== undefined) {
-            const today = new Date((options.now ?? (() => new Date()))().getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
-            const drawnPosts = madeFor(netBrand, netPlan);
-            assertPictureRoom(netBrand, { [network]: batch.posts.filter((p) => p.state === 'kept' && (p.date === undefined || p.date >= today) && [...drawnPosts].some((k) => k.startsWith(`${p.postId}|`))).length });
-          }
+          // Never refused for lack of pictures: the words are written for every topic, the pictures are drawn for the soonest topics that fit in this week's room, and the weekly catch-up draws the rest as room comes.
           const { job, created } = jobs.enqueue({ kind: 'network', brand: netBrand, site: siteOf(netBrand), by: scope.by(body['by']), planFile: netPlan, network });
           return send(res, created ? 202 : 200, { job, created });
         }
@@ -526,6 +522,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         scope.guard(limitBrand, false);
         const limit = weeklyLimitOf(limitBrand);
         if (limit === undefined) throw new ReviewError('NOT_FOUND', 'no such brand');
+        // A ledger that cannot be found while this brand already has pictures means the service is looking in a different place from the engine (PAID_LEDGER_FILE set in one
+        // place and not the other): the count would read 0 and the limit would look untouched. It is refused instead of showing a wrong number.
+        if (!existsSync(ledgerFile) && new ReviewStore(join(root, limitBrand), limitBrand).list().length > 0) {
+          console.error(`the paid-call ledger ${ledgerFile} does not exist, but ${limitBrand} already has pictures: the engine writes it somewhere else (check PAID_LEDGER_FILE in the engine's and the review service's settings)`);
+          throw new ReviewError('LOCKED', 'the pictures used this week cannot be counted: the paid-call ledger was not found where the poster service looks for it');
+        }
         const { week, used } = pictureUsage(limitBrand);
         return send(res, 200, { brand: limitBrand, week: { from: week.from, to: week.to, restart: week.restart }, limit, channels: NETWORKS.map((network) => ({ network, limit, used: used[network], left: Math.max(0, limit - used[network]) })) });
       }
@@ -715,6 +717,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           register: (brand, planFile, site) => { registerManualRelease({ brandDir: join(root, brand), siteBrand: brand, client: brand, site, planFile }); },
           onLapse: (brand, planFile, week) => { recordExpiry(root, (options.now ?? (() => new Date()))(), { brand, kind: 'week', planFile, week }); },
         });
+        // Pictures a drawn topic still lacks for a connected channel (added later, or no room at the time): drawn as this week's room allows.
+        runCatchUpDraws({
+          brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(), made: madeFor,
+          roomFor: (brand, network) => { const limit = weeklyLimitOf(brand); return limit === undefined ? null : pictureRoomFor({ ledgerFile, brand, network, limit, now: (options.now ?? (() => new Date()))() }); },
+          siteOf: (brand) => { try { return siteOf(brand); } catch { return null; } },
+        });
       } catch (error) {
         console.error(`weekly draw failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -749,5 +757,9 @@ if (import.meta.main) {
   const server = createReviewServer({ brandsRoot, secret, products });
   const port = Number(process.env['PORT'] ?? 4012);
   const host = process.env['HOST'] ?? '127.0.0.1';
-  server.listen(port, host, () => console.log(`review service listening on http://${host}:${port}`));
+  server.listen(port, host, () => {
+    console.log(`review service listening on http://${host}:${port}`);
+    const ledger = ledgerPathFor(brandsRoot, process.env);
+    console.log(`the weekly picture count reads the paid-call ledger at ${ledger}${existsSync(ledger) ? '' : ' (not there yet: the engine has not written one, or it writes somewhere else; check PAID_LEDGER_FILE in both settings)'}`);
+  });
 }
