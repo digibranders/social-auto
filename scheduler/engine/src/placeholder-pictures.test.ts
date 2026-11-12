@@ -9,7 +9,7 @@ import { buildCreativePrompt } from './ai-creative.ts';
 import type { Brand, PlannedPost } from './content.ts';
 import { NETWORK_RULES, NETWORKS } from './networks.ts';
 import { defaultBudgetLimits, PaidLedger } from './paid-ledger.ts';
-import { placeholderDeps, placeholderEnabled, placeholderHtml, textsOfPrompt, networkOfPrompt } from './placeholder-pictures.ts';
+import { logoForDraw, placeholderDeps, placeholderEnabled, placeholderHtml, textsOfPrompt, networkOfPrompt } from './placeholder-pictures.ts';
 import type { RunFn } from './chrome-render.ts';
 import { CANVAS_SIZE } from './layout.ts';
 
@@ -91,4 +91,12 @@ test('the weekly limit still stops a channel in placeholder mode', async () => {
   } finally {
     s.done();
   }
+});
+
+test('the real logo is left off a placeholder, and passed on unchanged for a real picture', () => {
+  const logo = { path: '/b/logo.svg', kind: 'wordmark' as const, sha256: 'abc' };
+  assert.equal(logoForDraw({ PICTURE_MODE: 'placeholder', LOCAL_PLACEHOLDER_PICTURES: 'yes' }, logo), undefined, 'a placeholder has no calm corner for it');
+  assert.deepEqual(logoForDraw({}, logo), logo);
+  assert.deepEqual(logoForDraw({ PICTURE_MODE: 'placeholder' }, logo), logo, 'one setting is not placeholder mode');
+  assert.equal(logoForDraw({}, undefined), undefined);
 });
