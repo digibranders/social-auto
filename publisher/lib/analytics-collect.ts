@@ -37,6 +37,11 @@ export interface TeamInstagram {
   token: string;
   /** Which client a post belongs to, since one account serves several. */
   brandOfPost(postId: string): string | undefined;
+  /**
+   * The account's own recent posts, matched to the posts we sent by their words. The sender does not write a published team post into the posted log (it
+   * only checks the account's recent posts before sending), so the log cannot say where a post went; the account itself can.
+   */
+  discover(now: number): Promise<Array<{ postId: string; remoteId: string; permalink: string | null; postedAt: string }>>;
 }
 
 export const TEAM_INSTAGRAM_ID = 'instagram';
@@ -72,7 +77,8 @@ function postIsDue(lastDay: string | undefined, lastReadAt: string | undefined, 
 }
 
 export async function collectAnalytics(input: CollectInput): Promise<{ file: AnalyticsFile; report: CollectReport }> {
-  const { channels, posted, key, googleApp, readers, now, team } = input;
+  const { channels, key, googleApp, readers, now, team } = input;
+  let posted = input.posted;
   const today = dayOf(now);
   const report: CollectReport = { posts: 0, accounts: 0, failures: [] };
   const byId = new Map(channels.map((c) => [c.id, c] as const));
@@ -116,6 +122,19 @@ export async function collectAnalytics(input: CollectInput): Promise<{ file: Ana
       if (/connect google again|withdrawn|expired/i.test(reasonOf(error)) && channel.platform === 'google') {
         file = recordAccount(file, channel.id, { brand: channel.brand, channel: channel.id, platform: channel.platform, label: channelLabel(channel), needs: ['reconnect'], checkedAt: new Date(now).toISOString() }, {}, now);
       }
+    }
+  }
+
+  if (team) {
+    try {
+      const found = await team.discover(now);
+      posted = { ...posted };
+      for (const f of found) {
+        const logKey = `${f.postId}|${TEAM_INSTAGRAM_ID}`;
+        if (posted[logKey] === undefined || !isSent(posted[logKey] as PostedLog[string])) posted[logKey] = { remoteId: f.remoteId, permalink: f.permalink, postedAt: f.postedAt };
+      }
+    } catch (error) {
+      report.failures.push({ id: TEAM_INSTAGRAM_ID, reason: reasonOf(error) });
     }
   }
 
