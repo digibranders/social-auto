@@ -180,3 +180,10 @@ test('a check a few hours later reads again the same day, so a new like shows; o
   assert.equal(again.file.posts['p1|instagram:1']?.series['2026-11-12']?.likes, 5, 'the new reading replaces the old one for the day');
   assert.ok(again.file.postsRead?.['p1|instagram:1']);
 });
+
+test('a run that starts a few seconds after the three-hour mark still reads, so the timer\'s runs are never skipped', async () => {
+  const first = await collectAnalytics({ file: EMPTY_ANALYTICS, channels: [ig], posted: posted(2), key: KEY, googleApp: null, readers: readers([]), now: NOW });
+  const next = await collectAnalytics({ file: first.file, channels: [ig], posted: posted(2), key: KEY, googleApp: null, readers: readers([]), now: NOW + 3 * 3_600_000 - 5_000 });
+  assert.equal(next.report.posts, 1);
+  assert.equal(next.report.accounts, 1);
+});
