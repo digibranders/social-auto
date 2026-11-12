@@ -12,7 +12,7 @@
 import { actorOf, engineActor } from '../../lib/actor.js';
 import { apiError, errorResponse } from '../../lib/api-error.js';
 import { channelsFor } from '../../lib/channels.js';
-import { normalizeWebsite, setWebsite } from '../../lib/clients.js';
+import { normalizePage, normalizeWebsite, setWebsite } from '../../lib/clients.js';
 import { EngineError, type JobView } from '../../lib/engine-client.js';
 import { json } from '../../lib/http.js';
 import { EditError } from '../../lib/overrides.js';
@@ -84,6 +84,17 @@ export async function POST(request: Request): Promise<Response> {
     // The first post goes out on a Monday unless the product says otherwise: the next Monday (India time) after today.
     const startDate = typeof startAsked === 'string' ? startAsked : nextMonday(Date.now());
 
+    // One page of the website: the poster service reads that page only, so it is given the page's address (the customer's saved website stays the host alone).
+    let readFrom = site;
+    if (body['page'] === true) {
+      try {
+        readFrom = normalizePage(body['site']);
+      } catch (error) {
+        if (error instanceof EditError) return apiError(400, 'INVALID_SITE', error.message);
+        throw error;
+      }
+    }
+
     const actor = request.headers.has('x-social-actor') ? actorOf(request) : null;
     const by = engineActor(product.id, actor);
 
@@ -106,7 +117,7 @@ export async function POST(request: Request): Promise<Response> {
       bound = true;
     }
     try {
-      const made = await engine.startSiteJob({ site, networks, page: body['page'] === true, weeks, postsPerWeek, startDate, actor: by });
+      const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks, postsPerWeek, startDate, actor: by });
       return json(made.created ? 202 : 200, { job: made.job, created: made.created });
     } catch (error) {
       // A job that never started must not leave the customer tied to this website.

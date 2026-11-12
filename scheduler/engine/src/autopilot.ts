@@ -53,6 +53,7 @@ import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
 import { readConnected } from './connected-networks.ts';
 import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
+import { pageModeBlocked } from './page-mode.ts';
 import { redrawAlike } from './look-alike-check.ts';
 import { classifyNotDrawn } from './not-drawn.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
@@ -205,7 +206,7 @@ async function main(): Promise<void> {
 
   // One page, not the whole site: only the address given is read. It is for a website that has no saved profile yet; one that has is already read, and its facts are used.
   if (values.page) {
-    if (await fileExists(join(BRANDS_ROOT, values.brand ?? slugFromSite(values.site), 'brand.json'))) throw new PageModeError('this website already has a saved profile, so it is not read again from a single page');
+    if (await pageModeBlocked(join(BRANDS_ROOT, values.brand ?? slugFromSite(values.site)))) throw new PageModeError('this website already has a saved profile with its facts, so it is not read again from a single page');
     process.env['CRAWL_ONLY_THIS_PAGE'] = 'true';
   }
 
