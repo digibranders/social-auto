@@ -42,6 +42,7 @@ test('a copy job stops before any picture is bought, a draw job draws only the k
 test('lines from the engine tell the step, the plan file and the error', () => {
   assert.deepEqual(readLine('2/4 Writing 4 new pain-point posts from 2026-11-10 (week-09.json)…', 'out'), { step: 2, planFile: 'week-09.json' });
   assert.deepEqual(readLine('BUDGET_EXHAUSTED (daily_cap): the day is spent. Nothing more was bought.', 'err').error?.code, 'BUDGET_EXHAUSTED');
+  assert.deepEqual(readLine('BUDGET_EXHAUSTED (BRAND_MONTH_PICTURES): this brand has already bought 38 pictures this month. Nothing more was bought.', 'err').error?.code, 'BUDGET_EXHAUSTED', 'the real refusal codes are in capitals');
   assert.deepEqual(readLine('PUBLISHING_DISABLED: switched off', 'err').error, { code: 'PUBLISHING_DISABLED', message: 'switched off' });
   assert.deepEqual(readLine('    BUDGET_EXHAUSTED: not an error line', 'out'), {});
 });

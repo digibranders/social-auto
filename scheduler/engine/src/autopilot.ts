@@ -295,22 +295,26 @@ async function main(): Promise<void> {
       console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
       const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
       ai.usage.purpose = 'writing';
-      // Networks of the same shape share one picture: a square one for Instagram, Facebook and Google, a wide one for LinkedIn. Each shape is its own run; the editorial
-      // check of the headlines is made once (in the first run), and a post it dropped is not drawn again in another shape.
+      // Every network gets a picture of its own (square for Instagram, Facebook and Google, wide for LinkedIn), each its own run with its own composition and ledger id;
+      // the editorial check of the headlines is made once (in the first run), and a post it dropped is not drawn again for another network.
+      const groups = pictureGroups(finalPlan.posts).filter((g) => onlyNetwork === undefined || g.networks.includes(onlyNetwork));
+      // One picture per post per network: the brand's monthly picture limit is checked for the whole draw before the first one is bought.
+      ai.ledger?.assertPicturesFit(groups.reduce((sum, g) => sum + g.postIds.length, 0));
       const dropped = new Set<string>();
       let first = true;
       let queuedTotal = 0;
       let stoppedReason: string | undefined;
       const usageIds: string[] = [];
-      for (const group of pictureGroups(finalPlan.posts).filter((g) => onlyNetwork === undefined || g.networks.includes(onlyNetwork))) {
+      for (const group of groups) {
         const posts = finalPlan.posts.filter((p) => group.postIds.includes(p.id) && !dropped.has(p.id));
         if (posts.length === 0) continue;
-        const suffix = group.shape.shape === 'square' ? '' : `-${group.shape.shape}`;
+        const network = group.networks[0];
+        const suffix = network ? `-${network}` : '';
         // A new picture for one network goes in a folder of its own, so the files of the pictures already made are never overwritten.
         const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai${suffix}${onlyNetwork ? `-redraw-${Date.now().toString(36)}` : ''}`);
-        if (group.networks.length > 0) console.log(`    Drawing the ${group.shape.shape} picture for ${group.networks.join(', ')}…`);
+        if (network) console.log(`    Drawing the ${group.shape.shape} picture for ${network}…`);
         const made = await makeCreatives({
-          ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape,
+          ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape, ...(network ? { network } : {}),
           ...(first ? {} : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
           // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
           ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),

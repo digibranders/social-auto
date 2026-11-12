@@ -55,23 +55,34 @@ export type PictureShape = NetworkRules['picture'];
 export const SQUARE_SHAPE: PictureShape = { shape: 'square', width: 1024, height: 1024 };
 
 /**
- * The pictures a batch of posts needs: networks of the same shape share one picture, so a post written for Instagram, Facebook and Google needs one square
- * picture and LinkedIn adds one wide one. A post without network captions needs the square one only. Square comes first.
+ * The pictures a batch of posts needs: every network a post is written for gets a picture of its own (a different composition of the same topic), so a post
+ * written for Instagram, Facebook, Google and LinkedIn needs four. The square pictures come first, in network order, and the wide one for LinkedIn last.
+ * A post without network captions needs one square picture, drawn for no network in particular.
  */
 export function pictureGroups(posts: ReadonlyArray<{ id: string; variants?: PostVariants }>): Array<{ shape: PictureShape; networks: Network[]; postIds: string[] }> {
-  const groups = new Map<string, { shape: PictureShape; networks: Set<Network>; postIds: Set<string> }>();
-  const group = (shape: PictureShape) => groups.get(shape.shape) ?? (groups.set(shape.shape, { shape, networks: new Set(), postIds: new Set() }), groups.get(shape.shape) as { shape: PictureShape; networks: Set<Network>; postIds: Set<string> });
+  const plain = new Set<string>();
+  const byNetwork = new Map<Network, Set<string>>();
   for (const post of posts) {
     const own = NETWORKS.filter((n) => post.variants?.[n] !== undefined);
-    if (own.length === 0) group(SQUARE_SHAPE).postIds.add(post.id);
-    for (const network of own) {
-      const g = group(NETWORK_RULES[network].picture);
-      g.networks.add(network);
-      g.postIds.add(post.id);
-    }
+    if (own.length === 0) plain.add(post.id);
+    for (const network of own) byNetwork.set(network, (byNetwork.get(network) ?? new Set<string>()).add(post.id));
   }
-  return [...groups.values()].sort((a, b) => (a.shape.shape === 'square' ? 0 : 1) - (b.shape.shape === 'square' ? 0 : 1)).map((g) => ({ shape: g.shape, networks: [...g.networks], postIds: [...g.postIds] }));
+  const groups: Array<{ shape: PictureShape; networks: Network[]; postIds: string[] }> = [];
+  if (plain.size > 0) groups.push({ shape: SQUARE_SHAPE, networks: [], postIds: [...plain] });
+  const asked = NETWORKS.filter((n) => byNetwork.has(n));
+  for (const network of [...asked.filter((n) => NETWORK_RULES[n].picture.shape === 'square'), ...asked.filter((n) => NETWORK_RULES[n].picture.shape !== 'square')]) {
+    groups.push({ shape: NETWORK_RULES[network].picture, networks: [network], postIds: [...(byNetwork.get(network) as Set<string>)] });
+  }
+  return groups;
 }
+
+/** What each network's picture is asked to look like, so the pictures of one topic differ from each other (the facts, the headline and the look stay the same). */
+export const COMPOSITION_BY_NETWORK: Record<Network, string> = {
+  instagram: 'The strongest, most direct picture of the idea: one clear subject, close and bold, the kind of image that stops a scroll.',
+  facebook: 'A warmer, wider view: the idea shown in its everyday setting, with people or a place around it, and a different camera angle from the Instagram picture.',
+  linkedin: 'A calm, professional view for a business reader: the idea at work in a real setting, composed for a wide frame, with room to breathe.',
+  google: 'A plain, factual view for someone searching nearby: the product or service shown simply and honestly, a different scene from the social pictures.',
+};
 
 /** The length worth aiming for, in words for the writer, e.g. "about 100 to 300 characters". */
 export const recommendedLengthText = (network: Network): string => `about ${NETWORK_RULES[network].recommended.min} to ${NETWORK_RULES[network].recommended.max} characters`;

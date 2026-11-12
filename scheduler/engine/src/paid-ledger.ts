@@ -32,9 +32,14 @@ export interface BudgetLimits {
   globalDayUsd: number;
   /** Picture purchases (attempts, including failed ones) per poster. There is no automatic regeneration. */
   maxImagesPerPoster: number;
+  /** Pictures one brand may buy in a UTC calendar month: pictures bought (an attempt the provider failed is not counted), never topics. Never above MAX_PICTURES_PER_BRAND_MONTH_CEILING. */
+  maxPicturesPerBrandMonth: number;
   /** What a picture may cost, counted when it is reserved. */
   imageReserveUsd: number;
 }
+
+/** The most pictures a brand may ever buy in a month, whatever a setting says: the settings can lower the limit but cannot raise it past this. */
+export const MAX_PICTURES_PER_BRAND_MONTH_CEILING = 200;
 
 /** Starting caps for the owner-operated V1 (provisional: to be checked against real bills). Calls made for one poster count towards its cap; site-wide calls count only towards the run, brand-day and deployment caps. */
 export const defaultBudgetLimits: BudgetLimits = {
@@ -47,11 +52,13 @@ export const defaultBudgetLimits: BudgetLimits = {
   globalDayUsd: 2.0,
   // One picture, and one more only when the first was rejected for a defect a new instruction can fix (see ai-creative-pipeline.ts).
   maxImagesPerPoster: 2,
+  // Each network of a topic gets its own picture, so this counts pictures (the owner's limit for a customer is 40 a month).
+  maxPicturesPerBrandMonth: 40,
   // An upper bound near the published price of a medium picture, not the usual bill (about $0.03): the reservation must never be lower than what the call may cost.
   imageReserveUsd: 0.05,
 };
 
-export type BudgetRefusal = 'POSTER_BUDGET' | 'RUN_BUDGET' | 'BRAND_DAY_BUDGET' | 'BRAND_MONTH_BUDGET' | 'GLOBAL_DAY_BUDGET' | 'IMAGE_LIMIT' | 'REPLAY_BLOCKED' | 'KILL_SWITCH';
+export type BudgetRefusal = 'POSTER_BUDGET' | 'RUN_BUDGET' | 'BRAND_DAY_BUDGET' | 'BRAND_MONTH_BUDGET' | 'BRAND_MONTH_PICTURES' | 'GLOBAL_DAY_BUDGET' | 'IMAGE_LIMIT' | 'REPLAY_BLOCKED' | 'KILL_SWITCH';
 
 export class BudgetError extends Error {
   readonly code: BudgetRefusal;
@@ -215,13 +222,23 @@ export class PaidLedger {
     });
   }
 
+  /**
+   * Refuses, before anything is bought, a draw that needs more pictures than the brand has left this month, so a batch is never half drawn because the
+   * limit ran out part-way. `needed` is the least number of pictures the draw buys (one per picture asked for; a retry may use more).
+   */
+  assertPicturesFit(needed: number): void {
+    const limit = Math.min(this.limits.maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING);
+    const used = this.spend().brandMonthPictures;
+    if (used + needed > limit) throw new BudgetError('BRAND_MONTH_PICTURES', `this draw needs ${needed} picture${needed === 1 ? '' : 's'} and this brand has bought ${used} of its ${limit} for this month`);
+  }
+
   /** The calls so far, as the log folds them. */
   calls(): PaidCall[] {
     return [...this.load().values()];
   }
 
   /** What each cap has used and may still give, as of now. */
-  spend(postId?: string): { poster: number; run: number; brandDay: number; brandMonth: number; globalDay: number } {
+  spend(postId?: string): { poster: number; run: number; brandDay: number; brandMonth: number; brandMonthPictures: number; globalDay: number } {
     const today = dayOf(this.now().toISOString());
     return summarize(this.load(), this.context, today, postId);
   }
@@ -242,6 +259,7 @@ export class PaidLedger {
         const attempts = [...calls.values()].filter((c) => c.jobId === context.jobId && c.operation === 'image' && c.postId === request.postId).length;
         if (attempts >= limits.maxImagesPerPoster) throw new BudgetError('IMAGE_LIMIT', `this poster has already used its ${limits.maxImagesPerPoster} picture purchase${limits.maxImagesPerPoster === 1 ? '' : 's'}; pictures are never regenerated automatically`);
       }
+      if (request.operation === 'image' && used.brandMonthPictures + 1 > Math.min(limits.maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING)) throw new BudgetError('BRAND_MONTH_PICTURES', `this brand has already bought ${used.brandMonthPictures} pictures this month, as many as its limit of ${Math.min(limits.maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING)} allows`);
       if (request.postId !== undefined && used.poster + cost > limits.perPosterUsd + 1e-9) throw new BudgetError('POSTER_BUDGET', `this poster would spend $${(used.poster + cost).toFixed(4)}, over its $${limits.perPosterUsd.toFixed(3)} limit`);
       if (used.run + cost > limits.perRunUsd + 1e-9) throw new BudgetError('RUN_BUDGET', `this run would spend $${(used.run + cost).toFixed(4)}, over its $${limits.perRunUsd.toFixed(3)} limit`);
       if (used.brandDay + cost > limits.perBrandDayUsd + 1e-9) throw new BudgetError('BRAND_DAY_BUDGET', `this brand would spend $${(used.brandDay + cost).toFixed(4)} today, over its $${limits.perBrandDayUsd.toFixed(2)} daily limit`);
@@ -295,11 +313,12 @@ export class PaidLedger {
   }
 }
 
-function summarize(calls: Map<string, PaidCall>, context: LedgerContext, today: string, postId?: string): { poster: number; run: number; brandDay: number; brandMonth: number; globalDay: number } {
+function summarize(calls: Map<string, PaidCall>, context: LedgerContext, today: string, postId?: string): { poster: number; run: number; brandDay: number; brandMonth: number; brandMonthPictures: number; globalDay: number } {
   let poster = 0;
   let run = 0;
   let brandDay = 0;
   let brandMonth = 0;
+  let brandMonthPictures = 0;
   let globalDay = 0;
   for (const call of calls.values()) {
     const charge = chargeOf(call);
@@ -311,9 +330,20 @@ function summarize(calls: Map<string, PaidCall>, context: LedgerContext, today: 
       globalDay += charge;
       if (call.brandId === context.brandId) brandDay += charge;
     }
-    if (call.brandId === context.brandId && call.createdAt.slice(0, 7) === today.slice(0, 7)) brandMonth += charge;
+    if (call.brandId === context.brandId && call.createdAt.slice(0, 7) === today.slice(0, 7)) {
+      brandMonth += charge;
+      if (call.operation === 'image' && call.status !== 'failed') brandMonthPictures += 1;
+    }
   }
-  return { poster: roundUsd(poster), run: roundUsd(run), brandDay: roundUsd(brandDay), brandMonth: roundUsd(brandMonth), globalDay: roundUsd(globalDay) };
+  return { poster: roundUsd(poster), run: roundUsd(run), brandDay: roundUsd(brandDay), brandMonth: roundUsd(brandMonth), brandMonthPictures, globalDay: roundUsd(globalDay) };
+}
+
+function readPictureLimit(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return defaultBudgetLimits.maxPicturesPerBrandMonth;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) throw new BudgetError('KILL_SWITCH', 'BUDGET_BRAND_MONTH_PICTURES must be a whole number of at least 1');
+  if (value > MAX_PICTURES_PER_BRAND_MONTH_CEILING) throw new BudgetError('KILL_SWITCH', `BUDGET_BRAND_MONTH_PICTURES cannot be more than ${MAX_PICTURES_PER_BRAND_MONTH_CEILING}`);
+  return value;
 }
 
 /** Limits from settings (BUDGET_* variables), each falling back to the defaults. A value that is not a positive number is an error, never ignored. */
@@ -333,6 +363,7 @@ export function budgetLimitsFromEnv(env: Record<string, string | undefined>): Bu
     perBrandMonthUsd: read('BUDGET_BRAND_MONTH_USD', defaultBudgetLimits.perBrandMonthUsd),
     globalDayUsd: read('BUDGET_GLOBAL_DAY_USD', defaultBudgetLimits.globalDayUsd),
     maxImagesPerPoster: Math.floor(read('BUDGET_IMAGES_PER_POSTER', defaultBudgetLimits.maxImagesPerPoster)),
+    maxPicturesPerBrandMonth: readPictureLimit(env['BUDGET_BRAND_MONTH_PICTURES']),
     imageReserveUsd: read('BUDGET_IMAGE_RESERVE_USD', defaultBudgetLimits.imageReserveUsd),
   };
 }

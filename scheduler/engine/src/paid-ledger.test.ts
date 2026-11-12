@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BudgetError, budgetLimitsFromEnv, defaultBudgetLimits, PaidLedger, type BudgetLimits, type BudgetRefusal } from './paid-ledger.ts';
+import { BudgetError, budgetLimitsFromEnv, defaultBudgetLimits, MAX_PICTURES_PER_BRAND_MONTH_CEILING, PaidLedger, type BudgetLimits, type BudgetRefusal } from './paid-ledger.ts';
 
 const DAY = new Date('2026-11-05T10:00:00Z');
 
@@ -192,4 +192,57 @@ test('limits come from settings, and a value that is not a positive number is an
   assert.equal(budgetLimitsFromEnv({ BUDGET_RUN_USD: '0.5' }).perRunUsd, 0.5);
   assert.throws(() => budgetLimitsFromEnv({ BUDGET_RUN_USD: 'lots' }), /BUDGET_RUN_USD/);
   assert.throws(() => budgetLimitsFromEnv({ BUDGET_POSTER_USD: '0' }), /BUDGET_POSTER_USD/);
+});
+
+test('a brand may buy 40 pictures a month: pictures are counted, not topics or dollars, across jobs and days, per brand and per UTC month', () => {
+  const { file, done } = workspace();
+  try {
+    assert.equal(defaultBudgetLimits.maxPicturesPerBrandMonth, 40);
+    const limits = { maxPicturesPerBrandMonth: 3, maxImagesPerPoster: 2, perBrandMonthUsd: 50, perBrandDayUsd: 50, globalDayUsd: 50, perRunUsd: 50, perPosterUsd: 50 };
+    const buy = (ledger: PaidLedger, key: string, postId: string) => ledger.complete(ledger.reserve({ operation: 'image', model: 'img', postId, requestKey: key, maxCostUsd: 0.02 }), { actualCostUsd: 0.02 });
+    const first = open(file, limits, { jobId: 'job-1', now: new Date('2026-11-03T09:00:00Z') });
+    buy(first, 'a', 'p1-instagram');
+    buy(first, 'b', 'p1-facebook');
+    // A text call is not a picture.
+    first.complete(first.reserve({ operation: 'text', model: 'm', requestKey: 't', maxCostUsd: 0.01 }), { actualCostUsd: 0.01 });
+    const later = open(file, limits, { jobId: 'job-2', now: new Date('2026-11-20T09:00:00Z') });
+    assert.equal(later.spend().brandMonthPictures, 2);
+    buy(later, 'c', 'p1-google');
+    assert.equal(refusal(() => buy(later, 'd', 'p1-linkedin')), 'BRAND_MONTH_PICTURES');
+    // A picture that failed was not bought, so it does not count.
+    const failing = open(file, limits, { jobId: 'job-3', brandId: 'other', now: new Date('2026-11-20T09:00:00Z') });
+    const lost = failing.reserve({ operation: 'image', model: 'img', postId: 'q1', requestKey: 'x', maxCostUsd: 0.02 });
+    failing.fail(lost, 'the provider refused');
+    assert.equal(failing.spend().brandMonthPictures, 0);
+    // Another brand has its own month, and the next month starts empty.
+    buy(failing, 'y', 'q1');
+    const december = open(file, limits, { jobId: 'job-4', now: new Date('2026-12-01T00:00:01Z') });
+    assert.equal(december.spend().brandMonthPictures, 0);
+    buy(december, 'e', 'p2');
+  } finally {
+    done();
+  }
+});
+
+test('a draw that needs more pictures than are left this month is refused whole, before any is bought', () => {
+  const { file, done } = workspace();
+  try {
+    const ledger = open(file, { maxPicturesPerBrandMonth: 5, perBrandMonthUsd: 50, perBrandDayUsd: 50, globalDayUsd: 50, perRunUsd: 50, perPosterUsd: 50 });
+    ledger.assertPicturesFit(5);
+    ledger.complete(ledger.reserve({ operation: 'image', model: 'img', postId: 'p1', requestKey: 'a', maxCostUsd: 0.02 }), { actualCostUsd: 0.02 });
+    ledger.assertPicturesFit(4);
+    assert.equal(refusal(() => ledger.assertPicturesFit(5)), 'BRAND_MONTH_PICTURES');
+    assert.equal(ledger.calls().length, 1, 'the check buys and records nothing');
+  } finally {
+    done();
+  }
+});
+
+test('the picture limit can be set from the environment but never above the ceiling in code, and a bad value is an error', () => {
+  assert.equal(budgetLimitsFromEnv({}).maxPicturesPerBrandMonth, 40);
+  assert.equal(budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: '25' }).maxPicturesPerBrandMonth, 25);
+  assert.equal(budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: String(MAX_PICTURES_PER_BRAND_MONTH_CEILING) }).maxPicturesPerBrandMonth, MAX_PICTURES_PER_BRAND_MONTH_CEILING);
+  assert.throws(() => budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: String(MAX_PICTURES_PER_BRAND_MONTH_CEILING + 1) }), BudgetError);
+  assert.throws(() => budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: '0' }), BudgetError);
+  assert.throws(() => budgetLimitsFromEnv({ BUDGET_BRAND_MONTH_PICTURES: '2.5' }), BudgetError);
 });

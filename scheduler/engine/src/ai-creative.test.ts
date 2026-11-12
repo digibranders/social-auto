@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { aiConfigFromEnv } from './ai.ts';
+import { NETWORK_RULES } from './networks.ts';
 import { buildCreativePrompt, displayDomain, judgeCreative, plainHeadline, retryNoteFor, reviewCreative, type CreativeReview, type TextManifest } from './ai-creative.ts';
 import { defaultHeadlineGate } from './headline-gate.ts';
 import { makeCreatives, manifestOf } from './ai-creative-pipeline.ts';
@@ -647,6 +648,61 @@ test('a wide run asks the picture model for the wide size and the prompt for a w
     assert.match(seen[0]?.prompt ?? '', /square \(1:1\)/);
     assert.match(seen[1]?.prompt ?? '', /wide landscape \(3:2/);
     assert.doesNotMatch(seen[1]?.prompt ?? '', /square \(1:1\)/);
+  } finally {
+    ctx.done();
+  }
+});
+
+test('each network a post is drawn for gets its own composition, told apart in the prompt, and its own ledger id; the facts and the text contract stay the same', async () => {
+  const ctx = setup();
+  try {
+    const seen: string[] = [];
+    const ids: string[] = [];
+    const draw = async (network: 'instagram' | 'facebook' | 'linkedin' | 'google') => {
+      const shape = NETWORK_RULES[network].picture;
+      await makeCreatives({
+        ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, `out-${network}`), shape, network, factOf: () => 'OyeChats answers from your own documents.',
+        posts: [post('p1', 'Answers from your own docs')],
+        deps: {
+          headlineGate: { enabled: false, config: defaultHeadlineGate },
+          scene: async (prompt, out) => { seen.push(prompt); ids.push(ctx.ai.usage.post ?? ''); writeFileSync(out, 'x'); },
+          review: async () => review(['Answers from your own docs', 'oyechats.com']),
+        },
+      });
+    };
+    for (const network of ['instagram', 'facebook', 'google', 'linkedin'] as const) await draw(network);
+    assert.equal(new Set(seen).size, 4, 'four different prompts');
+    const compositions = seen.map((p) => /COMPOSITION FOR THIS VERSION\. ([^\n]+)/.exec(p)?.[1]);
+    assert.equal(compositions.every((c) => typeof c === 'string' && c.length > 20), true);
+    assert.equal(new Set(compositions).size, 4, 'each network is told a different composition');
+    for (const prompt of seen) {
+      assert.match(prompt, /HEADLINE: "Answers from your own docs"/);
+      assert.match(prompt, /OyeChats answers from your own documents\./);
+      assert.match(prompt, /different network/);
+    }
+    assert.deepEqual(ids, ['oyechats-p1-instagram', 'oyechats-p1-facebook', 'oyechats-p1-google', 'oyechats-p1-linkedin']);
+    assert.match(seen[3] ?? '', /wide landscape \(3:2/);
+  } finally {
+    ctx.done();
+  }
+});
+
+test('a poster drawn with no network is as before: no version line and the old ledger id', async () => {
+  const ctx = setup();
+  try {
+    const seen: string[] = [];
+    const ids: string[] = [];
+    await makeCreatives({
+      ai: ctx.ai, brand, brandSlug: 'oyechats', outDir: join(ctx.dir, 'plain'), factOf: () => 'OyeChats answers from your own documents.',
+      posts: [post('p1', 'Answers from your own docs')],
+      deps: {
+        headlineGate: { enabled: false, config: defaultHeadlineGate },
+        scene: async (prompt, out) => { seen.push(prompt); ids.push(ctx.ai.usage.post ?? ''); writeFileSync(out, 'x'); },
+        review: async () => review(['Answers from your own docs', 'oyechats.com']),
+      },
+    });
+    assert.doesNotMatch(seen[0] ?? '', /COMPOSITION FOR THIS VERSION/);
+    assert.deepEqual(ids, ['oyechats-p1']);
   } finally {
     ctx.done();
   }
