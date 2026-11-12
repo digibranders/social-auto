@@ -114,6 +114,8 @@ export interface CreativeRunInput {
   directorEnabled?: boolean;
   /** The shape every poster of this run is drawn in; square when not given. A run is of one shape: a post that needs two shapes is drawn by two runs. */
   shape?: PictureShape;
+  /** An instruction for the first try, for a picture drawn again because it looked like another network's (it is told what to avoid). */
+  startNote?: string;
   /** The network every poster of this run is drawn for, when each network gets its own picture: it gets a composition of its own and its own ledger id. */
   network?: Network;
   /** The brand's real logo, when the posters are to carry it: the file (checked and frozen), its shape and the hash it must still have. */
@@ -272,7 +274,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     // The ledger counts a poster's calls under the same id.
     const ledgerId = ai.usage.post;
     ai.usage.network = input.network ?? null;
-    let note: string | undefined;
+    let note: string | undefined = input.startNote;
     try {
       for (let n = 1; n <= maxAttempts; n++) {
         const imageFile = join(outDir, `${post.id}.attempt${n}.jpg`);
