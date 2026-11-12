@@ -33,6 +33,7 @@ export const ERROR_CODES = [
   'INVALID_REASON',
   'DRAW_LIMIT_REACHED',
   'REDRAW_LIMIT_REACHED',
+  'PICTURE_LIMIT_REACHED',
   'NETWORK_ALREADY_THERE',
   'BRAND_LIMIT_REACHED',
   'GROUP_MISMATCH',
@@ -107,13 +108,13 @@ export function codeForStatus(status: number): ErrorCode {
 }
 
 /** An error answer: a plain sentence and its code. */
-export const apiError = (status: number, code: ErrorCode, message: string): Response => json(status, { error: message, code });
+export const apiError = (status: number, code: ErrorCode, message: string, extra: Record<string, string> = {}): Response => json(status, { error: message, code, ...extra });
 
 /** The answer for something thrown while serving a call: a known error as it is, anything else as INTERNAL with a generic sentence. */
 export function errorResponse(error: unknown, what: string): Response {
   if (error instanceof EditError) return apiError(error.status, error.code ?? codeForStatus(error.status), error.message);
   if (error instanceof ActorError) return apiError(error.status, error.code, error.message);
-  if (error instanceof EngineError) return apiError(error.status, error.code, error.message);
+  if (error instanceof EngineError) return apiError(error.status, error.code, error.message, error.pictureLimit ? { channel: error.pictureLimit.channel, restart: error.pictureLimit.restart } : {});
   console.error(describeError(error));
   return apiError(500, 'INTERNAL', `could not ${what}`);
 }

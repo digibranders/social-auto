@@ -44,6 +44,7 @@ test('lines from the engine tell the step, the plan file and the error', () => {
   assert.deepEqual(readLine('BUDGET_EXHAUSTED (daily_cap): the day is spent. Nothing more was bought.', 'err').error?.code, 'BUDGET_EXHAUSTED');
   assert.deepEqual(readLine('BUDGET_EXHAUSTED (BRAND_MONTH_PICTURES): this brand has already bought 38 pictures this month. Nothing more was bought.', 'err').error?.code, 'BUDGET_EXHAUSTED', 'the real refusal codes are in capitals');
   assert.deepEqual(readLine('PUBLISHING_DISABLED: switched off', 'err').error, { code: 'PUBLISHING_DISABLED', message: 'switched off' });
+  assert.deepEqual(readLine('PICTURE_LIMIT_REACHED (instagram): You have used your 5 Instagram pictures for this week. You can draw more from Monday 16 November. Nothing was bought.', 'err').error, { code: 'PICTURE_LIMIT_REACHED', message: 'You have used your 5 Instagram pictures for this week. You can draw more from Monday 16 November. Nothing was bought.' });
   assert.deepEqual(readLine('    BUDGET_EXHAUSTED: not an error line', 'out'), {});
 });
 

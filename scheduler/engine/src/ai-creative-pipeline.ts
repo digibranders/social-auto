@@ -271,6 +271,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     ai.usage.post = `${input.brandSlug}-${post.id}${input.network ? `-${input.network}` : shape.shape === 'square' ? '' : `-${shape.shape}`}`;
     // The ledger counts a poster's calls under the same id.
     const ledgerId = ai.usage.post;
+    ai.usage.network = input.network ?? null;
     let note: string | undefined;
     try {
       for (let n = 1; n <= maxAttempts; n++) {
@@ -421,5 +422,6 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     await saveConceptHistory(input.brandDir, past, report.results.flatMap((r) => (r.concept ? [{ at: report.generatedAt, postId: `${input.brandSlug}-${r.postId}`, concept: r.concept.concept, typography: r.concept.typography, people: r.concept.people, accepted: r.status === 'accepted' }] : [])));
   }
   await writeFile(join(outDir, 'creative-report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  ai.usage.network = null;
   return report;
 }

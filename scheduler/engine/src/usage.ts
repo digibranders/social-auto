@@ -6,6 +6,7 @@
 import { appendFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { ImageQuality } from './ai.ts';
+import type { Network } from './networks.ts';
 
 /** Dollars per million tokens. Image models: text prompt in, picture out. */
 export const RATES: Readonly<Record<string, { in: number; out: number }>> = {
@@ -94,6 +95,8 @@ export class UsageTally {
   purpose: Purpose = 'writing';
   /** The post the next calls are for, if any. */
   post: string | null = null;
+  /** The channel the next picture is drawn for, if it is drawn for one (the weekly picture limit counts by it). */
+  network: Network | null = null;
 
   /** The calls so far as log records. Writing that was not made for one post is shared evenly across `postIds`. */
   records(client: string, postIds: readonly string[], when: Date = new Date()): UsageRecord[] {

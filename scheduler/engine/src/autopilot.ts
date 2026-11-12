@@ -49,6 +49,8 @@ import { parseWeekdays } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
 import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
+import { ProductBrands } from './product-brands.ts';
+import { weeklyLimitFromEnv } from './picture-limit.ts';
 import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
 import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines } from './headline-gate.ts';
@@ -218,6 +220,8 @@ async function main(): Promise<void> {
     if (!Number.isFinite(monthCap) || monthCap <= 0) throw new Error('--month-cap-usd must be a positive number of dollars');
     budgetLimits.perBrandMonthUsd = monthCap;
   }
+  // A product's customers also have a limit of pictures per channel per week; our own clients keep the dollar caps only.
+  if (new ProductBrands(BRANDS_ROOT).has(slug)) budgetLimits.maxPicturesPerChannelWeek = weeklyLimitFromEnv(process.env);
   ai.ledger = new PaidLedger(resolve(process.env['PAID_LEDGER_FILE'] || join(BRANDS_ROOT, '..', 'ledger', 'paid-calls.jsonl')), budgetLimits, { jobId: `${slug}-${Date.now()}`, tenantId: 'owner', brandId: slug });
   let brandDir = join(BRANDS_ROOT, slug);
   // Another network for a batch already written (and perhaps drawn): the same topics, text only, no website read and no picture bought here.
@@ -300,6 +304,8 @@ async function main(): Promise<void> {
       const groups = pictureGroups(finalPlan.posts).filter((g) => onlyNetwork === undefined || g.networks.includes(onlyNetwork));
       // One picture per post per network: the brand's monthly picture limit is checked for the whole draw before the first one is bought.
       ai.ledger?.assertPicturesFit(groups.reduce((sum, g) => sum + g.postIds.length, 0));
+      // The same draw, channel by channel, against the week's limit for a product's customer: refused whole, naming the channel that has no room.
+      ai.ledger?.assertChannelPicturesFit(Object.fromEntries(groups.flatMap((g) => (g.networks[0] ? [[g.networks[0], g.postIds.length]] : []))));
       const dropped = new Set<string>();
       let first = true;
       let queuedTotal = 0;
@@ -544,6 +550,7 @@ async function main(): Promise<void> {
 if (import.meta.main) {
   main().catch((error: unknown) => {
     if (error instanceof PublishingDisabledError) console.error(`PUBLISHING_DISABLED: ${error.message}`);
+    else if (error instanceof BudgetError && error.code === 'PICTURE_LIMIT_REACHED') console.error(`PICTURE_LIMIT_REACHED (${error.channel?.network ?? 'channel'}): ${error.message} Nothing was bought.`);
     else if (error instanceof BudgetError) console.error(`BUDGET_EXHAUSTED (${error.code}): ${error.message}. Nothing more was bought; what was already made is kept.`);
     else if (error instanceof PartialDrawError) console.error(`PARTIAL_DRAW: ${error.message}`);
     else if (error instanceof NothingDrawnError) console.error(`NOTHING_DRAWN: ${error.message}`);

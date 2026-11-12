@@ -142,7 +142,7 @@ async function openaiImage(ai: AiConfig, request: SceneRequest, budget: ImageBud
   const wanted = openaiSizeFor(request.width, request.height);
   // Reserved before anything is sent: a refusal (over a cap, a second picture for the poster, the same request already made) stops here.
   const ledger = ai.ledger;
-  const callId = ledger?.reserve({ operation: 'image', model: ai.imageModel, ...(ai.usage.post !== null ? { postId: ai.usage.post } : {}), requestKey: `${request.prompt}|${request.width}x${request.height}|${ai.imageQuality}`, maxCostUsd: ledger.limits.imageReserveUsd });
+  const callId = ledger?.reserve({ operation: 'image', model: ai.imageModel, ...(ai.usage.post !== null ? { postId: ai.usage.post } : {}), ...(ai.usage.network !== null ? { network: ai.usage.network } : {}), requestKey: `${request.prompt}|${request.width}x${request.height}|${ai.imageQuality}`, maxCostUsd: ledger.limits.imageReserveUsd });
   if (ledger && callId) ledger.markInFlight(callId);
   let response: Response;
   try {
