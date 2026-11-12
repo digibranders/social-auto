@@ -4,13 +4,15 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { NETWORKS } from './networks.ts';
-import { headlineStylesEnabled, leanFor, loadTypeHistory, saveTypeHistory, TRAITS, typeDirectionLine, type LeanRecord } from './type-direction.ts';
+import { COLOUR_USE, headlineStylesEnabled, leanFor, loadTypeHistory, saveTypeHistory, TRAITS, typeDirectionLine, type LeanRecord } from './type-direction.ts';
 
 test('the four networks of any post are nudged towards four different weights and four different characters', () => {
   for (let i = 1; i <= 80; i += 1) {
     const leans = NETWORKS.map((n) => leanFor(`w01-d${i}`, n));
     assert.equal(new Set(leans.map((l) => l.weight)).size, 4, `post ${i} weights`);
     assert.equal(new Set(leans.map((l) => l.character)).size, 4, `post ${i} characters`);
+    assert.equal(new Set(leans.map((l) => l.attitude)).size, 4, `post ${i} attitudes`);
+    assert.equal(new Set(leans.map((l) => l.colour)).size, 4, `post ${i} colour uses`);
   }
 });
 
@@ -37,19 +39,20 @@ test('a lean steers clear of the brand\'s recent ones, the same way every time, 
   const avoided = leanFor('w01-d1', 'instagram', [first]);
   assert.notDeepEqual(avoided, first);
   assert.deepEqual(avoided, leanFor('w01-d1', 'instagram', [first]));
-  const everyPair = TRAITS.weight.flatMap((weight) => TRAITS.character.map((character) => ({ weight, character })));
+  const everyPair = TRAITS.weight.flatMap((weight) => TRAITS.character.map((character) => ({ weight, character, attitude: 'warm', colour: COLOUR_USE[0] })));
   assert.ok(leanFor('w01-d1', 'instagram', everyPair), 'a brand that has used every pair is still given one');
 });
 
 test('the prompt asks for an original voice, gives traits as inspiration and the lean as a nudge, names no layout, and limits script to an accent', () => {
-  const line = typeDirectionLine({ network: 'linkedin', lean: { weight: 'heavy', character: 'humanist' } });
+  const line = typeDirectionLine({ network: 'linkedin', lean: { weight: 'heavy', character: 'humanist', attitude: 'warm', colour: COLOUR_USE[2] } });
   assert.match(line, /Invent an original typographic voice/);
   assert.match(line, /for inspiration only, to use, combine or go beyond/);
-  assert.match(line, /leans towards heavy weight and a humanist character, but only where that serves this headline/);
+  assert.match(line, /must be clearly its own: lean strongly towards a heavy weight, a humanist character and a warm attitude, with the whole headline in the brand's accent colour, unless the words truly call for something else/);
+  assert.match(line, /see at a glance that their lettering is not the same/);
   assert.match(line, /choose the composition, scale, line breaks, alignment and placement yourself/);
   assert.match(line, /only for one short accent word, never for the whole headline/);
   assert.match(line, /credible and considered/);
-  for (const values of Object.values(TRAITS)) for (const v of values) assert.doesNotMatch(v, /\b(left|right|centre|center|top|bottom|corner|lines?|align)/i, v);
+  for (const values of [...Object.values(TRAITS), COLOUR_USE]) for (const v of values) assert.doesNotMatch(v, /\b(left|right|centre|center|top|bottom|corner|lines?|align)/i, v);
   // The traits are ingredients, not a fixed menu to pick one from: nothing says "choose one of".
   assert.doesNotMatch(line, /choose (one|a) (of|style)|pick one/i);
 });
@@ -64,7 +67,7 @@ test('a brand\'s memory keeps the newest 20 leans, survives a missing or damaged
   const dir = mkdtempSync(join(tmpdir(), 'type-history-'));
   try {
     assert.deepEqual(await loadTypeHistory(dir), []);
-    const rec = (n: number): LeanRecord => ({ weight: 'bold', character: 'geometric', at: `2026-11-12T10:00:${String(n).padStart(2, '0')}Z`, postId: `p${n}`, network: 'instagram' });
+    const rec = (n: number): LeanRecord => ({ weight: 'bold', character: 'geometric', attitude: 'warm', colour: COLOUR_USE[0], at: `2026-11-12T10:00:${String(n).padStart(2, '0')}Z`, postId: `p${n}`, network: 'instagram' });
     await saveTypeHistory(dir, [], []);
     assert.deepEqual(await loadTypeHistory(dir), [], 'nothing written for nothing');
     await saveTypeHistory(dir, [], Array.from({ length: 15 }, (_, i) => rec(i)));

@@ -21,12 +21,24 @@ export const TRAITS = {
   width: ['compressed', 'natural', 'expanded'],
   rhythm: ['disciplined', 'energetic', 'playful', 'restrained'],
   treatment: ['clean', 'tactile', 'inked', 'dimensional'],
+  attitude: ['urgent', 'understated', 'authoritative', 'playful', 'warm', 'confident', 'elegant', 'raw'],
 } as const;
+
+/** How the lettering uses the brand's own colours: what a picture is nudged towards so the pictures of one topic do not all share one colour scheme. */
+export const COLOUR_USE = [
+  'dark lettering in the brand\'s ink colour on a light area',
+  'light lettering on a dark area of the picture',
+  'the whole headline in the brand\'s accent colour',
+  'mostly the brand\'s ink colour with one key word in the accent colour',
+] as const;
 
 /** The two traits a picture is gently nudged towards. The model may go elsewhere. */
 export interface TypeLean {
   weight: string;
   character: string;
+  attitude: string;
+  /** How the brand's colours are used on the lettering (one of COLOUR_USE). */
+  colour: string;
 }
 
 const same = (a: TypeLean, b: TypeLean): boolean => a.weight === b.weight && a.character === b.character;
@@ -58,12 +70,15 @@ export function leanFor(postId: string, network: Network, recent: readonly TypeL
   const at = NETWORKS.indexOf(network);
   const weights = shuffled(TRAITS.weight, spread(`${postId}|weight`));
   const characters = shuffled(TRAITS.character, spread(`${postId}|character`));
+  // The attitude and the colour use are also different for every network of the post (eight attitudes and four colour uses, shuffled by the post).
+  const attitude = shuffled(TRAITS.attitude, spread(`${postId}|attitude`))[at] as string;
+  const colour = shuffled(COLOUR_USE, spread(`${postId}|colour`))[at] as string;
   // Candidates in the post's own order: this network's pair first, then the pairs the other positions would give.
   for (let step = 0; step < weights.length; step += 1) {
-    const lean = { weight: weights[(at + step * NETWORKS.length) % weights.length] as string, character: characters[(at + step) % characters.length] as string };
+    const lean = { weight: weights[(at + step * NETWORKS.length) % weights.length] as string, character: characters[(at + step) % characters.length] as string, attitude, colour };
     if (!recent.some((r) => same(r, lean))) return lean;
   }
-  return { weight: weights[at % weights.length] as string, character: characters[at % characters.length] as string };
+  return { weight: weights[at % weights.length] as string, character: characters[at % characters.length] as string, attitude, colour };
 }
 
 /** Headline typography is on unless HEADLINE_STYLES_ENABLED is exactly "false". */
@@ -82,7 +97,7 @@ export function typeDirectionLine(input: { network: Network; lean: TypeLean }): 
   return [
     'TYPOGRAPHIC VOICE. Invent an original typographic voice for this headline from its meaning, the mood of the topic and the brand\'s look. Decide what attitude the words should carry and let the lettering express it.',
     `Traits for inspiration only, to use, combine or go beyond (${ingredients}).`,
-    `This version leans towards ${input.lean.weight} weight and a ${input.lean.character} character, but only where that serves this headline; follow the words rather than the lean when they ask for something else. The other pictures of this topic lean elsewhere, so make this one clearly its own. ${NETWORK_CONTEXT[input.network]}`,
+    `This version must be clearly its own: lean strongly towards a ${input.lean.weight} weight, a ${input.lean.character} character and a ${input.lean.attitude} attitude, with ${input.lean.colour}, unless the words truly call for something else. The other pictures of this topic lean elsewhere, and someone looking at all of them should see at a glance that their lettering is not the same. ${NETWORK_CONTEXT[input.network]}`,
     'You choose the composition, scale, line breaks, alignment and placement yourself, and do not copy a stock poster arrangement. Every letter must be exactly as given and easy to read at phone size; clear letters matter more than the effect. A script or handwritten style may be used only for one short accent word, never for the whole headline.',
   ].join(' ');
 }

@@ -702,7 +702,7 @@ test('each network picture is nudged towards a headline look of its own and aske
     const brandDir = join(ctx.dir, 'brandmemory');
     const reports = [];
     for (const network of ['instagram', 'facebook', 'linkedin', 'google'] as const) reports.push(await draw(network, brandDir));
-    const leans = seen.map((p) => /leans towards (\w+) weight and a ([\w -]+?) character/.exec(p)?.slice(1, 3).join('/'));
+    const leans = seen.map((p) => /lean strongly towards a (\w+) weight, a ([\w -]+?) character and a (\w+) attitude, with ([^,]+?)(?:,| unless)/.exec(p)?.slice(1, 5).join('/'));
     assert.equal(leans.every((l) => typeof l === 'string'), true);
     assert.equal(new Set(leans).size, 4, 'four different leans');
     for (const prompt of seen) {
@@ -738,7 +738,7 @@ test('a brand does not get the same headline look twice in a row: the second dra
       await makeCreatives({
         ai: ctx.ai, brand, brandSlug: 'oyechats', brandDir, outDir: join(ctx.dir, `again-${i}`), shape: NETWORK_RULES.instagram.picture, network: 'instagram', factOf: () => 'OyeChats answers from your own documents.',
         posts: [post('p1', 'Answers from your own docs')],
-        deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, scene: async (prompt, out) => { looks.push(/leans towards (\w+) weight and a ([\w -]+?) character/.exec(prompt)?.slice(1, 3).join('/') ?? ''); writeFileSync(out, 'x'); }, review: async () => review(['Answers from your own docs', 'oyechats.com']) },
+        deps: { headlineGate: { enabled: false, config: defaultHeadlineGate }, scene: async (prompt, out) => { looks.push(/lean strongly towards a (\w+) weight, a ([\w -]+?) character and a (\w+) attitude, with ([^,]+?)(?:,| unless)/.exec(prompt)?.slice(1, 5).join('/') ?? ''); writeFileSync(out, 'x'); }, review: async () => review(['Answers from your own docs', 'oyechats.com']) },
       });
     }
     assert.equal(looks.length, 2);
@@ -751,7 +751,7 @@ test('a brand does not get the same headline look twice in a row: the second dra
 
 test('the creative director\'s own typography plan wins: no second typographic voice is added', () => {
   const manifest = { headline: 'Answers', brandName: '', domain: '' } as TextManifest;
-  const base = { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' }, network: 'instagram' as const, typeLean: { weight: 'bold', character: 'geometric' } };
+  const base = { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' }, network: 'instagram' as const, typeLean: { weight: 'bold', character: 'geometric', attitude: 'warm', colour: 'light lettering on a dark area of the picture' } };
   assert.match(buildCreativePrompt(manifest, base), /TYPOGRAPHIC VOICE/);
   assert.doesNotMatch(buildCreativePrompt(manifest, { ...base, concept: { concept: 'c', factToPicture: 'x', typography: 'Huge words across the whole poster.' } }), /TYPOGRAPHIC VOICE/);
 });
