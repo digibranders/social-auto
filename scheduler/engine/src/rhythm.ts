@@ -2,7 +2,7 @@
  * How often a client posts when the owner does not say otherwise: two posts per channel per week, on days spread through the week. A post goes to every channel
  * the owner approves it for, so the posts of a week are the posts of each of its channels; "weeks" says how many weeks are written at once.
  */
-import { weekdaysForPostsPerWeek, weekdaysFrom, type Weekday } from './cadence.ts';
+import { weekdayOf, weekdaysForPostsPerWeek, weekdaysFrom, type Weekday } from './cadence.ts';
 
 export const DEFAULT_POSTS_PER_WEEK = 2;
 export const MAX_WEEKS = 4;
@@ -57,5 +57,8 @@ export function checkTime(value: unknown): string {
 export function weeklyRhythm(input: { weeks?: unknown; postsPerWeek?: unknown; startDate?: string }): Rhythm {
   const weeks = input.weeks === undefined ? 1 : whole(input.weeks, 'weeks', 1, MAX_WEEKS);
   const perWeek = input.postsPerWeek === undefined ? DEFAULT_POSTS_PER_WEEK : whole(input.postsPerWeek, 'postsPerWeek', 1, 7);
-  return { days: Math.min(MAX_POSTS, weeks * perWeek), weekdays: input.startDate ? weekdaysFrom(input.startDate, perWeek) : weekdaysForPostsPerWeek(perWeek) };
+  // A plan that starts on the first day of the usual spread (a Monday for 5 a week: Monday to Friday) keeps that spread. Evenly spacing 5 posts over all seven days from a
+  // Monday would give Monday, Tuesday, Wednesday, Friday and Saturday, which is not the plan the owner approved. Any other start day keeps the first post on it.
+  const usual = weekdaysForPostsPerWeek(perWeek);
+  return { days: Math.min(MAX_POSTS, weeks * perWeek), weekdays: input.startDate && weekdayOf(input.startDate) !== usual[0] ? weekdaysFrom(input.startDate, perWeek) : usual };
 }

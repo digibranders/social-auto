@@ -26,8 +26,9 @@ function reasonCodeOf(reason: string, hasFacts: boolean): NonNullable<NetworkRes
 
 export type NetworkWriter = (posts: CaptionPost[], networks: Network[]) => Promise<{ variants: Record<string, PostVariants>; report: CaptionReport }>;
 
-export async function addNetworkToBatch(input: { brandDir: string; brand: string; planFile: string; network: Network; facts: readonly EvidenceFact[]; write: NetworkWriter }): Promise<NetworkResult> {
+export async function addNetworkToBatch(input: { brandDir: string; brand: string; planFile: string; network: Network; facts: readonly EvidenceFact[]; write: NetworkWriter; /** Today in India time (YYYY-MM-DD); a topic whose day has passed gets no picture. Defaults to the real day. */ today?: string }): Promise<NetworkResult> {
   const { brandDir, brand, planFile, network } = input;
+  const today = input.today ?? new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
   const copy = new CopyStage(brandDir, brand);
   const batch = copy.get(planFile);
   if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
@@ -76,8 +77,10 @@ export async function addNetworkToBatch(input: { brandDir: string; brand: string
     const variant = written.variants[post.id]?.[network];
     if (!variant) continue;
     const topic: NetworkResult['topics'][number] = { postId: post.id, outcome: 'written', ...(variant.fallback ? { fallback: true as const, reasonCode: reasonCodeOf(written.report.fallback.find((f) => f.postId === post.id)?.reason ?? '', (captionPosts.find((c) => c.id === post.id)?.facts.length ?? 0) > 0) } : {}) };
-    // Each network gets a picture of its own: a topic already drawn needs one drawn for the new network, never a copy of another network's picture.
-    if (drawn && versions.some((i) => i.version.postId === post.id)) topic.needsDraw = true;
+    // Each network gets a picture of its own: a topic already drawn needs one drawn for the new network, never a copy of another network's picture. A topic of a week
+    // not drawn yet has no pictures to match (the network is drawn with the rest of its week), and one whose day has passed can no longer be posted.
+    const day = batch.posts.find((p) => p.postId === post.id)?.date;
+    if (drawn && versions.some((i) => i.version.postId === post.id) && (day === undefined || day >= today)) topic.needsDraw = true;
     result.topics.push(topic);
   }
   return result;

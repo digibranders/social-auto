@@ -17,14 +17,17 @@ import { EngineError, type JobView } from '../../lib/engine-client.js';
 import { json } from '../../lib/http.js';
 import { EditError } from '../../lib/overrides.js';
 import { archivedAnswer, engineFor, workspaceFor } from '../../lib/product-workspace.js';
+import { nextMonday } from '../../lib/plan-days.js';
 import { loadChannels, loadClients, saveClients } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 4 * 1024;
 const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 type Network = (typeof NETWORKS)[number];
-/** The rhythm of a batch: fixed by the owner, not chosen by a product. */
-const BATCH_WEEKS = 1;
-const POSTS_PER_WEEK = 2;
+/** The rhythm of a batch: a monthly plan of 4 weeks at 5 posts a week unless the product asks for less. The ceilings are fixed here, never chosen by a product. */
+const DEFAULT_WEEKS = 4;
+const MAX_WEEKS = 4;
+const DEFAULT_POSTS_PER_WEEK = 5;
+const MAX_POSTS_PER_WEEK = 5;
 /** How many batches one customer may start, so a product cannot spend without limit: a job that is still waiting does not count. */
 const MAX_JOBS_PER_DAY = 3;
 const MAX_JOBS_PER_MONTH = 10;
@@ -71,6 +74,15 @@ export async function POST(request: Request): Promise<Response> {
     const networks = [...new Set((asked as Network[] | undefined) ?? connected)];
     if (networks.length === 0) return apiError(400, 'CHANNEL_NOT_CONNECTED', 'connect at least one account first, or say which networks to write for');
     if (body['page'] !== undefined && typeof body['page'] !== 'boolean') return apiError(400, 'INVALID_REQUEST', 'page must be true or false');
+    const whole = (value: unknown, fallback: number, max: number): number | null => (value === undefined ? fallback : typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= max ? value : null);
+    const weeks = whole(body['weeks'], DEFAULT_WEEKS, MAX_WEEKS);
+    if (weeks === null) return apiError(400, 'INVALID_REQUEST', `weeks must be a whole number from 1 to ${MAX_WEEKS}`);
+    const postsPerWeek = whole(body['postsPerWeek'], DEFAULT_POSTS_PER_WEEK, MAX_POSTS_PER_WEEK);
+    if (postsPerWeek === null) return apiError(400, 'INVALID_REQUEST', `postsPerWeek must be a whole number from 1 to ${MAX_POSTS_PER_WEEK}`);
+    const startAsked = body['startDate'];
+    if (startAsked !== undefined && (typeof startAsked !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(startAsked))) return apiError(400, 'INVALID_REQUEST', 'startDate must be a day like 2026-12-07');
+    // The first post goes out on a Monday unless the product says otherwise: the next Monday (India time) after today.
+    const startDate = typeof startAsked === 'string' ? startAsked : nextMonday(Date.now());
 
     // One page of the website: the poster service reads that page only, so it is given the page's address (the customer's saved website stays the host alone).
     let readFrom = site;
@@ -105,7 +117,7 @@ export async function POST(request: Request): Promise<Response> {
       bound = true;
     }
     try {
-      const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks: BATCH_WEEKS, postsPerWeek: POSTS_PER_WEEK, actor: by });
+      const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks, postsPerWeek, startDate, actor: by });
       return json(made.created ? 202 : 200, { job: made.job, created: made.created });
     } catch (error) {
       // A job that never started must not leave the customer tied to this website.

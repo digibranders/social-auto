@@ -213,3 +213,30 @@ test('a rewritten caption gets its closing line back on a line of its own, never
   assert.equal(recomposeCaption(body, ''), body, 'no closing line: the new body alone');
   assert.equal(recomposeCaption(body, '  \n'), body);
 });
+
+test('one chunk the writer cannot get right is asked for once more, and when that fails too only that chunk is left out and the plan says so; the rest is delivered', async () => {
+  const good = model();
+  let chunkCalls = 0;
+  const result = await planWeek({
+    ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 14 }, usedPainPoints: [],
+    fetchFn: (async (url: string, init?: RequestInit) => {
+      // The posts are written in chunks; the second chunk's answers are always invalid.
+      const body = String(init?.body);
+      const first = /Post 1 \(/.test(body) && !/Post 11 \(/.test(body);
+      void first;
+      chunkCalls += 1;
+      const isSecondChunk = chunkCalls > 2;
+      if (isSecondChunk) return new Response(JSON.stringify({ choices: [{ message: { content: 'this is not json' } }] }), { status: 200 });
+      return good.fetchFn(url, init);
+    }) as typeof fetch,
+  });
+  assert.ok(result.posts.length > 0 && result.posts.length < 14, `a part of the plan was delivered (${result.posts.length})`);
+  assert.ok(result.insufficientConcepts?.reasons.some((r) => /gave no valid answer twice, so they are left out/.test(r)), JSON.stringify(result.insufficientConcepts));
+});
+
+test('when the writer gives no valid answer for any chunk the plan still fails, with the reasons', async () => {
+  await assert.rejects(planWeek({
+    ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 3 }, usedPainPoints: [],
+    fetchFn: (async () => new Response(JSON.stringify({ choices: [{ message: { content: 'not json' } }] }), { status: 200 })) as typeof fetch,
+  }), (error: Error) => error instanceof InsufficientConceptsError && /gave no valid answer twice/.test(error.message + JSON.stringify((error as { reasons?: unknown }).reasons ?? '')));
+});

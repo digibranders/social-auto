@@ -56,16 +56,23 @@ export function expiringSoon(posters: readonly PosterView[], batches: readonly B
 /** What there is to announce for one customer, given what was announced before. Pure: the engine calls are made by the caller. */
 export function eventsForProgress(
   owner: { product: string; externalId: string },
-  progress: { jobs: ReadonlyArray<{ id: string; kind: string; state: string; batchId?: string }>; posters: ReadonlyArray<{ id: string; batchId: string; postId: string; network: string }>; expiring?: readonly Expiring[]; expired?: readonly ExpiredView[] },
+  progress: { jobs: ReadonlyArray<{ id: string; kind: string; state: string; batchId?: string; week?: string }>; posters: ReadonlyArray<{ id: string; batchId: string; postId: string; network: string }>; expiring?: readonly Expiring[]; expired?: readonly ExpiredView[] },
   outbox: Pick<Outbox, 'announced'>,
   now: number,
 ): { items: Addressed[]; announced: string[] } {
   const items: Addressed[] = [];
   const announced: string[] = [];
   for (const job of progress.jobs) {
+    // A week of a batch is being drawn: told once, when the draw is first seen waiting or running.
+    const drawing = `week-drawing:${job.id}`;
+    if (job.kind === 'draw' && job.week && job.batchId && (job.state === 'queued' || job.state === 'running' || job.state === 'done' || job.state === 'failed') && !isAnnounced(outbox, drawing) && !announced.includes(drawing)) {
+      announced.push(drawing);
+      items.push({ product: owner.product, event: newEvent('week.drawing', { externalId: owner.externalId, batchId: job.batchId, week: job.week, jobId: job.id }, now) });
+    }
     const key = `job:${job.id}`;
     if ((job.state !== 'done' && job.state !== 'failed') || isAnnounced(outbox, key)) continue;
     announced.push(key);
+    if (job.kind === 'draw' && job.week && job.batchId && job.state === 'done') items.push({ product: owner.product, event: newEvent('week.drawn', { externalId: owner.externalId, batchId: job.batchId, week: job.week, jobId: job.id }, now) });
     items.push({ product: owner.product, event: newEvent('job.finished', { externalId: owner.externalId, jobId: job.id, kind: job.kind, state: job.state, ...(job.batchId ? { batchId: job.batchId } : {}) }, now) });
   }
   for (const poster of progress.posters) {
@@ -81,9 +88,13 @@ export function eventsForProgress(
     items.push({ product: owner.product, event: newEvent('poster.expiring', { externalId: owner.externalId, ...place(e), expiresAt: e.expiresAt }, now) });
   }
   for (const e of progress.expired ?? []) {
-    const key = `expired:${e.kind}:${e.posterId ?? e.batchId}:${e.at}`;
+    const key = `expired:${e.kind}:${e.posterId ?? `${e.batchId}${e.week ? `:${e.week}` : ''}`}:${e.at}`;
     if (isAnnounced(outbox, key)) continue;
     announced.push(key);
+    if (e.kind === 'week') {
+      if (e.week) items.push({ product: owner.product, event: newEvent('week.lapsed', { externalId: owner.externalId, batchId: e.batchId, week: e.week, lapsedAt: e.at }, now) });
+      continue;
+    }
     items.push({ product: owner.product, event: newEvent('poster.expired', { externalId: owner.externalId, ...place(e), expiredAt: e.at }, now) });
   }
   return { items, announced };

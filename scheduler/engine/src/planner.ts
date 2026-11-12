@@ -13,7 +13,7 @@ import { eligibleMoves, moveBrief } from './creative-moves.ts';
 import { assignWeek, checkAnchored, defaultPillars, type PillarSpec, type PostAssignment } from './pillars.ts';
 import { postDates, type Weekday } from './cadence.ts';
 import { visualStyleFor } from './layout.ts';
-import { chatJson } from './llm.ts';
+import { chatJson, LlmError } from './llm.ts';
 import { isPricingText, validateEditorial } from './editorial.ts';
 import { neutralCta } from './cta.ts';
 import type { CallToAction } from './cta.ts';
@@ -185,6 +185,9 @@ export function buildPost(options: { draft: DraftPost; id: string; date: string;
 }
 
 /** The caption without the brand's own verified call to action, which is an invitation and not a claim the facts must support. */
+/** Whether the writer, after its own corrective try, gave no answer that passed the checks. */
+const isNoValidAnswer = (error: unknown): boolean => error instanceof LlmError && /^No valid response\./.test(error.message);
+
 /**
  * A rewritten caption with the engine's own closing line put back: the new body, a blank line, then the closing line. The closing line is never run on to the
  * last sentence ("...your business.Explore our services at acme.com (link in bio)"), whatever whitespace the old caption had at that spot.
@@ -390,7 +393,7 @@ export async function planWeek(options: {
     // still repeats an earlier idea is left out of the plan (fewer posts, never a repeat); or the plan fails.
     let attempt = 0;
     let droppedHere: string[] = [];
-    const chunk = await chatJson({
+    const writeChunk = (): Promise<PlannedPost[]> => chatJson({
       ai: options.ai,
       ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
       system: SYSTEM_PROMPT,
@@ -478,6 +481,24 @@ export async function planWeek(options: {
         return parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts: kept }, `week-${week}`).posts;
       },
     });
+    // One bad answer must not cost the whole plan: when the writer gives no valid answer for a chunk (after its own corrective try), the chunk is asked for once more from
+    // scratch; if that fails too, only that chunk is left out and the plan says so. The plan fails only when nothing valid remains (InsufficientConceptsError below).
+    let chunk: PlannedPost[];
+    try {
+      chunk = await writeChunk();
+    } catch (error) {
+      if (!isNoValidAnswer(error)) throw error;
+      options.log?.(`writing ${oversample ? 'candidates' : 'posts'} ${offset + 1}-${offset + chunkDates.length}: no valid answer, asking once more`);
+      attempt = 0;
+      droppedHere = [];
+      try {
+        chunk = await writeChunk();
+      } catch (second) {
+        if (!isNoValidAnswer(second)) throw second;
+        dropped.push(`${oversample ? 'candidates' : 'posts'} ${offset + 1}-${offset + chunkDates.length}: the writer gave no valid answer twice, so they are left out (${(second as Error).message.replace(/^No valid response\.\s*/, '').slice(0, 200)})`);
+        continue;
+      }
+    }
     dropped.push(...droppedHere);
     posts.push(...chunk);
     acceptedRecords.push(...chunk.map((p) => conceptRecordOf(p) as ConceptRecord));

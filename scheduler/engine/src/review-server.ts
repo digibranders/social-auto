@@ -42,11 +42,12 @@ import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } f
 import { foldLedgerFile } from './paid-ledger.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
 import { neededPictures, runWeeklyDraws } from './weekly-draw.ts';
+import type { NotDrawn } from './not-drawn.ts';
 import { channelPicturesUsed, pictureLimitMessage, PictureLimitError, pictureWeek, weeklyLimitFromEnv, type PictureWeek } from './picture-limit.ts';
 import { splitTrailingHashtags } from './caption-text.ts';
 import { checkStartDate, checkTime, RhythmError, weeklyRhythm } from './rhythm.ts';
 import { ProductBrands, PRODUCT_ID } from './product-brands.ts';
-import { EXPIRY_DAYS, readExpiry, sweepExpired } from './expiry.ts';
+import { EXPIRY_DAYS, readExpiry, recordExpiry, sweepExpired } from './expiry.ts';
 
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const MAX_BODY_BYTES = 8 * 1024;
@@ -227,7 +228,10 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   const refuseIfDrawAsked = (brand: string, planFile: string, postId?: string): void => {
     const asked = jobs.list({ brand }).filter((j) => j.kind === 'draw' && j.planFile === planFile);
     // A draw of one week of a batch locks only that week's posts; a draw with no week (a batch of one piece), or a call about the whole batch, locks everything.
-    const week = postId === undefined ? undefined : weekOfPost(new CopyStage(join(root, brand), brand).get(planFile).posts.find((p) => p.postId === postId) ?? {});
+    const batch = postId === undefined ? undefined : new CopyStage(join(root, brand), brand).get(planFile);
+    const week = batch === undefined ? undefined : weekOfPost(batch.posts.find((p) => p.postId === postId) ?? {});
+    // A kept topic that got no picture stays open for her to change (headline included) or drop, as long as no draw of its week is waiting or running.
+    if (postId !== undefined && batch?.notDrawn?.[postId] !== undefined && !asked.some((j) => (j.state === 'queued' || j.state === 'running') && (j.week === undefined || week === undefined || j.week === week))) return;
     if (asked.some((j) => j.week === undefined || week === undefined || j.week === week)) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch\'s choices and words are final');
   };
   const siteOf = (brand: string): string => {
@@ -382,14 +386,17 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const stopped = (brand: string, planFile: string): boolean => jobs.list({ brand }).find((j) => j.kind === 'draw' && j.planFile === planFile)?.state === 'failed';
           const batches = scope.visible(brands()).flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
           // The weeks of a batch written for several weeks: when each starts and ends, its posts, and whether its pictures are waiting, being drawn, drawn or given up.
-          const weeksView = (b: { brand: string; planFile: string; posts: Array<{ postId: string; date?: string }>; weekDrawn?: Record<string, string>; weekLapsed?: Record<string, string> }): { weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'drawn' | 'lapsed'; postIds: string[] }> } => {
+          const weeksView = (b: { brand: string; planFile: string; posts: Array<{ postId: string; date?: string; state?: string }>; weekDrawn?: Record<string, string>; weekLapsed?: Record<string, string>; notDrawn?: Record<string, NotDrawn> }): { weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'drawn' | 'not_drawn' | 'lapsed'; postIds: string[]; notDrawn?: Array<{ postId: string; code: string; reason: string }> }> } => {
             const mondays = weeksOf(b);
             if (mondays.length === 0) return {};
+            // A week whose draw ran but left every kept topic without a picture is not "drawn": nothing was made for it.
+            const allUndrawn = (from: string): boolean => { const kept = b.posts.filter((p) => weekOfPost(p) === from && (p as { state?: string }).state === 'kept'); return kept.length > 0 && kept.every((p) => b.notDrawn?.[p.postId] !== undefined); };
+            const undrawn = (from: string): Array<{ postId: string; code: string; reason: string }> => b.posts.filter((p) => weekOfPost(p) === from && b.notDrawn?.[p.postId] !== undefined).map((p) => ({ postId: p.postId, ...(b.notDrawn as Record<string, NotDrawn>)[p.postId] as NotDrawn }));
             const running = jobs.list({ brand: b.brand }).filter((j) => j.kind === 'draw' && j.planFile === b.planFile && (j.state === 'queued' || j.state === 'running'));
-            return { weeks: mondays.map((from) => ({ from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state: b.weekLapsed?.[from] !== undefined ? 'lapsed' as const : b.weekDrawn?.[from] !== undefined ? 'drawn' as const : running.some((j) => j.week === from) ? 'drawing' as const : 'waiting' as const, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId) })) };
+            return { weeks: mondays.map((from) => ({ from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state: b.weekLapsed?.[from] !== undefined ? 'lapsed' as const : b.weekDrawn?.[from] !== undefined ? (allUndrawn(from) ? 'not_drawn' as const : 'drawn' as const) : running.some((j) => j.week === from) ? 'drawing' as const : 'waiting' as const, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId), ...(undrawn(from).length > 0 ? { notDrawn: undrawn(from) } : {}) })) };
           };
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', '') })), ...weeksView(b) }));
+          const plain = batches.map((b) => ({ ...b, networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
@@ -423,7 +430,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
           if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
           // On a batch already drawn the new network's picture is drawn for every kept topic: the week must have room for them all.
-          if (batch.drawnAt) assertPictureRoom(netBrand, { [network]: batch.posts.filter((p) => p.state === 'kept').length });
+          if (batch.drawnAt !== undefined || batch.weekDrawn !== undefined) {
+            const today = new Date((options.now ?? (() => new Date()))().getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+            const drawnPosts = madeFor(netBrand, netPlan);
+            assertPictureRoom(netBrand, { [network]: batch.posts.filter((p) => p.state === 'kept' && (p.date === undefined || p.date >= today) && [...drawnPosts].some((k) => k.startsWith(`${p.postId}|`))).length });
+          }
           const { job, created } = jobs.enqueue({ kind: 'network', brand: netBrand, site: siteOf(netBrand), by: scope.by(body['by']), planFile: netPlan, network });
           return send(res, created ? 202 : 200, { job, created });
         }
@@ -487,6 +498,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { batch: editCopy({ brandDir, brand, planFile, postId, ...(headline !== undefined ? { headline } : {}), ...(caption !== undefined ? { caption } : {}), ...(network !== undefined ? { network } : {}), ...(brandName !== undefined ? { brandName } : {}), ...(domain !== undefined ? { domain } : {}), ...(signoffDefaults ? { signoffDefaults } : {}), by: scope.by(body['by']), facts }) });
         }
         return send(res, 404, { error: 'Not found' });
+      }
+      // Where the customer's plan ends: the last post day of every batch not put away (drawn ones included), so the product can offer the next month in time.
+      if (parts[0] === 'review' && parts[1] === 'plan' && parts.length === 2) {
+        if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        const planBrand = caller.role === 'product' ? caller.brand : url.searchParams.get('brand') ?? '';
+        scope.guard(planBrand, false);
+        if (!brands().includes(planBrand) || weeklyLimitOf(planBrand) === undefined) throw new ReviewError('NOT_FOUND', 'no such brand');
+        const days = new CopyStage(join(root, planBrand), planBrand).list().filter((b) => !b.closedAt).flatMap((b) => b.posts.flatMap((p) => (p.date ? [p.date] : []))).sort();
+        return send(res, 200, { brand: planBrand, endsOn: days.at(-1) ?? null, startsOn: days[0] ?? null });
       }
       // The networks the customer has connected accounts for, written by the product API whenever it looks at her channels: the draw buys no picture for any other.
       if (parts[0] === 'review' && parts[1] === 'connected' && parts.length === 2) {
@@ -691,6 +711,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             }
           },
           register: (brand, planFile, site) => { registerManualRelease({ brandDir: join(root, brand), siteBrand: brand, client: brand, site, planFile }); },
+          onLapse: (brand, planFile, week) => { recordExpiry(root, (options.now ?? (() => new Date()))(), { brand, kind: 'week', planFile, week }); },
         });
       } catch (error) {
         console.error(`weekly draw failed: ${error instanceof Error ? error.message : String(error)}`);
