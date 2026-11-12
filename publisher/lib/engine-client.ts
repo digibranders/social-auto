@@ -350,8 +350,10 @@ export interface PosterDetail extends PosterView {
 /** Something put away because nobody decided in time. */
 export interface ExpiredView {
   at: string;
-  kind: 'batch' | 'poster';
+  kind: 'batch' | 'poster' | 'week';
   batchId: string;
+  /** For a `week` given up undrawn: its Monday (YYYY-MM-DD). */
+  week?: string;
   postId?: string;
   network?: string;
   posterId?: string;
@@ -446,7 +448,7 @@ export class WorkspaceEngine {
   }
 
   /** Starts reading a website and writing posts for it, under this workspace's brand. Asking twice for the same brand is one job (`created: false`). */
-  async startSiteJob(input: { site: string; networks: readonly string[]; page: boolean; weeks?: number; postsPerWeek?: number; actor: string }): Promise<{ job: JobView; created: boolean }> {
+  async startSiteJob(input: { site: string; networks: readonly string[]; page: boolean; weeks?: number; postsPerWeek?: number; startDate?: string; actor: string }): Promise<{ job: JobView; created: boolean }> {
     const answer = await this.call('POST', '/review/jobs', input.actor, {
       kind: 'copy',
       site: input.site,
@@ -455,6 +457,7 @@ export class WorkspaceEngine {
       ...(input.page ? { page: true } : {}),
       ...(input.weeks !== undefined ? { weeks: input.weeks } : {}),
       ...(input.postsPerWeek !== undefined ? { postsPerWeek: input.postsPerWeek } : {}),
+      ...(input.startDate !== undefined ? { startDate: input.startDate } : {}),
     });
     const made = this.own(isObject(answer) ? answer['job'] : undefined);
     if (!made) throw unavailable();
@@ -489,6 +492,14 @@ export class WorkspaceEngine {
   async decideFact(factId: string, verb: 'confirm' | 'remove' | 'restore', actor: string): Promise<FactsView> {
     if (!FACT_ID.test(factId)) throw new EngineError(404, 'not found');
     return factsViewOf(await this.call('POST', `/review/brands/${this.brand}/facts/${factId}/${verb}`, actor, {}));
+  }
+
+  /** The first and last post day of the customer's plan (batches not put away, drawn ones included); null when she has none. */
+  async plan(actor: string): Promise<{ startsOn: string | null; endsOn: string | null }> {
+    const answer = await this.call('GET', '/review/plan', actor);
+    const day = (v: unknown): string | null => (typeof v === 'string' && DAY.test(v) ? v : null);
+    if (!isObject(answer)) throw unavailable();
+    return { startsOn: day(answer['startsOn']), endsOn: day(answer['endsOn']) };
   }
 
   /** Tells the poster service which networks the customer has connected accounts for, so no picture is bought for any other. Best effort: never throws. */
@@ -647,11 +658,13 @@ export class WorkspaceEngine {
     const answer = await this.call('GET', `/review/expiry?since=${encodeURIComponent(since)}`, actor);
     const raw = isObject(answer) && Array.isArray(answer['expired']) ? answer['expired'] : [];
     return raw.flatMap((e): ExpiredView[] => {
-      if (!isObject(e) || e['brand'] !== this.brand || (e['kind'] !== 'batch' && e['kind'] !== 'poster') || typeof e['at'] !== 'string' || typeof e['planFile'] !== 'string' || !PART.test(e['planFile'])) return [];
+      if (!isObject(e) || e['brand'] !== this.brand || (e['kind'] !== 'batch' && e['kind'] !== 'poster' && e['kind'] !== 'week') || typeof e['at'] !== 'string' || typeof e['planFile'] !== 'string' || !PART.test(e['planFile'])) return [];
       const posterId = typeof e['versionId'] === 'string' && VERSION_ID.test(e['versionId']) && e['versionId'].startsWith(`${this.brand}.`) ? e['versionId'] : undefined;
       const postId = typeof e['postId'] === 'string' && PART.test(e['postId']) ? e['postId'] : undefined;
       const network = str(e['network'], 20);
-      return [{ at: e['at'].slice(0, 40), kind: e['kind'], batchId: e['planFile'], ...(postId ? { postId } : {}), ...(network ? { network } : {}), ...(posterId ? { posterId } : {}) }];
+      const week = typeof e['week'] === 'string' && DAY.test(e['week']) ? e['week'] : undefined;
+      if (e['kind'] === 'week' && !week) return [];
+      return [{ at: e['at'].slice(0, 40), kind: e['kind'], batchId: e['planFile'], ...(week ? { week } : {}), ...(postId ? { postId } : {}), ...(network ? { network } : {}), ...(posterId ? { posterId } : {}) }];
     });
   }
 

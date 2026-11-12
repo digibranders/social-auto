@@ -1,3 +1,4 @@
+import { nextMonday } from './plan-days.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { GET as jobsGet, POST as jobsPost } from '../api/_v1/site-jobs.ts';
@@ -31,7 +32,7 @@ async function workspace(externalId: string, withAccount: boolean, key = KEY): P
 const start = (externalId: string, json: Record<string, unknown> = {}, headers: Record<string, string> = {}, key = KEY): Promise<Answer> =>
   call(jobsPost, '/api/v1/site-jobs', { key, headers, json: { externalId, site: 'https://www.acme.example.com', ...json } });
 
-test('a site job is started under the workspace\'s own brand, with the fixed rhythm, the connected networks and the person recorded', async () => {
+test('a site job is started under the workspace\'s own brand, with the monthly rhythm (4 weeks of 5 posts from the next Monday), the connected networks and the person recorded', async () => {
   await withProducts(async () => {
     const engine = await fakeEngine();
     try {
@@ -46,7 +47,7 @@ test('a site job is started under the workspace\'s own brand, with the fixed rhy
       const sent = engine.seen.find((s) => s.method === 'POST' && s.url === '/review/jobs');
       assert.equal(sent?.authorization, `Bearer ${ENGINE_SECRET}`);
       assert.deepEqual([sent?.brand, sent?.actor], [brand, 'brandbasket:user_42']);
-      assert.deepEqual(sent?.body, { kind: 'copy', site: 'https://www.acme.example.com', networks: ['linkedin'], brand, weeks: 1, postsPerWeek: 2 });
+      assert.deepEqual(sent?.body, { kind: 'copy', site: 'https://www.acme.example.com', networks: ['linkedin'], brand, weeks: 4, postsPerWeek: 5, startDate: nextMonday(Date.now()) });
 
       // The workspace is now bound to that website.
       const bound = (await loadClients()).file.clients.find((c) => c.brand === brand);

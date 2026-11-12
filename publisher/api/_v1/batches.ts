@@ -25,6 +25,7 @@ import type { JobView } from '../../lib/engine-client.js';
 import { archivedAnswer, engineFor, workspaceFor } from '../../lib/product-workspace.js';
 import { loadChannels } from '../../lib/store.js';
 import { syncConnected } from '../../lib/connected-sync.js';
+import { nextMonday } from '../../lib/plan-days.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
 const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network'] as const;
@@ -34,6 +35,14 @@ const MAX_DRAWS_PER_DAY = 3;
 const MAX_DRAWS_PER_MONTH = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
 type Action = (typeof ACTIONS)[number];
+/** The day the next plan should start: the Monday after the last post of the current one, or the next Monday when she has none (or it already ended). */
+function nextStart(endsOn: string | null, now: number): string {
+  const next = nextMonday(now);
+  if (endsOn === null || endsOn < next) return next;
+  const end = new Date(`${endsOn}T00:00:00Z`);
+  return new Date(end.getTime() + (((8 - end.getUTCDay()) % 7) || 7) * 86_400_000).toISOString().slice(0, 10);
+}
+
 const isAction = (value: unknown): value is Action => typeof value === 'string' && (ACTIONS as readonly string[]).includes(value);
 const LIMITS = { headline: 300, caption: 3000, network: 20, brandName: 200, domain: 200 } as const;
 
@@ -49,7 +58,14 @@ export async function GET(request: Request): Promise<Response> {
     // A written batch nobody decided on in time is put away and no longer listed; it is shown here for a while so the customer can be told.
     const since = new Date(Date.now() - (EXPIRY_DAYS * 2 + 30) * 86_400_000).toISOString();
     const expired = (await engine.listExpired(since, by)).flatMap((e) => (e.kind === 'batch' ? [{ id: e.batchId, expiredAt: e.at }] : []));
-    return json(200, { ...view, expired });
+    // Where her plan ends, and whether she may start the next one: when the last post is within 10 days (or she has no plan), and nothing is being written.
+    const [ending, jobs] = await Promise.all([engine.plan(by).catch(() => null), engine.listJobs(by)]);
+    if (ending === null) return json(200, { ...view, expired });
+    const writing = jobs.some((j) => j.kind === 'write' && (j.state === 'queued' || j.state === 'running'));
+    const today = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+    const daysLeft = ending.endsOn === null ? null : Math.round((Date.parse(`${ending.endsOn}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000);
+    const plan = { startsOn: ending.startsOn, endsOn: ending.endsOn, canStartNext: !writing && (daysLeft === null || daysLeft <= 10), nextStartDate: nextStart(ending.endsOn, Date.now()) };
+    return json(200, { ...view, expired, plan });
   } catch (error) {
     return errorResponse(error, 'read the written posts');
   }
