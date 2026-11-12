@@ -5,7 +5,7 @@
  * A poster that is rejected twice, or whose budget is spent, is dropped: fewer posters, never a poster that did not pass. An accepted poster is only
  * "pending": nothing here approves, schedules or publishes anything.
  */
-import { SQUARE_SHAPE, type PictureShape } from './networks.ts';
+import { SQUARE_SHAPE, type Network, type PictureShape } from './networks.ts';
 import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AiConfig } from './ai.ts';
@@ -114,6 +114,8 @@ export interface CreativeRunInput {
   directorEnabled?: boolean;
   /** The shape every poster of this run is drawn in; square when not given. A run is of one shape: a post that needs two shapes is drawn by two runs. */
   shape?: PictureShape;
+  /** The network every poster of this run is drawn for, when each network gets its own picture: it gets a composition of its own and its own ledger id. */
+  network?: Network;
   /** The brand's real logo, when the posters are to carry it: the file (checked and frozen), its shape and the hash it must still have. */
   logo?: { path: string; kind: 'wordmark' | 'symbol'; sha256: string };
   log?: (message: string) => void;
@@ -265,15 +267,15 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
       continue;
     }
     if (concept) result.concept = concept;
-    // A wide poster of a post is its own poster to the ledger, so its picture allowance and cap are its own.
-    ai.usage.post = `${input.brandSlug}-${post.id}${shape.shape === 'square' ? '' : `-${shape.shape}`}`;
+    // A picture drawn for a network is its own poster to the ledger (and so is a wide one), so its picture allowance and cap are its own.
+    ai.usage.post = `${input.brandSlug}-${post.id}${input.network ? `-${input.network}` : shape.shape === 'square' ? '' : `-${shape.shape}`}`;
     // The ledger counts a poster's calls under the same id.
     const ledgerId = ai.usage.post;
     let note: string | undefined;
     try {
       for (let n = 1; n <= maxAttempts; n++) {
         const imageFile = join(outDir, `${post.id}.attempt${n}.jpg`);
-        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
+        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(input.network ? { network: input.network } : {}), ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
         const attempt: CreativeAttempt = { n, prompt, imageFile, readings: [], accepted: false, defects: [] };
         result.attempts.push(attempt);
         log(`${post.id}: attempt ${n}, drawing the poster…`);

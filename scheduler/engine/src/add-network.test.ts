@@ -88,21 +88,19 @@ test('a network added to a batch that is still waiting is written into the plan 
   }
 });
 
-test('on a drawn batch a topic with a picture of the same shape gets a new pending version of it, a topic without one needs its own draw, and the release record gains the network', async () => {
+test('on a drawn batch every topic needs a picture drawn for the new network, even one with a picture of the same shape, and the release record gains the network', async () => {
   const s = setup(true);
   try {
     const before = JSON.parse(readFileSync(join(s.dir, 'campaigns', 'manual-week-01.json'), 'utf8')) as { plan: { platforms: string[] } };
     assert.deepEqual(before.plan.platforms, ['instagram', 'linkedin']);
+    const versionsBefore = s.store.list().length;
     const result = await run(s);
     const [d1, d2] = result.topics;
-    // d1 has an Instagram picture (square), the shape Facebook uses: its bytes are reused with Facebook's own caption.
-    assert.equal(d1?.versionIds?.length, 1);
-    assert.equal(d1?.needsDraw, undefined);
-    const made = s.store.get(d1?.versionIds?.[0] ?? '');
-    const source = s.store.list().find((i) => i.version.postId === 'w01-d1' && i.version.network === 'instagram');
-    assert.deepEqual([made.status, made.version.network, made.version.imageSha256 === source?.version.imageSha256, made.version.costUsd, made.version.caption], ['pending', 'facebook', true, 0, composeVariant({ caption: 'facebook caption for w01-d1', hashtags: ['#f'] })]);
-    // d2 has only a wide picture (LinkedIn): Facebook needs a square one of its own.
+    // d1 has an Instagram picture (square), the shape Facebook uses: it is not reused, because each network gets a picture of its own.
+    assert.deepEqual([d1?.versionIds, d1?.needsDraw], [undefined, true]);
+    // d2 has only a wide picture (LinkedIn): Facebook needs one of its own as well.
     assert.deepEqual([d2?.versionIds, d2?.needsDraw], [undefined, true]);
+    assert.equal(s.store.list().length, versionsBefore, 'no version was copied from another network\'s picture');
     const after = JSON.parse(readFileSync(join(s.dir, 'campaigns', 'manual-week-01.json'), 'utf8')) as { plan: { platforms: string[] } };
     assert.deepEqual(after.plan.platforms, ['instagram', 'linkedin', 'facebook']);
     assert.equal(s.store.list().filter((i) => i.version.network === 'linkedin').every((i) => i.status === 'pending'), true, 'nothing that existed changed');
@@ -129,7 +127,7 @@ test('a post written without per-network captions keeps Instagram when a network
   }
 });
 
-test('a network added after a draw reaches the schedule once its new picture is approved, and nothing before', async () => {
+test('a network added after a draw reaches the schedule once its own drawn picture is approved, and nothing before', async () => {
   const s = setup(true);
   try {
     const brands = join(s.root);
@@ -145,7 +143,16 @@ test('a network added after a draw reaches the schedule once its new picture is 
     await release();
     assert.deepEqual(scheduled().map((p) => [...(p.channels ?? [])]), [['instagram']], 'the new network is pending, so nothing goes out for it yet');
 
-    s.store.approve(result.topics[0]?.versionIds?.[0] ?? '', 'u');
+    // The topic is reported as needing a picture of its own; the job runner's draw then queues it. Simulated here as the draw's result: a pending Facebook version.
+    assert.equal(result.topics[0]?.needsDraw, true);
+    const v = (instagram as NonNullable<typeof instagram>).version;
+    const drawn = s.store.addVersion({
+      postId: v.postId, planFile: v.planFile, network: 'facebook', ...(v.width && v.height ? { width: v.width, height: v.height } : {}), headline: v.headline, caption: composeVariant({ caption: 'facebook caption for w01-d1', hashtags: ['#f'] }), ctaUrl: v.ctaUrl, factIds: v.factIds, evidence: v.evidence,
+      imagePath: join(s.dir, v.imageFile), validation: v.validation, attempts: v.attempts, costUsd: 0.017, ...(v.branding ? { branding: v.branding } : {}), createdBy: 'engine',
+    });
+    await release();
+    assert.deepEqual(scheduled().map((p) => [...(p.channels ?? [])]), [['instagram']], 'the drawn picture is pending until approved');
+    s.store.approve(drawn.versionId, 'u');
     await release();
     assert.deepEqual(scheduled().map((p) => [...(p.channels ?? [])].sort()), [['facebook', 'instagram']], 'approved, it goes out with the record\'s refreshed networks');
   } finally {

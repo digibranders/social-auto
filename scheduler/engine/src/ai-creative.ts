@@ -9,7 +9,7 @@
  * code adds afterwards to a quiet corner the model was asked to leave (`brandSignoff: 'logo'`, or a symbol beside a drawn name), or by its name in ordinary
  * lettering and its address.
  */
-import type { PictureShape } from './networks.ts';
+import { COMPOSITION_BY_NETWORK, type Network, type PictureShape } from './networks.ts';
 import { readFile } from 'node:fs/promises';
 import type { AiConfig } from './ai.ts';
 import { chatJson } from './llm.ts';
@@ -50,6 +50,8 @@ export interface CreativeContext {
   logo?: 'wordmark' | 'symbol';
   /** The shape the poster is drawn in; square when not given. */
   shape?: PictureShape;
+  /** The network this picture is drawn for, when each network gets its own: the prompt then asks for a composition of its own, different from the other networks'. */
+  network?: Network;
 }
 
 /** The words that ask for room for the logo, and say what is not to be drawn in its place. */
@@ -92,6 +94,7 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
           `THE VISUAL IDEA. Find the one concrete thing, action, object or situation that this exact fact is about, and make that the picture, so that a stranger scrolling past learns something from the picture itself and not only from the headline. The picture must have a visible, specific relationship to this fact: if you could put the same picture next to a different headline of this brand, the idea is too generic. Do not fall back on the usual stock illustration of business or marketing: people sitting at laptops, floating browser or app windows, targets, megaphones, growth arrows, rising charts, skylines, handshakes or lightbulbs. Show a person, a laptop or an interface only when the fact is actually about one. Invent the treatment fresh for this fact (the medium, the point of view, the scale, the composition, how the headline is set); it does not need to look like an illustration of people at work.`,
           'Do not invent product screenshots, customer quotes, results, endorsements, statistics, prices, offers or any evidence, and do not imply an outcome the fact does not state (no growth arrows, trophies or rising charts unless the fact says so). Any interface you show must be an obvious concept with no text in it. People may appear only as generic illustrated subjects, never as real customers, employees or endorsers.',
         ]),
+    ...(context.network ? [`COMPOSITION FOR THIS VERSION. ${COMPOSITION_BY_NETWORK[context.network]}`, 'This picture is one of several versions of the same topic, each made for a different network. The idea, the message and the text stay exactly as given, but the scene, the camera angle and the arrangement must be clearly different from the other versions.'] : []),
     ...(context.concept?.typography
       ? [`TYPOGRAPHY (an essential part of the concept, not optional styling): ${context.concept.typography} Execute this as part of the advertisement's design: compose the artwork and the type together, so that the picture leaves the room the type needs and the type belongs to the scene; follow the described scale, weight, colour, position and spatial relationship, including where the web address sits (and the brand name, only when the poster is asked to carry one). Do not automatically place the headline at the top or the brand details at the bottom. Keep the headline's capitalisation and punctuation exactly as given. If a decorative treatment would endanger the spelling or legibility of any letter, simplify its execution, but do not fall back to a large black headline above the artwork.`]
       : []),

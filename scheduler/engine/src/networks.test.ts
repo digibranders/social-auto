@@ -5,19 +5,20 @@ import { captionRulesView, composeVariant, NETWORK_RULES, NETWORKS, pictureGroup
 
 const v = (caption: string, hashtags: string[] = []) => ({ caption, hashtags });
 
-test('networks of the same shape share one picture: square first, a wide one added for LinkedIn', () => {
+test('every network a post is written for gets its own picture: square ones first, in network order, the wide LinkedIn one last', () => {
   const posts = [
     { id: 'p1', variants: { instagram: v('a'), facebook: v('b'), linkedin: v('c'), google: v('d') } as PostVariants },
     { id: 'p2', variants: { linkedin: v('only linkedin') } as PostVariants },
     { id: 'p3', variants: { instagram: v('only instagram') } as PostVariants },
   ];
   const groups = pictureGroups(posts);
-  assert.deepEqual(groups.map((g) => g.shape.shape), ['square', 'wide']);
-  assert.deepEqual(groups[0]?.networks.sort(), ['facebook', 'google', 'instagram']);
-  assert.deepEqual(groups[0]?.postIds.sort(), ['p1', 'p3'], 'p2 has no square network, so no square picture');
-  assert.deepEqual(groups[1]?.networks, ['linkedin']);
-  assert.deepEqual(groups[1]?.postIds.sort(), ['p1', 'p2']);
-  assert.deepEqual(groups[1]?.shape, NETWORK_RULES.linkedin.picture);
+  assert.deepEqual(groups.map((g) => g.networks), [['instagram'], ['facebook'], ['google'], ['linkedin']]);
+  assert.deepEqual(groups.map((g) => g.shape.shape), ['square', 'square', 'square', 'wide']);
+  assert.deepEqual(groups[0]?.postIds.sort(), ['p1', 'p3']);
+  assert.deepEqual(groups[1]?.postIds, ['p1'], 'p1 is the only post written for Facebook');
+  assert.deepEqual(groups[2]?.postIds, ['p1']);
+  assert.deepEqual(groups[3]?.postIds.sort(), ['p1', 'p2']);
+  assert.deepEqual(groups[3]?.shape, NETWORK_RULES.linkedin.picture);
 });
 
 test('a post with no network captions needs the square picture only, as before networks existed', () => {

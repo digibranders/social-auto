@@ -40,7 +40,7 @@ export function engineArgs(job: Job): string[] {
 export function readLine(line: string, source: 'out' | 'err'): { step?: number; planFile?: string; error?: { code: string; message: string } } {
   const step = /^(\d)\/4\s/.exec(line);
   const plan = /\((week-\d{2,4}\.json)\)/.exec(line) ?? /--draw-kept\s+(week-\d{2,4}\.json)/.exec(line);
-  const error = source === 'err' ? /^([A-Z][A-Z_]+)(?: \([a-z_]+\))?: (.+)$/.exec(line) : null;
+  const error = source === 'err' ? /^([A-Z][A-Z_]+)(?: \([A-Za-z_]+\))?: (.+)$/.exec(line) : null;
   return {
     ...(step ? { step: Number(step[1]) } : {}),
     ...(plan ? { planFile: plan[1] as string } : {}),

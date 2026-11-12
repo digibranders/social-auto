@@ -1,8 +1,8 @@
 /**
  * Adds a network to a written batch after the fact, from the same topics and with no new website read. Text only: for each topic a caption is written for the
  * network (the same writer, claim gate and length limit as the original), stored in the plan and in the copy list, and the batch's release record gains the
- * network. For a batch that was already drawn, each topic that has a picture of the network's shape gets a new pending version of that same picture for the
- * network (no draw, no cost); a topic with no such picture is reported as needing its own draw, which the job runner queues.
+ * network. For a batch that was already drawn, every topic with a picture is reported as needing a picture of its own for the new network (each network gets
+ * its own, even when it shares a shape with another), which the job runner queues as a draw; nothing is copied from another network's picture.
  */
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,8 +25,6 @@ function reasonCodeOf(reason: string, hasFacts: boolean): NonNullable<NetworkRes
 }
 
 export type NetworkWriter = (posts: CaptionPost[], networks: Network[]) => Promise<{ variants: Record<string, PostVariants>; report: CaptionReport }>;
-
-const STATUS_ORDER = ['approved', 'pending', 'held'] as const;
 
 export async function addNetworkToBatch(input: { brandDir: string; brand: string; planFile: string; network: Network; facts: readonly EvidenceFact[]; write: NetworkWriter }): Promise<NetworkResult> {
   const { brandDir, brand, planFile, network } = input;
@@ -74,26 +72,12 @@ export async function addNetworkToBatch(input: { brandDir: string; brand: string
   addPlatformToRelease(brandDir, planFile, network as PlanPlatform);
 
   const result: NetworkResult = { network, topics: [] };
-  const shape = NETWORK_RULES[network].picture.shape;
   for (const post of topics) {
     const variant = written.variants[post.id]?.[network];
     if (!variant) continue;
     const topic: NetworkResult['topics'][number] = { postId: post.id, outcome: 'written', ...(variant.fallback ? { fallback: true as const, reasonCode: reasonCodeOf(written.report.fallback.find((f) => f.postId === post.id)?.reason ?? '', (captionPosts.find((c) => c.id === post.id)?.facts.length ?? 0) > 0) } : {}) };
-    const own = versions.filter((i) => i.version.postId === post.id);
-    if (drawn && own.length > 0) {
-      // A picture of the network's own shape that is still in play: an approved one first, else one waiting. Its bytes are reused, so nothing is drawn or bought.
-      const source = STATUS_ORDER.flatMap((status) => own.filter((i) => i.status === status && i.version.network !== undefined && NETWORK_RULES[i.version.network as Network]?.picture.shape === shape).sort((a, b) => b.version.versionNumber - a.version.versionNumber)).at(0);
-      if (source) {
-        const v = source.version;
-        const made = store.addVersion({
-          postId: v.postId, planFile, network, ...(v.width && v.height ? { width: v.width, height: v.height } : {}), headline: v.headline, caption: composeVariant(variant), ctaUrl: v.ctaUrl, factIds: v.factIds, evidence: v.evidence,
-          imagePath: join(brandDir, v.imageFile), validation: v.validation, attempts: v.attempts, costUsd: 0, ...(v.branding ? { branding: v.branding } : {}), createdBy: 'engine',
-        });
-        topic.versionIds = [made.versionId];
-      } else {
-        topic.needsDraw = true;
-      }
-    }
+    // Each network gets a picture of its own: a topic already drawn needs one drawn for the new network, never a copy of another network's picture.
+    if (drawn && versions.some((i) => i.version.postId === post.id)) topic.needsDraw = true;
     result.topics.push(topic);
   }
   return result;
