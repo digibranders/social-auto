@@ -46,11 +46,14 @@ import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { analyzeSite, slugFromSite } from './analyze.ts';
 import { ReviewStore } from './review-store.ts';
 import { parseWeekdays } from './cadence.ts';
-import { composeCaption, parseBrand, parseWeekPlan, readJson, type WeekPlan } from './content.ts';
+import { composeCaption, parseBrand, parseWeekPlan, readJson, type PlannedPost, type WeekPlan } from './content.ts';
+import { batchLookAlikes } from './creative-director.ts';
 import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
 import { readConnected } from './connected-networks.ts';
+import { placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
+import { redrawAlike } from './look-alike-check.ts';
 import { classifyNotDrawn } from './not-drawn.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
 import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
@@ -299,6 +302,7 @@ async function main(): Promise<void> {
       if (values['dry-run'] && !values['allow-paid-ai']) throw new Error('fully AI posters make paid picture and vision calls: with --dry-run they need --allow-paid-ai');
       // The creative director is off unless it is switched on (CREATIVE_DIRECTOR_ENABLED=true): until it has had a live evaluation, each poster is drawn on its own.
       const directorEnabled = process.env['CREATIVE_DIRECTOR_ENABLED'] === 'true';
+      if (placeholderEnabled(process.env)) console.log('    PLACEHOLDER PICTURES: no picture model is called; these are plain stand-ins for local testing, never for a real customer.');
       console.log(`3/4 Drawing the posters with the picture model (no template; creative director ${directorEnabled ? 'ON' : 'off'})…`);
       const factText = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
       ai.usage.purpose = 'writing';
@@ -317,6 +321,16 @@ async function main(): Promise<void> {
       let queuedTotal = 0;
       let stoppedReason: string | undefined;
       const usageIds: string[] = [];
+      type Drawn = { group: (typeof groups)[number]; posts: PlannedPost[]; made: Awaited<ReturnType<typeof makeCreatives>>; outDir: string; suffix: string; network: Network | undefined };
+      const drawnGroups: Drawn[] = [];
+      const makeFor = (posts: PlannedPost[], outDir: string, group: (typeof groups)[number], network: Network | undefined, over: { startNote?: string; headlineGate?: boolean } = {}): ReturnType<typeof makeCreatives> => makeCreatives({
+        ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape, ...(network ? { network } : {}), ...(over.startNote ? { startNote: over.startNote } : {}),
+        // Local testing with no picture model (PICTURE_MODE=placeholder and LOCAL_PLACEHOLDER_PICTURES=yes): placeholder pictures, everything after them the normal pipeline.
+        ...(placeholderEnabled(process.env) ? { deps: placeholderDeps({ ai }) } : first || over.startNote ? (over.startNote ? { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } } : {}) : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
+        // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
+        ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
+        factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
+      });
       for (const group of groups) {
         const posts = finalPlan.posts.filter((p) => group.postIds.includes(p.id) && !dropped.has(p.id));
         if (posts.length === 0) continue;
@@ -325,13 +339,7 @@ async function main(): Promise<void> {
         // A new picture for one network goes in a folder of its own, so the files of the pictures already made are never overwritten.
         const outDir = join(OUT_ROOT, slug, `${planFile.replace(/\.json$/, '')}-ai${suffix}${onlyNetwork ? `-redraw-${Date.now().toString(36)}` : ''}`);
         if (network) console.log(`    Drawing the ${group.shape.shape} picture for ${network}…`);
-        const made = await makeCreatives({
-          ai, brand, brandSlug: slug, brandDir, posts, outDir, log: (m) => console.log(`    ${m}`), directorEnabled, shape: group.shape, ...(network ? { network } : {}),
-          ...(first ? {} : { deps: { headlineGate: { enabled: false, config: headlineGateFromEnv(process.env).config } } }),
-          // The real logo, frozen with the decision, goes on every poster that passes the checks, in a corner the picture was asked to leave calm.
-          ...(branding?.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { logo: { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } } : {}),
-          factOf: (post) => (post.factIds ?? []).map(factText).filter((t): t is string => t !== undefined).join(' ') || post.anchor || post.painPoint,
-        });
+        const made = await makeFor(posts, outDir, group, network);
         first = false;
         for (const r of made.results) {
           if (r.status === 'dropped') dropped.add(r.postId);
@@ -342,9 +350,35 @@ async function main(): Promise<void> {
         console.log(`    Posters: ${made.results.filter((r) => r.status === 'accepted').length} accepted of ${posts.length} (${Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ')}). Report: ${join(outDir, 'creative-report.json')}`);
         if (made.stoppedBy) console.log(`    STOPPED: ${made.stoppedBy}`);
         usageIds.push(...posts.map((p) => `${slug}-${p.id}${suffix}`));
+        drawnGroups.push({ group, posts, made, outDir, suffix, network });
+        if (made.stoppedBy) { stoppedReason = String(made.stoppedBy); break; }
+      }
+      // The pictures of one topic for different networks are compared side by side: two that are clearly the same scene are drawn once more (the later network), told to
+      // choose a different one. The second try counts as a picture of that channel; when it is not accepted, or a limit stops it, the first picture stays.
+      if (!onlyNetwork && !stoppedReason && !placeholderEnabled(process.env) && process.env['LOOKALIKE_CHECK'] !== 'off' && drawnGroups.filter((d) => d.network).length >= 2) {
+        const pictures = drawnGroups.flatMap((d) => (d.network ? d.made.results.flatMap((r) => (r.status === 'accepted' && r.file ? [{ postId: r.postId, network: d.network as Network, file: r.file }] : [])) : []));
+        const replaced = await redrawAlike({
+          pictures,
+          lookAlikes: (posters) => batchLookAlikes(ai, posters),
+          log: (m) => console.log(`    ${m}`),
+          redraw: async (flagged, note) => {
+            const target = drawnGroups.find((d) => d.network === flagged.network);
+            const post = target?.posts.find((p) => p.id === flagged.postId);
+            if (!target || !post) return null;
+            const again = await makeFor([post], `${target.outDir}-again`, target.group, target.network, { startNote: note });
+            const result = again.results.find((r) => r.postId === flagged.postId);
+            if (!result || result.status !== 'accepted' || !result.file) return null;
+            const index = target.made.results.findIndex((r) => r.postId === flagged.postId);
+            if (index >= 0) target.made.results[index] = result;
+            return { file: result.file };
+          },
+        });
+        if (replaced.length > 0) console.log(`    ${replaced.length} picture${replaced.length === 1 ? '' : 's'} drawn again because it looked like another network's.`);
+      }
+      for (const { group, posts, made, outDir, network } of drawnGroups) {
         const queued = registerForReview({ brandDir, brandSlug: slug, planFile, report: made, posts, brand, facts: loaded?.facts ?? [], reportFile: join(outDir, 'creative-report.json'), ...(onlyNetwork ? { networks: [onlyNetwork] } : group.networks.length > 0 ? { networks: group.networks } : {}), ...(branding ? { branding } : {}) });
         queuedTotal += queued.length;
-        if (made.stoppedBy) { stoppedReason = String(made.stoppedBy); break; }
+        void network;
       }
       console.log(ai.usage.format());
       const log = process.env['USAGE_LOG_FILE'];
