@@ -19,6 +19,12 @@
  *                        3 new topics (`weeks[].replacementsLeft`): `429 REPLACE_LIMIT_REACHED` with `restart`; a try that writes nothing fails with `NOTHING_WRITTEN` and is not counted. Only for a dropped post
  *                        (`409 CONFLICT`), once (`409 CONFLICT`), of a week not drawn (`409 BATCH_LOCKED`), whose day is tomorrow or later (`409 DAY_PASSED`). No picture is drawn or paid for.
  *
+ * POST /api/v1/batches   {"externalId", "batchId", "action": "move", "postId", "day": "2026-11-25"}   moves a written post to another day of **its own Monday-to-Sunday week**, in any state
+ *                        (pending, kept, dropped), until that week is drawn; the time stays as the post has it, and two posts may share a day. The day is changed in the batch and in the plan the
+ *                        pictures, the approval and the sending come from, so the post goes out on the new day. Answers 200 {"batch"} (and "warnings": ["WORDS_NAME_A_DAY"] when its words name a
+ *                        weekday or say today/tomorrow: they are not rewritten, so she should read them again); the day it already has is a 200 that changes nothing. `400 INVALID_DAY` (not a
+ *                        real day, or outside the post's week), `400 DAY_PASSED` (today or earlier), `409 BATCH_LOCKED` (its week was drawn or the batch put away), `404 NOT_FOUND`.
+ *
  * `X-Social-Actor` names the customer's person and is required to decide. A final batch answers 409 BATCH_LOCKED; words that do not agree with the facts
  * answer 422 WORDS_NOT_ACCEPTED.
  */
@@ -34,7 +40,7 @@ import { syncConnected } from '../../lib/connected-sync.js';
 import { nextMonday } from '../../lib/plan-days.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
-const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network', 'replace'] as const;
+const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network', 'replace', 'move'] as const;
 const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 /** How many times a customer may ask for pictures (each one costs money): a draw already waiting or finished for a batch is always just returned. */
 const MAX_DRAWS_PER_DAY = 3;
@@ -48,6 +54,9 @@ function nextStart(endsOn: string | null, now: number): string {
   const end = new Date(`${endsOn}T00:00:00Z`);
   return new Date(end.getTime() + (((8 - end.getUTCDay()) % 7) || 7) * 86_400_000).toISOString().slice(0, 10);
 }
+
+/** A real calendar day like 2026-11-25 (not 2026-02-31 or 2026-13-40). */
+const isRealDay = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
 const isAction = (value: unknown): value is Action => typeof value === 'string' && (ACTIONS as readonly string[]).includes(value);
 const LIMITS = { headline: 300, caption: 3000, network: 20, brandName: 200, domain: 200 } as const;
@@ -86,7 +95,7 @@ export async function POST(request: Request): Promise<Response> {
   const action = body['action'];
   if (!isAction(action)) return apiError(400, 'INVALID_REQUEST', `action must be one of: ${ACTIONS.join(', ')}`);
   // Asking for pictures or for more networks writes and spends; a brand that is put away does neither.
-  if (action === 'draw' || action === 'add-network' || action === 'replace') {
+  if (action === 'draw' || action === 'add-network' || action === 'replace' || action === 'move') {
     const away = archivedAnswer(found.workspace);
     if (away) return away;
   }
@@ -122,6 +131,13 @@ export async function POST(request: Request): Promise<Response> {
         if (error instanceof EngineError && error.status === 409 && error.engineCode === 'CONFLICT') return apiError(409, 'NETWORK_ALREADY_THERE', 'this batch already has that network');
         throw error;
       }
+    }
+    if (action === 'move') {
+      // Another day for a written post, within its own Monday-to-Sunday week, until the week is drawn. The time stays as the post has it.
+      const to = body['day'];
+      if (typeof to !== 'string' || !isRealDay(to)) return apiError(400, 'INVALID_DAY', 'day must be a real day like 2026-11-25');
+      const moved = await engine.moveWrittenPost(batchId, postId as string, to, by);
+      return json(200, { batch: moved.batch, ...(moved.warnings.length > 0 ? { warnings: moved.warnings } : {}) });
     }
     if (action === 'replace') {
       // A new topic for a dropped post of a week that is not drawn: a job that writes one post for the same day, from the website's facts. Words only; no picture until she keeps it and draws.
