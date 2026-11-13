@@ -34,6 +34,7 @@ export const ERROR_CODES = [
   'DRAW_LIMIT_REACHED',
   'REDRAW_LIMIT_REACHED',
   'PICTURE_LIMIT_REACHED',
+  'CAROUSEL_LIMIT_REACHED',
   'NETWORK_ALREADY_THERE',
   'BRAND_LIMIT_REACHED',
   'GROUP_MISMATCH',
@@ -114,7 +115,7 @@ export const apiError = (status: number, code: ErrorCode, message: string, extra
 export function errorResponse(error: unknown, what: string): Response {
   if (error instanceof EditError) return apiError(error.status, error.code ?? codeForStatus(error.status), error.message);
   if (error instanceof ActorError) return apiError(error.status, error.code, error.message);
-  if (error instanceof EngineError) return apiError(error.status, error.code, error.message, error.pictureLimit ? { channel: error.pictureLimit.channel, restart: error.pictureLimit.restart } : {});
+  if (error instanceof EngineError) return apiError(error.status, error.code, error.message, error.pictureLimit ? { channel: error.pictureLimit.channel, restart: error.pictureLimit.restart } : error.restart ? { restart: error.restart } : {});
   console.error(describeError(error));
   return apiError(500, 'INTERNAL', `could not ${what}`);
 }

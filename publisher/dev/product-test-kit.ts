@@ -55,7 +55,7 @@ export async function call(handler: Handler, path: string, init: { method?: stri
 export interface FakeJob {
   id: string;
   key: string;
-  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet';
+  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet' | 'carousel';
   brand: string;
   site: string;
   by: string;
@@ -112,6 +112,19 @@ export interface FakePoster {
   imageSha256?: string;
   /** The reason it was rejected, when it was. */
   rejectedFor?: string;
+  /** A slide or a caption of a carousel: shown with the carousel, never as a picture of its own. */
+  carousel?: { id: string; position: number; count: number };
+}
+
+export interface FakeCarousel {
+  brand: string;
+  id: string;
+  topic: string;
+  date: string;
+  status: 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
+  /** The version ids of its slides, in order, and the words for each channel. */
+  slides: string[];
+  captions: Array<{ network: string; caption: string }>;
 }
 
 export interface FakeEngine {
@@ -128,6 +141,9 @@ export interface FakeEngine {
   weekly: { limit: number; used: Record<string, number>; week: { from: string; to: string; restart: string } };
   /** When set, a request that draws pictures (draw, redraw, add a network) is refused like a channel with none left. */
   refusePictures: { channel: string; restart: string; error: string } | null;
+  /** The carousels made, and (when set) the refusal a customer who has made her week's carousel gets. */
+  carousels: FakeCarousel[];
+  carouselRefusal: { restart: string; error: string } | null;
   /** The networks the product API told the engine the customer has connected (null: never told). */
   connected: string[] | null;
   /** How many of the next PUT /review/connected calls are refused (404), as before the brand's first job exists. */
@@ -139,7 +155,7 @@ export interface FakeEngine {
 
 /** A pretend review service: it keeps jobs, runs none, and answers a second ask for a brand with a job already waiting by returning that job (as the real one does). */
 export async function fakeEngine(): Promise<FakeEngine> {
-  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
+  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], carouselRefusal: null, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
   let counter = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -177,10 +193,12 @@ export async function fakeEngine(): Promise<FakeEngine> {
       if (req.method === 'POST' && url.pathname === '/review/jobs' && body) {
         const brand = String(body['brand']);
         if (brand !== caller) return send(400, { error: 'brand must be the brand named in X-Brand' });
+        const asked = body['kind'] === 'carousel' ? 'carousel' : 'copy';
         const standing = engine.jobs.find((j) => j.brand === brand && (j.state === 'queued' || j.state === 'running'));
         if (standing) return send(200, { job: standing, created: false });
+        if (asked === 'carousel' && engine.carouselRefusal) return send(429, { error: engine.carouselRefusal.error, code: 'CAROUSEL_LIMIT_REACHED', restart: engine.carouselRefusal.restart });
         counter += 1;
-        const job: FakeJob = { id: `job-a${counter.toString(36).padStart(5, '0')}-0123abcd`, key: `copy:${brand}`, kind: 'copy', brand, site: String(body['site']), by: header('x-actor') ?? '', networks: body['networks'] as string[], state: 'queued', createdAt: new Date().toISOString() };
+        const job: FakeJob = { id: `job-a${counter.toString(36).padStart(5, '0')}-0123abcd`, key: `${asked}:${brand}`, kind: asked, brand, site: String(body['site']), by: header('x-actor') ?? '', networks: body['networks'] as string[], state: 'queued', createdAt: new Date().toISOString() };
         engine.jobs.unshift(job);
         return send(202, { job, created: true });
       }
@@ -278,8 +296,20 @@ export async function fakeEngine(): Promise<FakeEngine> {
       }
       if (req.method === 'GET' && url.pathname === '/review/posts') {
         const status = url.searchParams.get('status') ?? 'pending';
-        const mine = engine.posters.filter((p) => p.brand === caller && (status === 'all' || (status === 'open' ? p.status === 'pending' || p.status === 'held' : p.status === status)));
+        const mine = engine.posters.filter((p) => p.brand === caller && !p.carousel && (status === 'all' || (status === 'open' ? p.status === 'pending' || p.status === 'held' : p.status === status)));
         return send(200, { posts: mine.map(posterView), problems: [], reasons: ['weak_copy', 'other'] });
+      }
+      if (req.method === 'GET' && url.pathname === '/review/carousels') return send(200, { carousels: engine.carousels.filter((c) => c.brand === caller).map((c) => ({ id: c.id, topic: c.topic, date: c.date, createdAt: c.date, planFile: 'week-09.json', count: c.slides.length, status: c.status })).reverse() });
+      const carousel = /^\/review\/carousels\/([^/]+)\/([^/]+)(?:\/(approve|reject))?$/.exec(url.pathname);
+      if (carousel) {
+        const [, carouselBrand = '', carouselId = '', verb] = carousel;
+        const found = engine.carousels.find((c) => c.brand === carouselBrand && c.id === carouselId);
+        if (carouselBrand !== caller || !found) return send(404, { error: 'no such carousel', code: 'NOT_FOUND' });
+        if (!verb) return send(200, { id: found.id, count: found.slides.length, status: found.status, slides: found.slides.map((versionId, i) => ({ position: i + 1, versionId, status: found.status === 'approved' ? 'approved' : 'pending', headline: 'H', caption: '' })), captions: found.captions.map((c) => ({ ...c, versionId: `${caller}.${'c'.repeat(16)}`, status: found.status === 'approved' ? 'approved' : 'pending' })), reasons: ['weak_copy', 'other'] });
+        if (verb === 'reject' && !['weak_copy', 'other', 'style'].includes(String(body?.['reason']))) return send(400, { error: 'the reason must be one of', code: 'INVALID' });
+        if (found.status === 'incomplete') return send(400, { error: 'slide 2 has no picture yet', code: 'INVALID' });
+        found.status = verb === 'approve' ? 'approved' : 'rejected';
+        return send(200, { status: found.status });
       }
       const topic = /^\/review\/topics\/([^/]+)\/([^/]+)\/([^/]+)\/approve$/.exec(url.pathname);
       if (topic && req.method === 'POST') {
