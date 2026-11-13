@@ -1,0 +1,10 @@
+[Unit]
+Description=Start a release the moment the review service says an approval changed
+
+[Path]
+# The review service writes this file when a poster is approved or taken back. Several writes while the release runs make it run once more, never in parallel.
+PathChanged=/home/social/social-auto/scheduler/engine/brands/.release-requested
+Unit=social-release.service
+
+[Install]
+WantedBy=paths.target

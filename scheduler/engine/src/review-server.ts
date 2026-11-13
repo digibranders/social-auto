@@ -37,6 +37,7 @@ import { decideFact, FactsError, factsView } from './facts-view.ts';
 import { checkCopyWords, checkNewWords } from './copy-edit.ts';
 import { JobError, JobStore, keyOf, type Job, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
+import { requestRelease } from './release-request.ts';
 import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
@@ -745,6 +746,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { decisions: already.map((i) => ({ versionId: i.version.versionId, network: i.version.network ?? null, status: i.status })), already: true });
         }
         const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
+        requestRelease(root);
         return send(res, 200, { decisions });
       }
       // Whether the weekly carousel is switched on for the customer: made by the system on the Thursday before each week, for her to approve.
@@ -811,6 +813,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             }
           }
           if (parts[4] === 'reject') carouselStore.rejectCarousel(carouselId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
+          requestRelease(root);
           return send(res, 200, { status: carouselStore.carouselStatus(carouselId) });
         }
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
@@ -913,6 +916,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const by = scope.by(body['by']);
         if (action === 'reject' && text(body['reason'], 40) === 'expired') throw new ReviewError('INVALID', 'that reason is only recorded by the system');
         const decision = action === 'approve' ? store.approve(versionId, by) : store.reject(versionId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
+        // What is approved changed: the calendar follows now, not at the next timer.
+        requestRelease(root);
         return send(res, 200, { decision, status: store.get(versionId).status });
       }
       return send(res, 404, { error: 'Not found' });
