@@ -486,7 +486,7 @@ test('the written list also tells the page each network\'s caption rules', async
     const answer = (await (await s.call('/review/copy')).json()) as { batches: unknown[]; networkRules: Record<string, { maxCaption: number; recommendedMin: number; recommendedMax: number; visibleChars: number; maxHashtags: number }> };
     assert.deepEqual(answer.batches, []);
     assert.deepEqual(Object.keys(answer.networkRules), ['instagram', 'facebook', 'linkedin', 'google']);
-    assert.deepEqual(answer.networkRules['linkedin'], { maxCaption: 1300, recommendedMin: 400, recommendedMax: 800, visibleChars: 140, maxHashtags: 3 });
+    assert.deepEqual(answer.networkRules['linkedin'], { maxCaption: 1500, recommendedMin: 900, recommendedMax: 1200, visibleChars: 125, maxHashtags: 3 });
   } finally {
     await s.done();
   }

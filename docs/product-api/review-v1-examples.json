@@ -34,24 +34,24 @@
     ],
     "networkRules": {
       "instagram": {
-        "maxCaption": 600,
-        "recommendedMin": 100,
-        "recommendedMax": 300,
+        "maxCaption": 800,
+        "recommendedMin": 300,
+        "recommendedMax": 600,
         "visibleChars": 125,
         "maxHashtags": 5
       },
       "facebook": {
-        "maxCaption": 600,
-        "recommendedMin": 100,
-        "recommendedMax": 250,
+        "maxCaption": 800,
+        "recommendedMin": 300,
+        "recommendedMax": 600,
         "visibleChars": 125,
         "maxHashtags": 3
       },
       "linkedin": {
-        "maxCaption": 1300,
-        "recommendedMin": 400,
-        "recommendedMax": 800,
-        "visibleChars": 140,
+        "maxCaption": 1500,
+        "recommendedMin": 900,
+        "recommendedMax": 1200,
+        "visibleChars": 125,
         "maxHashtags": 3
       },
       "google": {
