@@ -159,6 +159,32 @@ test('a malformed person is refused, and a missing one is allowed for starting a
   });
 });
 
+test('PRODUCT_LIMITS=off lifts the day and month limits on batches, and only exactly "off" does', async () => {
+  const before = process.env['PRODUCT_LIMITS'];
+  try {
+    await withProducts(async () => {
+      const engine = await fakeEngine();
+      try {
+        const brand = await workspace('shop-1', true);
+        const done = (hoursAgo: number, n: number): FakeJob => ({ id: `job-b${n.toString(36).padStart(5, '0')}-0123abcd`, key: `copy:${brand}`, kind: 'copy', brand, site: 'https://acme.example.com', by: 'product:brandbasket', networks: ['instagram'], state: 'succeeded', createdAt: new Date(Date.now() - hoursAgo * 3_600_000).toISOString() });
+        engine.jobs.push(...Array.from({ length: 10 }, (_, i) => done(i / 4 + 0.5, i + 1)));
+        for (const value of [undefined, 'on', 'OFF']) {
+          if (value === undefined) delete process.env['PRODUCT_LIMITS'];
+          else process.env['PRODUCT_LIMITS'] = value;
+          expectError(await start('shop-1'), 429, 'JOB_LIMIT_REACHED', `limits are on (${value})`);
+        }
+        process.env['PRODUCT_LIMITS'] = 'off';
+        assert.equal((await start('shop-1')).status, 202, 'ten in a day and in a month, and another is allowed');
+      } finally {
+        await engine.close();
+      }
+    });
+  } finally {
+    if (before === undefined) delete process.env['PRODUCT_LIMITS'];
+    else process.env['PRODUCT_LIMITS'] = before;
+  }
+});
+
 test('a customer may start only so many batches a day and a month, but a job already waiting is always returned', async () => {
   await withProducts(async () => {
     const engine = await fakeEngine();
