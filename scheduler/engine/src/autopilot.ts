@@ -69,7 +69,7 @@ import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { normalizeHeadline } from './hooks.ts';
 import type { ConceptRecord } from './concepts.ts';
-import { conceptRecordOf, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
+import { CAPTION_RULES, conceptRecordOf, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
 import { topUpPlan } from './plan-topup.ts';
 import { createArtRenderContext, renderPlan, type PostRenderRecord } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
@@ -516,7 +516,7 @@ async function main(): Promise<void> {
         writeDay: async (day, existing) => {
           const one = await writePlan({ startDate: day, time: values.time, utcOffset: values['utc-offset'], count: 1, weekdays: [weekdayOf(day)] }, {
             // A different request from the first one on purpose (the paid-call guard refuses an identical one): the day, and the ideas the plan already has.
-            requestNote: `Write ONE post, for ${day}. It must be about a different fact and a different idea from the posts this plan already has: ${existing.slice(0, 20).map((p) => `"${p.headline.replaceAll('|', '')}"`).join('; ')}.`,
+            requestNote: `Write ONE post, for ${day}. It must be about a different fact and a different idea from the posts this plan already has: ${existing.slice(0, 20).map((p) => `"${p.headline.replaceAll('|', '')}"`).join('; ')}. ${CAPTION_RULES}`,
             recentHeadlines: [...history.weeks.flatMap((w) => w.headlines ?? []), ...existing.map((p) => p.headline)],
             recentConcepts: [...history.weeks.flatMap((w) => w.concepts ?? []), ...existing.flatMap((p) => { const r = conceptRecordOf(p); return r ? [r] : []; })],
           });

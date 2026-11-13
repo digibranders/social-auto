@@ -24,6 +24,8 @@ export interface ChatJsonOptions<T> {
   fetchFn?: typeof fetch;
   /** When no other provider can take over: the waits before each new try of a call that came back with a server error or "too many requests" (default 1 s, then 4 s). */
   retryDelaysMs?: readonly number[];
+  /** How many answers may be asked for from one provider, each corrected with what was wrong with the last (default 2). */
+  attempts?: number;
 }
 
 type ContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
@@ -122,7 +124,7 @@ export async function chatJson<T>(options: ChatJsonOptions<T>): Promise<T> {
       { role: 'system', content: `${options.system}\n\n${UNTRUSTED_DATA_RULE}` },
       { role: 'user', content: images.length === 0 ? options.user : [{ type: 'text', text: options.user }, ...images.map((url): ContentPart => ({ type: 'image_url', image_url: { url } }))] },
     ];
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < (options.attempts ?? 2); attempt++) {
       let content: string;
       try {
         // A server error or "too many requests" is a passing fault: with no other provider to take over, the call is tried again after a short wait (the failed call was
