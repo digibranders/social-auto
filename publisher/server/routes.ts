@@ -15,6 +15,7 @@ export const routes: Record<string, { method: string; load: () => Promise<Handle
   '/api/v1/facts': { method: 'ANY', load: async () => { const m = await import('../api/_v1/facts.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
   '/api/v1/batches': { method: 'ANY', load: async () => { const m = await import('../api/_v1/batches.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
   '/api/v1/posters': { method: 'ANY', load: async () => { const m = await import('../api/_v1/posters.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
+  '/api/v1/carousels': { method: 'ANY', load: async () => { const m = await import('../api/_v1/carousels.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
   '/api/v1/events': { method: 'GET', load: () => import('../api/_v1/events.js').then((m) => m.GET) },
   '/api/v1/analytics': { method: 'GET', load: () => import('../api/_v1/analytics.js').then((m) => m.GET) },
   '/api/v1/limits': { method: 'GET', load: () => import('../api/_v1/limits.js').then((m) => m.GET) },

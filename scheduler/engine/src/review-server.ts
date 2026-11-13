@@ -41,6 +41,9 @@ import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
+import { carouselRoom } from './carousel-limit.ts';
+import { readHistory as readCarouselHistory } from './carousel-run.ts';
+import { tomorrowAt } from './posting-plan.ts';
 import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
 import { pictureRoomFor } from './picture-room.ts';
 import type { NotDrawn } from './not-drawn.ts';
@@ -329,9 +332,30 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
               throw error;
             }
-            const carouselBrand = slugFromSite(carouselSite);
+            // A product's customer is named by whoever owns the brand (X-Brand), never by the website; our own clients are named after the site.
+            let carouselBrand: string;
+            let carouselFor = [...new Set(carouselNetworks as string[])];
+            if (caller.role === 'product') {
+              if (body['brand'] !== caller.brand) throw new ReviewError('INVALID', 'brand must be the brand named in X-Brand');
+              carouselBrand = caller.brand;
+              scope.guard(carouselBrand, true);
+            } else {
+              carouselBrand = slugFromSite(carouselSite);
+              scope.guard(carouselBrand, true);
+            }
             if (!BRAND.test(carouselBrand) || !existsSync(join(root, carouselBrand, 'brand.json'))) throw new ReviewError('INVALID', 'that website has not been read yet: write posts for it first, so a carousel can be made from what it states');
-            const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: text(body['by'], 80), networks: [...new Set(carouselNetworks as string[])], ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
+            if (caller.role === 'product') {
+              // Pictures are bought only for channels the customer has connected, and a carousel is limited like a draw: one a week, and a rejected one may be made once more.
+              const connected = readConnected(join(root, carouselBrand));
+              if (connected === null) throw new ReviewError('CONFLICT', 'CONNECTED_UNKNOWN: the connected channels are not known yet, so no pictures are drawn');
+              carouselFor = carouselFor.filter((n) => connected.has(n as Network));
+              if (carouselFor.length === 0) throw new ReviewError('INVALID', 'none of those channels is connected, so there is nothing to make a carousel for');
+              const onDay = `${carouselDay ?? tomorrowAt('+05:30')}T${carouselTime ?? '10:00'}:00+05:30`;
+              const carouselStore = storeFor(carouselBrand);
+              const room = carouselRoom(readCarouselHistory(join(root, carouselBrand)).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return carouselStore.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })), onDay);
+              if (!room.ok) return send(res, 429, { error: room.message, code: 'CAROUSEL_LIMIT_REACHED', restart: room.restart });
+            }
+            const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: scope.by(body['by']), networks: carouselFor, ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
             return send(res, created ? 202 : 200, { job, created });
           }
           if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" or "carousel" (drawing is asked for on the written batch)');
@@ -564,15 +588,31 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
         return send(res, 200, { decisions });
       }
+      // The carousels made for a brand (a product sees its own), newest first, with where each stands.
+      if (parts[0] === 'review' && parts[1] === 'carousels' && parts.length === 2 && req.method === 'GET') {
+        const listBrand = caller.role === 'product' ? caller.brand : url.searchParams.get('brand') ?? '';
+        if (!BRAND.test(listBrand)) return send(res, 400, { error: 'brand is not a brand name' });
+        scope.guard(listBrand, false);
+        if (!brands().includes(listBrand)) return send(res, 200, { carousels: [] });
+        const listStore = storeFor(listBrand);
+        const carousels = readCarouselHistory(join(root, listBrand)).map((h) => {
+          let status: string;
+          let count = 0;
+          try { status = listStore.carouselStatus(h.id); count = listStore.carouselSlides(h.id).count; } catch { status = 'incomplete'; }
+          return { id: h.id, topic: h.topic, date: h.date ?? h.createdAt, createdAt: h.createdAt, planFile: h.planFile, count, status };
+        }).reverse();
+        return send(res, 200, { carousels });
+      }
       // A carousel: shown whole, and approved or rejected as one step. Its pictures are served by the ordinary picture route, by each slide's version id.
       if (parts[0] === 'review' && parts[1] === 'carousels' && (parts.length === 4 || (parts.length === 5 && req.method === 'POST' && (parts[4] === 'approve' || parts[4] === 'reject')))) {
         const carouselBrand = decodeURIComponent(parts[2] ?? '');
         const carouselId = decodeURIComponent(parts[3] ?? '');
+        scope.guard(carouselBrand, parts.length === 5);
         if (!BRAND.test(carouselBrand) || !brands().includes(carouselBrand) || !/^[A-Za-z0-9._-]{1,80}$/.test(carouselId)) throw new ReviewError('NOT_FOUND', 'no such carousel');
         const carouselStore = storeFor(carouselBrand);
         if (parts.length === 5) {
           const body = await readJson(req);
-          const by = text(body['by'], 80);
+          const by = scope.by(body['by']);
           if (parts[4] === 'approve') carouselStore.approveCarousel(carouselId, by);
           else carouselStore.rejectCarousel(carouselId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
           return send(res, 200, { status: carouselStore.carouselStatus(carouselId) });
@@ -596,7 +636,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const problems: Array<{ brand: string; message: string }> = [];
         const items = scope.visible(brands()).flatMap((brand) => {
           try {
-            const all = storeFor(brand).list();
+            // A product sees its pictures one by one; the slides and captions of a carousel are shown with the carousel.
+            const all = storeFor(brand).list().filter((i) => caller.role !== 'product' || !i.version.carousel);
             return status === 'all' ? all : status === 'open' ? all.filter((i) => i.status === 'pending' || i.status === 'held') : all.filter((i) => i.status === status);
           } catch (error) {
             if (error instanceof ReviewError && (error.code === 'TAMPERED' || error.code === 'LOCKED')) {
@@ -615,6 +656,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       const action = parts[3];
       scope.guard(versionId.split('.')[0] ?? '', action === 'approve' || action === 'reject' || action === 'redraw' || action === 'words');
       const store = storeOf(versionId);
+      // A slide or a caption of a carousel is decided with the whole carousel, never on its own: the customer approves, rejects or redraws the set.
+      if (caller.role === 'product' && (action === 'approve' || action === 'reject' || action === 'redraw' || action === 'words') && store.get(versionId).version.carousel) throw new ReviewError('CONFLICT', 'this belongs to a carousel; decide the carousel as a whole');
       if (parts.length === 3 && req.method === 'GET') {
         const item = store.get(versionId);
         return send(res, 200, { ...item, ...redrawFor(item, jobs.list({ brand: item.version.brand })), history: store.history(item.version.postId, item.version.network ?? '').map((h) => summary(h)) });

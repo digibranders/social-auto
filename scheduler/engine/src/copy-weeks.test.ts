@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { CopyStage, CopyStageError, weekOfPost, weeksOf } from './copy-stage.ts';
 import { createReviewServer } from './review-server.ts';
 import { ProductBrands } from './product-brands.ts';
+import { ReviewStore } from './review-store.ts';
 import { JobStore } from './job-store.ts';
 import { engineArgs } from './job-runner.ts';
 import { mondayOf } from './picture-limit.ts';
@@ -270,5 +271,95 @@ test('a draw for a product customer stops when the connected networks were never
     assert.equal((connectedForDraw(dir, true) as Set<string>).size, 0, 'recorded as none connected: nothing is drawn, and nothing is refused as unknown');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ---- a customer asks for a carousel
+
+const inDays = (n: number): string => new Date(Date.now() + n * 86_400_000).toISOString().slice(0, 10);
+
+test('a customer asks for a carousel: it is made for her own brand and only the channels she has connected, and a second ask is the same job', async () => {
+  const s = await start();
+  try {
+    const ask = (over: Record<string, unknown> = {}): Promise<Response> => s.call('/review/jobs', { kind: 'carousel', site: 'acme.example', brand: 'bb-acme', networks: ['instagram', 'linkedin', 'facebook'], startDate: inDays(3), ...over });
+    const first = await ask();
+    assert.equal(first.status, 202, JSON.stringify(await first.clone().json()));
+    const { job } = (await first.json()) as { job: { id: string; kind: string; brand: string; networks: string[]; by: string } };
+    assert.deepEqual([job.kind, job.brand, job.networks], ['carousel', 'bb-acme', ['instagram', 'facebook']], 'linkedin is not connected, so nothing is made for it');
+    assert.deepEqual(engineArgs(job as never).slice(0, 5), ['src/carousel-cli.ts', '--site', 'https://acme.example', '--brand', 'bb-acme']);
+    const again = await ask();
+    assert.equal(again.status, 200);
+    assert.equal(((await again.json()) as { job: { id: string } }).job.id, job.id);
+    assert.equal((await ask({ brand: 'bb-other' })).status, 400, 'the brand must be the one named in X-Brand');
+    assert.equal((await ask({ networks: ['linkedin'] })).status, 400, 'no connected channel among those asked for');
+  } finally {
+    await s.done();
+  }
+});
+
+test('a carousel is refused while the connected channels are not known, and once a week is made another is refused with the day it starts again', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    const day = inDays(3);
+    const ask = (): Promise<Response> => s.call('/review/jobs', { kind: 'carousel', site: 'acme.example', brand: 'bb-acme', networks: ['instagram'], startDate: day });
+    rmSync(join(dir, 'connected.json'), { force: true });
+    const unknown = await ask();
+    assert.equal(unknown.status, 409);
+    assert.match(((await unknown.json()) as { error: string }).error, /CONNECTED_UNKNOWN/);
+    writeConnected(dir, ['instagram']);
+    // A carousel already made for that week (not rejected: it has no slides in review yet, so it still counts).
+    writeFileSync(join(dir, 'carousels.json'), JSON.stringify({ carousels: [{ id: 'car-made', topic: 't', createdAt: new Date().toISOString(), planFile: 'week-02.json', date: `${day}T10:00:00+05:30` }] }));
+    const full = await ask();
+    assert.equal(full.status, 429);
+    const body = (await full.json()) as { code: string; restart: string; error: string };
+    assert.equal(body.code, 'CAROUSEL_LIMIT_REACHED');
+    assert.match(body.restart, /^\d{4}-\d{2}-\d{2}$/);
+    assert.match(body.error, /already made for the week/);
+  } finally {
+    await s.done();
+  }
+});
+
+test('a customer sees only her own carousels: the list holds hers, and another brand\'s carousel is not hers to read or decide', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    writeFileSync(join(dir, 'carousels.json'), JSON.stringify({ carousels: [{ id: 'car-1', topic: 'Why it works', createdAt: '2026-11-12T00:00:00Z', planFile: 'week-02.json', date: '2026-11-17T10:00:00+05:30' }] }));
+    const own = (await (await s.call('/review/carousels')).json()) as { carousels: Array<{ id: string; topic: string; status: string; count: number }> };
+    assert.deepEqual(own.carousels.map((c) => [c.id, c.topic, c.status, c.count]), [['car-1', 'Why it works', 'incomplete', 0]]);
+    const owners = new ProductBrands(join(s.root, 'brands'));
+    mkdirSync(join(s.root, 'brands', 'bb-other'), { recursive: true });
+    owners.claim('bb-other', 'brandbasket', () => false);
+    const asOther = (path: string, body?: unknown): Promise<Response> => fetch(`${s.base}${path}`, { method: body === undefined ? 'GET' : 'POST', headers: { Authorization: `Bearer ${PRODUCT}`, 'X-Brand': 'bb-other', 'X-Actor': 'brandbasket:u', 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    assert.deepEqual(((await (await asOther('/review/carousels')).json()) as { carousels: unknown[] }).carousels, []);
+    assert.ok([403, 404].includes((await asOther('/review/carousels/bb-acme/car-1')).status), 'reading another brand\'s carousel is refused');
+    assert.ok([403, 404].includes((await asOther('/review/carousels/bb-acme/car-1/approve', { by: 'x' })).status), 'deciding it is refused');
+  } finally {
+    await s.done();
+  }
+});
+
+test('a carousel slide is not one of a customer\'s pictures: it is not in her list and cannot be approved, rejected or redrawn on its own', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    const image = join(s.root, 'slide.jpg');
+    writeFileSync(image, 'slide');
+    const store = new ReviewStore(dir, 'bb-acme');
+    const base = { headline: 'H', caption: '', ctaUrl: 'https://acme.example', factIds: ['f1'], evidence: [{ factId: 'f1', text: 't', quote: 'q', url: 'https://acme.example/', context: 'c' }], imagePath: image, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0 };
+    const slide = store.addVersion({ ...base, postId: 'car-1-s1', planFile: 'week-02.json', carousel: { id: 'car-1', position: 1, count: 3 } });
+    const single = store.addVersion({ ...base, postId: 'w1-d1', planFile: 'week-01.json', network: 'instagram' });
+    const list = (await (await s.call('/review/posts?status=all')).json()) as { posts: Array<{ versionId: string }> };
+    assert.deepEqual(list.posts.map((p) => p.versionId), [single.versionId], 'only the ordinary picture is listed');
+    for (const action of ['approve', 'reject', 'redraw']) {
+      const answer = await s.call(`/review/posts/${slide.versionId}/${action}`, { by: 'x', reason: 'other' });
+      assert.equal(answer.status, 409, action);
+      assert.match(((await answer.json()) as { error: string }).error, /carousel as a whole/);
+    }
+    assert.equal(store.get(slide.versionId).status, 'pending', 'nothing was decided');
+    assert.equal((await s.call(`/review/posts/${slide.versionId}/image`)).status, 200, 'the picture itself can still be read');
+  } finally {
+    await s.done();
   }
 });

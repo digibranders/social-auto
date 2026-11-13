@@ -103,6 +103,16 @@ Only the customer decides. A picture replaced by a newer one answers `409 POSTER
 
 `GET /api/v1/limits?externalId=` answers `{week: {from, to, restart}, limit: 7, channels: [{network, limit, used, left}]}` for her own workspace (`WORKSPACE_NOT_FOUND` otherwise). The week runs Monday to Sunday in India time and starts again on `restart` (YYYY-MM-DD). A customer may draw 7 pictures a week for each channel (5 for the week's posts and 2 spare). Every picture drawn counts, including a redraw and the picture of a network added later; a try that bought nothing does not, and carousel slides are not counted here. Draws, redraws and added networks that would pass a channel's limit are refused before anything is bought with `429 PICTURE_LIMIT_REACHED` (`error` is a plain sentence to show, for example "You have used your 7 Instagram pictures for this week. You can draw more from Monday 16 November."; `channel` and `restart` are fixed). Our own clients are not limited this way.
 
+## The carousel of the week (`/api/v1/carousels`)
+
+One post of 3 to 5 slides, with the **same slides on every connected channel** and the words written for each channel. It replaces one of the week's posts, is made from the facts the customer's website states (read it first: start a batch), and the business name is never written on a slide (the address and the real logo are on the last slide only). Google Business gets the first slide as a normal post.
+
+- `POST /api/v1/carousels {externalId, action: "make", networks?, startDate?}` asks for it. Only connected channels are made for (`400 CHANNEL_NOT_CONNECTED` when there is none; `409 CONFLICT` before the website was read). `202 {job, created}`; the job has `kind: "carousel"` and follows the same states as a write job. A second ask while one is being made returns the same job (`200`, `created: false`).
+- **One carousel a week** that is still wanted (waiting, approved or posted); a rejected one may be made once more, and no more than two are made in a week (Monday to Sunday, India time, from the day it is for). Beyond that `429 CAROUSEL_LIMIT_REACHED {error, code, restart}`; `error` is a sentence to show and `restart` the day she can make another. It costs about 9 cents for five slides, and is not counted in the 7 pictures a week for each channel (`GET /api/v1/limits`).
+- `GET /api/v1/carousels?externalId=` lists them, newest first: `{carousels: [{id, topic, date, count, status}]}`. `status` is `incomplete` (not every slide is ready), `pending` (waiting for the customer), `approved`, `rejected` or `blocked` (a slide did not pass the checks).
+- `GET /api/v1/carousels?externalId=&id=` shows one: `{carousel: {id, count, status, slides: [{position, status}], captions: [{network, caption, status}]}, reasons}`. The slide itself is `&slide=N&image=1` (JPEG). A slide or a caption of a carousel is never listed in `GET /api/v1/posters` and cannot be approved, rejected or redrawn there.
+- `POST /api/v1/carousels {externalId, action: "approve" | "reject", id, reason?, comment?}` decides the **whole carousel** (every slide and every channel's words, exactly as they are now). `X-Social-Actor` is required. `reject` needs a `reason` (as for pictures). Answers `{carousel: {id, status}}`. A carousel that is not approved by its day is not posted.
+
 ## Per-channel versions (`variants`)
 
 A post has one main caption and picture. `variants` gives one platform its own caption, its own picture, or both. It is an object keyed by platform (`instagram`, `facebook`, `linkedin`, `google`); any other key is refused (`INVALID_VARIANTS`).
@@ -178,6 +188,7 @@ Every error answers `{"error": "<a plain sentence>", "code": "<CODE>"}`. The sen
 | `WORKSPACE_ARCHIVED` | 409 | the brand is put away, so nothing new is written, drawn or sent for it |
 | `REDRAW_LIMIT_REACHED` | 409 | the picture was already drawn again as often as is allowed |
 | `PICTURE_LIMIT_REACHED` | 429 | the customer has drawn all the pictures she may this week for a channel (7 a week for each channel); the answer also has `channel` and `restart` (the Monday it starts again, YYYY-MM-DD) and a plain sentence to show |
+| `CAROUSEL_LIMIT_REACHED` | 429 | the customer has already made her carousel for the week (one a week; a rejected one may be made once more); the answer also has `restart`, the day she can make another |
 | `INVALID_REASON` | 400 | `reason` of a rejection is missing or not one of the listed reasons |
 | `INVALID_EXTERNAL_ID` | 400 | `externalId` is missing or not 1-64 letters, digits or `. _ : -` |
 | `WORKSPACE_NOT_FOUND` | 404 | no workspace with that `externalId` belongs to this product |

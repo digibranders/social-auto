@@ -27,6 +27,7 @@ const VERSION_ID = /^[a-z0-9][a-z0-9-]{0,62}\.[a-f0-9]{16}$/;
 const FACT_ID = /^[a-f0-9]{12}$/;
 const PART = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const BRAND = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const CAROUSEL_ID = /^[A-Za-z0-9._-]{1,80}$/;
 const JOB_ID = /^job-[a-z0-9]{4,12}-[a-f0-9]{8}$/;
 
 const PRODUCT_ID = /^[a-z][a-z0-9-]{0,31}$/;
@@ -64,20 +65,23 @@ export class EngineError extends Error {
   readonly engineCode: string | undefined;
   /** For a channel that has used its pictures for the week: which channel and the day (YYYY-MM-DD) it starts again. */
   readonly pictureLimit: { channel: string; restart: string } | undefined;
-  constructor(status: number, message: string, reason?: string, engineCode?: string, pictureLimit?: { channel: string; restart: string }) {
+  /** For a customer who has made her carousel for the week: the day (YYYY-MM-DD) she can make another. */
+  readonly restart: string | undefined;
+  constructor(status: number, message: string, reason?: string, engineCode?: string, pictureLimit?: { channel: string; restart: string }, restart?: string) {
     super(message);
     this.name = 'EngineError';
     this.status = status;
     this.reason = reason;
     this.engineCode = engineCode;
     this.pictureLimit = pictureLimit;
+    this.restart = restart;
   }
 
   /** The code the product API answers with. */
   get code(): ErrorCode {
     switch (this.status) {
       case 429:
-        return 'PICTURE_LIMIT_REACHED';
+        return this.engineCode === 'CAROUSEL_LIMIT_REACHED' ? 'CAROUSEL_LIMIT_REACHED' : 'PICTURE_LIMIT_REACHED';
       case 404:
         return 'NOT_FOUND';
       case 400:
@@ -119,7 +123,7 @@ const unavailable = (): EngineError => new EngineError(503, 'the poster service 
 export interface JobView {
   id: string;
   /** `write`: a batch of written posts; `draw`: pictures (a first draw, a redraw, or the picture of a newly added network); `network`: the words for a network added later. */
-  kind: 'write' | 'draw' | 'network';
+  kind: 'write' | 'draw' | 'network' | 'carousel';
   /** The written batch a draw or an added network is for. */
   batchId?: string;
   /** For a draw of one week of a batch: the Monday of that week (YYYY-MM-DD). */
@@ -136,7 +140,7 @@ export interface JobView {
   finishedAt?: string;
 }
 
-const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network' };
+const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel' };
 const CODE = /^[A-Z][A-Z_]{1,40}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -153,7 +157,7 @@ function jobView(raw: unknown): { view: JobView; brand: string } | null {
   const view: JobView = { id, kind: JOB_KIND[kind] as JobView['kind'], state: STATE[state] as JobView['state'], createdAt };
   if (typeof step === 'number' && Number.isInteger(step) && step >= 1 && step <= 4) view.step = step;
   if (typeof finishedAt === 'string') view.finishedAt = finishedAt;
-  if (JOB_KIND[kind] !== 'write' && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
+  if ((JOB_KIND[kind] === 'draw' || JOB_KIND[kind] === 'network') && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
   if (JOB_KIND[kind] === 'draw' && typeof raw['week'] === 'string' && DAY.test(raw['week'])) view.week = raw['week'];
   if (raw['auto'] === true) view.auto = true;
   const error = raw['error'];
@@ -343,6 +347,29 @@ export interface PosterView {
   sharedWith?: string[];
 }
 
+/** Where a carousel stands as a whole. `incomplete`: not every slide is ready; `pending`: waiting for the customer. */
+export type CarouselStatus = 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
+const CAROUSEL_STATUSES: readonly string[] = ['incomplete', 'blocked', 'rejected', 'approved', 'pending'];
+const carouselStatus = (value: unknown): CarouselStatus => (typeof value === 'string' && CAROUSEL_STATUSES.includes(value) ? (value as CarouselStatus) : 'incomplete');
+
+export interface CarouselSummary {
+  id: string;
+  topic: string;
+  /** The day it is meant for, ISO 8601 with the offset. */
+  date: string;
+  /** How many slides it has. */
+  count: number;
+  status: CarouselStatus;
+}
+
+export interface CarouselDetail {
+  id: string;
+  count: number;
+  status: CarouselStatus;
+  slides: Array<{ position: number; status: string; /** Only for the engine client's own use: which picture the slide is. */ versionId?: string }>;
+  captions: Array<{ network: string; caption: string; status: string }>;
+}
+
 export interface PosterDetail extends PosterView {
   ctaUrl?: string;
   /** Where each fact the poster states was found on the website. */
@@ -381,6 +408,7 @@ const STATUS_NOTICE: Record<string, string> = {
 const IMAGE_HASH = new WeakMap<PosterView, string>();
 const NETWORK_ORDER = ['instagram', 'facebook', 'linkedin', 'google'];
 /** The sentence the engine writes when a channel has no pictures left, in exactly this shape. */
+const CAROUSEL_LIMIT_SENTENCE = /^(?:A carousel is already made for the week of \d{4}-\d{2}-\d{2}\. You can make another from \d{4}-\d{2}-\d{2}, or reject this week's and make one again|Two carousels were already made for the week of \d{4}-\d{2}-\d{2}\. You can make another from \d{4}-\d{2}-\d{2})\.$/;
 const PICTURE_LIMIT_SENTENCE = /^You have (?:used your \d{1,2}|\d{1,2} of your \d{1,2}) (?:Instagram|Facebook|LinkedIn|Google) pictures (?:for|left) this week[^<>]{0,120}\.$/;
 
 /**
@@ -405,6 +433,8 @@ function markShared(posters: readonly PosterView[]): void {
 
 function posterOf(raw: unknown, brand: string): PosterView | null {
   if (!isObject(raw) || raw['brand'] !== brand || typeof raw['versionId'] !== 'string' || !VERSION_ID.test(raw['versionId']) || !raw['versionId'].startsWith(`${brand}.`)) return null;
+  // A slide or a caption of a carousel is shown with its carousel, never as a picture of its own.
+  if (isObject(raw['carousel'])) return null;
   if (typeof raw['planFile'] !== 'string' || !PART.test(raw['planFile']) || typeof raw['postId'] !== 'string' || !PART.test(raw['postId'])) return null;
   const status = str(raw['status'], 20) ?? 'pending';
   const view: PosterView = {
@@ -647,6 +677,54 @@ export class WorkspaceEngine {
     return { ...poster, ...(str(version['ctaUrl'], 2000) ? { ctaUrl: str(version['ctaUrl'], 2000) as string } : {}), evidence, ...(decidedAt ? { decidedAt } : {}), history };
   }
 
+  /** Asks for this week's carousel: made from the website's verified facts for the channels given (the engine keeps only the connected ones). One a week; a second ask is the same job. */
+  async startCarousel(input: { site: string; networks: readonly string[]; startDate?: string; actor: string }): Promise<{ job: JobView; created: boolean }> {
+    const answer = await this.call('POST', '/review/jobs', input.actor, { kind: 'carousel', site: input.site, networks: input.networks, brand: this.brand, ...(input.startDate !== undefined ? { startDate: input.startDate } : {}) });
+    const made = this.own(isObject(answer) ? answer['job'] : undefined);
+    if (!made) throw unavailable();
+    return { job: made, created: isObject(answer) && answer['created'] === true };
+  }
+
+  /** The carousels made for this customer, newest first. */
+  async listCarousels(actor: string): Promise<CarouselSummary[]> {
+    const answer = await this.call('GET', '/review/carousels', actor);
+    const raw = isObject(answer) && Array.isArray(answer['carousels']) ? answer['carousels'] : [];
+    return raw.flatMap((c): CarouselSummary[] => {
+      if (!isObject(c) || typeof c['id'] !== 'string' || !CAROUSEL_ID.test(c['id'])) return [];
+      return [{ id: c['id'], topic: str(c['topic'], 200) ?? '', date: str(c['date'], 40) ?? '', count: Math.max(0, Math.floor(num(c['count']))), status: carouselStatus(c['status']) }];
+    });
+  }
+
+  /** One carousel with its slides and the words it will go out with for each channel. */
+  async getCarousel(id: string, actor: string): Promise<CarouselDetail> {
+    if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
+    const answer = await this.call('GET', `/review/carousels/${this.brand}/${id}`, actor);
+    if (!isObject(answer) || answer['id'] !== id) throw new EngineError(404, 'not found');
+    const slides = (Array.isArray(answer['slides']) ? answer['slides'] : []).flatMap((s): CarouselDetail['slides'] => {
+      if (!isObject(s)) return [];
+      const position = Math.floor(num(s['position']));
+      if (position < 1 || position > 10) return [];
+      const versionId = typeof s['versionId'] === 'string' && VERSION_ID.test(s['versionId']) && s['versionId'].startsWith(`${this.brand}.`) ? s['versionId'] : null;
+      return [{ position, status: versionId ? (str(s['status'], 20) ?? 'pending') : 'missing', ...(versionId ? { versionId } : {}) }];
+    });
+    const captions = (Array.isArray(answer['captions']) ? answer['captions'] : []).flatMap((c): CarouselDetail['captions'] => (isObject(c) && typeof c['network'] === 'string' && NETWORK_ORDER.includes(c['network']) ? [{ network: c['network'], caption: str(c['caption'], 3000) ?? '', status: str(c['status'], 20) ?? 'pending' }] : []));
+    return { id, count: Math.max(0, Math.floor(num(answer['count']))), status: carouselStatus(answer['status']), slides, captions };
+  }
+
+  /** Approves the whole carousel: every slide and every channel's words, exactly as they are now. */
+  async approveCarousel(id: string, actor: string): Promise<CarouselSummary['status']> {
+    if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/carousels/${this.brand}/${id}/approve`, actor, {});
+    return carouselStatus(isObject(answer) ? answer['status'] : undefined);
+  }
+
+  /** Rejects the whole carousel, with a reason. */
+  async rejectCarousel(id: string, reason: RejectionReason, comment: string | undefined, actor: string): Promise<CarouselSummary['status']> {
+    if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/carousels/${this.brand}/${id}/reject`, actor, { reason, ...(comment ? { comment } : {}) });
+    return carouselStatus(isObject(answer) ? answer['status'] : undefined);
+  }
+
   /** The picture itself, as a JPEG. */
   async getPosterImage(id: string, actor: string): Promise<Buffer> {
     return this.callImage(`/review/posts/${this.versionPath(id)}/image`, actor);
@@ -751,6 +829,12 @@ export class WorkspaceEngine {
       const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
       const sentence = typeof answer['error'] === 'string' && PICTURE_LIMIT_SENTENCE.test(answer['error']) ? answer['error'] : 'You have used the pictures you can draw for this channel this week. Try again next week.';
       throw new EngineError(429, sentence, 'refused', 'PICTURE_LIMIT_REACHED', channel && restart ? { channel, restart } : undefined);
+    }
+    // A customer who has made her carousel for the week: only the two fixed sentences the engine writes are shown, and the day she can make another.
+    if (response.status === 429 && isObject(answer) && answer['code'] === 'CAROUSEL_LIMIT_REACHED') {
+      const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
+      const sentence = typeof answer['error'] === 'string' && CAROUSEL_LIMIT_SENTENCE.test(answer['error']) ? answer['error'] : 'You have already made your carousel for this week. You can make another next week.';
+      throw new EngineError(429, sentence, 'refused', 'CAROUSEL_LIMIT_REACHED', undefined, restart);
     }
     if (response.status === 400 || response.status === 403 || response.status === 409 || response.status === 422) {
       let engineCode = isObject(answer) && typeof answer['code'] === 'string' ? answer['code'] : undefined;
