@@ -104,13 +104,12 @@ test('planCarousel refuses to start without enough verified facts', async () => 
 
 import { slideConcepts, slidePosts } from './carousel.ts';
 
-test('slidePosts makes one post per slide: no brand name on any slide, and the web address only on the last', () => {
+test('slidePosts makes one post per slide: neither a brand name nor a web address on any slide', () => {
   const draft = parseCarouselDraft(good, facts);
   const posts = slidePosts(draft, { idPrefix: 'cc-w46-car', date: '2026-11-18T10:00:00+05:30' });
   assert.deepEqual(posts.map((p) => p.id), ['cc-w46-car-s1', 'cc-w46-car-s2', 'cc-w46-car-s3', 'cc-w46-car-s4']);
   assert.ok(posts.every((p) => p.date === '2026-11-18T10:00:00+05:30' && p.mode === 'ai' && p.pillar === 'carousel'));
-  assert.deepEqual(posts.slice(0, 3).map((p) => p.signoff), [{ brandName: '', domain: '' }, { brandName: '', domain: '' }, { brandName: '', domain: '' }]);
-  assert.deepEqual(posts[3]?.signoff, { brandName: '' }, 'the last slide leaves the brand name off and keeps the website\'s address');
+  assert.deepEqual(posts.map((p) => p.signoff), [{ brandName: '', domain: '' }, { brandName: '', domain: '' }, { brandName: '', domain: '' }, { brandName: '', domain: '' }]);
   assert.deepEqual(posts[2]?.factIds, ['f2']);
   assert.equal(posts[0]?.headline, 'Not sure what |curry to choose|?');
 });

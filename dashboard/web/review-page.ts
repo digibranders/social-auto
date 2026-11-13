@@ -345,7 +345,7 @@ function postCaptions(batch: CopyBatch, p: CopyPost, locked: boolean, redraw: ()
       brandName && domain ? h('div', { class: 'rv-signoff-edit' },
         h('label', { class: 'rv-field' }, 'Brand name on the poster', brandName),
         h('label', { class: 'rv-field' }, 'Web address on the poster', domain),
-        h('small', { class: 'muted' }, 'The sign-off at the bottom of the poster: by default only the web address. Type a brand name to add it to this poster; clear a box to leave that line off; type the original again to go back to it. With the client\'s real logo on the poster, the logo carries the name and the name is not drawn. The address must be on the client\'s own website.')) : null,
+        h('small', { class: 'muted' }, 'The sign-off at the bottom of the poster: by default there is none. Type a brand name or a web address to add it to this poster; clear a box to take it off again. With the client\'s real logo on the poster, the logo carries the name and the name is not drawn. The address must be on the client\'s own website.')) : null,
       h('div', { class: 'rv-actions' },
         button('Save', 'btn btn-primary', () => void saveEdit(batch, p, e.network, { headline: headline.value, caption: caption.value, ...(brandName && domain ? { brandName: brandName.value, domain: domain.value } : {}) }, redraw), 'Save', state.busy),
         button('Cancel', 'btn', () => { state.editing = null; redraw(); })));

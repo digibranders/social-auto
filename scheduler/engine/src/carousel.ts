@@ -149,8 +149,8 @@ export function slidePosts(draft: CarouselDraft, options: SlidePostOptions): Pla
     date: options.date,
     painPoint: draft.topic,
     mode: 'ai',
-    // The business name is never written on a carousel slide (the owner's rule). The web address is only on the last slide: an empty string leaves a line off, and a missing one means the website's own address.
-    signoff: index < draft.slides.length - 1 ? { brandName: '', domain: '' } : { brandName: '' },
+    // Neither the business name nor the web address is written on a carousel slide (the owner's rule): an empty string leaves a line off.
+    signoff: { brandName: '', domain: '' },
     headline: slide.headline,
     subline: '',
     pillar: 'carousel',

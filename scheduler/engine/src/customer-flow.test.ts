@@ -216,12 +216,12 @@ test('new words for a drawn picture make a new pending version of the same pictu
   }
 });
 
-test('the sign-off default of a product brand is the web address only, and a customer can still name a post', async () => {
+test('the sign-off default of a product brand is nothing (no name, no web address), and a customer can still name a post', async () => {
   const s = await start();
   try {
     new CopyStage(s.dir, 'bb-acme').open('week-01.json', [{ postId: 'w01-d1', headline: 'Answers from your own docs', caption: 'Hook.\n\n#a', captions: { instagram: { text: 'Caption for instagram.' } } }]);
-    const list = (await (await s.call('/review/copy')).json()) as { batches: Array<{ signoffDefault?: { brandName: string; domain: string } }> };
-    assert.deepEqual(list.batches[0]?.signoffDefault, { brandName: '', domain: 'acme.example' });
+    const list = (await (await s.call('/review/copy')).json()) as { batches: Array<{ signoffDefault?: { brandName: string; domain: string; site: string } }> };
+    assert.deepEqual(list.batches[0]?.signoffDefault, { brandName: '', domain: '', site: 'acme.example' });
     const put = (body: unknown): Promise<Response> => fetch(`${s.base}/review/copy/bb-acme/week-01.json/w01-d1/edit`, { method: 'PUT', headers: { Authorization: 'Bearer brandbasket-secret-0123456789', 'X-Brand': 'bb-acme', 'X-Actor': 'brandbasket:user-42', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     assert.equal((await put({ headline: 'Answers from your own docs', caption: 'Hello there, friends.', brandName: 'Acme Sweets' })).status, 200);
     const plan = JSON.parse(readFileSync(join(s.dir, 'week-01.json'), 'utf8')) as { posts: Array<{ signoff?: { brandName?: string } }> };

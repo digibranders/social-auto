@@ -439,7 +439,7 @@ test('the sign-off of a written post can be changed over the API: the list shows
     const put = (body: unknown) => s.call('/review/copy/acme/week-01.json/p1/edit', { method: 'PUT', body: JSON.stringify(body) });
     type Listed = { batches: Array<{ signoffDefault?: { brandName: string; domain: string }; posts: Array<{ headline: string; signoff?: { brandName?: string; domain?: string } }> }> };
     const before = (await (await s.call('/review/copy')).json()) as Listed;
-    assert.deepEqual(before.batches[0]?.signoffDefault, { brandName: '', domain: 'acme.com' }, 'a poster carries the web address only unless a name is typed for it');
+    assert.deepEqual(before.batches[0]?.signoffDefault, { brandName: '', domain: '', site: 'acme.com' }, 'a poster carries no name and no web address unless typed for it; site is where a typed address must be');
     assert.equal(before.batches[0]?.posts[0]?.signoff, undefined);
 
     const ok = await put({ by: 'owner', brandName: 'Acme Labs', domain: 'acme.com/pricing' });
