@@ -75,3 +75,15 @@ export function isSameOrigin(request: Request): boolean {
     return false;
   }
 }
+
+/**
+ * For a plain HTML form on this site's own page. Every page of ours says Referrer-Policy: no-referrer, and under that
+ * policy a browser sends a form post with Origin: null (or none) even from our own page. So when Origin is not an address,
+ * the browser's own Sec-Fetch-Site must say the post came from this very site (a page of another site cannot fake it).
+ * An Origin that names another site is never accepted.
+ */
+export function isSameOriginForm(request: Request): boolean {
+  if (isSameOrigin(request)) return true;
+  const origin = request.headers.get('origin');
+  return (origin === null || origin === 'null') && request.headers.get('sec-fetch-site') === 'same-origin';
+}

@@ -4,6 +4,7 @@ import {
   clearedSessionCookie,
   createSession,
   isSameOrigin,
+  isSameOriginForm,
   isSignedIn,
   passwordMatches,
   readCookie,
@@ -68,4 +69,16 @@ test('isSameOrigin accepts only requests from the site itself', () => {
   assert.equal(isSameOrigin(make({ origin: 'https://evil.example', host: 'cal.example' })), false);
   assert.equal(isSameOrigin(make({ host: 'cal.example' })), false);
   assert.equal(isSameOrigin(make({ origin: 'not a url', host: 'cal.example' })), false);
+});
+
+test('isSameOriginForm also accepts a plain form post from the site itself, whose Origin is "null" under no-referrer, but never another site', () => {
+  const make = (headers: Record<string, string>): Request => new Request('https://cal.example/api/google/choose', { method: 'POST', headers });
+  assert.equal(isSameOriginForm(make({ origin: 'https://cal.example', host: 'cal.example' })), true);
+  assert.equal(isSameOriginForm(make({ origin: 'null', host: 'cal.example', 'sec-fetch-site': 'same-origin' })), true, 'what Chrome sends for a form post when the page says no-referrer');
+  assert.equal(isSameOriginForm(make({ host: 'cal.example', 'sec-fetch-site': 'same-origin' })), true);
+  assert.equal(isSameOriginForm(make({ origin: 'null', host: 'cal.example', 'sec-fetch-site': 'cross-site' })), false);
+  assert.equal(isSameOriginForm(make({ origin: 'null', host: 'cal.example', 'sec-fetch-site': 'same-site' })), false);
+  assert.equal(isSameOriginForm(make({ origin: 'null', host: 'cal.example' })), false, 'no proof it came from the site');
+  assert.equal(isSameOriginForm(make({ origin: 'https://evil.example', host: 'cal.example', 'sec-fetch-site': 'same-origin' })), false, 'a named other site is never accepted');
+  assert.equal(isSameOriginForm(make({ host: 'cal.example' })), false);
 });

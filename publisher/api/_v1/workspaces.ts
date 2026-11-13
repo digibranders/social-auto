@@ -4,12 +4,13 @@
  *
  * POST /api/v1/workspaces                 {"externalId": "<your id for the brand>", "name": "Shop name", "group"?: "<your id for the customer who owns several brands>"}
  *                                         creates the workspace, or returns the existing one (safe to repeat). Without a group the workspace is its own customer.
+ * PATCH /api/v1/workspaces               {"externalId", "name"}  changes the name that is shown (screens and staff dashboard only: posters and captions are not touched); answers {"workspace"}
  * GET  /api/v1/workspaces?group=...       the customer's workspaces: {"workspaces": [{id, externalId, name, website, archived}], "brandsAllowed", "brandsUsed", "ceiling"}
  * GET  /api/v1/workspaces?externalId=...  the workspace and its connected channels (never their tokens)
  */
 import { channelLabel, channelsFor, type Channel } from '../../lib/channels.js';
 import { assertRoomForBrand, brandsAllowed, brandsUsed, BRANDS_CEILING, type BrandSettings } from '../../lib/brands.js';
-import { ensureWorkspace, findWorkspace, groupOf, isExternalId, workspacesInGroup, type AddedClient, type ClientsFile } from '../../lib/clients.js';
+import { ensureWorkspace, findWorkspace, groupOf, isExternalId, setWorkspaceName, workspacesInGroup, type AddedClient, type ClientsFile } from '../../lib/clients.js';
 import { apiError, errorResponse } from '../../lib/api-error.js';
 import { json } from '../../lib/http.js';
 import { disconnectedNotices, noticesFor } from '../../lib/workspace-notices.js';
@@ -83,6 +84,30 @@ export async function POST(request: Request): Promise<Response> {
     return json(result.created ? 201 : 200, { workspace: workspaceView(result.client, channelsFor(channels, result.client.brand), pauses, [], groupFacts(result.file, settings, result.client)) });
   } catch (error) {
     return errorResponse(error, 'save the workspace');
+  }
+}
+
+export async function PATCH(request: Request): Promise<Response> {
+  const product = productOf(request);
+  if (product instanceof Response) return product;
+  if (!storeConfigured()) return apiError(503, 'STORAGE_NOT_SET_UP', 'storage is not set up');
+  if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return apiError(413, 'REQUEST_TOO_LARGE', 'request too large');
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+  if (typeof body !== 'object' || body === null) return apiError(400, 'INVALID_REQUEST', 'send JSON');
+  if (!isExternalId(body['externalId'])) return apiError(400, 'INVALID_EXTERNAL_ID', 'externalId is required');
+
+  try {
+    const { file, etag } = await loadClients();
+    const client = findWorkspace(file, product.id, body['externalId']);
+    if (!client) return apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
+    const renamed = setWorkspaceName(file, client.brand, body['name']);
+    if (renamed !== file) await saveClients(renamed, etag);
+    const updated = findWorkspace(renamed, product.id, body['externalId']) as AddedClient;
+    const [{ file: channels }, { file: pauses }, { file: manual }, { overrides }, { settings }] = await Promise.all([loadChannels(), loadPauses(), loadManual(), loadOverrides(), loadBrandSettings()]);
+    const posts = applyOverrides([...releasedSchedule.read().filter((p) => (p.brand ?? 'default') === updated.brand), ...manual.posts.filter((p) => p.brand === updated.brand).map(toScheduled)], overrides);
+    return json(200, { workspace: workspaceView(updated, channelsFor(channels, updated.brand), pauses, posts, groupFacts(renamed, settings, updated)) });
+  } catch (error) {
+    return errorResponse(error, 'rename the workspace');
   }
 }
 
