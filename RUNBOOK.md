@@ -6,7 +6,7 @@ Everyday chores and what to do when an alert arrives. Written so anyone can foll
 
 | Piece | Where | Does what |
 |---|---|---|
-| **Content engine** | `scheduler/engine`, on the server (timer `social-auto-weekly`, Mondays 10:00 IST) | Reads a client's website, writes posts, draws posters, saves them to GitHub `main`. |
+| **Content engine** | `scheduler/engine`, on the server: the review service and job runner (`social-review`, `social-jobs`) and the campaign runner (`social-campaigns`, every 5 minutes) | Reads a client's website, writes posts, draws posters for the owner or the customer to approve. The old Monday job `social-auto-weekly` (write for every client, commit and push to `main` from the server) is retired: its timer was switched off on the server on 2026-11-13, because the production checkout always holds runtime files so its safety check refused to run, and forcing it would have pushed to `main` from the live server. |
 | **Publisher** | `publisher/`, service `social-publisher` | Posts every day, renews tokens, sends alerts, serves the private status feed and the product API. |
 | **Dashboard** | `dashboard/`, service `social-dashboard`, at `https://social.digibranders.com` | Calendar behind a login: what is scheduled, published, missed. Posts that have not gone out yet can be edited (caption, hashtags, picture) or reverted. |
 | **Old Vercel projects** | `social-publisher`, `social-dashboard` on Vercel | Being retired. Never let their cron and the server's timers post at the same time. |
@@ -37,7 +37,7 @@ Work on a branch, open a pull request, merge into `main`, then run `deploy/scrip
 ### Connect a client's Facebook Page
 The client first makes your Facebook account an admin of their Page (Page settings, Page access, "Facebook access"; full control is not needed). Accept it, then in the dashboard click **Connect Facebook** (as that same Facebook account), choose "current Pages only" and tick the Page. The Page token is saved **encrypted** in the private store (`channels.json`) and never shown. From the next scheduled post on, each post also goes to the Page; posts from before the connection are not sent. Instagram and Facebook are independent: one failing does not stop the other, and each failure sends its own alert. To disconnect a Page: POST `/api/channels` with `{"remove": "facebook:<page id>"}` and the edit secret (a button is not built yet). While the Meta app is unpublished, only accounts with a role in the app can connect.
 
-### Run the weekly job by hand
+### Run the weekly job by hand (the Mac only; retired on the server)
 `~/social-auto-runner/scheduler/engine/scripts/weekly.sh`, or `launchctl kickstart gui/$(id -u)/com.56steve.social-auto.weekly`. The log is `~/Library/Logs/social-auto/weekly.log`.
 The job works in `~/social-auto-runner`, a separate checkout of `main`; it refuses to run if that checkout has local changes or is not on `main`.
 
