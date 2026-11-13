@@ -3,6 +3,7 @@
  * written from it), confirm it, or put it back. Held facts (proof claims such as statistics, awards or certifications, see proof-hold.ts) are shown with the reason
  * they are held and cannot be confirmed. Confirming even one fact switches the brand to "confirmed facts only": see `mode`.
  */
+import { isCustomerFact } from './customer-facts.ts';
 import { join } from 'node:path';
 import { loadFacts } from './evidence-pipeline.ts';
 import { displayFact, type EvidenceFact } from './evidence.ts';
@@ -34,7 +35,7 @@ export interface FactsResponse {
 const MAX_FACTS = 80;
 export const FACT_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,80}$/;
 
-const shown = (f: EvidenceFact): boolean => f.intent === 'claim' && f.attribution === 'brand' && (f.status === 'usable' || f.proofHold !== undefined);
+const shown = (f: EvidenceFact): boolean => !isCustomerFact(f) && f.intent === 'claim' && f.attribution === 'brand' && (f.status === 'usable' || f.proofHold !== undefined);
 
 export async function factsView(brandDir: string, brand: string): Promise<FactsResponse> {
   const loaded = await loadFacts(brandDir);

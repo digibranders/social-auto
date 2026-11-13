@@ -20,6 +20,7 @@ test('the prompt asks for the exact headline, the verified fact and the brand co
   for (const colour of ['#FFFEF5', '#292929', '#FF5542']) assert.match(prompt, new RegExp(colour));
   assert.match(prompt, /attached logo image exactly/);
   assert.match(prompt, /no extra claims/);
+  assert.doesNotMatch(prompt, /verified/i, 'a statement the customer wrote is never called verified in the picture prompt');
   assert.doesNotMatch(prompt, /rectangle|zone|panel|slot|column|grid|layout family|\d+ ?px|\d+%/i, 'no template geometry reaches the model');
   assert.doesNotMatch(buildFullPosterPrompt({ ...input, hasLogoReference: false }), /attached logo/);
 });

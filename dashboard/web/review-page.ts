@@ -14,7 +14,7 @@ interface CopyPost { postId: string; headline: string; caption: string; captions
 interface CopyBatch { brand: string; planFile: string; posts: CopyPost[]; drawnAt?: string; /** What a poster's sign-off says unless changed: the website's address and no brand name. */ signoffDefault?: { brandName: string; domain: string } }
 
 /** What the owner is typing in the "write posts for a website" form; kept here so a redraw does not wipe it. */
-interface StartForm { site: string; page: boolean; networks: string[]; weeks: number; postsPerWeek: number; /** The day of the first post (YYYY-MM-DD), or empty for the next free day. */ startDate: string; /** The time of day the posts go out, India time (HH:MM). */ time: string; /** The client the posts are for: a client's name, or NEW_CLIENT for one named after the website. */ client: string }
+interface StartForm { /** What the client says herself about the week (a topic); empty when there is none. */ topic: string; site: string; page: boolean; networks: string[]; weeks: number; postsPerWeek: number; /** The day of the first post (YYYY-MM-DD), or empty for the next free day. */ startDate: string; /** The time of day the posts go out, India time (HH:MM). */ time: string; /** The client the posts are for: a client's name, or NEW_CLIENT for one named after the website. */ client: string }
 
 interface State {
   /** Written posts waiting to be kept or dropped, before any picture is bought. */
@@ -48,7 +48,7 @@ interface State {
   clients: readonly ClientSummary[] | null;
 }
 
-const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, carouselOpen: null, carousel: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, startDate: '', time: DEFAULT_POST_TIME, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, rules: {}, clients: null };
+const state: State = { copy: [], filter: 'pending', view: 'cards', queue: null, reasons: Object.keys(REASON_LABELS), problems: [], openId: null, detail: null, carouselOpen: null, carousel: null, error: null, notice: null, busy: false, rejecting: false, jobs: [], start: { topic: '', site: '', page: false, networks: ['instagram', 'linkedin'], weeks: 1, postsPerWeek: 2, startDate: '', time: DEFAULT_POST_TIME, client: NEW_CLIENT }, editing: null, clientFor: {}, clientForBrand: {}, rules: {}, clients: null };
 
 /** Saves a client's approval mode (set by the page that owns the data); null means saved, else the problem in words. */
 let saveApprovalMode: (client: ClientSummary, mode: 'manual' | 'auto') => Promise<string | null> = async () => 'Not available here.';
@@ -126,6 +126,24 @@ async function startWriting(redraw: () => void): Promise<void> {
     const batchName = (done.body as { job?: { brand?: unknown } } | null)?.job?.brand;
     if (form.client !== NEW_CLIENT && typeof batchName === 'string') state.clientForBrand[batchName] = form.client;
     state.start.site = '';
+  }
+  await loadJobs(redraw);
+}
+
+async function startTopic(redraw: () => void): Promise<void> {
+  const form = state.start;
+  if (!looksLikeSite(form.site)) { state.error = 'Type the website address, like acme.com.'; redraw(); return; }
+  if (form.networks.length === 0) { state.error = 'Choose at least one network to write for.'; redraw(); return; }
+  const text = form.topic.trim();
+  if (text.length < 10) { state.error = 'Write a little more: what it is, and when or for how long.'; redraw(); return; }
+  if (text.length > 1000) { state.error = 'Keep the topic under 1000 characters.'; redraw(); return; }
+  const when = whenProblem(form.startDate, form.time, Date.now());
+  if (when) { state.error = when; redraw(); return; }
+  redraw();
+  const done = await post({ topic_job: { site: form.site.trim(), text, networks: form.networks, time: form.time, ...(form.startDate ? { startDate: form.startDate } : {}) } }, 'The request could not be sent. Nothing was started.');
+  if (done.ok) {
+    state.notice = 'Started. One post is being written from what you wrote; it appears in the list below for you to keep or drop. Nothing is drawn or published at this step.';
+    state.start.topic = '';
   }
   await loadJobs(redraw);
 }
@@ -224,6 +242,9 @@ function startView(redraw: () => void): HTMLElement {
     select.addEventListener('change', () => set(Number(select.value)));
     return h('label', { class: 'rv-check rv-number' }, `${label} `, select);
   };
+  const topicBox = h('textarea', { class: 'rv-input rv-topic', rows: '3', maxlength: '1000', placeholder: 'Diwali special: 20% off all thalis until 2 Nov.', 'aria-label': 'A topic in your own words' });
+  topicBox.value = form.topic;
+  topicBox.addEventListener('input', () => { form.topic = topicBox.value; });
   const running = state.jobs.some((j) => j.kind === 'copy' && jobActive(j));
   // When the posts go out: the day of the first one and the time of day. The written posts keep their spacing after the first.
   const startDay = h('input', { class: 'rv-input', type: 'date', 'aria-label': 'Day of the first post', min: tomorrowIst(Date.now()) });
@@ -257,6 +278,9 @@ function startView(redraw: () => void): HTMLElement {
     h('div', { class: 'rv-actions rv-last' }, number('Weeks', form.weeks, 4, (n) => { form.weeks = n; }), number('Posts a week', form.postsPerWeek, 7, (n) => { form.postsPerWeek = n; }),
       button(running ? 'Writing…' : 'Write the posts', 'btn btn-primary', () => void startWriting(redraw), 'Write the posts', state.busy),
       button('Make a carousel', 'btn', () => void startCarousel(redraw), 'Make a carousel', state.busy)),
+    h('h4', { class: 'rv-topic-title' }, 'Or add a topic of your own'),
+    h('p', { class: 'muted rv-hint' }, 'Write what the post is about, in your own words (an offer, a new dish, an event, with the dates). It is used as you wrote it and is not called verified. The website must already have been read. Claims that need proof (best, guaranteed, certified, results, customer counts) are refused. Uses the first post day and time above.'),
+    h('div', { class: 'rv-actions' }, topicBox, button('Add a topic', 'btn', () => void startTopic(redraw), 'Add a topic', state.busy)),
     h('p', { class: 'muted rv-hint-carousel' }, 'A carousel is one post of 3 to 5 swipeable slides in one look, made from the facts of a website that has already been read. It uses the first post day and time above; you approve it in the list below before anything is published.'),
   );
 }

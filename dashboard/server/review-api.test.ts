@@ -204,6 +204,22 @@ test('a carousel is read whole, and approved or rejected in one step, with the r
   assert.equal(calls.length, before);
 });
 
+test('a topic in the client\'s own words is asked for through the proxy, with only listed fields, from this site\'s own signed-in pages', async () => {
+  upstream(202, { job: { id: 'job-abc123-12345678' }, created: true });
+  const topic = 'Diwali special: 20% off all thalis until 2 Nov.';
+  assert.equal((await POST(post({ topic_job: { site: 'acme.com', text: topic, networks: ['instagram', 'linkedin'], startDate: '2026-11-25', time: '11:30', kind: 'copy', by: 'someone else' } }))).status, 200);
+  assert.equal(calls[0]?.url, 'http://127.0.0.1:4012/review/jobs');
+  assert.deepEqual(JSON.parse(String(calls[0]?.init.body)), { by: 'owner', kind: 'topic', site: 'acme.com', text: topic, networks: ['instagram', 'linkedin'], startDate: '2026-11-25', time: '11:30' });
+  const before = calls.length;
+  const ok = { site: 'acme.com', text: topic, networks: ['instagram'] };
+  for (const bad of [{ ...ok, text: '' }, { ...ok, text: '  ' }, { ...ok, text: 'x'.repeat(1001) }, { ...ok, networks: [] }, { ...ok, networks: ['tiktok'] }, { text: topic, networks: ['instagram'] }, { ...ok, startDate: 'tomorrow' }, { ...ok, time: '9' }]) {
+    assert.equal((await POST(post({ topic_job: bad }))).status, 400, JSON.stringify(bad).slice(0, 80));
+  }
+  assert.equal((await POST(post({ topic_job: ok }, { signedIn: false }))).status, 401);
+  assert.equal((await POST(post({ topic_job: ok }, { origin: 'https://evil.example' }))).status, 403);
+  assert.equal(calls.length, before);
+});
+
 test('a carousel for a client is asked for through the proxy, with only listed fields, from this site\'s own signed-in pages', async () => {
   upstream(202, { job: { id: 'job-abc123-12345678' }, created: true });
   assert.equal((await POST(post({ carousel_job: { site: 'acme.com', networks: ['instagram', 'linkedin'], startDate: '2026-11-25', time: '11:30', kind: 'copy', by: 'someone else' } }))).status, 200);

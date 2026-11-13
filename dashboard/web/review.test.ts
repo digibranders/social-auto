@@ -324,3 +324,12 @@ test('a carousel job is kept and described in its own words', () => {
   assert.match(jobText({ ...(job as object), state: 'failed', error: 'slide 2 was rejected' } as never), /stopped\. slide 2 was rejected\. Nothing was published\.$/);
   assert.equal(parseJobs({ jobs: [{ ...base, kind: 'banana' }] }).length, 0);
 });
+
+test('a topic job is told in plain words, and is kept when the service lists it', () => {
+  const job = { id: 'job-abc123-12345678', kind: 'topic', brand: 'acme', site: 'https://acme.example.com', state: 'running', step: 2 };
+  assert.equal(parseJobs({ jobs: [job] }).length, 1);
+  assert.equal(jobText(job as never), 'Writing a post from your topic for https://acme.example.com: writing the post');
+  assert.equal(jobText({ ...job, state: 'queued' } as never), 'Writing a post from your topic for https://acme.example.com: waiting for its turn');
+  assert.match(jobText({ ...job, state: 'succeeded' } as never), /done, the post is waiting for you below to keep or drop/);
+  assert.match(jobText({ ...job, state: 'failed', error: 'the writer gave no valid answer.' } as never), /stopped\. the writer gave no valid answer\. Nothing was drawn or published\./);
+});

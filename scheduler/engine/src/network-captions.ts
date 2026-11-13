@@ -28,7 +28,7 @@ export interface CaptionReport {
   fallback: Array<{ postId: string; network: Network; reason: string }>;
 }
 
-const SYSTEM = `You write social media captions for a business from verified facts. For each post and each network listed you get the post's headline, the main caption and the exact facts it rests on. Write one caption per post and network.
+const SYSTEM = `You write social media captions for a business from facts. For each post and each network listed you get the post's headline, the main caption and the exact facts it rests on. Write one caption per post and network.
 Rules: use only what the facts state; do not add numbers, prices, guarantees, awards, statistics or comparisons the facts do not state; say the same thing the headline says, in the voice of the network; do not repeat the headline word for word; do not repeat yourself inside the caption; do not write a call to action, a web address or hashtags in the caption text (they are added separately); write plain sentences. For each caption also give hashtags (a list of #tags, each one word) within the network's limit, an empty list when the limit is 0.
 Return JSON only: {"captions":[{"postId":"...","network":"...","caption":"...","hashtags":["#..."]}]}`;
 

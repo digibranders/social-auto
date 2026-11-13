@@ -54,7 +54,7 @@ const TYPOGRAPHY_OVERLAP = 0.4;
 /** Descriptions of type all use the same few words, so a higher similarity than for pictures is needed before two are called alike. */
 const TYPOGRAPHY_EMBEDDING = 0.9;
 
-export const DIRECTOR_SYSTEM = `You are the creative director of a batch of social media posters. For each post you are given its approved headline and the verified fact it states. Invent ONE visual concept per post, in your own words.
+export const DIRECTOR_SYSTEM = `You are the creative director of a batch of social media posters. For each post you are given its approved headline and the fact it states. Invent ONE visual concept per post, in your own words.
 A concept is a description of an actual picture, complete and specific enough that an illustrator could make it without asking you anything: the subject, the world or setting it lives in, how it is made (the medium, materials, light, camera, mood), how it is composed, and the single idea that makes it communicate the fact. Do not name a style category or choose from a list of looks; describe this picture. "A modern professional illustration showing business growth" is not a concept. "A tiny website built from individual architectural blocks sits under a photographer's hard side light, one section lifted out so the structure under it shows, almost monochrome except for one small coral detail" is.
 Rules:
 - The concepts of the batch must be clearly unlike each other and unlike every concept in HISTORY. The difference must be in the central visual idea (the subject and what happens to it), never only in colours, backgrounds or camera angle. Say, inside each concept, what makes it unlike the other posters of the batch.
