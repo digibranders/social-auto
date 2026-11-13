@@ -11,6 +11,7 @@ import { applyConflicts, applyFreshness, type TermConflict } from './commercial.
 import type { SiteSnapshot } from './crawl.ts';
 import { buildEvidence, flatTextEvidence, type EvidenceFact, type EvidenceSet, type PageSnapshot } from './evidence.ts';
 import { extractStructure, type PageStructure } from './evidence-extract.ts';
+import { customerFactsOf } from './customer-facts.ts';
 
 export const FACTS_FILE = 'facts.json';
 export const FACTS_VERSION = 1;
@@ -93,5 +94,8 @@ export async function loadFacts(brandDir: string, options: { now?: Date; maxAgeD
     throw new Error(`${join(brandDir, FACTS_FILE)} has the wrong shape or version; rebuild it or remove it`);
   }
   const file = raw as unknown as FactsFile;
-  return { facts: applyFreshness(file.facts, options.now ?? new Date(), options.maxAgeDays ?? DEFAULT_FACT_MAX_AGE_DAYS), file };
+  // What the customer said herself is part of her facts, kept apart from the website's (the website is read again without losing it). The saved site file itself is not changed.
+  const now = options.now ?? new Date();
+  const maxAgeDays = options.maxAgeDays ?? DEFAULT_FACT_MAX_AGE_DAYS;
+  return { facts: [...applyFreshness(file.facts, now, maxAgeDays), ...applyFreshness(customerFactsOf(brandDir), now, maxAgeDays)], file };
 }

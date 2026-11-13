@@ -13,6 +13,7 @@ import { slugFromSite } from './analyze.ts';
 import { COMPOSITOR_READY, assertMayDraw, freezeLogo, logoPathFor, resolveBranding } from './branding.ts';
 import { runCarousel } from './carousel-run.ts';
 import { parseBrand, readJson } from './content.ts';
+import { isCustomerFact } from './customer-facts.ts';
 import { loadFacts } from './evidence-pipeline.ts';
 import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
 import { applyReview, loadReview } from './fact-review.ts';
@@ -62,7 +63,7 @@ async function main(): Promise<void> {
   const brand = parseBrand(await readJson(join(brandDir, 'brand.json')), 'brand.json');
   const loaded = await loadFacts(brandDir);
   if (!loaded) throw new Error(`there are no verified facts for ${values.site}: write posts for the website once first, so it is read`);
-  const facts = applyReview(loaded.facts.filter((f) => f.status === 'usable'), await loadReview(brandDir)).facts;
+  const facts = applyReview(loaded.facts.filter((f) => f.status === 'usable' && !isCustomerFact(f)), await loadReview(brandDir)).facts;
 
   // The real logo goes on the last slide only. A client that requires it is stopped before anything is bought when it cannot be had.
   const brandingInput = { brand, brandDir, requireAuthenticLogo: values['require-logo'], compositorReady: COMPOSITOR_READY };

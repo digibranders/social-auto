@@ -43,7 +43,7 @@ export function buildFullPosterPrompt(input: FullPosterInput): string {
     `The only text on the poster must be exactly these words, spelled exactly as written, with no other words, numbers or symbols anywhere: HEADLINE: "${input.headline}"`,
     ...(input.subline ? [`SUPPORTING LINE: "${input.subline}"`] : []),
     `Also show the brand name "${input.brandName}" as a small wordmark${input.hasLogoReference ? ' by copying the attached logo image exactly, without redrawing, restyling or altering it' : ''}${input.host ? `, and the web address "${input.host}" small` : ''}.`,
-    `The message of the poster is only this verified fact: "${input.fact}". Create an original visual idea that makes this fact clear to a stranger who is scrolling past. Show what the fact states and nothing more: no extra claims, offers, prices, statistics, awards, testimonials or promises.`,
+    `The message of the poster is only this fact: "${input.fact}". Create an original visual idea that makes this fact clear to a stranger who is scrolling past. Show what the fact states and nothing more: no extra claims, offers, prices, statistics, awards, testimonials or promises.`,
     `Use the brand's colours: background ${input.colors.background}, ink ${input.colors.ink}, accent ${input.colors.accent}. Make the headline large and easy to read, with strong contrast against whatever is behind it.`,
     'Keep every important element fully inside the frame, with comfortable margins. Do not copy any existing advertisement, brand, slogan or character.',
   ];

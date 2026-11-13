@@ -23,6 +23,7 @@
  * --review (needs --art) has a vision model look at each finished poster, repairs what can be repaired without a new picture, and rejects the rest
  * (see review-loop.ts). It never approves anything. --review-budget caps what review and repair may spend per batch, in dollars.
  */
+import { factsForTopic, isCustomerFact } from './customer-facts.ts';
 import { loadFacts } from './evidence-pipeline.ts';
 import { applyReview, loadReview } from './fact-review.ts';
 import { modelJudge, modelPictureJudge, modelWorthJudge } from './semantic-judge.ts';
@@ -169,6 +170,7 @@ async function main(): Promise<void> {
       'plan-only': { type: 'boolean', default: false },
       'copy-first': { type: 'boolean', default: false },
       page: { type: 'boolean', default: false },
+      topic: { type: 'string' },
       'draw-kept': { type: 'string' },
       'draw-week': { type: 'string' },
       'redraw-missing': { type: 'boolean', default: false },
@@ -206,6 +208,8 @@ async function main(): Promise<void> {
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
 
+  // A topic the customer wrote herself: one post from her own statement only (the website's facts are not mixed in), written for the owner to confirm before any picture.
+  if (values.topic !== undefined && (!values['copy-first'] || days !== 1 || values.page)) throw new Error('--topic writes one post for the owner to confirm: it needs --copy-first and --days 1, and it is not read from a page');
   // One page, not the whole site: only the address given is read. It is for a website that has no saved profile yet; one that has is already read, and its facts are used.
   if (values.page) {
     if (await pageModeBlocked(join(BRANDS_ROOT, values.brand ?? slugFromSite(values.site)))) throw new PageModeError('this website already has a saved profile with its facts, so it is not read again from a single page');
@@ -282,7 +286,11 @@ async function main(): Promise<void> {
     ai.usage.purpose = 'writing';
     if (!values['draw-kept']) console.log(`2/4 Writing ${days} new pain-point posts${pattern} from ${startDate} (${planFile})…`);
     const loaded = await loadFacts(brandDir);
-    const reviewed = loaded ? applyReview(loaded.facts.filter((f) => f.status === 'usable'), await loadReview(brandDir)) : undefined;
+    // What the customer said herself is used only for the topic it was written for: a normal run never writes from it.
+    const usableFact = (f: { status: string }): boolean => f.status === 'usable';
+    const topicFacts = loaded && values.topic !== undefined ? factsForTopic(loaded.facts, values.topic).filter(usableFact) : [];
+    if (values.topic !== undefined && topicFacts.length === 0) throw new Error(`TOPIC_NOT_FOUND: there is no statement ${values.topic} to write from`);
+    const reviewed = loaded ? (values.topic !== undefined ? { facts: topicFacts, mode: 'all_usable' as const, approved: 0, rejected: 0 } : applyReview(loaded.facts.filter((f) => usableFact(f) && !isCustomerFact(f)), await loadReview(brandDir))) : undefined;
     if (loaded && reviewed) console.log(`    Evidence facts: ${loaded.facts.filter((f) => f.status === 'usable').length} usable of ${loaded.facts.length} (built ${loaded.file.builtAt.slice(0, 10)}); ${reviewed.mode === 'approved_only' ? `${reviewed.approved} approved by the owner are used` : 'none approved yet, all usable are eligible'}.`);
     else console.log('    No evidence facts for this brand: writing from the profile\'s proof points (legacy evidence coverage).');
     // Before anything is written or bought for this run: the site must be supported, the profile must be about it, and there must be a fact to write from.
@@ -292,7 +300,8 @@ async function main(): Promise<void> {
       const findings = [
         checkLanguage(sample, declared),
         checkBrandIdentity({ name: brand.name, site: brand.website || values.site, pageText: sample, titles: loaded.file.snapshots.map((snap) => snap.title) }),
-        checkEvidence(reviewed?.facts.length ?? 0),
+        // A topic is one post from the customer's own statement: the site's own count of facts does not apply to it.
+        ...(values.topic === undefined ? [checkEvidence(reviewed?.facts.length ?? 0)] : []),
       ].flatMap((f) => (f ? [f] : []));
       const stop = findings.find((f) => f.severity === 'stop');
       if (stop) throw new PreflightError(stop);

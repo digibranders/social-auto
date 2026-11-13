@@ -15,6 +15,7 @@
  *   POST /api/review   { "close": { "brand", "planFile" } }           put a written batch away without drawing it
  *   POST /api/review   { "draw": { "brand", "planFile", "client"?, "retry"? } }   draw the kept posts of a batch (once only; "retry" after a failed draw draws only the posts that still have no picture)
  *   POST /api/review   { "job": { "site", "page"?, "networks", "weeks"?, "postsPerWeek"? } }   read a website (or one page) and write its posts (answers with the job)
+ *   POST /api/review   { "topic_job": { "site", "text", "networks", "startDate"?, "time"? } }   write one post from the client's own words about the week, for a website that was already read (answers with the job)
  *   POST /api/review   { "carousel_job": { "site", "networks", "startDate"?, "time"? } }   make one carousel for a client whose website was already read (answers with the job)
  *   GET  /api/review?view=jobs                                         the jobs, newest first;  GET /api/review?view=job&id=<jobId>   one job
  */
@@ -101,7 +102,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!secret || !process.env['REVIEW_URL']) return json(503, { error: 'The review queue is not configured' });
   if (Number(request.headers.get('content-length') ?? 0) > MAX_BODY_BYTES) return json(413, { error: 'That is too large' });
 
-  let body: { carousel_job?: Record<string, unknown>; carousel?: Record<string, unknown>; id?: unknown; action?: unknown; reason?: unknown; comment?: unknown; copy?: Record<string, unknown>; edit?: Record<string, unknown>; close?: Record<string, unknown>; draw?: Record<string, unknown>; job?: Record<string, unknown> };
+  let body: { topic_job?: Record<string, unknown>; carousel_job?: Record<string, unknown>; carousel?: Record<string, unknown>; id?: unknown; action?: unknown; reason?: unknown; comment?: unknown; copy?: Record<string, unknown>; edit?: Record<string, unknown>; close?: Record<string, unknown>; draw?: Record<string, unknown>; job?: Record<string, unknown> };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -121,6 +122,15 @@ export async function POST(request: Request): Promise<Response> {
     return typeof brand === 'string' && BRAND.test(brand) && typeof planFile === 'string' && PLAN_FILE.test(planFile) ? { brand, planFile } : null;
   };
   const words = (value: unknown, max: number): string | null => (typeof value === 'string' && value.trim() !== '' && value.length <= max ? value : null);
+  if (body.topic_job !== undefined) {
+    const site = words(body.topic_job['site'], 200);
+    const text = words(body.topic_job['text'], 1000);
+    const networks = body.topic_job['networks'];
+    const { startDate, time } = body.topic_job;
+    if (!site || !text || !Array.isArray(networks) || networks.length === 0 || !networks.every((n) => typeof n === 'string' && NETWORKS.includes(n))
+      || (startDate !== undefined && (typeof startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(startDate))) || (time !== undefined && (typeof time !== 'string' || !/^\d{2}:\d{2}$/.test(time)))) return json(400, { error: 'Invalid request' });
+    return send('/review/jobs', 'POST', { kind: 'topic', site, text, networks, ...(startDate ? { startDate } : {}), ...(time ? { time } : {}) });
+  }
   if (body.carousel_job !== undefined) {
     const site = words(body.carousel_job['site'], 200);
     const networks = body.carousel_job['networks'];

@@ -31,7 +31,7 @@ export interface HeadlineGateConfig {
 
 export const defaultHeadlineGate: HeadlineGateConfig = { minTotal: 3 };
 
-const SYSTEM = `You are a strict advertising editor. For each item you get a poster headline and the verified fact it was written from. Judge only the headline as a stranger would meet it in a social feed, without the fact beside it.
+const SYSTEM = `You are a strict advertising editor. For each item you get a poster headline and the fact it was written from. Judge only the headline as a stranger would meet it in a social feed, without the fact beside it.
 informative (0 to 2): what does a reader learn from the headline alone? 0 nothing: filler, a vague promise, or a list of nouns ("services for businesses of all sizes", "everything you need"). 1 something true but general. 2 something specific and useful: a concrete capability, number, condition or answer.
 natural (0 to 2): does it read like copy a person would write? 0 stilted, awkward or ungrammatical ("unique website, made together"), 1 acceptable, 2 natural and clear on its own.
 Do not judge whether it is true, do not rewrite it, do not suggest other headlines, and do not penalise a question headline that sets up a specific answer. Give one short reason. Return JSON only: {"scores":[{"id":"...","informative":0,"natural":0,"reason":"..."}]}`;
