@@ -25,6 +25,8 @@ export interface ManualReleaseInput {
   client: string;
   site: string;
   planFile: string;
+  /** The networks it may go to, when they are known better than the plan says (a carousel's are the networks of its approved captions). */
+  platforms?: readonly string[];
   now?: Date;
 }
 
@@ -50,7 +52,8 @@ export function registerManualRelease(input: ManualReleaseInput): { file: string
   if (!WEEK_FILE.test(input.planFile)) throw new Error('that is not a plan file name');
   const plan = parseWeekPlan(JSON.parse(readFileSync(join(input.brandDir, input.planFile), 'utf8')) as unknown, input.planFile);
   if (plan.posts.length === 0) throw new Error('the plan has no posts');
-  const platforms = [...new Set(plan.posts.flatMap((p) => (p.variants ? Object.keys(p.variants) : ['instagram'])).filter(isNetwork))] as PlanPlatform[];
+  const platforms = [...new Set((input.platforms ?? plan.posts.flatMap((p) => (p.variants ? Object.keys(p.variants) : ['instagram']))).filter(isNetwork))] as PlanPlatform[];
+  if (platforms.length === 0) throw new Error('the plan has no network to go to');
   const dir = join(input.brandDir, 'campaigns');
   const id = `manual-${input.planFile.replace(/\.json$/, '')}`;
   const file = join(dir, `${id}.json`);
