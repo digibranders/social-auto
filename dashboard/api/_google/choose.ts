@@ -9,7 +9,7 @@ import { finishConnect, type Outcome } from '../../lib/connect-result.js';
 import { chooserPage } from '../../lib/google-choose.js';
 import { clearedPickCookie, parsePickCookie, PICK_COOKIE } from '../../lib/google-flow.js';
 import { askPublisher, parseChoices } from '../../lib/google-publisher.js';
-import { isSameOrigin, readCookie } from '../../lib/security.js';
+import { isSameOriginForm, readCookie } from '../../lib/security.js';
 
 const LOCATION_ID = /^\d{1,25}$/;
 const html = (status: number, body: string, extra: Record<string, string> = {}): Response =>
@@ -36,7 +36,7 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  if (!isSameOrigin(request)) return html(403, 'Request not allowed');
+  if (!isSameOriginForm(request)) return html(403, 'Request not allowed');
   const pending = waiting(request);
   if (!pending) return expired(request);
   const location = new URLSearchParams(await request.text().catch(() => '')).get('location') ?? '';
