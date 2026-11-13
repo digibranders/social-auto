@@ -55,3 +55,16 @@ test('a monthly plan starting on a Monday posts Monday to Friday, as approved; o
   assert.equal(weeklyRhythm({ postsPerWeek: 2, startDate: '2026-11-18' }).weekdays[0], 'wed');
   assert.deepEqual([...weeklyRhythm({ postsPerWeek: 2, startDate: '2026-11-18' }).weekdays], ['wed', 'sat']);
 });
+
+test('exact weekdays give a post on each of them every week, in week order, and win over postsPerWeek', async () => {
+  const { postDates } = await import('./cadence.ts');
+  const r = weeklyRhythm({ weeks: 2, weekdays: ['sat', 'MON', 'tue'], postsPerWeek: 5, startDate: '2026-12-07' });
+  assert.deepEqual(r, { days: 6, weekdays: ['mon', 'tue', 'sat'] });
+  // The dates the planner makes from it fall only on those days, from the start day.
+  assert.deepEqual(postDates('2026-12-07', r.days, r.weekdays), ['2026-12-07', '2026-12-08', '2026-12-12', '2026-12-14', '2026-12-15', '2026-12-19']);
+  assert.equal(weeklyRhythm({ weeks: 4, weekdays: ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] }).days, 28);
+});
+
+test('bad exact weekdays are refused in plain words', () => {
+  for (const bad of [[], 'mon', ['funday'], [3], null]) assert.throws(() => weeklyRhythm({ weekdays: bad }), RhythmError, JSON.stringify(bad));
+});

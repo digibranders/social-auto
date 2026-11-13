@@ -30,6 +30,8 @@ export interface AddedClient {
   requireAuthenticLogo?: boolean;
   /** Who approves the posters made from the website: `manual` (the default, not stored) means a person approves each one in Review; `auto` means a poster that passes every automatic check is approved by the system and released. */
   approvalMode?: 'manual' | 'auto';
+  /** The days of the week the customer wants posts on, for each channel (see posting-days.ts). A channel with no entry keeps the usual spread. */
+  postingDays?: Partial<Record<'instagram' | 'facebook' | 'linkedin' | 'google', Array<'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'>>>;
   /** What the AI may cost for this client in a calendar month, in dollars. Missing means the engine's default limit (about $8); the engine refuses to buy anything past it. */
   spendCapUsd?: number;
 }
