@@ -98,3 +98,42 @@ test('a batch is written on the days saved for its channel, a call can name its 
     }
   });
 });
+
+test('the team sets a customer\'s days from the dashboard: saved, shown in the status feed, used by the next batch, cleared with {}, and refused without the staff secret', async () => {
+  const { POST: clientsPost } = await import('../api/clients.ts');
+  const { clientFeedDetails } = await import('./clients.ts');
+  const { loadClients } = await import('./store.ts');
+  const staff = async (json: unknown, secret: string | null = 'staff-secret-for-tests'): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const r = await clientsPost(new Request('https://social.example.test/api/clients?action=set-posting-days', { method: 'POST', headers: { 'content-type': 'application/json', ...(secret ? { authorization: `Bearer ${secret}` } : {}) }, body: JSON.stringify(json) }));
+    return { status: r.status, body: (await r.json()) as Record<string, unknown> };
+  };
+  await withProducts(async () => {
+    const engine = await fakeEngine();
+    const before = process.env['EDIT_SECRET'];
+    process.env['EDIT_SECRET'] = 'staff-secret-for-tests';
+    try {
+      const made = await make('shop-1');
+      const brand = String((made.body['workspace'] as { id: string }).id);
+      assert.equal((await staff({ brand, days: { instagram: ['sat', 'mon', 'tue'], facebook: ['wed', 'fri'] } })).status, 200);
+      assert.deepEqual(Object.fromEntries(Object.entries(channelsOf(await read('shop-1'))).map(([n, v]) => [n, v.days])), { instagram: ['mon', 'tue', 'sat'], facebook: ['wed', 'fri'] }, 'the product sees what the team set');
+      const { file } = await loadClients();
+      const client = file.clients.find((c) => c.brand === brand);
+      assert.deepEqual(clientFeedDetails(client as never).postingDays, { instagram: ['mon', 'tue', 'sat'], facebook: ['wed', 'fri'] }, 'in the status feed');
+
+      assert.equal((await start('shop-1', { networks: ['facebook'] })).status, 202);
+      const sent = engine.seen.filter((s) => s.method === 'POST' && s.url === '/review/jobs').at(-1);
+      assert.deepEqual((sent?.body as Record<string, unknown>)['weekdays'], ['wed', 'fri']);
+
+      assert.equal((await staff({ brand, days: { instagram: ['someday'] } })).status, 400);
+      assert.equal((await staff({ brand, days: { tiktok: ['mon'] } })).status, 400);
+      assert.equal((await staff({ brand, days: { instagram: ['mon'] } }, null)).status, 401, 'no staff secret');
+      assert.equal((await staff({ brand, days: {} })).status, 200);
+      assert.deepEqual(channelsOf(await read('shop-1')), {}, 'cleared');
+      assert.equal(clientFeedDetails(((await loadClients()).file.clients.find((c) => c.brand === brand)) as never).postingDays, undefined);
+    } finally {
+      if (before === undefined) delete process.env['EDIT_SECRET'];
+      else process.env['EDIT_SECRET'] = before;
+      await engine.close();
+    }
+  });
+});

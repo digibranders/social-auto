@@ -1,7 +1,7 @@
 /** The calendar page. Every piece of text goes into the page as text, never as HTML. */
 import type { AnalyticsData } from '../shared/analytics.ts';
 import type { InboxData } from '../shared/inbox.ts';
-import { NO_PAUSES, parseStatus, PLATFORMS, type ChannelHealth, type Platform, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
+import { NO_PAUSES, parseStatus, PLATFORMS, type ChannelHealth, type Platform, type PostingDaysData, type PostState, type StatusPost, type StatusResponse } from '../shared/status.ts';
 import {
   addDays,
   addMonths,
@@ -1147,7 +1147,7 @@ async function saveWebsite(client: ClientSummary, website: string): Promise<stri
 }
 
 /** Sends one plan change for a client added in the dashboard; resolves to an explanation when it did not work. */
-async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required' | 'set-approval-mode' | 'set-spend-cap' | 'set-brands-default' | 'set-brands-allowed', body: Record<string, unknown>, done: string): Promise<string | null> {
+async function changePlans(action: 'add-plan' | 'remove-plan' | 'set-limit' | 'set-logo-required' | 'set-approval-mode' | 'set-spend-cap' | 'set-posting-days' | 'set-brands-default' | 'set-brands-allowed', body: Record<string, unknown>, done: string): Promise<string | null> {
   try {
     const response = await fetch(`/api/clients?action=${action}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (response.status === 401) {
@@ -1182,6 +1182,11 @@ const setSpendCap = (client: ClientSummary, cap: number | null): Promise<string 
   changePlans('set-spend-cap', { brand: client.brand, cap }, cap === null
     ? 'Saved: this client is back on the default monthly AI limit.'
     : `Saved: the AI may cost up to $${cap.toFixed(2)} a month for this client. Posters stop being made once it is reached.`);
+
+const setPostingDays = (client: ClientSummary, days: PostingDaysData): Promise<string | null> =>
+  changePlans('set-posting-days', { brand: client.brand, days }, Object.keys(days).length === 0
+    ? 'Saved: every channel is back on the usual spread of days. Posts already written keep their days.'
+    : 'Saved: new batches are written on these days. Posts already written keep their days.');
 
 const setBrandsDefault = (value: number): Promise<string | null> =>
   changePlans('set-brands-default', { value }, `Saved: a customer may have ${value} brand${value === 1 ? '' : 's'} unless set otherwise below. The app sees it at once.`);
@@ -1244,6 +1249,7 @@ const clientsContext: ClientsContext = {
   setLogoRequired,
   setApprovalMode,
   setSpendCap,
+  setPostingDays,
   brands: () => state.data?.brands ?? null,
   setBrandsDefault,
   setBrandsAllowed,
