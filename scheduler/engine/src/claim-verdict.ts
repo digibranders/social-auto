@@ -13,7 +13,7 @@
  * A quote the model cites that is not in the stored evidence makes the verdict invalid (a model may not invent its own sources).
  * A deterministic hold always wins over the model.
  */
-import { normalizeForQuote } from './claims.ts';
+import { claimType, normalizeForQuote } from './claims.ts';
 import { sentencesOf } from './evidence.ts';
 
 export type VerdictField = 'headline' | 'subline' | 'caption';
@@ -95,6 +95,15 @@ function accounts(claimText: string, sentence: string): boolean {
   return contains(sentence, claimText) && a.length / b.length >= 0.6;
 }
 
+/**
+ * A question asserts nothing, so it has no source quote to be supported by ("Ready to talk?"). It is skipped only when it carries no figure, price, deadline,
+ * superlative or guarantee word (a capability word such as "support" in a question asks, it does not assert): a question that smuggles a claim in ("Why is it the fastest?") still has to be accounted for. Statements are never skipped.
+ */
+export function isEmptyQuestion(text: string): boolean {
+  const t = text.trim();
+  return t.endsWith('?') && !t.slice(0, -1).includes('?') && ['subjective', 'capability'].includes(claimType(t));
+}
+
 export function assessVerdict(verdict: ClaimVerdict, draft: DraftTexts, evidence: { factId: string; quotes: readonly string[] }, options: { deterministicHold?: boolean } = {}): VerdictAction {
   if (options.deterministicHold) return { action: 'drop', problems: ['a deterministic claim check holds this copy, and that always wins over the model'] };
   const problems: string[] = [];
@@ -106,6 +115,7 @@ export function assessVerdict(verdict: ClaimVerdict, draft: DraftTexts, evidence
 
   if (verdict.decision === 'SUPPORTED') {
     for (const sentence of materialSentences(draft)) {
+      if (isEmptyQuestion(sentence.text)) continue;
       if (!verdict.coverage.some((c) => c.field === sentence.field && accounts(c.claimText, sentence.text))) problems.push(`the ${sentence.field} sentence "${sentence.text.slice(0, 70)}" is not accounted for by any quote`);
     }
     return problems.length === 0 ? { action: 'continue' } : { action: 'adjudicate', problems };
