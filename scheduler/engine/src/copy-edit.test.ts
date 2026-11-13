@@ -142,9 +142,10 @@ test('changing Instagram\'s caption changes the main caption and its network ver
   }
 });
 
-const DEFAULTS = { brandName: 'Acme', domain: 'acme.com' };
+// A poster carries no brand name and no web address unless typed for it; a typed address must be on the client's own site.
+const DEFAULTS = { brandName: '', domain: '', site: 'acme.com' };
 
-test('the brand name and web address of one poster can be changed or left off; the plan and the list follow, and the default wording typed again goes back to the default', () => {
+test('the brand name and web address of one poster can be typed for it; the plan and the list follow, and clearing a box goes back to the default (none)', () => {
   const { dir, stage, done } = workspace();
   try {
     const batch = edit(dir, { brandName: ' Acme   Labs ', domain: 'https://www.Acme.com/Pricing/', signoffDefaults: DEFAULTS });
@@ -156,10 +157,10 @@ test('the brand name and web address of one poster can be changed or left off; t
     assert.equal(plan().posts[1]?.signoff, undefined, 'other posts keep the default');
     assert.equal(stage.get('week-01.json').posts[1]?.signoff, undefined);
 
-    // Only the piece given changes; the default typed again clears it.
+    // Only the piece given changes; an empty box goes back to the default, which is nothing.
     assert.deepEqual(edit(dir, { domain: 'shop.acme.com', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: 'Acme Labs', domain: 'shop.acme.com' });
-    assert.deepEqual(edit(dir, { brandName: 'Acme', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { domain: 'shop.acme.com' });
-    const cleared = edit(dir, { domain: 'acme.com', signoffDefaults: DEFAULTS });
+    assert.deepEqual(edit(dir, { brandName: '', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { domain: 'shop.acme.com' });
+    const cleared = edit(dir, { domain: '', signoffDefaults: DEFAULTS });
     assert.equal(cleared.posts[0]?.signoff, undefined);
     assert.equal(plan().posts[0]?.signoff, undefined);
   } finally {
@@ -167,15 +168,16 @@ test('the brand name and web address of one poster can be changed or left off; t
   }
 });
 
-test('an empty brand name or web address leaves that line off the poster, and the default typed again brings it back', () => {
+test('a poster carries neither a brand name nor a web address until one is typed for it, and emptying both boxes goes back to that', () => {
   const { dir, done } = workspace();
   try {
     const plan = () => JSON.parse(readFileSync(join(dir, 'week-01.json'), 'utf8')) as { posts: Array<{ signoff?: unknown }> };
-    assert.deepEqual(edit(dir, { brandName: '', domain: '', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: '', domain: '' });
-    assert.deepEqual(plan().posts[0]?.signoff, { brandName: '', domain: '' });
-    assert.deepEqual(edit(dir, { brandName: '   ', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: '', domain: '' }, 'only spaces is empty too');
-    assert.deepEqual(edit(dir, { domain: 'acme.com', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: '' }, 'one line back, the other still off');
-    assert.equal(edit(dir, { brandName: 'Acme', signoffDefaults: DEFAULTS }).posts[0]?.signoff, undefined, 'both back: nothing is stored');
+    assert.equal(edit(dir, { brandName: '', domain: '', signoffDefaults: DEFAULTS }).posts[0]?.signoff, undefined, 'empty is the default: nothing is stored');
+    assert.equal(plan().posts[0]?.signoff, undefined);
+    assert.deepEqual(edit(dir, { domain: 'acme.com', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { domain: 'acme.com' }, 'the address can be asked for');
+    assert.deepEqual(edit(dir, { brandName: '   ', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { domain: 'acme.com' }, 'only spaces is empty too');
+    assert.deepEqual(edit(dir, { brandName: 'Acme', signoffDefaults: DEFAULTS }).posts[0]?.signoff, { brandName: 'Acme', domain: 'acme.com' });
+    assert.equal(edit(dir, { brandName: '', domain: '', signoffDefaults: DEFAULTS }).posts[0]?.signoff, undefined, 'both emptied: nothing is stored');
   } finally {
     done();
   }
@@ -223,7 +225,7 @@ test('a caption longer than the network takes is refused when the owner makes it
     const plan = JSON.parse(readFileSync(planPath, 'utf8')) as { posts: Array<{ id: string; caption: string }> };
     (plan.posts[0] as { caption: string }).caption = long;
     writeFileSync(planPath, JSON.stringify(plan));
-    const batch = edit(dir, { caption: long, network: 'instagram', brandName: 'Acme Labs', signoffDefaults: { brandName: 'Acme', domain: 'acme.com' } });
+    const batch = edit(dir, { caption: long, network: 'instagram', brandName: 'Acme Labs', signoffDefaults: DEFAULTS });
     assert.equal(batch.posts[0]?.signoff?.brandName, 'Acme Labs');
   } finally {
     done();

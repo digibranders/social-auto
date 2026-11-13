@@ -30,7 +30,7 @@ const draft = parseCarouselDraft({
 const clean = { graphicalLogoOrIcon: false, badgeSealAwardOrCertification: false, inventedNumberPriceOrStatistic: false, interfaceOrScreenshotWithText: false, personPresentedAsCustomerOrEndorser: false, flagOrReligiousSymbol: false };
 const reading = (texts: string[]): CreativeReview => ({ regions: texts.map((text) => ({ text, readable: true })), marks: { ...clean }, relevance: 2, composition: 2, readableSmall: true, textOverImportantArt: false, people: { present: false, estimatedCount: 0, prominent: false, description: '' }, notes: 'none' });
 /** What a faithful picture of each slide would show: its headline, and the sign-off only on the last. */
-const shown = (headline: string): string[] => (headline.startsWith('Open') ? [headline.replace(/\|/g, ''), 'currycook.com'] : [headline.replace(/\|/g, '')]);
+const shown = (headline: string): string[] => [headline.replace(/\|/g, '')];
 
 function setup(): { dir: string; ai: ReturnType<typeof aiConfigFromEnv>; done: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'carousel-make-'));
@@ -58,7 +58,7 @@ test('every slide drawn and accepted makes a ready carousel, in order, with one 
     assert.ok(out.slides.every((s) => s.file?.endsWith('.jpg')));
     assert.ok(prompts.every((p) => p.includes('flat vector illustration, warm cream background') && p.includes('heavy rounded sans-serif')));
     assert.doesNotMatch(prompts[0] ?? '', /WEB ADDRESS/);
-    assert.match(prompts[2] ?? '', /WEB ADDRESS: "currycook.com"/);
+    assert.doesNotMatch(prompts[2] ?? '', /WEB ADDRESS:/, 'no web address on any slide');
     assert.ok(prompts.every((p) => !p.includes('BRAND NAME')), 'the business name is not on any slide');
     assert.match(prompts[2] ?? '', /The brand name is not part of the text on this poster/);
   } finally {
@@ -118,7 +118,7 @@ test('the real logo is asked for and placed on the last slide only', async () =>
       deps: {
         headlineGate: { enabled: false, config: defaultHeadlineGate },
         scene: async (prompt, file) => { prompts.push(prompt); writeFileSync(file, 'x'); },
-        // With the logo, the name is inside it and is not drawn: the last slide shows its headline and the address only.
+        // With the logo, the name is inside it and is not drawn: the last slide shows its headline only.
         review: async () => {
           const seen = reading(shown(draft.slides[Math.min(prompts.length, 3) - 1]?.headline ?? ''));
           return { ...seen, regions: seen.regions.map((r) => ({ ...r, box: [100, 600, 900, 700] as [number, number, number, number] })) };
