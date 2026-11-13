@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import type { AiConfig } from './ai.ts';
 import { generateScene } from './ai.ts';
 import { decideReadings, thirdReading, type Dispute } from './creative-adjudication.ts';
-import { buildCreativePrompt, displayDomain, isRecoverable, plainHeadline, retryNoteFor, reviewCreative, type CreativeDefect, type CreativeReview, type TextManifest } from './ai-creative.ts';
+import { buildCreativePrompt, isRecoverable, plainHeadline, retryNoteFor, reviewCreative, type CreativeDefect, type CreativeReview, type TextManifest } from './ai-creative.ts';
 import type { Brand, PlannedPost } from './content.ts';
 import type { LogoPlacementRecord } from './branding.ts';
 import { inspectLogoFile } from './branding.ts';
@@ -147,9 +147,9 @@ export function observedPeople(readings: readonly CreativeReview[]): { observed:
   return any ? { observed: 'background', description: any.people.description } : { observed: 'none', description: '' };
 }
 
-/** A poster's sign-off is the web address; the brand's name is drawn only when one was typed for that post (an empty one leaves the line off). */
+/** A poster carries no brand name and no web address; either is drawn only when one was typed for that post (an empty one leaves the line off). */
 export const manifestOf = (post: PlannedPost, brand: Brand, logo?: CreativeRunInput['logo']): TextManifest => ({
-  headline: plainHeadline(post.headline), brandName: post.signoff?.brandName ?? '', domain: post.signoff?.domain ?? displayDomain(brand.website),
+  headline: plainHeadline(post.headline), brandName: post.signoff?.brandName ?? '', domain: post.signoff?.domain ?? '',
   // A full logo carries the name, so the name is not drawn beside it; a symbol alone does not, so the name stays.
   ...(logo?.kind === 'wordmark' ? { brandSignoff: 'logo' as const } : {}),
 });

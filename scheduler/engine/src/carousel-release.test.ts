@@ -52,7 +52,7 @@ test('a customer\'s carousel reaches the calendar only after she approves the wh
         slides: {
           headlineGate: { enabled: false, config: defaultHeadlineGate },
           scene: async (_prompt, file) => { drawn += 1; writeFileSync(file, `slide ${drawn}`); },
-          review: async () => reading([(draft.slides[(drawn - 1) % 3]?.headline ?? '').replace(/\|/g, ''), ...(drawn % 3 === 0 ? ['currycook.com'] : [])]),
+          review: async () => reading([(draft.slides[(drawn - 1) % 3]?.headline ?? '').replace(/\|/g, '')]),
         },
       },
     });

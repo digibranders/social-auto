@@ -21,10 +21,14 @@ export const MAX_CAPTION_CHARS = 1500;
 interface RawVariant { caption?: unknown; hashtags?: unknown; fallback?: unknown }
 interface RawPost { id?: unknown; signoff?: unknown; headline?: unknown; subline?: unknown; caption?: unknown; hashtags?: unknown; factIds?: unknown; variants?: Record<string, RawVariant> }
 
-/** What a poster's sign-off says when the owner has not changed it: the brand's name and the website's address. */
+/**
+ * What a poster's sign-off says when the owner has not changed it: no brand name and no web address. `site` is the client's own website, which a typed
+ * address must be on; it is never drawn by itself.
+ */
 export interface SignoffDefaults {
   brandName: string;
   domain: string;
+  site: string;
 }
 
 export interface Signoff {
@@ -64,7 +68,7 @@ export function checkSignoff(wanted: { brandName?: string; domain?: string }, de
     else {
       if (address.length > MAX_ADDRESS_CHARS) throw new CopyStageError('REJECTED', `the web address is ${address.length} characters; a poster can carry at most ${MAX_ADDRESS_CHARS}`);
       if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+(\/[A-Za-z0-9._~\-/]*)?$/.test(address)) throw new CopyStageError('REJECTED', 'that does not look like a web address, such as acme.com or acme.com/pricing');
-      const own = defaults.domain.toLowerCase();
+      const own = defaults.site.toLowerCase();
       if (host !== own && !host.endsWith(`.${own}`)) throw new CopyStageError('REJECTED', `the web address must be on the client's own website (${own}), not another one`);
       next.domain = address;
     }

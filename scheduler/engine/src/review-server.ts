@@ -251,12 +251,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       throw new CopyStageError('REJECTED', 'this brand has no website saved, so its pictures cannot be drawn');
     }
   };
-  /** What a poster's sign-off says unless the owner changes it: the brand's name and the website's address. Null when the brand has neither saved. */
+  /** What a poster's sign-off says unless the owner changes it: nothing (no name, no web address). `site` is the website a typed address must be on. Null when the brand has no website saved. */
   const signoffDefaultsOf = (brand: string): SignoffDefaults | null => {
     try {
       const saved = JSON.parse(readFileSync(join(root, brand, 'brand.json'), 'utf8')) as { website?: unknown };
-      // Every poster's sign-off is the web address; a name is drawn only when one is typed for that post.
-      return { brandName: '', domain: displayDomain(cleanSite(saved.website)) };
+      // A poster carries no name and no web address; either is drawn only when typed for that post.
+      return { brandName: '', domain: '', site: displayDomain(cleanSite(saved.website)) };
     } catch {
       return null;
     }

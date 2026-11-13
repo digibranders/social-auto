@@ -133,7 +133,8 @@ test('the vision answer must be well formed, or the call is retried and then fai
 // ---- The pipeline
 
 const brand = { name: 'OyeChats', website: 'https://www.oyechats.com', colors: { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4', tile: '#EEEEEE' } } as unknown as Brand;
-const post = (id: string, headline: string): PlannedPost => ({ id, headline }) as unknown as PlannedPost;
+// Posters are drawn with no web address unless one was typed, so the fixture types the brand's address to keep what these tests check.
+const post = (id: string, headline: string): PlannedPost => ({ id, headline, signoff: { domain: 'oyechats.com' } }) as unknown as PlannedPost;
 
 function setup(limits: Partial<typeof defaultBudgetLimits> = {}): { dir: string; ai: ReturnType<typeof aiConfigFromEnv>; ledger: PaidLedger; done: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'creative-run-'));
@@ -796,18 +797,20 @@ test('a poster drawn with no network is as before: no version line and the old l
   }
 });
 
-test('manifestOf draws the owner\'s sign-off wording when one was chosen, else the brand\'s name and the website\'s address', () => {
+test('manifestOf draws the owner\'s sign-off wording when one was chosen, and nothing (no name, no web address) when none was', () => {
   const chosen = { ...post('p', 'Track |tasks|'), signoff: { brandName: 'Oye Chats', domain: 'oyechats.com/pricing' } };
   assert.deepEqual(manifestOf(chosen, brand), { headline: 'Track tasks', brandName: 'Oye Chats', domain: 'oyechats.com/pricing' });
-  assert.deepEqual(manifestOf({ ...chosen, signoff: { brandName: 'Oye Chats' } }, brand), { headline: 'Track tasks', brandName: 'Oye Chats', domain: 'oyechats.com' });
+  assert.deepEqual(manifestOf({ ...chosen, signoff: { brandName: 'Oye Chats' } }, brand), { headline: 'Track tasks', brandName: 'Oye Chats', domain: '' }, 'the address stays off unless it was typed');
+  assert.deepEqual(manifestOf({ id: 'p', headline: 'Track tasks' } as unknown as PlannedPost, brand), { headline: 'Track tasks', brandName: '', domain: '' }, 'no sign-off typed: the headline alone');
 });
 
 test('a poster is judged against the sign-off the owner chose: the edited text passes, the old default no longer does, and no sign-off at all is rejected', () => {
   const chosen = manifestOf({ ...post('p', 'Track tasks'), signoff: { brandName: 'Oye Chats Pro', domain: 'oyechats.com/pricing' } }, brand);
   assert.equal(judgeCreative(chosen, review(['Track tasks', 'Oye Chats Pro', 'oyechats.com/pricing'])).accepted, true);
   assert.equal(judgeCreative(chosen, review(['Track tasks', 'OyeChats', 'oyechats.com'])).accepted, false, 'the old wording is not what was chosen');
-  const plain = manifestOf(post('p', 'Track tasks'), brand);
-  assert.equal(judgeCreative(plain, review(['Track tasks'])).defects.filter((d) => d.kind === 'missing_text').map((d) => d.text).join(', '), 'the web address', 'with no sign-off typed, only the address is required');
+  const plain = manifestOf({ id: 'p', headline: 'Track tasks' } as unknown as PlannedPost, brand);
+  assert.equal(judgeCreative(plain, review(['Track tasks'])).accepted, true, 'with no sign-off typed, the headline alone is right');
+  assert.equal(judgeCreative(plain, review(['Track tasks', 'oyechats.com'])).accepted, false, 'a web address nobody asked for is extra');
 });
 
 test('a poster whose owner left the brand name and web address off is asked for, and judged on, the headline alone', () => {
@@ -823,7 +826,7 @@ test('a poster whose owner left the brand name and web address off is asked for,
 });
 
 test('leaving off only one of the two keeps the other required and renumbers the contract', () => {
-  const noName = manifestOf({ ...post('p', 'Track tasks'), signoff: { brandName: '' } }, brand);
+  const noName = manifestOf({ ...post('p', 'Track tasks'), signoff: { brandName: '', domain: 'oyechats.com' } }, brand);
   const promptNoName = buildCreativePrompt(noName, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } });
   assert.match(promptNoName, /2\. WEB ADDRESS: "oyechats\.com", clearly legible and not tiny/);
   assert.equal(judgeCreative(noName, review(['Track tasks', 'oyechats.com'])).accepted, true);
@@ -844,9 +847,9 @@ test('the sign-off saved in a plan file reaches the poster request: the file is 
   const bare = manifestOf(read, brand);
   assert.deepEqual(bare, { headline: 'Track tasks', brandName: '', domain: '' });
   assert.doesNotMatch(buildCreativePrompt(bare, { fact: 'f', colors: { background: '#fff', ink: '#000', accent: '#f00' } }), /BRAND NAME:|WEB ADDRESS:/);
-  // And a plan with no sign-off still draws the default one: the web address, without the brand's name.
+  // And a plan with no sign-off draws none: the headline alone, with no brand name and no web address.
   const plain = parseWeekPlan(JSON.parse(JSON.stringify({ ...saved, posts: [{ ...saved.posts[0], signoff: undefined }] })), 'week-01.json').posts[0] as PlannedPost;
-  assert.deepEqual(manifestOf(plain, brand), { headline: 'Track tasks', brandName: '', domain: 'oyechats.com' });
+  assert.deepEqual(manifestOf(plain, brand), { headline: 'Track tasks', brandName: '', domain: '' });
 });
 
 test('a draw from a saved plan whose owner left the brand name and web address off asks the picture model for neither and accepts the headline alone', async () => {

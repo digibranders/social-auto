@@ -28,7 +28,7 @@
         ],
         "signoffDefault": {
           "brandName": "",
-          "domain": "acme.example"
+          "domain": ""
         }
       }
     ],
