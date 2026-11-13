@@ -117,7 +117,9 @@ export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunR
   const main = captions.captions['instagram'] ?? Object.values(captions.captions)[0] ?? draft.topic;
   const plan: WeekPlan = {
     brand: input.brandSlug, timezone: offsetOf(input.date), renderMode: 'ai_v1',
-    posts: [{ id: carouselId, date: input.date, painPoint: draft.topic, mode: 'ai', headline: draft.topic, subline: '', caption: main, hashtags: [], imagePrompt: draft.topic, pillar: 'carousel', factIds: [...new Set(draft.slides.flatMap((s) => s.factIds))] }],
+    posts: [{ id: carouselId, date: input.date, painPoint: draft.topic, mode: 'ai', headline: draft.topic, subline: '', caption: main, hashtags: [], imagePrompt: draft.topic, pillar: 'carousel', factIds: [...new Set(draft.slides.flatMap((s) => s.factIds))],
+      // The channels it may go to: a release record made from this plan (manual-release.ts) reads them from here, so a carousel is never limited to Instagram by default.
+      variants: Object.fromEntries(Object.entries(captions.captions).map(([network, caption]) => [network, { caption, hashtags: [] }])) }],
   };
   await writeFileAtomic(join(input.brandDir, planFile), `${JSON.stringify(plan, null, 2)}\n`);
   await writeFileAtomic(join(input.brandDir, HISTORY_FILE), `${JSON.stringify({ carousels: [...history, { id: carouselId, topic: draft.topic, createdAt: now().toISOString(), planFile, date: input.date }] }, null, 2)}\n`);

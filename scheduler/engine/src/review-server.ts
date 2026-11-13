@@ -45,6 +45,7 @@ import { carouselRoom } from './carousel-limit.ts';
 import { readHistory as readCarouselHistory } from './carousel-run.ts';
 import { tomorrowAt } from './posting-plan.ts';
 import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
+import { readCarouselWeekly, runWeeklyCarousels, writeCarouselWeekly } from './weekly-carousel.ts';
 import { pictureRoomFor } from './picture-room.ts';
 import type { NotDrawn } from './not-drawn.ts';
 import { channelPicturesUsed, ledgerPathFor, pictureLimitMessage, PictureLimitError, mondayOf, pictureWeek, weeklyLimitFromEnv, type PictureWeek } from './picture-limit.ts';
@@ -588,6 +589,21 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
         return send(res, 200, { decisions });
       }
+      // Whether the weekly carousel is switched on for the customer: made by the system on the Thursday before each week, for her to approve.
+      if (parts[0] === 'review' && parts[1] === 'carousel-weekly' && parts.length === 2) {
+        if (caller.role !== 'product') return send(res, 404, { error: 'Not found' });
+        const weeklyDir = join(root, caller.brand);
+        if (req.method === 'GET') return send(res, 200, { enabled: readCarouselWeekly(weeklyDir) });
+        if (req.method === 'PUT') {
+          scope.guard(caller.brand, true);
+          if (!brands().includes(caller.brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const body = await readJson(req);
+          if (typeof body['enabled'] !== 'boolean') throw new ReviewError('INVALID', 'enabled must be true or false');
+          writeCarouselWeekly(weeklyDir, body['enabled']);
+          return send(res, 200, { enabled: body['enabled'] });
+        }
+        return send(res, 405, { error: 'Method not allowed' });
+      }
       // The carousels made for a brand (a product sees its own), newest first, with where each stands.
       if (parts[0] === 'review' && parts[1] === 'carousels' && parts.length === 2 && req.method === 'GET') {
         const listBrand = caller.role === 'product' ? caller.brand : url.searchParams.get('brand') ?? '';
@@ -763,6 +779,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           },
           register: (brand, planFile, site) => { registerManualRelease({ brandDir: join(root, brand), siteBrand: brand, client: brand, site, planFile }); },
           onLapse: (brand, planFile, week) => { recordExpiry(root, (options.now ?? (() => new Date()))(), { brand, kind: 'week', planFile, week }); },
+        });
+        // The weekly carousel of each customer who switched it on: made for the Friday of the week, from the Thursday before.
+        runWeeklyCarousels({
+          brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(),
+          made: (brand) => { const dir = join(root, brand); const st = storeFor(brand); return readCarouselHistory(dir).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return st.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })); },
+          siteOf: (brand) => { try { return siteOf(brand); } catch { return null; } },
         });
         // Pictures a drawn topic still lacks for a connected channel (added later, or no room at the time): drawn as this week's room allows.
         runCatchUpDraws({

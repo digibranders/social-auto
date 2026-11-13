@@ -685,6 +685,18 @@ export class WorkspaceEngine {
     return { job: made, created: isObject(answer) && answer['created'] === true };
   }
 
+  /** Whether the weekly carousel is switched on for this customer. */
+  async carouselWeekly(actor: string): Promise<boolean> {
+    const answer = await this.call('GET', '/review/carousel-weekly', actor);
+    return isObject(answer) && answer['enabled'] === true;
+  }
+
+  /** Switches the weekly carousel on or off: when on, one is made for her each week for her to approve. Answers the new state. */
+  async setCarouselWeekly(enabled: boolean, actor: string): Promise<boolean> {
+    const answer = await this.call('PUT', '/review/carousel-weekly', actor, { enabled });
+    return isObject(answer) && answer['enabled'] === true;
+  }
+
   /** The carousels made for this customer, newest first. */
   async listCarousels(actor: string): Promise<CarouselSummary[]> {
     const answer = await this.call('GET', '/review/carousels', actor);

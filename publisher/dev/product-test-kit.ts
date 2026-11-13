@@ -144,6 +144,8 @@ export interface FakeEngine {
   /** The carousels made, and (when set) the refusal a customer who has made her week's carousel gets. */
   carousels: FakeCarousel[];
   carouselRefusal: { restart: string; error: string } | null;
+  /** Whether the customer switched the weekly carousel on. */
+  carouselWeekly: boolean;
   /** The networks the product API told the engine the customer has connected (null: never told). */
   connected: string[] | null;
   /** How many of the next PUT /review/connected calls are refused (404), as before the brand's first job exists. */
@@ -155,7 +157,7 @@ export interface FakeEngine {
 
 /** A pretend review service: it keeps jobs, runs none, and answers a second ask for a brand with a job already waiting by returning that job (as the real one does). */
 export async function fakeEngine(): Promise<FakeEngine> {
-  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], carouselRefusal: null, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
+  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], carouselRefusal: null, carouselWeekly: false, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
   let counter = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -298,6 +300,10 @@ export async function fakeEngine(): Promise<FakeEngine> {
         const status = url.searchParams.get('status') ?? 'pending';
         const mine = engine.posters.filter((p) => p.brand === caller && !p.carousel && (status === 'all' || (status === 'open' ? p.status === 'pending' || p.status === 'held' : p.status === status)));
         return send(200, { posts: mine.map(posterView), problems: [], reasons: ['weak_copy', 'other'] });
+      }
+      if (url.pathname === '/review/carousel-weekly') {
+        if (req.method === 'PUT' && body) engine.carouselWeekly = body['enabled'] === true;
+        return send(200, { enabled: engine.carouselWeekly });
       }
       if (req.method === 'GET' && url.pathname === '/review/carousels') return send(200, { carousels: engine.carousels.filter((c) => c.brand === caller).map((c) => ({ id: c.id, topic: c.topic, date: c.date, createdAt: c.date, planFile: 'week-09.json', count: c.slides.length, status: c.status })).reverse() });
       const carousel = /^\/review\/carousels\/([^/]+)\/([^/]+)(?:\/(approve|reject))?$/.exec(url.pathname);

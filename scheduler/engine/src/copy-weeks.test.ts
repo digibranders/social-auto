@@ -363,3 +363,19 @@ test('a carousel slide is not one of a customer\'s pictures: it is not in her li
     await s.done();
   }
 });
+
+test('the weekly carousel is switched on or off by the customer for her own brand only, and staff have no switch', async () => {
+  const s = await start();
+  try {
+    assert.deepEqual(await (await s.call('/review/carousel-weekly')).json(), { enabled: false });
+    const on = await s.call('/review/carousel-weekly', { enabled: true }, 'PUT');
+    assert.equal(on.status, 200, JSON.stringify(await on.clone().json()));
+    assert.deepEqual(await (await s.call('/review/carousel-weekly')).json(), { enabled: true });
+    assert.equal((await s.call('/review/carousel-weekly', { enabled: 'yes' }, 'PUT')).status, 400);
+    assert.deepEqual(await (await s.call('/review/carousel-weekly', { enabled: false }, 'PUT')).json(), { enabled: false });
+    const staff = await fetch(`${s.base}/review/carousel-weekly`, { headers: { Authorization: 'Bearer staff-secret-0123456789' } });
+    assert.equal(staff.status, 404);
+  } finally {
+    await s.done();
+  }
+});
