@@ -446,3 +446,266 @@ test('a customer adds a topic: written for her connected channels only, one topi
     await s.done();
   }
 });
+
+// ---- the topics a customer asked for: where each stands, as a unit of its own
+
+import { topicRequests } from './topic-requests.ts';
+
+function topicFixture(): { dir: string; jobs: JobStore; done: () => void } {
+  const root = mkdtempSync(join(tmpdir(), 'topic-view-'));
+  const dir = join(root, 'bb-acme');
+  mkdirSync(dir, { recursive: true });
+  writeConnected(dir, ['instagram', 'facebook']);
+  return { dir, jobs: new JobStore(join(root, 'jobs')), done: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+const topicPost = (id: string, date: string) => ({ postId: id, date, headline: 'Diwali |thalis|, 20% off', caption: 'Main caption', captions: { instagram: { text: 'ig words' }, facebook: { text: 'fb words' } } });
+
+test('a topic request says where it stands: writing, waiting for her words with the pictures it would cost, drawing, drawn, or not made with a code', () => {
+  const t = topicFixture();
+  try {
+    const ask = (day: string, planFile?: string): string => {
+      const { job } = t.jobs.enqueue({ kind: 'topic', brand: 'bb-acme', site: 'acme.example', by: 'u', networks: ['instagram', 'facebook'], topicId: `t-${day}`, startDate: day, time: '11:30' });
+      if (planFile) t.jobs.update(job.id, { state: 'succeeded', planFileMade: planFile });
+      return job.id;
+    };
+    const view = () => topicRequests({ brandDir: t.dir, brand: 'bb-acme', jobs: t.jobs.list({ brand: 'bb-acme' }), made: () => new Set(), connected: readConnected(t.dir) });
+
+    // Being written.
+    ask('2026-11-17');
+    let [only] = view();
+    assert.deepEqual([only?.state, only?.week, only?.goesOutOn, only?.goesOutAt, only?.picturesToDraw], ['writing', { from: W1, to: '2026-11-22' }, '2026-11-17', '11:30', 0]);
+
+    // Written: her words are ready, and the cost is one picture for each connected channel.
+    const s = new CopyStage(t.dir, 'bb-acme');
+    s.open('week-02.json', [topicPost('w02-d1', '2026-11-17')]);
+    t.jobs.update(t.jobs.list({ brand: 'bb-acme' })[0]?.id as string, { state: 'succeeded', planFileMade: 'week-02.json' });
+    [only] = view();
+    assert.equal(only?.state, 'waiting_for_words');
+    assert.deepEqual(only?.words, { headline: 'Diwali thalis, 20% off', captions: { instagram: 'ig words', facebook: 'fb words' } });
+    assert.deepEqual([only?.batchId, only?.postId, only?.picturesToDraw], ['week-02.json', 'w02-d1', 2]);
+    writeConnected(t.dir, ['instagram']);
+    assert.equal(view()[0]?.picturesToDraw, 1, 'only a connected channel is drawn for');
+    writeConnected(t.dir, ['instagram', 'facebook']);
+
+    // Drawing, then drawn.
+    s.decide('week-02.json', 'w02-d1', 'kept', 'u');
+    s.markWeekDrawn('week-02.json', W1);
+    const { job: draw } = t.jobs.enqueue({ kind: 'draw', brand: 'bb-acme', site: 'acme.example', by: 'u', planFile: 'week-02.json', week: W1 });
+    assert.equal(view()[0]?.state, 'drawing');
+    t.jobs.update(draw.id, { state: 'succeeded' });
+    const made = new Set(['w02-d1|instagram', 'w02-d1|facebook']);
+    const drawn = topicRequests({ brandDir: t.dir, brand: 'bb-acme', jobs: t.jobs.list({ brand: 'bb-acme' }), made: () => made, connected: readConnected(t.dir) });
+    assert.deepEqual([drawn[0]?.state, drawn[0]?.picturesToDraw], ['drawn', 0]);
+    assert.equal(view()[0]?.reason, 'DRAW_FAILED', 'a week drawn with no picture made is told');
+    // A draw that failed before the week was marked and was then retried: pictures exist, so it is drawn.
+    const t2 = topicFixture();
+    try {
+      new CopyStage(t2.dir, 'bb-acme').open('week-02.json', [topicPost('w02-d1', '2026-11-17')]);
+      const { job } = t2.jobs.enqueue({ kind: 'topic', brand: 'bb-acme', site: 'acme.example', by: 'u', networks: ['instagram'], topicId: 't-x', startDate: '2026-11-17' });
+      t2.jobs.update(job.id, { state: 'succeeded', planFileMade: 'week-02.json' });
+      const view2 = topicRequests({ brandDir: t2.dir, brand: 'bb-acme', jobs: t2.jobs.list({ brand: 'bb-acme' }), made: () => new Set(['w02-d1|instagram']), connected: null });
+      assert.deepEqual([view2[0]?.state, view2[0]?.picturesToDraw], ['drawn', 0]);
+    } finally {
+      t2.done();
+    }
+  } finally {
+    t.done();
+  }
+});
+
+test('a topic that was not made carries a code: dropped, no room for the pictures, a failed writing, a week that passed', () => {
+  const t = topicFixture();
+  try {
+    const s = new CopyStage(t.dir, 'bb-acme');
+    const fail = t.jobs.enqueue({ kind: 'topic', brand: 'bb-acme', site: 'acme.example', by: 'u', networks: ['instagram'], topicId: 't-a', startDate: '2026-11-17' }).job;
+    t.jobs.update(fail.id, { state: 'failed', error: { code: 'INSUFFICIENT_CONCEPTS', message: 'x' } });
+    const other = t.jobs.enqueue({ kind: 'topic', brand: 'bb-acme', site: 'acme.example', by: 'u', networks: ['instagram'], topicId: 't-b', startDate: '2026-11-24' }).job;
+    t.jobs.update(other.id, { state: 'failed', error: { code: 'FAILED', message: 'x' } });
+    const reasons = () => topicRequests({ brandDir: t.dir, brand: 'bb-acme', jobs: t.jobs.list({ brand: 'bb-acme' }), made: () => new Set(), connected: null }).map((r) => r.reason).sort();
+    assert.deepEqual(reasons(), ['NOT_WRITTEN', 'TEXT_REFUSED']);
+
+    for (const [n, topicId, day] of [[3, 't-c', '2026-11-30'], [4, 't-d', '2026-12-07'], [5, 't-e', '2026-12-14']] as const) {
+      s.open(`week-0${n}.json`, [topicPost(`w0${n}-d1`, day)]);
+      const { job } = t.jobs.enqueue({ kind: 'topic', brand: 'bb-acme', site: 'acme.example', by: 'u', networks: ['instagram'], topicId, startDate: day });
+      t.jobs.update(job.id, { state: 'succeeded', planFileMade: `week-0${n}.json` });
+    }
+    s.decide('week-03.json', 'w03-d1', 'dropped', 'u');
+    s.markWeekLapsed('week-04.json', '2026-12-07');
+    const byWeek = (): Record<string, string | undefined> => Object.fromEntries(topicRequests({ brandDir: t.dir, brand: 'bb-acme', jobs: t.jobs.list({ brand: 'bb-acme' }), made: () => new Set(), connected: null }).map((r) => [r.week.from, r.reason]));
+    assert.equal(byWeek()['2026-11-30'], 'DROPPED');
+    assert.equal(byWeek()['2026-12-07'], 'WEEK_PASSED');
+    assert.equal(byWeek()['2026-12-14'], undefined, 'the one still waiting has no reason');
+    // Kept and drawn, but the channel had no pictures left this week.
+    s.decide('week-05.json', 'w05-d1', 'kept', 'u');
+    s.markWeekDrawn('week-05.json', '2026-12-14');
+    s.setNotDrawn('week-05.json', { 'w05-d1': { code: 'PICTURE_LIMIT_REACHED', reason: 'no room' } as never });
+    assert.equal(byWeek()['2026-12-14'], 'NO_PICTURE_ROOM');
+  } finally {
+    t.done();
+  }
+});
+
+test('a topic is a unit of its own: a week drawn in the main batch never locks it, and drawing it never locks the main week', () => {
+  const t = topicFixture();
+  try {
+    const s = new CopyStage(t.dir, 'bb-acme');
+    s.open('week-01.json', posts);
+    s.open('week-02.json', [topicPost('w02-d1', '2026-11-17')]);
+    s.decide('week-01.json', 'w1-d1', 'kept', 'u');
+    s.markWeekDrawn('week-01.json', W1);
+    // The main week is drawn; the topic of that same week can still be kept, edited and drawn.
+    assert.doesNotThrow(() => s.decide('week-02.json', 'w02-d1', 'kept', 'u'));
+    assert.doesNotThrow(() => s.edit('week-02.json', 'w02-d1', { headline: 'Diwali thalis, 20% off', caption: 'Better main caption' }, 'u', () => undefined));
+    s.markWeekDrawn('week-02.json', W1);
+    // And the other way round: drawing the topic leaves the main batch's other posts of that week alone.
+    const t2 = topicFixture();
+    try {
+      const s2 = new CopyStage(t2.dir, 'bb-acme');
+      s2.open('week-01.json', posts);
+      s2.open('week-02.json', [topicPost('w02-d1', '2026-11-17')]);
+      s2.decide('week-02.json', 'w02-d1', 'kept', 'u');
+      s2.markWeekDrawn('week-02.json', W1);
+      assert.doesNotThrow(() => s2.decide('week-01.json', 'w1-d1', 'kept', 'u'));
+      assert.doesNotThrow(() => s2.decide('week-01.json', 'w1-d2', 'dropped', 'u'));
+    } finally {
+      t2.done();
+    }
+  } finally {
+    t.done();
+  }
+});
+
+test('a customer\'s topic over HTTP: it always gets a day, the same words again are the same request, other words in a full week are refused with the day she can ask again, a refused text says why by a code, and the list shows where each stands', async () => {
+  const s = await start();
+  try {
+    writeFileSync(join(s.root, 'brands', 'bb-acme', 'facts.json'), JSON.stringify({ version: 1, builtAt: '2026-11-01T00:00:00Z', site: 'https://acme.example', facts: [], conflicts: [], snapshots: [], coverage: { pages: 0, structured: 0, flatText: 0, usable: 0, needsReview: 0, excluded: 0, notes: [] } }));
+    const ask = (over: Record<string, unknown> = {}): Promise<Response> => s.call('/review/jobs', { kind: 'topic', site: 'acme.example', brand: 'bb-acme', networks: ['instagram'], text: 'Diwali special: 20% off all thalis until 2 Nov.', ...over });
+    for (const [text, reason] of [['hi', 'TOO_SHORT'], ['See https://acme.example/diwali for the 20% off offer', 'LINK_NOT_ALLOWED'], ['The best thali in town, 20% off', 'NEEDS_PROOF'], ['x'.repeat(1001), 'TOO_LONG']] as const) {
+      const refused = await ask({ text });
+      assert.equal(refused.status, 400);
+      const body = (await refused.json()) as { reason: string; error: string };
+      assert.equal(body.reason, reason);
+      assert.ok(body.error.length > 0);
+    }
+    const first = await ask();
+    assert.equal(first.status, 202, JSON.stringify(await first.clone().json()));
+    const { job } = (await first.json()) as { job: { id: string; startDate: string } };
+    assert.match(job.startDate, /^\d{4}-\d{2}-\d{2}$/, 'a day is always set, so the week can be counted');
+    const repeat = await ask({ text: '  Diwali special: 20% off all thalis until 2 Nov.  ' });
+    assert.equal(repeat.status, 200, 'the same words for the same week are the same request');
+    assert.equal(((await repeat.json()) as { job: { id: string } }).job.id, job.id);
+    const spaced = await ask({ text: 'DIWALI special:  20% off   all thalis until 2 Nov.' });
+    assert.equal(spaced.status, 200, 'other case and spacing are the same words');
+    assert.equal(((await spaced.json()) as { job: { id: string } }).job.id, job.id);
+    const other = await ask({ text: 'New dish: paneer kulcha, served from Monday.' });
+    assert.equal(other.status, 429);
+    assert.equal(((await other.json()) as { code: string }).code, 'TOPIC_LIMIT_REACHED');
+    assert.equal(JSON.parse(readFileSync(join(s.root, 'brands', 'bb-acme', 'customer-facts.json'), 'utf8')).statements.length, 1, 'the repeat and the refused ask kept nothing');
+    const listed = (await (await s.call('/review/topic-requests')).json()) as { requests: Array<{ jobId: string; state: string; picturesToDraw: number }> };
+    assert.deepEqual(listed.requests.map((r) => [r.jobId, r.state, r.picturesToDraw]), [[job.id, 'writing', 0]]);
+  } finally {
+    await s.done();
+  }
+});
+
+// ---- a dropped topic gives a new one
+
+import { MAX_REPLACEMENTS_PER_WEEK, replaceProblem } from './copy-stage.ts';
+
+const futureWeek = (): string => mondayOf(new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10));
+const dayOf = (monday: string, n: number): string => new Date(Date.parse(`${monday}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const todayIst = (): string => new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+const fresh = (id: string, date: string) => ({ postId: id, date, headline: `New ${id}`, caption: `Caption ${id}`, captions: { instagram: { text: `ig ${id}` }, facebook: { text: `fb ${id}` } } });
+
+test('a dropped post can be given a new topic: same day, undecided, counted per week, never for a post that is kept, drawn, past, or already replaced', () => {
+  const t = topicFixture();
+  try {
+    const monday = futureWeek();
+    const s = new CopyStage(t.dir, 'bb-acme');
+    s.open('week-03.json', [0, 1, 2, 3].map((n) => post(`p${n}`, dayOf(monday, n))));
+    const batch = (): ReturnType<typeof s.get> => s.get('week-03.json');
+    assert.equal(replaceProblem(batch(), 'p0', todayIst())?.code, 'CONFLICT', 'a post that is not dropped');
+    assert.equal(replaceProblem(batch(), 'nope', todayIst())?.code, 'NOT_FOUND');
+    for (const id of ['p0', 'p1', 'p2', 'p3']) s.decide('week-03.json', id, 'dropped', 'u');
+    assert.equal(replaceProblem(batch(), 'p0', todayIst()), null);
+    assert.equal(replaceProblem(batch(), 'p0', dayOf(monday, 0))?.code, 'DAY_PASSED', 'its day is today or has passed');
+
+    const after = s.addReplacement('week-03.json', 'p0', fresh('w03-r1', dayOf(monday, 0)), todayIst());
+    const added = after.posts.find((p) => p.postId === 'w03-r1');
+    assert.deepEqual([added?.date, added?.state, added?.replaces, after.replacedBy, after.replacements], [dayOf(monday, 0), 'pending', 'p0', { p0: 'w03-r1' }, { [monday]: 1 }]);
+    assert.equal(added?.contentHash.length, 64, 'the choice is about these exact words');
+    assert.equal(after.posts.find((p) => p.postId === 'p0')?.state, 'dropped', 'the dropped post stays dropped');
+    assert.equal(replaceProblem(after, 'p0', todayIst())?.code, 'CONFLICT', 'one replacement per dropped post');
+    assert.doesNotThrow(() => s.decide('week-03.json', 'w03-r1', 'kept', 'u'), 'the new post is kept like any other');
+
+    s.addReplacement('week-03.json', 'p1', fresh('w03-r2', dayOf(monday, 1)), todayIst());
+    s.addReplacement('week-03.json', 'p2', fresh('w03-r3', dayOf(monday, 2)), todayIst());
+    assert.equal(MAX_REPLACEMENTS_PER_WEEK, 3);
+    assert.equal(replaceProblem(batch(), 'p3', todayIst())?.code, 'LIMIT', 'a week has three');
+    assert.throws(() => s.addReplacement('week-03.json', 'p3', fresh('w03-r4', dayOf(monday, 3)), todayIst()), (e: Error) => e instanceof CopyStageError && e.code === 'LIMIT');
+
+    s.markWeekDrawn('week-03.json', monday);
+    assert.equal(replaceProblem(batch(), 'p3', todayIst())?.code, 'ALREADY_DRAWN', 'a week that was drawn is final');
+  } finally {
+    t.done();
+  }
+});
+
+test('a new topic over HTTP: only for a dropped post, a job per post, the limit counts those being written, and the words are asked for the connected networks only', async () => {
+  const s = await start();
+  try {
+    const monday = futureWeek();
+    const copy = new CopyStage(join(s.root, 'brands', 'bb-acme'), 'bb-acme');
+    copy.open('week-03.json', [0, 1, 2, 3].map((n) => post(`p${n}`, dayOf(monday, n))));
+    const ask = (id: string): Promise<Response> => s.call(`/review/copy/bb-acme/week-03.json/${id}/replace`, {});
+    const body = async (res: Response): Promise<Record<string, any>> => (await res.json()) as Record<string, any>;
+    const notDropped = await ask('p0');
+    assert.equal(notDropped.status, 409);
+    assert.equal((await body(notDropped)).code, 'CONFLICT');
+    for (const id of ['p0', 'p1', 'p2', 'p3']) assert.equal((await s.call(`/review/copy/bb-acme/week-03.json/${id}/drop`, {})).status, 200);
+    const first = await ask('p0');
+    assert.equal(first.status, 202, JSON.stringify(await first.clone().json()));
+    const { job } = (await body(first)) as { job: { id: string; kind: string; planFile: string; postId: string; networks: string[] } };
+    assert.deepEqual([job.kind, job.planFile, job.postId, job.networks], ['replace', 'week-03.json', 'p0', ['instagram', 'facebook']]);
+    assert.deepEqual(engineArgs(job as never).slice(5), ['--copy-first', '--replace', 'week-03.json', '--replace-post', 'p0', '--networks', 'instagram,facebook']);
+    const again = await ask('p0');
+    assert.equal(again.status, 200, 'the same ask while one runs is the same job');
+    const sameJob = await body(again);
+    assert.equal((sameJob['job'] as { id: string }).id, job.id);
+    assert.equal(sameJob['created'], false);
+
+    // Two more being written use the week's three; the fourth is refused with the day she can ask again.
+    assert.equal((await ask('p1')).status, 202);
+    assert.equal((await ask('p2')).status, 202);
+    const full = await ask('p3');
+    assert.equal(full.status, 429);
+    const limited = await body(full);
+    assert.equal(limited['code'], 'REPLACE_LIMIT_REACHED');
+    assert.equal(limited['restart'], dayOf(monday, 7));
+
+    // A try that wrote nothing is not counted: once it has failed, a new one may be asked for.
+    s.jobs.update(job.id, { state: 'failed', error: { code: 'NOTHING_WRITTEN', message: 'x' } });
+    assert.equal(copy.get('week-03.json').replacements, undefined, 'nothing was added or counted');
+    assert.equal((await ask('p3')).status, 202, 'the failed one freed its place');
+    const retry = await ask('p0');
+    assert.equal(retry.status, 429, 'but the week still has its three being written');
+
+    writeConnected(join(s.root, 'brands', 'bb-acme'), ['facebook']);
+    copy.open('week-04.json', [post('q0', dayOf(monday, 14))]);
+    copy.decide('week-04.json', 'q0', 'dropped', 'u');
+    const connected = await s.call('/review/copy/bb-acme/week-04.json/q0/replace', {});
+    assert.deepEqual(((await body(connected)).job as { networks: string[] }).networks, ['facebook'], 'instagram is not connected');
+    copy.open('week-05.json', [post('r0', dayOf(monday, 21))]);
+    copy.decide('week-05.json', 'r0', 'dropped', 'u');
+    copy.markWeekDrawn('week-05.json', mondayOf(dayOf(monday, 21)));
+    assert.equal((await s.call('/review/copy/bb-acme/week-05.json/r0/replace', {})).status, 409, 'a week that was drawn is final');
+    copy.open('week-06.json', [post('s0', todayIst())]);
+    copy.decide('week-06.json', 's0', 'dropped', 'u');
+    const past = await s.call('/review/copy/bb-acme/week-06.json/s0/replace', {});
+    assert.equal(past.status, 409);
+    assert.equal((await body(past)).code, 'DAY_PASSED');
+  } finally {
+    await s.done();
+  }
+});

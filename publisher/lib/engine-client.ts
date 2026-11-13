@@ -67,7 +67,9 @@ export class EngineError extends Error {
   readonly pictureLimit: { channel: string; restart: string } | undefined;
   /** For a customer who has made her carousel for the week: the day (YYYY-MM-DD) she can make another. */
   readonly restart: string | undefined;
-  constructor(status: number, message: string, reason?: string, engineCode?: string, pictureLimit?: { channel: string; restart: string }, restart?: string) {
+  /** For a topic text that cannot be used: why, as a fixed code (TOO_SHORT, TOO_LONG, LINK_NOT_ALLOWED, NEEDS_PROOF, NOT_TEXT). */
+  readonly textReason: string | undefined;
+  constructor(status: number, message: string, reason?: string, engineCode?: string, pictureLimit?: { channel: string; restart: string }, restart?: string, textReason?: string) {
     super(message);
     this.name = 'EngineError';
     this.status = status;
@@ -75,22 +77,25 @@ export class EngineError extends Error {
     this.engineCode = engineCode;
     this.pictureLimit = pictureLimit;
     this.restart = restart;
+    this.textReason = textReason;
   }
 
   /** The code the product API answers with. */
   get code(): ErrorCode {
     switch (this.status) {
       case 429:
-        return this.engineCode === 'CAROUSEL_LIMIT_REACHED' ? 'CAROUSEL_LIMIT_REACHED' : 'PICTURE_LIMIT_REACHED';
+        return this.engineCode === 'CAROUSEL_LIMIT_REACHED' ? 'CAROUSEL_LIMIT_REACHED' : this.engineCode === 'TOPIC_LIMIT_REACHED' ? 'TOPIC_LIMIT_REACHED' : this.engineCode === 'REPLACE_LIMIT_REACHED' ? 'REPLACE_LIMIT_REACHED' : 'PICTURE_LIMIT_REACHED';
       case 404:
         return 'NOT_FOUND';
       case 400:
-        return 'INVALID_REQUEST';
+        if (this.textReason === 'LINK_NOT_ALLOWED') return 'LINK_NOT_ALLOWED';
+        return this.textReason !== undefined ? 'TEXT_REFUSED' : 'INVALID_REQUEST';
       case 422:
         return this.engineCode === 'NOTHING_KEPT' ? 'NOTHING_KEPT' : 'WORDS_NOT_ACCEPTED';
       case 403:
         return 'CONFLICT';
       case 409:
+        if (this.engineCode === 'DAY_PASSED') return 'DAY_PASSED';
         if (this.engineCode === 'HELD') return 'FACT_HELD';
         if (this.engineCode === 'ALREADY_DRAWN' || this.engineCode === 'CLOSED') return 'BATCH_LOCKED';
         if (this.engineCode === 'LIMIT') return 'REDRAW_LIMIT_REACHED';
@@ -107,6 +112,7 @@ export class EngineError extends Error {
 /** What a product is told about a refusal, by the engine's code and never by the engine's own words. */
 function refusalMessage(status: number, engineCode: string | undefined): string {
   if (engineCode === 'NOTHING_KEPT') return 'keep at least one post before asking for pictures';
+  if (engineCode === 'DAY_PASSED') return 'the day of this post is today or has passed, so a new topic cannot be written for it';
   if (engineCode === 'LIMIT') return 'this picture was already drawn again as often as is allowed';
   if (engineCode === 'STALE') return 'a newer picture replaced this one';
   if (engineCode === 'BLOCKED') return 'this picture did not pass the checks, so it cannot be approved';
@@ -117,15 +123,26 @@ function refusalMessage(status: number, engineCode: string | undefined): string 
   return 'the request was not accepted';
 }
 
+/** Why a topic text cannot be used, in our own words (the engine's sentence is never passed on). */
+const TEXT_REASONS: Record<string, string> = {
+  NOT_TEXT: 'Write what the post is about.',
+  TOO_SHORT: 'Write a little more: what is it, and when or for how long.',
+  TOO_LONG: 'Keep it under 1000 characters.',
+  LINK_NOT_ALLOWED: 'Links are not read in this box. Write the details in words.',
+  NEEDS_PROOF: 'The text has a claim that needs proof, such as a guarantee, a "best", a certificate or a result. Say it in plain words instead.',
+};
+
 const unavailable = (): EngineError => new EngineError(503, 'the poster service is not available just now. Try again shortly.');
 
 /** A job as a product sees it: no secrets, no paths, no log lines, no name of who asked. */
 export interface JobView {
   id: string;
   /** `write`: a batch of written posts; `draw`: pictures (a first draw, a redraw, or the picture of a newly added network); `network`: the words for a network added later. */
-  kind: 'write' | 'draw' | 'network' | 'carousel';
+  kind: 'write' | 'draw' | 'network' | 'carousel' | 'topic' | 'replace';
   /** The written batch a draw or an added network is for. */
   batchId?: string;
+  /** For a `replace` job: the dropped post a new topic is being written for. */
+  postId?: string;
   /** For a draw of one week of a batch: the Monday of that week (YYYY-MM-DD). */
   week?: string;
   /** True for a draw the system started by itself (the weekly draw); it is not one of the customer's own asks. */
@@ -140,7 +157,7 @@ export interface JobView {
   finishedAt?: string;
 }
 
-const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel' };
+const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel', topic: 'topic', replace: 'replace' };
 const CODE = /^[A-Z][A-Z_]{1,40}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -157,8 +174,9 @@ function jobView(raw: unknown): { view: JobView; brand: string } | null {
   const view: JobView = { id, kind: JOB_KIND[kind] as JobView['kind'], state: STATE[state] as JobView['state'], createdAt };
   if (typeof step === 'number' && Number.isInteger(step) && step >= 1 && step <= 4) view.step = step;
   if (typeof finishedAt === 'string') view.finishedAt = finishedAt;
-  if ((JOB_KIND[kind] === 'draw' || JOB_KIND[kind] === 'network') && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
+  if ((JOB_KIND[kind] === 'draw' || JOB_KIND[kind] === 'network' || JOB_KIND[kind] === 'replace') && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
   if (JOB_KIND[kind] === 'draw' && typeof raw['week'] === 'string' && DAY.test(raw['week'])) view.week = raw['week'];
+  if (JOB_KIND[kind] === 'replace' && typeof raw['postId'] === 'string' && PART.test(raw['postId'])) view.postId = raw['postId'];
   if (raw['auto'] === true) view.auto = true;
   const error = raw['error'];
   if (view.state === 'failed' && isObject(error) && typeof error['code'] === 'string' && CODE.test(error['code'])) view.failure = error['code'];
@@ -205,6 +223,9 @@ export interface WrittenPostView {
   edited?: boolean;
   signoff?: { brandName?: string; domain?: string };
   advice?: string;
+  /** On a post written to take a dropped one's place: that post's id; on a dropped post that was given a new topic: the new post's id. */
+  replaces?: string;
+  replacedBy?: string;
 }
 
 /** One week of a batch written for several weeks: its first and last day, and whether its pictures wait, are being drawn, are drawn, or were given up. */
@@ -217,6 +238,8 @@ export interface BatchWeekView {
   missingDays?: string[];
   /** Kept topics of the week that got no picture: why, in a fixed code and plain words (`message`). They stay open to change or drop; a retry of the week draws only them. */
   notDrawn?: Array<{ postId: string; code: NotDrawnCode; message: string }>;
+  /** How many dropped topics of this week may still be given a new one. */
+  replacementsLeft?: number;
 }
 
 export type NotDrawnCode = 'HEADLINE_TOO_WEAK' | 'NO_PICTURE' | 'PICTURE_LIMIT_REACHED' | 'FACT_OUT_OF_DATE';
@@ -280,6 +303,7 @@ function factsViewOf(raw: unknown): FactsView {
 
 function batchViewOf(raw: unknown, brand: string): BatchView | null {
   if (!isObject(raw) || raw['brand'] !== brand || typeof raw['planFile'] !== 'string' || !PART.test(raw['planFile']) || !Array.isArray(raw['posts'])) return null;
+  const replacedBy = isObject(raw['replacedBy']) ? raw['replacedBy'] : {};
   const posts = raw['posts'].flatMap((p): WrittenPostView[] => {
     if (!isObject(p) || typeof p['postId'] !== 'string' || !PART.test(p['postId'])) return [];
     const captions: Record<string, NetworkCaption> = {};
@@ -293,19 +317,20 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
     const advice = str(p['advice'], 300);
     const date = typeof p['date'] === 'string' && DAY.test(p['date']) ? p['date'] : undefined;
     const nd = isObject(p['notDrawn']) && typeof p['notDrawn']['code'] === 'string' && NOT_DRAWN_CODES.includes(p['notDrawn']['code']) ? (p['notDrawn']['code'] as NotDrawnCode) : undefined;
-    return [{ id: p['postId'], ...(date ? { date } : {}), ...(nd ? { notDrawn: { code: nd, message: NOT_DRAWN_REASON[nd] } } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}) }];
+    return [{ id: p['postId'], ...(date ? { date } : {}), ...(nd ? { notDrawn: { code: nd, message: NOT_DRAWN_REASON[nd] } } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}), ...(typeof p['replaces'] === 'string' && PART.test(p['replaces']) ? { replaces: p['replaces'] } : {}), ...(typeof replacedBy[p['postId']] === 'string' && PART.test(replacedBy[p['postId']] as string) ? { replacedBy: replacedBy[p['postId']] as string } : {}) }];
   });
   // The list names the networks; an answer to a decision does not, so they are read from the captions then.
   const named = Array.isArray(raw['networks']) ? raw['networks'].filter((n): n is string => typeof n === 'string').slice(0, 10) : [];
   const networks = named.length > 0 ? named : [...new Set(posts.flatMap((p) => Object.keys(p.captions)))].sort();
   const signoffDefault = signoffOf(raw['signoffDefault']);
+  const left = isObject(raw['replacementsLeft']) ? raw['replacementsLeft'] : {};
   const weeks = Array.isArray(raw['weeks']) ? raw['weeks'].flatMap((w): BatchWeekView[] => {
     if (!isObject(w) || typeof w['from'] !== 'string' || !DAY.test(w['from']) || typeof w['to'] !== 'string' || !DAY.test(w['to']) || !Array.isArray(w['postIds'])) return [];
     const state = w['state'];
     if (state !== 'waiting' && state !== 'drawing' && state !== 'drawn' && state !== 'not_drawn' && state !== 'lapsed' && state !== 'empty') return [];
     const missingDays = Array.isArray(w['missingDays']) ? w['missingDays'].filter((d): d is string => typeof d === 'string' && DAY.test(d)).slice(0, 7) : [];
     const notDrawn = Array.isArray(w['notDrawn']) ? w['notDrawn'].flatMap((n): Array<{ postId: string; code: NotDrawnCode; message: string }> => (isObject(n) && typeof n['postId'] === 'string' && PART.test(n['postId']) && typeof n['code'] === 'string' && NOT_DRAWN_CODES.includes(n['code']) ? [{ postId: n['postId'], code: n['code'] as NotDrawnCode, message: NOT_DRAWN_REASON[n['code'] as NotDrawnCode] }] : [])).slice(0, 40) : [];
-    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(missingDays.length > 0 ? { missingDays } : {}), ...(notDrawn.length > 0 ? { notDrawn } : {}) }];
+    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(missingDays.length > 0 ? { missingDays } : {}), ...(notDrawn.length > 0 ? { notDrawn } : {}), ...(typeof left[w['from']] === 'number' ? { replacementsLeft: Math.max(0, Math.min(10, Math.trunc(left[w['from']] as number))) } : {}) }];
   }).slice(0, 8) : [];
   return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(weeks.length > 0 ? { weeks } : {}), ...(signoffDefault ? { signoffDefault } : {}), posts };
 }
@@ -351,6 +376,31 @@ export interface PosterView {
 export type CarouselStatus = 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
 const CAROUSEL_STATUSES: readonly string[] = ['incomplete', 'blocked', 'rejected', 'approved', 'pending'];
 const carouselStatus = (value: unknown): CarouselStatus => (typeof value === 'string' && CAROUSEL_STATUSES.includes(value) ? (value as CarouselStatus) : 'incomplete');
+
+export type TopicState = 'writing' | 'waiting_for_words' | 'drawing' | 'drawn' | 'not_made';
+const TOPIC_STATES: readonly string[] = ['writing', 'waiting_for_words', 'drawing', 'drawn', 'not_made'];
+const TOPIC_REASONS: readonly string[] = ['NOT_WRITTEN', 'TEXT_REFUSED', 'DROPPED', 'PUT_AWAY', 'WEEK_PASSED', 'DRAW_FAILED', 'NO_PICTURE_ROOM', 'NO_PICTURE', 'HEADLINE_TOO_WEAK', 'FACT_OUT_OF_DATE'];
+
+/** A topic the customer asked for in her own words, and where it stands. */
+export interface TopicRequestView {
+  id: string;
+  /** The job that writes it; used to find the request just made, and not part of what a product is shown. */
+  jobId: string;
+  week: { from: string; to: string };
+  /** The day (YYYY-MM-DD) and time (HH:MM), India time, the post goes out. */
+  goesOutOn: string;
+  goesOutAt: string;
+  state: TopicState;
+  /** For `not_made`: why, as a fixed code. */
+  reason?: string;
+  createdAt: string;
+  /** Once written: the batch and post to keep, edit and draw through the written-posts calls, and the words. */
+  batchId?: string;
+  postId?: string;
+  words?: { headline: string; captions: Record<string, string> };
+  /** The pictures drawing it would make now, one for each connected channel it is written for. */
+  picturesToDraw: number;
+}
 
 export interface CarouselSummary {
   id: string;
@@ -463,6 +513,28 @@ function decisionOf(raw: unknown, brand: string): DecisionView {
   const id = decision && typeof decision['versionId'] === 'string' ? decision['versionId'] : '';
   if (!VERSION_ID.test(id) || !id.startsWith(`${brand}.`) || !isObject(raw)) throw unavailable();
   return { id, status: str(raw['status'], 20) ?? '', decidedAt: str(decision?.['at'], 40) ?? '' };
+}
+
+/** The safe view of a topic request the engine sent, or null when it is not a well formed one. Only fixed codes and the customer's own words pass. */
+function topicRequestOf(raw: unknown): TopicRequestView | null {
+  if (!isObject(raw)) return null;
+  const week = raw['week'];
+  const { id, state, createdAt, goesOutOn, goesOutAt } = raw;
+  if (typeof id !== 'string' || !/^t-[A-Za-z0-9-]{1,40}$/.test(id)) return null;
+  if (typeof state !== 'string' || !TOPIC_STATES.includes(state) || typeof createdAt !== 'string') return null;
+  if (!isObject(week) || typeof week['from'] !== 'string' || !DAY.test(week['from']) || typeof week['to'] !== 'string' || !DAY.test(week['to'])) return null;
+  if (typeof goesOutOn !== 'string' || !DAY.test(goesOutOn) || typeof goesOutAt !== 'string' || !/^\d{2}:\d{2}$/.test(goesOutAt)) return null;
+  if (typeof raw['jobId'] !== 'string' || !JOB_ID.test(raw['jobId'])) return null;
+  const view: TopicRequestView = { id, jobId: raw['jobId'], week: { from: week['from'], to: week['to'] }, goesOutOn, goesOutAt, state: state as TopicState, createdAt, picturesToDraw: Math.max(0, Math.min(10, Math.trunc(num(raw['picturesToDraw'])))) };
+  if (typeof raw['reason'] === 'string' && TOPIC_REASONS.includes(raw['reason'])) view.reason = raw['reason'];
+  if (typeof raw['batchId'] === 'string' && PART.test(raw['batchId'])) view.batchId = raw['batchId'];
+  if (typeof raw['postId'] === 'string' && PART.test(raw['postId'])) view.postId = raw['postId'];
+  const words = raw['words'];
+  if (isObject(words) && typeof words['headline'] === 'string' && isObject(words['captions'])) {
+    const captions = Object.fromEntries(Object.entries(words['captions']).flatMap(([network, text]) => (NETWORK_ORDER.includes(network) && typeof text === 'string' ? [[network, text.slice(0, 5000)]] : [])));
+    view.words = { headline: words['headline'].slice(0, 300), captions };
+  }
+  return view;
 }
 
 export class WorkspaceEngine {
@@ -590,6 +662,15 @@ export class WorkspaceEngine {
     return { job, created: isObject(answer) && answer['created'] === true };
   }
 
+  /** Asks for a new topic for a dropped post: a job that writes one post for the same day. The same ask while one is running is the same job. */
+  async replaceWrittenPost(batchId: string, postId: string, actor: string): Promise<{ job: JobView; created: boolean }> {
+    if (!PART.test(batchId) || !PART.test(postId)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/copy/${this.brand}/${batchId}/${postId}/replace`, actor, {});
+    const job = this.own(isObject(answer) ? answer['job'] : undefined);
+    if (!job) throw unavailable();
+    return { job, created: isObject(answer) && answer['created'] === true };
+  }
+
   /** Keeps or drops one written post. */
   async decideWrittenPost(batchId: string, postId: string, verb: 'keep' | 'drop', actor: string): Promise<BatchView> {
     return this.oneBatch(await this.call('POST', `${this.copyPath(batchId, postId)}/${verb}`, actor, {}));
@@ -683,6 +764,24 @@ export class WorkspaceEngine {
     const made = this.own(isObject(answer) ? answer['job'] : undefined);
     if (!made) throw unavailable();
     return { job: made, created: isObject(answer) && answer['created'] === true };
+  }
+
+  /** Starts one post written from the customer's own words for a day. A second ask with the same words for the same week is the same job (`created: false`). */
+  async startTopic(input: { site: string; networks: readonly string[]; text: unknown; startDate: string; actor: string }): Promise<{ job: JobView; created: boolean }> {
+    const answer = await this.call('POST', '/review/jobs', input.actor, { kind: 'topic', site: input.site, networks: input.networks, brand: this.brand, text: input.text, startDate: input.startDate });
+    const made = this.own(isObject(answer) ? answer['job'] : undefined);
+    if (!made) throw unavailable();
+    return { job: made, created: isObject(answer) && answer['created'] === true };
+  }
+
+  /** The topics this customer asked for, newest first (the last ten). */
+  async listTopicRequests(actor: string): Promise<TopicRequestView[]> {
+    const answer = await this.call('GET', '/review/topic-requests', actor);
+    const raw = isObject(answer) && Array.isArray(answer['requests']) ? answer['requests'] : [];
+    return raw.flatMap((r) => {
+      const view = topicRequestOf(r);
+      return view ? [view] : [];
+    });
   }
 
   /** Whether the weekly carousel is switched on for this customer. */
@@ -847,6 +946,20 @@ export class WorkspaceEngine {
       const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
       const sentence = typeof answer['error'] === 'string' && CAROUSEL_LIMIT_SENTENCE.test(answer['error']) ? answer['error'] : 'You have already made your carousel for this week. You can make another next week.';
       throw new EngineError(429, sentence, 'refused', 'CAROUSEL_LIMIT_REACHED', undefined, restart);
+    }
+    // A customer who has her topic for the week: the day she can add another.
+    if (response.status === 429 && isObject(answer) && answer['code'] === 'TOPIC_LIMIT_REACHED') {
+      const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
+      throw new EngineError(429, restart ? `You have already added a topic for this week. You can add another from ${restart}.` : 'You have already added a topic for this week. You can add another next week.', 'refused', 'TOPIC_LIMIT_REACHED', undefined, restart);
+    }
+    // A week that has its new topics: the day she can ask again.
+    if (response.status === 429 && isObject(answer) && answer['code'] === 'REPLACE_LIMIT_REACHED') {
+      const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
+      throw new EngineError(429, restart ? `A week may have 3 new topics written. You can ask again from ${restart}.` : 'A week may have 3 new topics written. You can ask again next week.', 'refused', 'REPLACE_LIMIT_REACHED', undefined, restart);
+    }
+    // A topic text that cannot be used: a fixed code and our own fixed sentence for it, never the engine's words.
+    if (response.status === 400 && isObject(answer) && typeof answer['reason'] === 'string' && TEXT_REASONS[answer['reason']] !== undefined) {
+      throw new EngineError(400, TEXT_REASONS[answer['reason']] as string, 'refused', 'INVALID', undefined, undefined, answer['reason']);
     }
     if (response.status === 400 || response.status === 403 || response.status === 409 || response.status === 422) {
       let engineCode = isObject(answer) && typeof answer['code'] === 'string' ? answer['code'] : undefined;

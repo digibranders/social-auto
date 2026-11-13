@@ -5,6 +5,7 @@
  * jobs/<id>.json, changed only under one lock. The same request made twice returns the job that already exists instead of starting a second one:
  *   - copy: one active job per website (a new one can start once the last has finished);
  *   - carousel: one active job per client (a new one can start once the last has finished);
+ *   - replace: one active job per dropped post (a new topic written for its day); a new one can start once the last has finished;
  *   - topic: one active job per client (a post written from the customer's own statement; a new one can start once the last has finished);
  *   - draw: one job per written batch, so a repeated click can never buy the pictures twice; once it has failed, one more may draw only what it did not finish.
  * At most one job per brand runs at a time (two would fight over the same week files); different brands run side by side.
@@ -14,7 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { LockError, syncDir, withFileLock } from './file-lock.ts';
 
-export type JobKind = 'copy' | 'draw' | 'carousel' | 'redraw' | 'network' | 'newnet' | 'topic';
+export type JobKind = 'copy' | 'draw' | 'carousel' | 'redraw' | 'network' | 'newnet' | 'topic' | 'replace';
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export class JobError extends Error {
@@ -98,7 +99,7 @@ const LOG_LINE_CHARS = 300;
 export const scrub = (line: string): string => line.replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{10,}/g, '[key removed]').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{10,}/gi, 'Bearer [removed]').slice(0, LOG_LINE_CHARS);
 
 export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network' | 'week'>): string =>
-  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'topic' ? `topic:${spec.brand}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
+  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'topic' ? `topic:${spec.brand}` : spec.kind === 'replace' ? `replace:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
 
 export class JobStore {
   private readonly dir: string;

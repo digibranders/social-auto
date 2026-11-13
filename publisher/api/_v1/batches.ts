@@ -13,6 +13,12 @@
  * POST /api/v1/batches   {"externalId", "batchId", "action": "draw", "retry"?: true}   asks for pictures for the kept posts, once per batch (retry only after a
  *                        failed one); answers 202 {"job", "created"}, or 200 with the job that already exists. From then on the batch is final.
  *
+ * POST /api/v1/batches   {"externalId", "batchId", "action": "replace", "postId"}   gives a DROPPED post a new topic: a job (kind "replace", with `postId`) that writes one new post for the same day and
+ *                        time, from the website's facts, for the networks the dropped post was written for and she has connected; answers 202 {"job", "created"} (200 with the job already waiting or
+ *                        running for that post). When it succeeds the batch has the new post (`replaces` = the dropped post's id, state "pending"; the dropped post shows `replacedBy`). A week may have
+ *                        3 new topics (`weeks[].replacementsLeft`): `429 REPLACE_LIMIT_REACHED` with `restart`; a try that writes nothing fails with `NOTHING_WRITTEN` and is not counted. Only for a dropped post
+ *                        (`409 CONFLICT`), once (`409 CONFLICT`), of a week not drawn (`409 BATCH_LOCKED`), whose day is tomorrow or later (`409 DAY_PASSED`). No picture is drawn or paid for.
+ *
  * `X-Social-Actor` names the customer's person and is required to decide. A final batch answers 409 BATCH_LOCKED; words that do not agree with the facts
  * answer 422 WORDS_NOT_ACCEPTED.
  */
@@ -28,7 +34,7 @@ import { syncConnected } from '../../lib/connected-sync.js';
 import { nextMonday } from '../../lib/plan-days.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
-const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network'] as const;
+const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network', 'replace'] as const;
 const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 /** How many times a customer may ask for pictures (each one costs money): a draw already waiting or finished for a batch is always just returned. */
 const MAX_DRAWS_PER_DAY = 3;
@@ -80,7 +86,7 @@ export async function POST(request: Request): Promise<Response> {
   const action = body['action'];
   if (!isAction(action)) return apiError(400, 'INVALID_REQUEST', `action must be one of: ${ACTIONS.join(', ')}`);
   // Asking for pictures or for more networks writes and spends; a brand that is put away does neither.
-  if (action === 'draw' || action === 'add-network') {
+  if (action === 'draw' || action === 'add-network' || action === 'replace') {
     const away = archivedAnswer(found.workspace);
     if (away) return away;
   }
@@ -114,6 +120,17 @@ export async function POST(request: Request): Promise<Response> {
         return json(made.created ? 202 : 200, { job: { ...made.job }, created: made.created });
       } catch (error) {
         if (error instanceof EngineError && error.status === 409 && error.engineCode === 'CONFLICT') return apiError(409, 'NETWORK_ALREADY_THERE', 'this batch already has that network');
+        throw error;
+      }
+    }
+    if (action === 'replace') {
+      // A new topic for a dropped post of a week that is not drawn: a job that writes one post for the same day, from the website's facts. Words only; no picture until she keeps it and draws.
+      try {
+        await syncConnected(engine, found.workspace.brand, by);
+        const made = await engine.replaceWrittenPost(batchId, postId as string, by);
+        return json(made.created ? 202 : 200, { job: { ...made.job }, created: made.created });
+      } catch (error) {
+        if (error instanceof EngineError && error.status === 409 && error.engineCode === 'CONFLICT') return apiError(409, 'CONFLICT', 'only a post that was dropped can be given a new topic, and only once');
         throw error;
       }
     }
