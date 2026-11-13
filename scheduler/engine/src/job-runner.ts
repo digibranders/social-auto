@@ -33,7 +33,7 @@ export function engineArgs(job: Job): string[] {
     if (!job.planFile) throw new Error('a draw job needs the batch to draw');
     return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--draw-kept', job.planFile, ...(job.week ? ['--draw-week', job.week] : []), ...(job.retry ? ['--redraw-missing'] : [])];
   }
-  if (job.kind === 'carousel') return ['src/carousel-cli.ts', '--site', job.site, '--networks', job.networks.join(','), ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
+  if (job.kind === 'carousel') return ['src/carousel-cli.ts', '--site', job.site, '--brand', job.brand, '--networks', job.networks.join(','), ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
   const networks = job.networks.length > 0 ? ['--networks', job.networks.join(',')] : [];
   const rhythm = job.weekdays && job.weekdays.length > 0 ? ['--weekdays', job.weekdays.join(',')] : [];
   return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--copy-first', ...(job.page ? ['--page'] : []), ...networks, ...(job.days ? ['--days', String(job.days)] : []), ...rhythm, ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];

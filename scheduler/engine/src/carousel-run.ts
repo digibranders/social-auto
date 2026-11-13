@@ -23,7 +23,7 @@ const HISTORY_FILE = 'carousels.json';
 const AVOID_TOPICS = 8;
 const WEEK_FILE = /^week-(\d+)\.json$/;
 
-interface HistoryEntry { id: string; topic: string; createdAt: string; planFile: string }
+export interface HistoryEntry { id: string; topic: string; createdAt: string; planFile: string; /** The day it is for, ISO 8601 with the offset (older entries have none). */ date?: string }
 
 export interface CarouselRunInput {
   ai: AiConfig;
@@ -62,7 +62,7 @@ export interface CarouselRunResult {
   fallback?: CarouselCaptions['fallback'];
 }
 
-function readHistory(brandDir: string): HistoryEntry[] {
+export function readHistory(brandDir: string): HistoryEntry[] {
   try {
     const raw = JSON.parse(readFileSync(join(brandDir, HISTORY_FILE), 'utf8')) as { carousels?: unknown };
     return Array.isArray(raw.carousels) ? (raw.carousels as HistoryEntry[]).filter((c) => typeof c?.id === 'string' && typeof c.topic === 'string') : [];
@@ -120,7 +120,7 @@ export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunR
     posts: [{ id: carouselId, date: input.date, painPoint: draft.topic, mode: 'ai', headline: draft.topic, subline: '', caption: main, hashtags: [], imagePrompt: draft.topic, pillar: 'carousel', factIds: [...new Set(draft.slides.flatMap((s) => s.factIds))] }],
   };
   await writeFileAtomic(join(input.brandDir, planFile), `${JSON.stringify(plan, null, 2)}\n`);
-  await writeFileAtomic(join(input.brandDir, HISTORY_FILE), `${JSON.stringify({ carousels: [...history, { id: carouselId, topic: draft.topic, createdAt: now().toISOString(), planFile }] }, null, 2)}\n`);
+  await writeFileAtomic(join(input.brandDir, HISTORY_FILE), `${JSON.stringify({ carousels: [...history, { id: carouselId, topic: draft.topic, createdAt: now().toISOString(), planFile, date: input.date }] }, null, 2)}\n`);
   log(`4/4 The carousel is in the owner's review queue (${planFile}); nothing was scheduled or published.`);
   return { status: 'queued', carouselId, planFile, topic: draft.topic, ...(captions.fallback.length > 0 ? { fallback: captions.fallback } : {}) };
 }

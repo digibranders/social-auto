@@ -131,8 +131,8 @@ test('a carousel job starts the carousel command with the site, the channels and
   const { s, done } = fresh();
   try {
     const { job } = s.enqueue(spec({ kind: 'carousel', days: undefined, startDate: '2026-11-18', time: '10:00' }));
-    assert.deepEqual(engineArgs(job), ['src/carousel-cli.ts', '--site', 'https://acme.example.com', '--networks', 'instagram,linkedin', '--start', '2026-11-18', '--time', '10:00']);
-    assert.deepEqual(engineArgs({ ...job, startDate: undefined as never, time: undefined as never }), ['src/carousel-cli.ts', '--site', 'https://acme.example.com', '--networks', 'instagram,linkedin']);
+    assert.deepEqual(engineArgs(job), ['src/carousel-cli.ts', '--site', 'https://acme.example.com', '--brand', job.brand, '--networks', 'instagram,linkedin', '--start', '2026-11-18', '--time', '10:00']);
+    assert.deepEqual(engineArgs({ ...job, startDate: undefined as never, time: undefined as never }), ['src/carousel-cli.ts', '--site', 'https://acme.example.com', '--brand', job.brand, '--networks', 'instagram,linkedin']);
     const exec: Exec = async (_args, onLine) => {
       onLine('1/4 Planning a carousel from 6 verified facts…', 'out');
       onLine("4/4 The carousel is in the owner's review queue (week-03.json); nothing was scheduled or published.", 'out');

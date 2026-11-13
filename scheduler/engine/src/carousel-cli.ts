@@ -1,7 +1,7 @@
 /**
  * Makes one carousel for a client and puts it in the owner's review queue. Started by the job runner for a "carousel" job; nothing is scheduled or published.
  *
- *   node src/carousel-cli.ts --site acme.com --networks instagram,linkedin [--start 2026-11-18] [--time 10:00] [--utc-offset +05:30] [--require-logo]
+ *   node src/carousel-cli.ts --site acme.com [--brand shop-1] --networks instagram,linkedin [--start 2026-11-18] [--time 10:00] [--utc-offset +05:30] [--require-logo]
  *
  * The website must already have been read (a saved profile and verified facts): a carousel is made from what the client's site states and the owner has not removed.
  */
@@ -14,6 +14,7 @@ import { COMPOSITOR_READY, assertMayDraw, freezeLogo, logoPathFor, resolveBrandi
 import { runCarousel } from './carousel-run.ts';
 import { parseBrand, readJson } from './content.ts';
 import { loadFacts } from './evidence-pipeline.ts';
+import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
 import { applyReview, loadReview } from './fact-review.ts';
 import { isNetwork, NETWORKS, type Network } from './networks.ts';
 import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
@@ -26,7 +27,7 @@ const OUT_ROOT = resolve('out');
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
-      site: { type: 'string' }, networks: { type: 'string' }, start: { type: 'string' }, time: { type: 'string', default: '10:00' }, 'utc-offset': { type: 'string', default: '+05:30' },
+      site: { type: 'string' }, brand: { type: 'string' }, networks: { type: 'string' }, start: { type: 'string' }, time: { type: 'string', default: '10:00' }, 'utc-offset': { type: 'string', default: '+05:30' },
       env: { type: 'string' }, 'require-logo': { type: 'boolean', default: false }, 'month-cap-usd': { type: 'string' },
     },
   });
@@ -39,7 +40,9 @@ async function main(): Promise<void> {
 
   loadEnvIfPresent(envFilePath(values.env, process.env));
   const ai = aiConfigFromEnv(process.env);
-  const slug = slugFromSite(values.site);
+  // A product's customer is named by whoever owns the brand, never by the website (two customers may have the same one); our own clients are named after the site.
+  const slug = values.brand ?? slugFromSite(values.site);
+  if (!/^[a-z0-9][a-z0-9._-]{0,79}$/.test(slug)) throw new Error('--brand must be a brand name');
   const brandDir = join(BRANDS_ROOT, slug);
   const limits = budgetLimitsFromEnv(process.env);
   if (values['month-cap-usd'] !== undefined) {
@@ -65,12 +68,16 @@ async function main(): Promise<void> {
   assertMayDraw(decided);
   const branding = freezeLogo(brandDir, decided, logoPathFor(brandingInput, decided));
   console.log(`    Branding: ${branding.intendedMode} intended, ${branding.appliedMode} applied${branding.reason ? ` (${branding.reason})` : ''}`);
-  const logo = branding.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } : undefined;
+  // Not in placeholder mode: a placeholder card has no calm corner for the logo.
+  const logo = logoForDraw(process.env, branding.status === 'applied' && branding.logoFile && branding.logoKind && branding.logoAssetSha256 ? { path: join(brandDir, branding.logoFile), kind: branding.logoKind, sha256: branding.logoAssetSha256 } : undefined);
+  if (placeholderEnabled(process.env)) console.log('    PLACEHOLDER PICTURES: no picture model is called; these are plain stand-ins for local testing, never for a real customer.');
 
   const start = values.start ?? tomorrowAt(values['utc-offset']);
   const result = await runCarousel({
     ai, brand, brandSlug: slug, brandDir, facts, networks: networks as Network[], date: `${start}T${values.time}:00${values['utc-offset']}`, outRoot: OUT_ROOT, ...(logo ? { logo } : {}),
     log: (m) => console.log(m),
+    // Local testing with no picture model (PICTURE_MODE=placeholder and LOCAL_PLACEHOLDER_PICTURES=yes): plain stand-ins, everything after them the normal pipeline.
+    ...(placeholderEnabled(process.env) ? { deps: { slides: placeholderDeps({ ai }) } } : {}),
   });
   console.log(ai.usage.format());
   if (result.status !== 'queued') {
