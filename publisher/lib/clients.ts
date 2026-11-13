@@ -365,6 +365,14 @@ export function setArchived(file: ClientsFile, brand: string, archived: boolean,
   };
 }
 
+/** The file with a workspace's shown name changed. Trimmed and cut like a name given at creation; blank is refused. Nothing but the name changes. */
+export function setWorkspaceName(file: ClientsFile, brand: string, name: unknown): ClientsFile {
+  const shown = typeof name === 'string' ? name.trim().slice(0, MAX_NAME_LENGTH) : '';
+  if (shown === '') throw new EditError('name must be some text', 400, 'INVALID_REQUEST');
+  if (!file.clients.some((c) => c.brand === brand)) throw new EditError('no such workspace', 404, 'WORKSPACE_NOT_FOUND');
+  return { clients: file.clients.map((c) => (c.brand === brand ? { ...c, name: shown } : c)) };
+}
+
 /** The workspaces of one product's customer (group), oldest first. Another product's workspaces are never in it. */
 export const workspacesInGroup = (file: ClientsFile, product: string, group: string): AddedClient[] =>
   file.clients.filter((c) => c.product === product && groupOf(c) === group).sort((a, b) => a.createdAt.localeCompare(b.createdAt));

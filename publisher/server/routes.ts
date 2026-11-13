@@ -8,7 +8,7 @@ export const routes: Record<string, { method: string; load: () => Promise<Handle
   '/api/cron': { method: 'GET', load: () => import('../api/cron.js').then((m) => m.GET) },
   '/api/status': { method: 'GET', load: () => import('../api/status.js').then((m) => m.GET) },
   '/api/channels': { method: 'POST', load: () => import('../api/channels.js').then((m) => m.POST) },
-  '/api/v1/workspaces': { method: 'ANY', load: async () => { const m = await import('../api/_v1/workspaces.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
+  '/api/v1/workspaces': { method: 'ANY', load: async () => { const m = await import('../api/_v1/workspaces.js'); return (request) => (request.method === 'POST' ? m.POST(request) : request.method === 'PATCH' ? m.PATCH(request) : m.GET(request)); } },
   '/api/v1/pictures': { method: 'POST', load: () => import('../api/_v1/pictures.js').then((m) => m.POST) },
   '/api/v1/posts': { method: 'ANY', load: async () => { const m = await import('../api/_v1/posts.js'); return (request) => (request.method === 'POST' ? m.POST(request) : request.method === 'DELETE' ? m.DELETE(request) : request.method === 'PATCH' ? m.PATCH(request) : m.GET(request)); } },
   '/api/v1/site-jobs': { method: 'ANY', load: async () => { const m = await import('../api/_v1/site-jobs.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
