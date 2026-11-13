@@ -24,7 +24,7 @@
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
 import { listCampaigns } from './campaign-runner.ts';
@@ -41,6 +41,7 @@ import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
+import { checkCustomerText, saveStatement } from './customer-facts.ts';
 import { carouselRoom } from './carousel-limit.ts';
 import { readHistory as readCarouselHistory } from './carousel-run.ts';
 import { tomorrowAt } from './posting-plan.ts';
@@ -359,7 +360,58 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: scope.by(body['by']), networks: carouselFor, ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
             return send(res, created ? 202 : 200, { job, created });
           }
-          if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy" or "carousel" (drawing is asked for on the written batch)');
+          if (body['kind'] === 'topic') {
+            // A post written from what the customer says herself: her own words, kept as typed and never called verified. The website must already have been read (the brand's look comes from it).
+            const topicSite = cleanSite(body['site']);
+            const asked = body['networks'] === undefined ? [] : Array.isArray(body['networks']) ? body['networks'] : null;
+            if (asked === null || asked.some((n) => typeof n !== 'string' || !isNetwork(n))) throw new ReviewError('INVALID', `networks must be a list of ${NETWORKS.join(', ')}`);
+            let topicDay: string | undefined;
+            let topicTime: string | undefined;
+            try {
+              if (body['startDate'] !== undefined) topicDay = checkStartDate(body['startDate'], Date.now());
+              if (body['time'] !== undefined) topicTime = checkTime(body['time']);
+            } catch (error) {
+              if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
+              throw error;
+            }
+            let topicBrand: string;
+            let topicFor = [...new Set(asked as string[])];
+            if (caller.role === 'product') {
+              if (body['brand'] !== caller.brand) throw new ReviewError('INVALID', 'brand must be the brand named in X-Brand');
+              topicBrand = caller.brand;
+            } else {
+              topicBrand = slugFromSite(topicSite);
+            }
+            scope.guard(topicBrand, true);
+            const topicDir = join(root, topicBrand);
+            if (!BRAND.test(topicBrand) || !existsSync(join(topicDir, 'brand.json')) || (await loadFacts(topicDir)) === null) throw new ReviewError('INVALID', 'that website has not been read yet: write posts for it first, so the post can use its look');
+            if (caller.role === 'product') {
+              // Only channels she has connected are written for, and one topic a week (Monday to Sunday, India time, from the day of the post).
+              const connected = readConnected(topicDir);
+              if (connected === null) throw new ReviewError('CONFLICT', 'CONNECTED_UNKNOWN: the connected channels are not known yet, so nothing is written');
+              topicFor = (topicFor.length > 0 ? topicFor : [...connected]).filter((n) => connected.has(n as Network));
+              if (topicFor.length === 0) throw new ReviewError('INVALID', 'none of those channels is connected, so there is nothing to write the post for');
+              const week = mondayOf(topicDay ?? tomorrowAt('+05:30'));
+              const thisWeek = jobs.list({ brand: topicBrand }).filter((j) => j.kind === 'topic' && j.state !== 'failed' && typeof j.startDate === 'string' && mondayOf(j.startDate) === week);
+              if (thisWeek.length > 0) {
+                const restart = new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+                return send(res, 429, { error: `You have already added a topic for the week of ${week}. You can add another from ${restart}.`, code: 'TOPIC_LIMIT_REACHED', restart });
+              }
+            }
+            // One at a time: a second ask while one is being written is the same job, and its words are not kept.
+            const standing = jobs.list({ brand: topicBrand }).find((j) => j.kind === 'topic' && (j.state === 'queued' || j.state === 'running'));
+            if (standing) return send(res, 200, { job: standing, created: false });
+            const problem = checkCustomerText(body['text']);
+            if (problem !== null) throw new ReviewError('INVALID', problem);
+            const by = scope.by(body['by']);
+            if (by.trim() === '') throw new ReviewError('INVALID', 'who is asking must be given');
+            const topicId = `t-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
+            const kept = saveStatement(topicDir, { id: topicId, text: (body['text'] as string).trim(), by, at: new Date().toISOString() });
+            if (kept === null) throw new ReviewError('INVALID', 'Write it as a sentence: what it is, and when or for how long.');
+            const { job, created } = jobs.enqueue({ kind: 'topic', brand: topicBrand, site: topicSite, by, networks: topicFor, topicId, ...(topicDay ? { startDate: topicDay } : {}), ...(topicTime ? { time: topicTime } : {}) });
+            return send(res, created ? 202 : 200, { job, created });
+          }
+          if (body['kind'] !== 'copy') throw new ReviewError('INVALID', 'kind must be "copy", "carousel" or "topic" (drawing is asked for on the written batch)');
           if (body['page'] !== undefined && typeof body['page'] !== 'boolean') throw new ReviewError('INVALID', 'page must be true or false');
           const page = body['page'] === true;
           const site = cleanSite(body['site'], { keepPath: page });

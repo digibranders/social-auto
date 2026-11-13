@@ -403,3 +403,46 @@ test('approving a carousel makes its release record for the networks of its capt
     await s.done();
   }
 });
+
+// ---- a customer adds a topic of her own
+
+test('a customer adds a topic: written for her connected channels only, one topic a week, and a failed one does not use the week', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    writeFileSync(join(dir, 'facts.json'), JSON.stringify({ version: 1, builtAt: '2026-11-01T00:00:00Z', site: 'https://acme.example', facts: [], conflicts: [], snapshots: [], coverage: { pages: 0, structured: 0, flatText: 0, usable: 0, needsReview: 0, excluded: 0, notes: [] } }));
+    const day = inDays(3);
+    const ask = (over: Record<string, unknown> = {}): Promise<Response> => s.call('/review/jobs', { kind: 'topic', site: 'acme.example', brand: 'bb-acme', networks: ['instagram', 'linkedin', 'facebook'], startDate: day, text: 'Diwali special: 20% off all thalis until 2 Nov.', ...over });
+    const first = await ask();
+    assert.equal(first.status, 202, JSON.stringify(await first.clone().json()));
+    const { job } = (await first.json()) as { job: { id: string; kind: string; brand: string; networks: string[]; topicId: string } };
+    assert.deepEqual([job.kind, job.brand, job.networks], ['topic', 'bb-acme', ['instagram', 'facebook']], 'linkedin is not connected');
+    assert.deepEqual(engineArgs(job as never).slice(0, 9), ['src/autopilot.ts', '--site', 'https://acme.example', '--brand', 'bb-acme', '--copy-first', '--topic', job.topicId, '--days']);
+    assert.equal((await ask({ brand: 'bb-other' })).status, 400, 'the brand must be the one in X-Brand');
+    assert.equal((await ask({ networks: ['linkedin'] })).status, 400, 'no connected channel among those asked for');
+
+    // Once it is being written, a second ask is the same job; once it is done the week has its topic.
+    s.jobs.update(job.id, { state: 'succeeded' });
+    const full = await ask({ text: 'New dish: paneer kulcha, served from Monday.' });
+    assert.equal(full.status, 429);
+    const body = (await full.json()) as { code: string; restart: string; error: string };
+    assert.equal(body.code, 'TOPIC_LIMIT_REACHED');
+    assert.match(body.restart, /^\d{4}-\d{2}-\d{2}$/);
+    assert.match(body.error, /already added a topic for the week/);
+    assert.equal(JSON.parse(readFileSync(join(dir, 'customer-facts.json'), 'utf8')).statements.length, 1, 'the refused ask kept nothing');
+
+    // A topic that failed does not use its week (the first one succeeded, so another week is the place to look): a later week is free, and its failure frees it again.
+    const later = await ask({ startDate: inDays(12), text: 'Weekend brunch is back from this Saturday.' });
+    assert.equal(later.status, 202, JSON.stringify(await later.clone().json()));
+    const laterJob = ((await later.json()) as { job: { id: string } }).job;
+    s.jobs.update(laterJob.id, { state: 'failed' });
+    const retry = await ask({ startDate: inDays(12), text: 'Weekend brunch is back from this Saturday, 10 am.' });
+    assert.equal(retry.status, 202, 'a failed topic does not use the week');
+    rmSync(join(dir, 'connected.json'), { force: true });
+    const unknown = await ask({ startDate: inDays(30) });
+    assert.equal(unknown.status, 409);
+    assert.match(((await unknown.json()) as { error: string }).error, /CONNECTED_UNKNOWN/);
+  } finally {
+    await s.done();
+  }
+});

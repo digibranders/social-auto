@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -570,6 +570,48 @@ test('jobs: a carousel can be asked for only for a client whose website was alre
     const again = await post(ask);
     assert.equal(again.status, 200);
     assert.equal(((await again.json()) as { job: { id: string } }).job.id, job.id);
+  } finally {
+    await s.done();
+  }
+});
+
+test('jobs: a topic is written from the customer\'s own words, for a client whose website was already read; her words are kept as typed and a second ask is the same job', async () => {
+  const s = await start();
+  try {
+    const post = (body: unknown) => s.call('/review/jobs', { method: 'POST', body: JSON.stringify(body) });
+    const ask = { kind: 'topic', site: 'acme.example.com', networks: ['instagram', 'linkedin'], by: 'owner', text: 'Diwali special: 20% off all thalis until 2 Nov.' };
+    const unread = await post(ask);
+    assert.equal(unread.status, 400);
+    assert.match(((await unread.json()) as { error: string }).error, /not been read yet/);
+    const dir = join(s.root, 'brands', 'acme');
+    writeFileSync(join(dir, 'brand.json'), '{}');
+    writeFileSync(join(dir, 'facts.json'), JSON.stringify({ version: 1, builtAt: '2026-11-01T00:00:00Z', site: 'https://acme.example.com', facts: [], conflicts: [], snapshots: [], coverage: { pages: 0, structured: 0, flatText: 0, usable: 0, needsReview: 0, excluded: 0, notes: [] } }));
+    const bad: Array<[unknown, RegExp]> = [
+      [{ ...ask, networks: ['tiktok'] }, /networks must be/],
+      [{ ...ask, startDate: '2020-01-01' }, /./],
+      [{ ...ask, by: ' ' }, /./],
+      [{ ...ask, text: 'hi' }, /a little more/],
+      [{ ...ask, text: 'See https://acme.example.com/diwali for the offer' }, /Links are not read/],
+      [{ ...ask, text: 'The best thali in town, 20% off' }, /needs proof/],
+      [{ ...ask, text: undefined }, /Write what the post is about/],
+    ];
+    for (const [body, message] of bad) {
+      const answer = await post(body);
+      assert.equal(answer.status, 400, JSON.stringify(body));
+      assert.match(((await answer.json()) as { error: string }).error, message);
+    }
+    assert.equal(existsSync(join(dir, 'customer-facts.json')) ? readFileSync(join(dir, 'customer-facts.json'), 'utf8') : false, false, 'nothing refused is kept');
+    const first = await post(ask);
+    assert.equal(first.status, 202, JSON.stringify(await first.clone().json()));
+    const { job } = (await first.json()) as { job: { id: string; kind: string; brand: string; networks: string[]; topicId: string } };
+    assert.deepEqual([job.kind, job.brand, job.networks], ['topic', 'acme', ['instagram', 'linkedin']]);
+    assert.match(job.topicId, /^t-[a-z0-9]+-[a-f0-9]{6}$/);
+    assert.ok(readFileSync(join(dir, 'customer-facts.json'), 'utf8').includes('20% off all thalis until 2 Nov'), 'her words are kept as typed');
+    assert.doesNotMatch(JSON.stringify(job), /Diwali/, 'the job does not carry her words');
+    const again = await post({ ...ask, text: 'A different text that must not replace the first one.' });
+    assert.equal(again.status, 200);
+    assert.equal(((await again.json()) as { job: { id: string } }).job.id, job.id);
+    assert.equal(JSON.parse(readFileSync(join(dir, 'customer-facts.json'), 'utf8')).statements.length, 1, 'the second ask kept nothing');
   } finally {
     await s.done();
   }
