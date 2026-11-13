@@ -709,3 +709,37 @@ test('a new topic over HTTP: only for a dropped post, a job per post, the limit 
     await s.done();
   }
 });
+
+// ---- the day and time on every picture and written post
+
+test('every picture and written post says the day and time (India time) it is planned for, read from the plan file, so a moved post shows its new day', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    const image = join(s.root, 'pic.jpg');
+    writeFileSync(image, 'pic');
+    const store = new ReviewStore(dir, 'bb-acme');
+    const base = { planFile: 'week-01.json', headline: 'H', caption: 'C', ctaUrl: 'https://acme.example', factIds: ['f1'], evidence: [{ factId: 'f1', text: 't', quote: 'q', url: 'https://acme.example/', context: 'c' }], imagePath: image, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0 };
+    store.addVersion({ ...base, postId: 'w1-d1', network: 'instagram' });
+    store.addVersion({ ...base, postId: 'w2-d1', network: 'instagram' });
+    // The plan file as written: w1-d1 at 10:00 India time, w2-d1 at 20:30 UTC (which is 02:00 the next day in India).
+    writeFileSync(join(dir, 'week-01.json'), JSON.stringify({ brand: 'bb-acme', posts: [{ id: 'w1-d1', date: '2026-11-16T10:00:00+05:30' }, { id: 'w2-d1', date: '2026-11-23T20:30:00Z' }] }));
+    const listed = async (): Promise<Array<{ postId: string; date?: string; time?: string }>> => ((await (await s.call('/review/posts?status=all')).json()) as { posts: Array<{ postId: string; date?: string; time?: string }> }).posts;
+    const byId = (rows: Array<{ postId: string; date?: string; time?: string }>, id: string) => rows.find((r) => r.postId === id);
+    assert.deepEqual([byId(await listed(), 'w1-d1')?.date, byId(await listed(), 'w1-d1')?.time], ['2026-11-16', '10:00']);
+    assert.deepEqual([byId(await listed(), 'w2-d1')?.date, byId(await listed(), 'w2-d1')?.time], ['2026-11-24', '02:00'], 'always India time, whatever offset the plan was written with');
+    // A post moved to another day shows the new day (the plan file changed, so the cache is read again).
+    writeFileSync(join(dir, 'week-01.json'), JSON.stringify({ brand: 'bb-acme', posts: [{ id: 'w1-d1', date: '2026-11-19T10:00:00+05:30' }, { id: 'w2-d1', date: '2026-11-23T20:30:00Z' }] }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(byId(await listed(), 'w1-d1')?.date, '2026-11-19');
+    // A picture of a post the plan does not know has no day, and nothing breaks.
+    store.addVersion({ ...base, postId: 'ghost', network: 'instagram' });
+    assert.equal(byId(await listed(), 'ghost')?.date, undefined);
+    // The written posts carry their time too.
+    const batches = (await (await s.call('/review/copy')).json()) as { batches: Array<{ posts: Array<{ postId: string; date?: string; time?: string }> }> };
+    const post = batches.batches[0]?.posts.find((p) => p.postId === 'w1-d1');
+    assert.deepEqual([post?.date, post?.time], ['2026-11-16', '10:00'], 'the batch keeps its own day; the time is the plan\'s');
+  } finally {
+    await s.done();
+  }
+});

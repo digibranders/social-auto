@@ -273,10 +273,36 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     const left = Math.max(0, redrawCap - brandJobs.filter((j) => j.key === key && countsAgainstCap(j)).length);
     return { canRedraw: REDRAWABLE.includes(item.status) && left > 0, redrawsLeft: left };
   };
+  /** The day and time (India time) a post of a plan file is planned for, read from the plan file the pictures and the release come from. Cached by the file's modification time. */
+  const planTimes = new Map<string, { mtimeMs: number; times: Map<string, { date: string; time: string }> }>();
+  const plannedWhen = (brand: string, planFile: string, postId: string): { date: string; time: string } | undefined => {
+    const file = join(root, brand, planFile);
+    try {
+      const { mtimeMs } = statSync(file);
+      let entry = planTimes.get(file);
+      if (!entry || entry.mtimeMs !== mtimeMs) {
+        const plan = JSON.parse(readFileSync(file, 'utf8')) as { posts?: Array<{ id?: unknown; date?: unknown }> };
+        const times = new Map<string, { date: string; time: string }>();
+        for (const p of plan.posts ?? []) {
+          if (typeof p.id !== 'string' || typeof p.date !== 'string') continue;
+          const at = Date.parse(p.date);
+          if (Number.isNaN(at)) continue;
+          const india = new Date(at + 5.5 * 3_600_000).toISOString();
+          times.set(p.id, { date: india.slice(0, 10), time: india.slice(11, 16) });
+        }
+        entry = { mtimeMs, times };
+        planTimes.set(file, entry);
+      }
+      return entry.times.get(postId);
+    } catch {
+      return undefined;
+    }
+  };
   const summary = (item: ReviewItem, redraw?: { canRedraw: boolean; redrawsLeft: number }) => ({
     versionId: item.version.versionId, brand: item.version.brand, postId: item.version.postId, planFile: item.version.planFile, versionNumber: item.version.versionNumber, status: item.status,
     headline: item.version.headline, caption: item.version.caption, createdAt: item.version.createdAt, costUsd: item.version.costUsd, imageSha256: item.version.imageSha256,
     ...(item.version.network ? { network: item.version.network } : {}),
+    ...plannedWhen(item.version.brand, item.version.planFile, item.version.postId),
     ...(item.version.carousel ? { carousel: item.version.carousel } : {}),
     ...(item.version.width && item.version.height ? { width: item.version.width, height: item.version.height, shape: item.version.width / item.version.height >= 1.2 ? 'wide' : item.version.width / item.version.height <= 0.83 ? 'tall' : 'square' } : {}),
     ...(item.decision ? { decidedBy: item.decision.by, decidedAt: item.decision.at, reason: item.decision.reason } : {}),
@@ -485,7 +511,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             return { weeks: mondays.map((from) => ({ from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state: !b.posts.some((p) => weekOfPost(p) === from) ? 'empty' as const : b.weekLapsed?.[from] !== undefined ? 'lapsed' as const : b.weekDrawn?.[from] !== undefined ? (allUndrawn(from) ? 'not_drawn' as const : 'drawn' as const) : running.some((j) => j.week === from) ? 'drawing' as const : 'waiting' as const, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId), ...(missingIn(from).length > 0 ? { missingDays: missingIn(from) } : {}), ...(undrawn(from).length > 0 ? { notDrawn: undrawn(from) } : {}) })) };
           };
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, MAX_REPLACEMENTS_PER_WEEK - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
+          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, MAX_REPLACEMENTS_PER_WEEK - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, ...(plannedWhen(b.brand, b.planFile, p.postId) ? { time: (plannedWhen(b.brand, b.planFile, p.postId) as { time: string }).time } : {}), headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
