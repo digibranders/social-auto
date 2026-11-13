@@ -44,6 +44,7 @@ import { readConnected, writeConnected } from './connected-networks.ts';
 import { customerTextProblem, readStatements, saveStatement } from './customer-facts.ts';
 import { topicRequests } from './topic-requests.ts';
 import { carouselRoom } from './carousel-limit.ts';
+import { productLimitsOff } from './limits-switch.ts';
 import { readHistory as readCarouselHistory } from './carousel-run.ts';
 import { tomorrowAt } from './posting-plan.ts';
 import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
@@ -264,7 +265,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   const storeOf = (versionId: string): ReviewStore => storeFor(versionId.split('.')[0] ?? '');
   const brands = (): string[] => readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && BRAND.test(d.name)).map((d) => d.name);
 
-  const redrawCap = options.redrawCap ?? 1;
+  // PRODUCT_LIMITS=off lifts the one redraw a picture is given (testing only).
+  const redrawCap = options.redrawCap ?? (productLimitsOff() ? 50 : 1);
   /** A redraw that bought nothing (no picture passed the checks) does not use up the poster's allowance. */
   const countsAgainstCap = (j: Job): boolean => !(j.state === 'failed' && j.error?.code === 'NOTHING_DRAWN');
   const REDRAWABLE: readonly ReviewStatus[] = ['pending', 'rejected', 'blocked', 'held'];
@@ -384,7 +386,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               const onDay = `${carouselDay ?? tomorrowAt('+05:30')}T${carouselTime ?? '10:00'}:00+05:30`;
               const carouselStore = storeFor(carouselBrand);
               const room = carouselRoom(readCarouselHistory(join(root, carouselBrand)).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return carouselStore.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })), onDay);
-              if (!room.ok) return send(res, 429, { error: room.message, code: 'CAROUSEL_LIMIT_REACHED', restart: room.restart });
+              if (!room.ok && !productLimitsOff()) return send(res, 429, { error: room.message, code: 'CAROUSEL_LIMIT_REACHED', restart: room.restart });
             }
             const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: scope.by(body['by']), networks: carouselFor, ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
             return send(res, created ? 202 : 200, { job, created });
@@ -430,7 +432,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               const kept = readStatements(topicDir);
               const repeat = sameWords === null ? undefined : thisWeek.find((j) => kept.some((st) => st.id === j.topicId && plainly(st.text) === sameWords));
               if (repeat) return send(res, 200, { job: repeat, created: false });
-              if (thisWeek.length > 0) {
+              if (thisWeek.length > 0 && !productLimitsOff()) {
                 const restart = new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
                 return send(res, 429, { error: `You have already added a topic for the week of ${week}. You can add another from ${restart}.`, code: 'TOPIC_LIMIT_REACHED', restart });
               }
@@ -513,7 +515,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             return { weeks: mondays.map((from) => ({ from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state: !b.posts.some((p) => weekOfPost(p) === from) ? 'empty' as const : b.weekLapsed?.[from] !== undefined ? 'lapsed' as const : b.weekDrawn?.[from] !== undefined ? (allUndrawn(from) ? 'not_drawn' as const : 'drawn' as const) : running.some((j) => j.week === from) ? 'drawing' as const : 'waiting' as const, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId), ...(missingIn(from).length > 0 ? { missingDays: missingIn(from) } : {}), ...(undrawn(from).length > 0 ? { notDrawn: undrawn(from) } : {}) })) };
           };
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, MAX_REPLACEMENTS_PER_WEEK - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, ...(plannedWhen(b.brand, b.planFile, p.postId) ? { time: (plannedWhen(b.brand, b.planFile, p.postId) as { time: string }).time } : {}), headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
+          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, (productLimitsOff() ? 99 : MAX_REPLACEMENTS_PER_WEEK) - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, ...(plannedWhen(b.brand, b.planFile, p.postId) ? { time: (plannedWhen(b.brand, b.planFile, p.postId) as { time: string }).time } : {}), headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
@@ -570,7 +572,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const standing = jobs.list({ brand }).find((j) => j.kind === 'replace' && j.planFile === planFile && j.postId === postId && (j.state === 'queued' || j.state === 'running'));
           if (standing) return send(res, 200, { job: standing, created: false });
           const today = tomorrowAt('+05:30', new Date(Date.now() - 86_400_000));
-          const problem = replaceProblem(batch, postId, today);
+          const maxNew = productLimitsOff() ? Number.POSITIVE_INFINITY : MAX_REPLACEMENTS_PER_WEEK;
+          const problem = replaceProblem(batch, postId, today, maxNew);
           const post = batch.posts.find((p) => p.postId === postId);
           const week = post ? weekOfPost(post) : undefined;
           const restart = week === undefined ? undefined : new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
@@ -579,7 +582,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (problem) throw new CopyStageError(problem.code, problem.message);
           // Tries that are waiting or running count too, so two quick asks cannot go past the limit.
           const writing = jobs.list({ brand }).filter((j) => j.kind === 'replace' && j.planFile === planFile && (j.state === 'queued' || j.state === 'running') && week !== undefined && weekOfPost(batch.posts.find((p) => p.postId === j.postId) ?? {}) === week).length;
-          if (week !== undefined && (batch.replacements?.[week] ?? 0) + writing >= MAX_REPLACEMENTS_PER_WEEK) return limited();
+          if (week !== undefined && (batch.replacements?.[week] ?? 0) + writing >= maxNew) return limited();
           // The words are written for the networks the dropped post was written for; for a product's customer only those she has connected.
           let replaceFor = Object.keys(post?.captions ?? {}).filter(isNetwork);
           if (caller.role === 'product') {

@@ -51,6 +51,7 @@ import { composeCaption, parseBrand, parseWeekPlan, readJson, type PlannedPost, 
 import { batchLookAlikes } from './creative-director.ts';
 import { addNetworkToBatch } from './add-network.ts';
 import { CopyStage, CopyStageError, replaceProblem } from './copy-stage.ts';
+import { productLimitsOff } from './limits-switch.ts';
 import { ProductBrands } from './product-brands.ts';
 import { ConnectedUnknownError, connectedForDraw, readConnected } from './connected-networks.ts';
 import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
@@ -172,7 +173,8 @@ async function replaceDroppedPost(input: {
   const stage = new CopyStage(brandDir, input.slug);
   const batch = stage.get(planFile);
   const today = tomorrowAt('+05:30', new Date(Date.now() - 86_400_000));
-  const problem = replaceProblem(batch, droppedId, today);
+  const maxPerWeek = productLimitsOff() ? Number.POSITIVE_INFINITY : undefined;
+  const problem = replaceProblem(batch, droppedId, today, maxPerWeek);
   if (problem) throw new CopyStageError(problem.code, problem.message);
   const dropped = batch.posts.find((p) => p.postId === droppedId) as { date: string };
   const day = dropped.date;
@@ -207,7 +209,7 @@ async function replaceDroppedPost(input: {
   }
   // The plan file first: a post in it that the batch never got is harmless (nothing draws a post the batch does not keep), while a batch post with no plan entry could not be drawn.
   await writeFileAtomic(planPath, `${JSON.stringify({ ...existingPlan, posts: [...existingPlan.posts, post] }, null, 2)}\n`);
-  stage.addReplacement(planFile, droppedId, { postId: post.id, date: day, headline: post.headline, caption: composeCaption(post), ...(post.variants ? { captions: Object.fromEntries(Object.entries(post.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}) }, today);
+  stage.addReplacement(planFile, droppedId, { postId: post.id, date: day, headline: post.headline, caption: composeCaption(post), ...(post.variants ? { captions: Object.fromEntries(Object.entries(post.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}) }, today, maxPerWeek);
   // What was written is remembered, so a later batch does not repeat it.
   const week = history.weeks.find((w) => w.file === planFile);
   if (week) {

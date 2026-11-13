@@ -827,3 +827,63 @@ test('moving a post over HTTP changes its day in the batch and in the plan file,
     await s.done();
   }
 });
+
+// ---- PRODUCT_LIMITS=off lifts the limits for a stretch of testing, and only when it is exactly "off"
+
+import { productLimitsOff, UNLIMITED } from './limits-switch.ts';
+import { weeklyLimitFromEnv } from './picture-limit.ts';
+
+/** Runs `work` with PRODUCT_LIMITS set (or not), and puts the setting back. */
+async function withLimits<T>(value: string | undefined, work: () => Promise<T>): Promise<T> {
+  const before = process.env['PRODUCT_LIMITS'];
+  if (value === undefined) delete process.env['PRODUCT_LIMITS'];
+  else process.env['PRODUCT_LIMITS'] = value;
+  try {
+    return await work();
+  } finally {
+    if (before === undefined) delete process.env['PRODUCT_LIMITS'];
+    else process.env['PRODUCT_LIMITS'] = before;
+  }
+}
+
+test('the limits switch is on only for exactly PRODUCT_LIMITS=off, and lifts the weekly pictures of a channel', () => {
+  assert.equal(productLimitsOff({}), false);
+  for (const value of ['', 'on', 'OFF', 'false', 'no', '0', 'off ']) assert.equal(productLimitsOff({ PRODUCT_LIMITS: value }), false, value);
+  assert.equal(productLimitsOff({ PRODUCT_LIMITS: 'off' }), true);
+  assert.equal(weeklyLimitFromEnv({}), 7, 'the weekly pictures of a channel, as always');
+  assert.equal(weeklyLimitFromEnv({ PRODUCT_PICTURES_PER_CHANNEL_WEEK: '5' }), 5);
+  assert.throws(() => weeklyLimitFromEnv({ PRODUCT_PICTURES_PER_CHANNEL_WEEK: '99' }), /1 to 20/, 'a bad setting is still an error while the limits are on');
+  assert.equal(weeklyLimitFromEnv({ PRODUCT_LIMITS: 'off' }), UNLIMITED);
+  assert.equal(weeklyLimitFromEnv({ PRODUCT_LIMITS: 'off', PRODUCT_PICTURES_PER_CHANNEL_WEEK: '5' }), UNLIMITED);
+});
+
+test('with the limits off a customer may add more than one topic a week and more than three new topics a week; with them on (or no setting) nothing changes', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    writeFileSync(join(dir, 'facts.json'), JSON.stringify({ version: 1, builtAt: '2026-11-01T00:00:00Z', site: 'https://acme.example', facts: [], conflicts: [], snapshots: [], coverage: { pages: 0, structured: 0, flatText: 0, usable: 0, needsReview: 0, excluded: 0, notes: [] } }));
+    const day = inDays(3);
+    const topic = (text: string): Promise<Response> => s.call('/review/jobs', { kind: 'topic', site: 'acme.example', brand: 'bb-acme', networks: ['instagram'], startDate: day, text });
+    const first = await topic('Diwali special: 20% off all thalis until 2 Nov.');
+    assert.equal(first.status, 202);
+    s.jobs.update(((await first.json()) as { job: { id: string } }).job.id, { state: 'succeeded' });
+    assert.equal((await withLimits(undefined, () => topic('New dish: paneer kulcha, served from Monday.'))).status, 429, 'no setting: one a week');
+    assert.equal((await withLimits('on', () => topic('New dish: paneer kulcha, served from Monday.'))).status, 429);
+    const lifted = await withLimits('off', () => topic('New dish: paneer kulcha, served from Monday.'));
+    assert.equal(lifted.status, 202, JSON.stringify(await lifted.clone().json()));
+
+    // New topics of dropped posts: a fourth in one week is refused, unless the limits are off.
+    const monday = futureWeek();
+    const copy = new CopyStage(dir, 'bb-acme');
+    copy.open('week-03.json', [0, 1, 2, 3].map((n) => post(`p${n}`, dayOf(monday, n))));
+    for (const id of ['p0', 'p1', 'p2', 'p3']) copy.decide('week-03.json', id, 'dropped', 'u');
+    const replace = (id: string): Promise<Response> => s.call(`/review/copy/bb-acme/week-03.json/${id}/replace`, {});
+    for (const id of ['p0', 'p1', 'p2']) assert.equal((await replace(id)).status, 202);
+    assert.equal((await replace('p3')).status, 429, 'the fourth new topic of a week is refused');
+    assert.equal((await withLimits('off', () => replace('p3'))).status, 202, 'unless the limits are off');
+    const listed = (await (await withLimits('off', () => s.call('/review/copy'))).json()) as { batches: Array<{ planFile: string; replacementsLeft?: Record<string, number> }> };
+    assert.ok((listed.batches.find((b) => b.planFile === 'week-03.json')?.replacementsLeft?.[monday] ?? 0) > 3, 'the screen is told there is room');
+  } finally {
+    await s.done();
+  }
+});

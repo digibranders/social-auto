@@ -33,6 +33,7 @@ import { channelsFor } from '../../lib/channels.js';
 import { EngineError, EXPIRY_DAYS } from '../../lib/engine-client.js';
 import { apiError, errorResponse } from '../../lib/api-error.js';
 import { json } from '../../lib/http.js';
+import { productLimitsOff } from '../../lib/limits-switch.js';
 import type { JobView } from '../../lib/engine-client.js';
 import { archivedAnswer, engineFor, workspaceFor } from '../../lib/product-workspace.js';
 import { loadChannels } from '../../lib/store.js';
@@ -162,7 +163,8 @@ export async function POST(request: Request): Promise<Response> {
       const latest = allDraws.find((j) => j.batchId === batchId && j.week === week);
       // What the system drew by itself (the weekly draw) is not one of the customer's own asks.
       const draws = allDraws.filter((j) => j.auto !== true);
-      if (!latest || retry) {
+      // PRODUCT_LIMITS=off lifts the limits on asking for pictures (testing only).
+      if (!productLimitsOff() && (!latest || retry)) {
         const since = (ms: number): number => draws.filter((j) => Date.now() - Date.parse(j.createdAt) < ms).length;
         if (since(DAY_MS) >= MAX_DRAWS_PER_DAY) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_DAY} times a day; try again tomorrow`);
         if (since(30 * DAY_MS) >= MAX_DRAWS_PER_MONTH) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_MONTH} times a month; try again later`);

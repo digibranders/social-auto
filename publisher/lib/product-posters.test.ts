@@ -79,6 +79,25 @@ test('draw: refusals, and the per-customer limits', async () => {
   });
 });
 
+test('PRODUCT_LIMITS=off lifts the limits on asking for pictures', async () => {
+  const before = process.env['PRODUCT_LIMITS'];
+  try {
+    await withEngine(async (engine) => {
+      const brand = await workspace('shop-1');
+      engine.batches.push(batch(brand, true, { planFile: 'week-02.json' }));
+      const old = (hours: number, n: number): FakeJob => ({ id: `job-e${n.toString(36).padStart(5, '0')}-0123abcd`, key: 'draw', kind: 'draw', brand, site: 'https://acme.example', by: 'x', networks: [], planFile: `old-${n}.json`, state: 'succeeded', createdAt: new Date(Date.now() - hours * 3_600_000).toISOString() });
+      engine.jobs.push(...Array.from({ length: 3 }, (_, i) => old(i + 1, i + 1)));
+      delete process.env['PRODUCT_LIMITS'];
+      expectError(await draw({ batchId: 'week-02.json' }), 429, 'DRAW_LIMIT_REACHED', 'limits on');
+      process.env['PRODUCT_LIMITS'] = 'off';
+      assert.equal((await draw({ batchId: 'week-02.json' })).status, 202, 'limits off');
+    });
+  } finally {
+    if (before === undefined) delete process.env['PRODUCT_LIMITS'];
+    else process.env['PRODUCT_LIMITS'] = before;
+  }
+});
+
 test('posters: lists, detail and image carry safe fields only and stay with their own customer', async () => {
   await withEngine(async (engine) => {
     const one = await workspace('shop-1');
