@@ -67,7 +67,9 @@ export class EngineError extends Error {
   readonly pictureLimit: { channel: string; restart: string } | undefined;
   /** For a customer who has made her carousel for the week: the day (YYYY-MM-DD) she can make another. */
   readonly restart: string | undefined;
-  constructor(status: number, message: string, reason?: string, engineCode?: string, pictureLimit?: { channel: string; restart: string }, restart?: string) {
+  /** For a topic text that cannot be used: why, as a fixed code (TOO_SHORT, TOO_LONG, LINK_NOT_ALLOWED, NEEDS_PROOF, NOT_TEXT). */
+  readonly textReason: string | undefined;
+  constructor(status: number, message: string, reason?: string, engineCode?: string, pictureLimit?: { channel: string; restart: string }, restart?: string, textReason?: string) {
     super(message);
     this.name = 'EngineError';
     this.status = status;
@@ -75,17 +77,19 @@ export class EngineError extends Error {
     this.engineCode = engineCode;
     this.pictureLimit = pictureLimit;
     this.restart = restart;
+    this.textReason = textReason;
   }
 
   /** The code the product API answers with. */
   get code(): ErrorCode {
     switch (this.status) {
       case 429:
-        return this.engineCode === 'CAROUSEL_LIMIT_REACHED' ? 'CAROUSEL_LIMIT_REACHED' : 'PICTURE_LIMIT_REACHED';
+        return this.engineCode === 'CAROUSEL_LIMIT_REACHED' ? 'CAROUSEL_LIMIT_REACHED' : this.engineCode === 'TOPIC_LIMIT_REACHED' ? 'TOPIC_LIMIT_REACHED' : 'PICTURE_LIMIT_REACHED';
       case 404:
         return 'NOT_FOUND';
       case 400:
-        return 'INVALID_REQUEST';
+        if (this.textReason === 'LINK_NOT_ALLOWED') return 'LINK_NOT_ALLOWED';
+        return this.textReason !== undefined ? 'TEXT_REFUSED' : 'INVALID_REQUEST';
       case 422:
         return this.engineCode === 'NOTHING_KEPT' ? 'NOTHING_KEPT' : 'WORDS_NOT_ACCEPTED';
       case 403:
@@ -117,13 +121,22 @@ function refusalMessage(status: number, engineCode: string | undefined): string 
   return 'the request was not accepted';
 }
 
+/** Why a topic text cannot be used, in our own words (the engine's sentence is never passed on). */
+const TEXT_REASONS: Record<string, string> = {
+  NOT_TEXT: 'Write what the post is about.',
+  TOO_SHORT: 'Write a little more: what is it, and when or for how long.',
+  TOO_LONG: 'Keep it under 1000 characters.',
+  LINK_NOT_ALLOWED: 'Links are not read in this box. Write the details in words.',
+  NEEDS_PROOF: 'The text has a claim that needs proof, such as a guarantee, a "best", a certificate or a result. Say it in plain words instead.',
+};
+
 const unavailable = (): EngineError => new EngineError(503, 'the poster service is not available just now. Try again shortly.');
 
 /** A job as a product sees it: no secrets, no paths, no log lines, no name of who asked. */
 export interface JobView {
   id: string;
   /** `write`: a batch of written posts; `draw`: pictures (a first draw, a redraw, or the picture of a newly added network); `network`: the words for a network added later. */
-  kind: 'write' | 'draw' | 'network' | 'carousel';
+  kind: 'write' | 'draw' | 'network' | 'carousel' | 'topic';
   /** The written batch a draw or an added network is for. */
   batchId?: string;
   /** For a draw of one week of a batch: the Monday of that week (YYYY-MM-DD). */
@@ -140,7 +153,7 @@ export interface JobView {
   finishedAt?: string;
 }
 
-const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel' };
+const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel', topic: 'topic' };
 const CODE = /^[A-Z][A-Z_]{1,40}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -352,6 +365,31 @@ export type CarouselStatus = 'incomplete' | 'blocked' | 'rejected' | 'approved' 
 const CAROUSEL_STATUSES: readonly string[] = ['incomplete', 'blocked', 'rejected', 'approved', 'pending'];
 const carouselStatus = (value: unknown): CarouselStatus => (typeof value === 'string' && CAROUSEL_STATUSES.includes(value) ? (value as CarouselStatus) : 'incomplete');
 
+export type TopicState = 'writing' | 'waiting_for_words' | 'drawing' | 'drawn' | 'not_made';
+const TOPIC_STATES: readonly string[] = ['writing', 'waiting_for_words', 'drawing', 'drawn', 'not_made'];
+const TOPIC_REASONS: readonly string[] = ['NOT_WRITTEN', 'TEXT_REFUSED', 'DROPPED', 'PUT_AWAY', 'WEEK_PASSED', 'DRAW_FAILED', 'NO_PICTURE_ROOM', 'NO_PICTURE', 'HEADLINE_TOO_WEAK', 'FACT_OUT_OF_DATE'];
+
+/** A topic the customer asked for in her own words, and where it stands. */
+export interface TopicRequestView {
+  id: string;
+  /** The job that writes it; used to find the request just made, and not part of what a product is shown. */
+  jobId: string;
+  week: { from: string; to: string };
+  /** The day (YYYY-MM-DD) and time (HH:MM), India time, the post goes out. */
+  goesOutOn: string;
+  goesOutAt: string;
+  state: TopicState;
+  /** For `not_made`: why, as a fixed code. */
+  reason?: string;
+  createdAt: string;
+  /** Once written: the batch and post to keep, edit and draw through the written-posts calls, and the words. */
+  batchId?: string;
+  postId?: string;
+  words?: { headline: string; captions: Record<string, string> };
+  /** The pictures drawing it would make now, one for each connected channel it is written for. */
+  picturesToDraw: number;
+}
+
 export interface CarouselSummary {
   id: string;
   topic: string;
@@ -463,6 +501,28 @@ function decisionOf(raw: unknown, brand: string): DecisionView {
   const id = decision && typeof decision['versionId'] === 'string' ? decision['versionId'] : '';
   if (!VERSION_ID.test(id) || !id.startsWith(`${brand}.`) || !isObject(raw)) throw unavailable();
   return { id, status: str(raw['status'], 20) ?? '', decidedAt: str(decision?.['at'], 40) ?? '' };
+}
+
+/** The safe view of a topic request the engine sent, or null when it is not a well formed one. Only fixed codes and the customer's own words pass. */
+function topicRequestOf(raw: unknown): TopicRequestView | null {
+  if (!isObject(raw)) return null;
+  const week = raw['week'];
+  const { id, state, createdAt, goesOutOn, goesOutAt } = raw;
+  if (typeof id !== 'string' || !/^t-[A-Za-z0-9-]{1,40}$/.test(id)) return null;
+  if (typeof state !== 'string' || !TOPIC_STATES.includes(state) || typeof createdAt !== 'string') return null;
+  if (!isObject(week) || typeof week['from'] !== 'string' || !DAY.test(week['from']) || typeof week['to'] !== 'string' || !DAY.test(week['to'])) return null;
+  if (typeof goesOutOn !== 'string' || !DAY.test(goesOutOn) || typeof goesOutAt !== 'string' || !/^\d{2}:\d{2}$/.test(goesOutAt)) return null;
+  if (typeof raw['jobId'] !== 'string' || !JOB_ID.test(raw['jobId'])) return null;
+  const view: TopicRequestView = { id, jobId: raw['jobId'], week: { from: week['from'], to: week['to'] }, goesOutOn, goesOutAt, state: state as TopicState, createdAt, picturesToDraw: Math.max(0, Math.min(10, Math.trunc(num(raw['picturesToDraw'])))) };
+  if (typeof raw['reason'] === 'string' && TOPIC_REASONS.includes(raw['reason'])) view.reason = raw['reason'];
+  if (typeof raw['batchId'] === 'string' && PART.test(raw['batchId'])) view.batchId = raw['batchId'];
+  if (typeof raw['postId'] === 'string' && PART.test(raw['postId'])) view.postId = raw['postId'];
+  const words = raw['words'];
+  if (isObject(words) && typeof words['headline'] === 'string' && isObject(words['captions'])) {
+    const captions = Object.fromEntries(Object.entries(words['captions']).flatMap(([network, text]) => (NETWORK_ORDER.includes(network) && typeof text === 'string' ? [[network, text.slice(0, 5000)]] : [])));
+    view.words = { headline: words['headline'].slice(0, 300), captions };
+  }
+  return view;
 }
 
 export class WorkspaceEngine {
@@ -685,6 +745,24 @@ export class WorkspaceEngine {
     return { job: made, created: isObject(answer) && answer['created'] === true };
   }
 
+  /** Starts one post written from the customer's own words for a day. A second ask with the same words for the same week is the same job (`created: false`). */
+  async startTopic(input: { site: string; networks: readonly string[]; text: unknown; startDate: string; actor: string }): Promise<{ job: JobView; created: boolean }> {
+    const answer = await this.call('POST', '/review/jobs', input.actor, { kind: 'topic', site: input.site, networks: input.networks, brand: this.brand, text: input.text, startDate: input.startDate });
+    const made = this.own(isObject(answer) ? answer['job'] : undefined);
+    if (!made) throw unavailable();
+    return { job: made, created: isObject(answer) && answer['created'] === true };
+  }
+
+  /** The topics this customer asked for, newest first (the last ten). */
+  async listTopicRequests(actor: string): Promise<TopicRequestView[]> {
+    const answer = await this.call('GET', '/review/topic-requests', actor);
+    const raw = isObject(answer) && Array.isArray(answer['requests']) ? answer['requests'] : [];
+    return raw.flatMap((r) => {
+      const view = topicRequestOf(r);
+      return view ? [view] : [];
+    });
+  }
+
   /** Whether the weekly carousel is switched on for this customer. */
   async carouselWeekly(actor: string): Promise<boolean> {
     const answer = await this.call('GET', '/review/carousel-weekly', actor);
@@ -847,6 +925,15 @@ export class WorkspaceEngine {
       const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
       const sentence = typeof answer['error'] === 'string' && CAROUSEL_LIMIT_SENTENCE.test(answer['error']) ? answer['error'] : 'You have already made your carousel for this week. You can make another next week.';
       throw new EngineError(429, sentence, 'refused', 'CAROUSEL_LIMIT_REACHED', undefined, restart);
+    }
+    // A customer who has her topic for the week: the day she can add another.
+    if (response.status === 429 && isObject(answer) && answer['code'] === 'TOPIC_LIMIT_REACHED') {
+      const restart = typeof answer['restart'] === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(answer['restart']) ? answer['restart'] : undefined;
+      throw new EngineError(429, restart ? `You have already added a topic for this week. You can add another from ${restart}.` : 'You have already added a topic for this week. You can add another next week.', 'refused', 'TOPIC_LIMIT_REACHED', undefined, restart);
+    }
+    // A topic text that cannot be used: a fixed code and our own fixed sentence for it, never the engine's words.
+    if (response.status === 400 && isObject(answer) && typeof answer['reason'] === 'string' && TEXT_REASONS[answer['reason']] !== undefined) {
+      throw new EngineError(400, TEXT_REASONS[answer['reason']] as string, 'refused', 'INVALID', undefined, undefined, answer['reason']);
     }
     if (response.status === 400 || response.status === 403 || response.status === 409 || response.status === 422) {
       let engineCode = isObject(answer) && typeof answer['code'] === 'string' ? answer['code'] : undefined;

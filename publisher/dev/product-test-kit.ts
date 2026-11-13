@@ -55,7 +55,7 @@ export async function call(handler: Handler, path: string, init: { method?: stri
 export interface FakeJob {
   id: string;
   key: string;
-  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet' | 'carousel';
+  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet' | 'carousel' | 'topic';
   brand: string;
   site: string;
   by: string;
@@ -67,6 +67,10 @@ export interface FakeJob {
   planFile?: string;
   week?: string;
   auto?: boolean;
+  /** A topic job only: the statement id, the day it goes out and the words (the real engine keeps the words beside the brand, not in the job). */
+  topicId?: string;
+  startDate?: string;
+  text?: string;
   error?: { code: string; message: string };
   result?: unknown;
 }
@@ -144,6 +148,9 @@ export interface FakeEngine {
   /** The carousels made, and (when set) the refusal a customer who has made her week's carousel gets. */
   carousels: FakeCarousel[];
   carouselRefusal: { restart: string; error: string } | null;
+  /** The topics asked for in the customer's own words, as the engine lists them (a test sets their state), and (when set) the refusal a customer who has her week's topic gets. */
+  topics: Array<Record<string, unknown>>;
+  topicRefusal: { restart: string; error: string } | null;
   /** Whether the customer switched the weekly carousel on. */
   carouselWeekly: boolean;
   /** The networks the product API told the engine the customer has connected (null: never told). */
@@ -155,9 +162,12 @@ export interface FakeEngine {
   close: () => Promise<void>;
 }
 
+/** The Monday of the week a day (YYYY-MM-DD) falls in. */
+const mondayOfDay = (day: string): string => new Date(Date.parse(`${day}T00:00:00Z`) - ((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+
 /** A pretend review service: it keeps jobs, runs none, and answers a second ask for a brand with a job already waiting by returning that job (as the real one does). */
 export async function fakeEngine(): Promise<FakeEngine> {
-  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], carouselRefusal: null, carouselWeekly: false, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
+  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], topics: [], topicRefusal: null, carouselRefusal: null, carouselWeekly: false, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
   let counter = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -195,6 +205,26 @@ export async function fakeEngine(): Promise<FakeEngine> {
       if (req.method === 'POST' && url.pathname === '/review/jobs' && body) {
         const brand = String(body['brand']);
         if (brand !== caller) return send(400, { error: 'brand must be the brand named in X-Brand' });
+        if (body['kind'] === 'topic') {
+          const text = typeof body['text'] === 'string' ? body['text'].trim() : '';
+          if (text.length < 10) return send(400, { error: 'Write a little more: what is it, and when or for how long.', code: 'INVALID', reason: text.length === 0 && typeof body['text'] !== 'string' ? 'NOT_TEXT' : 'TOO_SHORT' });
+          if (text.length > 1000) return send(400, { error: 'Keep it under 1000 characters.', code: 'INVALID', reason: 'TOO_LONG' });
+          if (/https?:\/\/|www\.|[^\s@]+@[^\s@]+\.[a-z]{2,}|\b[a-z0-9-]+\.(com|in|co|org|net|io)\b/i.test(text)) return send(400, { error: 'Links are not read in this box.', code: 'INVALID', reason: 'LINK_NOT_ALLOWED' });
+          if (/\bbest\b/i.test(text)) return send(400, { error: 'A claim that needs proof.', code: 'INVALID', reason: 'NEEDS_PROOF' });
+          const day = String(body['startDate']);
+          const plainly = (t: string): string => t.replace(/\s+/g, ' ').trim().toLowerCase();
+          const repeat = engine.jobs.find((j) => j.kind === 'topic' && j.brand === brand && plainly(j.text ?? '') === plainly(text) && j.startDate !== undefined && mondayOfDay(j.startDate) === mondayOfDay(day));
+          if (repeat) return send(200, { job: repeat, created: false });
+          const week = mondayOfDay(day);
+          const restart = new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+          if (engine.jobs.some((j) => j.kind === 'topic' && j.brand === brand && j.state !== 'failed' && j.startDate !== undefined && mondayOfDay(j.startDate) === week)) return send(429, { error: `You have already added a topic for the week of ${week}. You can add another from ${restart}.`, code: 'TOPIC_LIMIT_REACHED', restart });
+          if (engine.topicRefusal) return send(429, { error: engine.topicRefusal.error, code: 'TOPIC_LIMIT_REACHED', restart: engine.topicRefusal.restart });
+          counter += 1;
+          const topicJob: FakeJob = { id: `job-a${counter.toString(36).padStart(5, '0')}-0123abcd`, key: `topic:${brand}`, kind: 'topic', brand, site: String(body['site']), by: header('x-actor') ?? '', networks: body['networks'] as string[], state: 'queued', createdAt: new Date().toISOString(), topicId: `t-${counter.toString(36)}-abcdef`, startDate: day, text };
+          engine.jobs.unshift(topicJob);
+          engine.topics.unshift({ brand, id: topicJob.topicId, jobId: topicJob.id, week: { from: mondayOfDay(day), to: new Date(Date.parse(`${mondayOfDay(day)}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10) }, goesOutOn: day, goesOutAt: '10:00', state: 'writing', createdAt: topicJob.createdAt, picturesToDraw: 0 });
+          return send(202, { job: topicJob, created: true });
+        }
         const asked = body['kind'] === 'carousel' ? 'carousel' : 'copy';
         const standing = engine.jobs.find((j) => j.brand === brand && (j.state === 'queued' || j.state === 'running'));
         if (standing) return send(200, { job: standing, created: false });
@@ -204,6 +234,7 @@ export async function fakeEngine(): Promise<FakeEngine> {
         engine.jobs.unshift(job);
         return send(202, { job, created: true });
       }
+      if (req.method === 'GET' && url.pathname === '/review/topic-requests') return send(200, { requests: engine.topics.filter((t) => t['brand'] === caller) });
       if (req.method === 'GET' && url.pathname === '/review/jobs') return send(200, { jobs: engine.jobs.filter((j) => j.brand === caller) });
       const one = /^\/review\/jobs\/(job-[a-z0-9]+-[a-f0-9]{8})$/.exec(url.pathname);
       if (req.method === 'GET' && one) {
