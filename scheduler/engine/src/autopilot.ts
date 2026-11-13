@@ -50,7 +50,7 @@ import { parseWeekdays, weekdayOf } from './cadence.ts';
 import { composeCaption, parseBrand, parseWeekPlan, readJson, type PlannedPost, type WeekPlan } from './content.ts';
 import { batchLookAlikes } from './creative-director.ts';
 import { addNetworkToBatch } from './add-network.ts';
-import { CopyStage, CopyStageError } from './copy-stage.ts';
+import { CopyStage, CopyStageError, replaceProblem } from './copy-stage.ts';
 import { ProductBrands } from './product-brands.ts';
 import { ConnectedUnknownError, connectedForDraw, readConnected } from './connected-networks.ts';
 import { logoForDraw, placeholderDeps, placeholderEnabled } from './placeholder-pictures.ts';
@@ -70,7 +70,7 @@ import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { normalizeHeadline } from './hooks.ts';
 import type { ConceptRecord } from './concepts.ts';
-import { CAPTION_RULES, conceptRecordOf, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
+import { CAPTION_RULES, conceptRecordOf, InsufficientConceptsError, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
 import { topUpPlan } from './plan-topup.ts';
 import { createArtRenderContext, renderPlan, type PostRenderRecord } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
@@ -147,6 +147,80 @@ class PageModeError extends Error {}
 class NothingDrawnError extends Error {}
 class PartialDrawError extends Error {}
 
+/** Thrown when a new topic could not be written: nothing is added and nothing is counted. Printed with its code so the job can say so. */
+class NothingWrittenError extends Error {}
+
+/**
+ * Writes one new post for the day of a dropped post, through the normal writer (the claim gate on the website's facts, the brand-identity check, the headline rules) with every post of the
+ * batch given as what it must not repeat, writes its caption for each network, and adds it to the plan file and to the batch. Nothing is drawn and nothing is scheduled.
+ */
+async function replaceDroppedPost(input: {
+  brandDir: string;
+  slug: string;
+  planFile: string;
+  droppedId: string;
+  networks: readonly string[];
+  time: string;
+  utcOffset: string;
+  history: Awaited<ReturnType<typeof readHistory>>;
+  historyPath: string;
+  loaded: Awaited<ReturnType<typeof loadFacts>>;
+  writePlan: (schedule: PlanSchedule, over?: Partial<Parameters<typeof planWeek>[0]>) => ReturnType<typeof planWeek>;
+  ai: Parameters<typeof writeNetworkCaptions>[0]['ai'];
+}): Promise<void> {
+  const { brandDir, planFile, droppedId, history } = input;
+  const stage = new CopyStage(brandDir, input.slug);
+  const batch = stage.get(planFile);
+  const today = tomorrowAt('+05:30', new Date(Date.now() - 86_400_000));
+  const problem = replaceProblem(batch, droppedId, today);
+  if (problem) throw new CopyStageError(problem.code, problem.message);
+  const dropped = batch.posts.find((p) => p.postId === droppedId) as { date: string };
+  const day = dropped.date;
+  const planPath = join(brandDir, planFile);
+  const existingPlan = parseWeekPlan(await readJson(planPath), planFile);
+  // The new post goes out at the dropped post's own time.
+  const dateOf = existingPlan.posts.find((p) => p.id === droppedId)?.date ?? `${day}T${input.time}:00${input.utcOffset}`;
+  const clock = /T(\d{2}:\d{2})/.exec(dateOf)?.[1] ?? input.time;
+  const existing = existingPlan.posts;
+  console.log(`    Writing a new topic for ${day} (${planFile})…`);
+  let one: PlannedPost | undefined;
+  try {
+    const made = await input.writePlan({ startDate: day, time: clock, utcOffset: input.utcOffset, count: 1, weekdays: [weekdayOf(day)] }, {
+      // A different request from the batch's own on purpose (the paid-call guard refuses an identical one): the day, and every idea the batch already has, the dropped one included.
+      requestNote: `Write ONE post, for ${day}. It must be about a different fact and a different idea from the posts this batch already has: ${existing.slice(0, 40).map((p) => `"${p.headline.replaceAll('|', '')}"`).join('; ')}. ${CAPTION_RULES}`,
+      recentHeadlines: [...history.weeks.flatMap((w) => w.headlines ?? []), ...existing.map((p) => p.headline)],
+      recentConcepts: [...history.weeks.flatMap((w) => w.concepts ?? []), ...existing.flatMap((p) => { const r = conceptRecordOf(p); return r ? [r] : []; })],
+    });
+    one = made.posts[0];
+  } catch (error) {
+    if (!(error instanceof InsufficientConceptsError)) throw error;
+  }
+  if (one === undefined) throw new NothingWrittenError('no new topic passed the checks for that day, so nothing was added');
+  const stem = /^week-(\d{2,4})\.json$/.exec(planFile)?.[1] ?? '00';
+  const newId = `w${stem}-r${existing.filter((p) => p.id.startsWith(`w${stem}-r`)).length + 1}`;
+  let post: PlannedPost = { ...one, id: newId, date: dateOf };
+  if (input.networks.length > 0) {
+    console.log(`    Writing a caption for each of ${input.networks.join(', ')}…`);
+    const factOf = (id: string): string | undefined => { const fact = input.loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+    const written = await writeNetworkCaptions({ ai: input.ai, networks: input.networks as Network[], posts: [{ id: post.id, headline: post.headline.replaceAll('|', ''), caption: post.caption, hashtags: post.hashtags, facts: (post.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) }] });
+    if (written.variants[post.id]) post = { ...post, variants: written.variants[post.id] as PostVariants };
+  }
+  // The plan file first: a post in it that the batch never got is harmless (nothing draws a post the batch does not keep), while a batch post with no plan entry could not be drawn.
+  await writeFileAtomic(planPath, `${JSON.stringify({ ...existingPlan, posts: [...existingPlan.posts, post] }, null, 2)}\n`);
+  stage.addReplacement(planFile, droppedId, { postId: post.id, date: day, headline: post.headline, caption: composeCaption(post), ...(post.variants ? { captions: Object.fromEntries(Object.entries(post.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}) }, today);
+  // What was written is remembered, so a later batch does not repeat it.
+  const week = history.weeks.find((w) => w.file === planFile);
+  if (week) {
+    week.painPoints.push(post.painPoint);
+    week.headlines = [...(week.headlines ?? []), normalizeHeadline(post.headline)];
+    const concept = conceptRecordOf(post);
+    if (concept) week.concepts = [...(week.concepts ?? []), concept];
+    if (post.factIds) week.factIds = [...(week.factIds ?? []), ...post.factIds];
+    await writeFileAtomic(input.historyPath, `${JSON.stringify(history, null, 2)}\n`);
+  }
+  console.log(`3/4 Copy first: a new topic (${post.id}) for ${day} is waiting for the owner to keep or drop it. No picture was bought.`);
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -171,6 +245,8 @@ async function main(): Promise<void> {
       'copy-first': { type: 'boolean', default: false },
       page: { type: 'boolean', default: false },
       topic: { type: 'string' },
+      replace: { type: 'string' },
+      'replace-post': { type: 'string' },
       'draw-kept': { type: 'string' },
       'draw-week': { type: 'string' },
       'redraw-missing': { type: 'boolean', default: false },
@@ -208,6 +284,8 @@ async function main(): Promise<void> {
   const days = Number(values.days);
   if (!Number.isInteger(days) || days < 1 || days > 31) throw new Error('--days must be a whole number from 1 to 31');
 
+  // A new topic for a dropped post of a written batch: one post for the same day, written from the website's facts like the rest of the batch and added to it.
+  if (values.replace !== undefined && (!values['copy-first'] || values['replace-post'] === undefined || values.topic !== undefined || values.page)) throw new Error('--replace writes one new post for a dropped one: it needs --copy-first and --replace-post, and it is not a topic or a page read');
   // A topic the customer wrote herself: one post from her own statement only (the website's facts are not mixed in), written for the owner to confirm before any picture.
   if (values.topic !== undefined && (!values['copy-first'] || days !== 1 || values.page)) throw new Error('--topic writes one post for the owner to confirm: it needs --copy-first and --days 1, and it is not read from a page');
   // One page, not the whole site: only the address given is read. It is for a website that has no saved profile yet; one that has is already read, and its facts are used.
@@ -499,6 +577,10 @@ async function main(): Promise<void> {
       ...over,
     });
     const schedule: PlanSchedule = { startDate, time: values.time, utcOffset: values['utc-offset'], count: days, ...(weekdays ? { weekdays } : {}) };
+    if (values.replace !== undefined) {
+      await replaceDroppedPost({ brandDir, slug, planFile: values.replace, droppedId: values['replace-post'] as string, networks, time: values.time, utcOffset: values['utc-offset'], history, historyPath, loaded, writePlan, ai });
+      return;
+    }
     let plan = await writePlan(schedule);
     await verdicts?.save();
     if (plan.candidateReport) {
@@ -655,6 +737,7 @@ if (import.meta.main) {
     else if (error instanceof PartialDrawError) console.error(`PARTIAL_DRAW: ${error.message}`);
     else if (error instanceof NothingDrawnError) console.error(`NOTHING_DRAWN: ${error.message}`);
     else if (error instanceof PageModeError) console.error(`PAGE_MODE_UNAVAILABLE: ${error.message}`);
+    else if (error instanceof NothingWrittenError) console.error(`NOTHING_WRITTEN: ${error.message}`);
     else if (error instanceof CopyStageError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof CrawlError) console.error(`${error.code}: ${error.message}`);
     else if (error instanceof ConnectedUnknownError) console.error(`CONNECTED_UNKNOWN: ${error.message}`);

@@ -15,7 +15,7 @@ import type { NotDrawn } from './not-drawn.ts';
 export type CopyState = 'pending' | 'kept' | 'dropped';
 
 export class CopyStageError extends Error {
-  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'CLOSED' | 'REJECTED' | 'LOCKED' | 'CONFLICT';
+  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'CLOSED' | 'REJECTED' | 'LOCKED' | 'CONFLICT' | 'LIMIT' | 'DAY_PASSED';
   constructor(code: CopyStageError['code'], message: string) {
     super(message);
     this.name = 'CopyStageError';
@@ -40,6 +40,8 @@ export interface CopyPost {
   /** A note for the owner, such as "weak headline: it tells the reader nothing specific". Advice only: the owner can still keep the post. */
   advice?: string;
   state: CopyState;
+  /** Set on a post written to take the place of a dropped one: that post's id. */
+  replaces?: string;
   decidedBy?: string;
   decidedAt?: string;
 }
@@ -57,6 +59,9 @@ export interface CopyBatch {
   requestedDays?: string[];
   /** Kept topics that got no picture in their week's draw, with why. They stay open for keep, drop and edit; a retry of the week draws only them. */
   notDrawn?: Record<string, NotDrawn>;
+  /** How many replacements were written for each week (its Monday), and which new post replaced each dropped one. */
+  replacements?: Record<string, number>;
+  replacedBy?: Record<string, string>;
   /** The weeks (their Mondays) that were left undrawn because their time passed or nothing was kept in them. Nothing of them is drawn any more. */
   weekLapsed?: Record<string, string>;
   /** Set when the owner put the whole batch away without drawing it: it is no longer listed and its posts cannot be drawn. */
@@ -77,6 +82,24 @@ export const postLocked = (batch: CopyBatch, post: CopyPost): boolean => {
   if (batch.notDrawn?.[post.postId] !== undefined && (week === undefined || batch.weekLapsed?.[week] === undefined)) return false;
   return batch.drawnAt !== undefined || (week !== undefined && (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined));
 };
+
+/** The most replacements a batch may have written for one week: a dropped topic gives a new one, up to this many times. */
+export const MAX_REPLACEMENTS_PER_WEEK = 3;
+
+/** Why a dropped post cannot be given a new topic now (and the code to answer with), or null when it can. `today` is the day in India time (YYYY-MM-DD). */
+export function replaceProblem(batch: CopyBatch, postId: string, today: string): { code: CopyStageError['code']; message: string } | null {
+  if (batch.closedAt) return { code: 'CLOSED', message: 'this batch was put away, so it cannot be changed' };
+  const post = batch.posts.find((p) => p.postId === postId);
+  if (!post) return { code: 'NOT_FOUND', message: 'no such post in this batch' };
+  if (post.state !== 'dropped') return { code: 'CONFLICT', message: 'only a post that was dropped can be given a new topic' };
+  if (batch.replacedBy?.[postId] !== undefined) return { code: 'CONFLICT', message: 'this post was already given a new topic' };
+  if (postLocked(batch, post)) return { code: 'ALREADY_DRAWN', message: 'this post was already sent to be drawn, so its week is final' };
+  if (post.date === undefined) return { code: 'INVALID', message: 'this post has no day, so a new topic cannot be written for it' };
+  if (post.date <= today) return { code: 'DAY_PASSED', message: 'the day of this post is today or has passed' };
+  const week = weekOfPost(post) as string;
+  if ((batch.replacements?.[week] ?? 0) >= MAX_REPLACEMENTS_PER_WEEK) return { code: 'LIMIT', message: `a week may have ${MAX_REPLACEMENTS_PER_WEEK} new topics written` };
+  return null;
+}
 
 export const PLAN_FILE = /^week-\d{2,4}\.json$/;
 const POST_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;
@@ -224,6 +247,24 @@ export class CopyStage {
       if (!weeksOf(batch).includes(week)) throw new CopyStageError('NOT_FOUND', 'no such week in this batch');
       if (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined) return { batch, result: undefined };
       return { batch: this.settled({ ...batch, weekLapsed: { ...(batch.weekLapsed ?? {}), [week]: this.now().toISOString() } }), result: undefined };
+    });
+  }
+
+  /**
+   * Adds the new topic written for a dropped post: same day, undecided, with its words for each network. Checked again under the lock (a draw or a second replacement may have
+   * come in while it was being written); the replacement is counted only here, so a try that wrote nothing never uses one of the week's.
+   */
+  addReplacement(planFile: string, droppedId: string, post: { postId: string; date: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }, today: string): CopyBatch {
+    return this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      const problem = replaceProblem(batch, droppedId, today);
+      if (problem) throw new CopyStageError(problem.code, problem.message);
+      if (batch.posts.some((p) => p.postId === post.postId)) throw new CopyStageError('CONFLICT', 'a post with that id already exists');
+      const gone = batch.posts.find((p) => p.postId === droppedId) as CopyPost;
+      const week = weekOfPost(gone) as string;
+      const added: CopyPost = { postId: post.postId, date: gone.date as string, headline: post.headline, caption: post.caption, contentHash: copyHash(post.headline, post.caption, textsOf(post.captions)), ...(post.captions && Object.keys(post.captions).length > 0 ? { captions: post.captions } : {}), ...(post.advice ? { advice: post.advice.slice(0, 300) } : {}), state: 'pending', replaces: droppedId };
+      const next: CopyBatch = { ...batch, posts: [...batch.posts, added], replacements: { ...(batch.replacements ?? {}), [week]: (batch.replacements?.[week] ?? 0) + 1 }, replacedBy: { ...(batch.replacedBy ?? {}), [droppedId]: post.postId } };
+      return { batch: next, result: next };
     });
   }
 

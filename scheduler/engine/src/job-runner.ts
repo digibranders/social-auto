@@ -33,6 +33,10 @@ export function engineArgs(job: Job): string[] {
     if (!job.planFile) throw new Error('a draw job needs the batch to draw');
     return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--draw-kept', job.planFile, ...(job.week ? ['--draw-week', job.week] : []), ...(job.retry ? ['--redraw-missing'] : [])];
   }
+  if (job.kind === 'replace') {
+    if (!job.planFile || !job.postId) throw new Error('a replace job needs the batch and the dropped post');
+    return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--copy-first', '--replace', job.planFile, '--replace-post', job.postId, ...(job.networks.length > 0 ? ['--networks', job.networks.join(',')] : [])];
+  }
   if (job.kind === 'topic') {
     if (!job.topicId) throw new Error('a topic job needs the statement it is written from');
     return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--copy-first', '--topic', job.topicId, '--days', '1', ...(job.networks.length > 0 ? ['--networks', job.networks.join(',')] : []), ...(job.startDate ? ['--start', job.startDate] : []), ...(job.time ? ['--time', job.time] : [])];
@@ -112,12 +116,12 @@ export async function runJob(store: JobStore, job: Job, exec: Exec, hooks: RunHo
     if (tail.length > 60) tail.shift();
     const read = readLine(line, source);
     if (read.step !== undefined) step = read.step;
-    if (read.planFile && (job.kind === 'copy' || job.kind === 'carousel' || job.kind === 'topic')) planFileMade = read.planFile;
+    if (read.planFile && (job.kind === 'copy' || job.kind === 'carousel' || job.kind === 'topic' || job.kind === 'replace')) planFileMade = read.planFile;
     if (read.error) lastError = read.error;
     // Progress is written at most once a second, however fast the engine talks.
     pending ??= setTimeout(flush, 1000);
   };
-  const { code, timedOut } = await exec(engineArgs(job), onLine, job.kind === 'copy' || job.kind === 'topic' ? COPY_TIMEOUT_MS : DRAW_TIMEOUT_MS);
+  const { code, timedOut } = await exec(engineArgs(job), onLine, job.kind === 'copy' || job.kind === 'topic' || job.kind === 'replace' ? COPY_TIMEOUT_MS : DRAW_TIMEOUT_MS);
   if (pending) clearTimeout(pending);
   const base = { logTail: tail, ...(step !== undefined ? { step } : {}), ...(planFileMade ? { planFileMade } : {}), ...(code !== null ? { exitCode: code } : {}) };
   if (code === 0 && !timedOut) {

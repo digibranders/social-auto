@@ -29,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
 import { listCampaigns } from './campaign-runner.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
-import { CopyStage, CopyStageError, weekOfPost, weeksOf } from './copy-stage.ts';
+import { CopyStage, CopyStageError, MAX_REPLACEMENTS_PER_WEEK, replaceProblem, weekOfPost, weeksOf } from './copy-stage.ts';
 import { editCopy, type SignoffDefaults } from './copy-edit.ts';
 import { displayDomain } from './ai-creative.ts';
 import { loadFacts } from './evidence-pipeline.ts';
@@ -131,7 +131,7 @@ function fail(res: ServerResponse, error: unknown): void {
 }
 
 const FACTS_STATUS: Record<FactsError['code'], number> = { NOT_FOUND: 404, INVALID: 400, HELD: 409, LOCKED: 503 };
-const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, CLOSED: 409, REJECTED: 422, LOCKED: 503, CONFLICT: 409 };
+const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, CLOSED: 409, REJECTED: 422, LOCKED: 503, CONFLICT: 409, LIMIT: 429, DAY_PASSED: 409 };
 
 const sameSecret = (given: Buffer, secret: string): boolean => {
   const wanted = Buffer.from(secret);
@@ -485,7 +485,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             return { weeks: mondays.map((from) => ({ from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state: !b.posts.some((p) => weekOfPost(p) === from) ? 'empty' as const : b.weekLapsed?.[from] !== undefined ? 'lapsed' as const : b.weekDrawn?.[from] !== undefined ? (allUndrawn(from) ? 'not_drawn' as const : 'drawn' as const) : running.some((j) => j.week === from) ? 'drawing' as const : 'waiting' as const, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId), ...(missingIn(from).length > 0 ? { missingDays: missingIn(from) } : {}), ...(undrawn(from).length > 0 ? { notDrawn: undrawn(from) } : {}) })) };
           };
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
+          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, MAX_REPLACEMENTS_PER_WEEK - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
@@ -496,6 +496,38 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           refuseIfDrawAsked(brand, planFile, postId);
           const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
           return send(res, 200, { batch });
+        }
+        // A new topic for a dropped post of a week that is not drawn yet: one post for the same day, written from the website's facts like the rest of the batch and added to it, undecided.
+        // It is a job (the writer runs in the job runner). The same ask while one is waiting or running is the same job; a week may have only so many, and a try that writes nothing does not count.
+        if (parts.length === 6 && req.method === 'POST' && verb === 'replace') {
+          scope.guard(brand, true);
+          if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const body = await readJson(req);
+          const brandDir = join(root, brand);
+          const batch = new CopyStage(brandDir, brand).get(planFile);
+          const standing = jobs.list({ brand }).find((j) => j.kind === 'replace' && j.planFile === planFile && j.postId === postId && (j.state === 'queued' || j.state === 'running'));
+          if (standing) return send(res, 200, { job: standing, created: false });
+          const today = tomorrowAt('+05:30', new Date(Date.now() - 86_400_000));
+          const problem = replaceProblem(batch, postId, today);
+          const post = batch.posts.find((p) => p.postId === postId);
+          const week = post ? weekOfPost(post) : undefined;
+          const restart = week === undefined ? undefined : new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
+          const limited = (): Response | void => send(res, 429, { error: `A week may have ${MAX_REPLACEMENTS_PER_WEEK} new topics written. You can ask again from ${restart ?? 'next week'}.`, code: 'REPLACE_LIMIT_REACHED', ...(restart ? { restart } : {}) });
+          if (problem?.code === 'LIMIT') return limited();
+          if (problem) throw new CopyStageError(problem.code, problem.message);
+          // Tries that are waiting or running count too, so two quick asks cannot go past the limit.
+          const writing = jobs.list({ brand }).filter((j) => j.kind === 'replace' && j.planFile === planFile && (j.state === 'queued' || j.state === 'running') && week !== undefined && weekOfPost(batch.posts.find((p) => p.postId === j.postId) ?? {}) === week).length;
+          if (week !== undefined && (batch.replacements?.[week] ?? 0) + writing >= MAX_REPLACEMENTS_PER_WEEK) return limited();
+          // The words are written for the networks the dropped post was written for; for a product's customer only those she has connected.
+          let replaceFor = Object.keys(post?.captions ?? {}).filter(isNetwork);
+          if (caller.role === 'product') {
+            const connected = readConnected(brandDir);
+            if (connected === null) throw new ReviewError('CONFLICT', 'CONNECTED_UNKNOWN: the connected channels are not known yet, so nothing is written');
+            replaceFor = replaceFor.filter((n) => connected.has(n));
+            if (replaceFor.length === 0) throw new ReviewError('INVALID', 'none of the networks this post was written for is connected, so there is nothing to write');
+          }
+          const { job, created } = jobs.enqueue({ kind: 'replace', brand, site: siteOf(brand), by: scope.by(body['by']), networks: replaceFor, planFile, postId });
+          return send(res, created ? 202 : 200, { job, created });
         }
         // Put a whole batch away (POST .../<brand>/<planFile>/close) or change the words of one post before it is drawn (PUT .../<brand>/<planFile>/<postId>/edit).
         if (parts.length === 5 && req.method === 'POST' && parts[4] === 'close') {
