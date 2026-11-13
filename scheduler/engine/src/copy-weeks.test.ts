@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -375,6 +375,30 @@ test('the weekly carousel is switched on or off by the customer for her own bran
     assert.deepEqual(await (await s.call('/review/carousel-weekly', { enabled: false }, 'PUT')).json(), { enabled: false });
     const staff = await fetch(`${s.base}/review/carousel-weekly`, { headers: { Authorization: 'Bearer staff-secret-0123456789' } });
     assert.equal(staff.status, 404);
+  } finally {
+    await s.done();
+  }
+});
+
+test('approving a carousel makes its release record for the networks of its captions, so one made before the record existed, or in a week never drawn, still reaches the calendar', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    const image = join(s.root, 'slide.jpg');
+    writeFileSync(image, 'slide');
+    // A carousel plan file as an earlier version wrote it: one post, with no channels named.
+    writeFileSync(join(dir, 'week-09.json'), JSON.stringify({ brand: 'bb-acme', timezone: '+05:30', renderMode: 'ai_v1', posts: [{ id: 'car-9', date: '2099-11-13T10:00:00+05:30', painPoint: 'p', mode: 'ai', headline: 'T', subline: '', caption: 'C', hashtags: [], imagePrompt: 'a carousel', pillar: 'carousel' }] }));
+    writeFileSync(join(dir, 'carousels.json'), JSON.stringify({ carousels: [{ id: 'car-9', topic: 'T', createdAt: '2026-11-12T00:00:00Z', planFile: 'week-09.json', date: '2099-11-13T10:00:00+05:30' }] }));
+    const store = new ReviewStore(dir, 'bb-acme');
+    const base = { planFile: 'week-09.json', headline: 'H', caption: '', ctaUrl: 'https://acme.example', factIds: ['f1'], evidence: [{ factId: 'f1', text: 't', quote: 'q', url: 'https://acme.example/', context: 'c' }], imagePath: image, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0 };
+    for (const n of [1, 2, 3]) store.addVersion({ ...base, postId: `car-9-s${n}`, carousel: { id: 'car-9', position: n, count: 3 } });
+    for (const network of ['instagram', 'facebook']) store.addVersion({ ...base, postId: 'car-9', network, caption: `${network} words`, carousel: { id: 'car-9', position: 0, count: 3 } });
+    assert.equal(existsSync(join(dir, 'campaigns', 'manual-week-09.json')), false, 'no record before she approves');
+    const approved = await s.call('/review/carousels/bb-acme/car-9/approve', {});
+    assert.equal(approved.status, 200, JSON.stringify(await approved.clone().json()));
+    const record = JSON.parse(readFileSync(join(dir, 'campaigns', 'manual-week-09.json'), 'utf8')) as { brand: string; plan: { platforms: string[] } };
+    assert.deepEqual([record.brand, record.plan.platforms.sort()], ['bb-acme', ['facebook', 'instagram']]);
+    assert.equal((await s.call('/review/carousels/bb-acme/car-9/approve', {})).status, 200, 'asking again changes nothing');
   } finally {
     await s.done();
   }

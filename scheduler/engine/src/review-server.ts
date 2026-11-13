@@ -629,8 +629,21 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (parts.length === 5) {
           const body = await readJson(req);
           const by = scope.by(body['by']);
-          if (parts[4] === 'approve') carouselStore.approveCarousel(carouselId, by);
-          else carouselStore.rejectCarousel(carouselId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
+          if (parts[4] === 'approve') {
+            carouselStore.approveCarousel(carouselId, by);
+            // A customer's carousel reaches her calendar through a release record like her pictures do. It is made here too, so one made before the record was made with it (or for a
+            // week that was never drawn) is not left unexported. It goes to the networks of its approved captions, and asking again changes nothing.
+            if (caller.role === 'product') {
+              try {
+                const planFile = readCarouselHistory(join(root, carouselBrand)).find((h) => h.id === carouselId)?.planFile;
+                const networks = carouselStore.carouselSlides(carouselId).captions.map((c) => c.version.network ?? '');
+                if (planFile) registerManualRelease({ brandDir: join(root, carouselBrand), siteBrand: carouselBrand, client: carouselBrand, site: siteOf(carouselBrand), planFile, platforms: networks });
+              } catch (error) {
+                console.error(`could not make the release record of carousel ${carouselId}: ${error instanceof Error ? error.message : String(error)}`);
+              }
+            }
+          }
+          if (parts[4] === 'reject') carouselStore.rejectCarousel(carouselId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
           return send(res, 200, { status: carouselStore.carouselStatus(carouselId) });
         }
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
