@@ -709,3 +709,87 @@ test('a new topic over HTTP: only for a dropped post, a job per post, the limit 
     await s.done();
   }
 });
+
+// ---- another day for a written post
+
+test('a written post moves to another day of its own week, whatever its state, until its week is drawn; the plan file is changed with it and a failure changes nothing', () => {
+  const t = topicFixture();
+  try {
+    const monday = futureWeek();
+    const s = new CopyStage(t.dir, 'bb-acme');
+    s.open('week-03.json', [0, 1, 2].map((n) => post(`p${n}`, dayOf(monday, n))), [0, 1, 2].map((n) => dayOf(monday, n)));
+    s.decide('week-03.json', 'p1', 'kept', 'u');
+    s.decide('week-03.json', 'p2', 'dropped', 'u');
+    const planned: Array<[string, string]> = [];
+    const move = (id: string, day: string, today = todayIst(), plan: (id: string, day: string) => void = (i, d) => { planned.push([i, d]); }) => s.movePost('week-03.json', id, day, today, plan);
+
+    for (const [id, to] of [['p0', dayOf(monday, 4)], ['p1', dayOf(monday, 6)], ['p2', dayOf(monday, 5)]] as const) {
+      const result = move(id, to);
+      assert.equal(result.moved, true, `${id}: pending, kept and dropped posts all move`);
+      assert.equal(result.batch.posts.find((p) => p.postId === id)?.date, to);
+    }
+    assert.deepEqual(planned.map(([id]) => id), ['p0', 'p1', 'p2'], 'the plan file was changed for each');
+    assert.equal(s.get('week-03.json').posts.find((p) => p.postId === 'p1')?.state, 'kept', 'the choice stays');
+    // A day the plan asked for that no post is on any more is reported as the day it was moved to, not as a day with no post.
+    assert.deepEqual(s.get('week-03.json').requestedDays, [dayOf(monday, 4), dayOf(monday, 5), dayOf(monday, 6)]);
+
+    const same = move('p0', dayOf(monday, 4));
+    assert.equal(same.moved, false, 'the day it already has changes nothing');
+    assert.equal(planned.length, 3, 'and the plan file is not touched');
+    const outside = (work: () => unknown): string | undefined => { try { work(); } catch (error) { return error instanceof CopyStageError ? error.code : String(error); } return undefined; };
+    assert.equal(outside(() => move('p0', dayOf(monday, 7))), 'OUTSIDE_WEEK', 'the next Monday is another week');
+    assert.equal(outside(() => move('p0', dayOf(monday, -1))), 'OUTSIDE_WEEK');
+    assert.equal(outside(() => move('p0', dayOf(monday, 1), dayOf(monday, 1))), 'DAY_PASSED', 'today or earlier');
+    assert.equal(outside(() => move('p0', 'next friday')), 'INVALID');
+    assert.equal(outside(() => move('p0', '2026-02-31')), 'INVALID', 'not a real day');
+    assert.equal(outside(() => move('p0', '2026-13-40')), 'INVALID', 'not a day at all');
+    assert.equal(outside(() => move('nope', dayOf(monday, 2))), 'NOT_FOUND');
+    assert.equal(outside(() => move('p0', dayOf(monday, 2), todayIst(), () => { throw new Error('disk full'); })), 'Error: disk full');
+    assert.equal(s.get('week-03.json').posts.find((p) => p.postId === 'p0')?.date, dayOf(monday, 4), 'a failed plan write leaves the batch as it was');
+    s.markWeekDrawn('week-03.json', monday);
+    assert.equal(outside(() => move('p0', dayOf(monday, 2))), 'ALREADY_DRAWN', 'a week that was drawn is final');
+  } finally {
+    t.done();
+  }
+});
+
+test('moving a post over HTTP changes its day in the batch and in the plan file, keeps its time, and says when its words name a day', async () => {
+  const s = await start();
+  try {
+    const monday = futureWeek();
+    const dir = join(s.root, 'brands', 'bb-acme');
+    const copy = new CopyStage(dir, 'bb-acme');
+    const named = { ...post('p1', dayOf(monday, 1)), caption: 'Come on Friday for the special', captions: { instagram: { text: 'ig Friday' } } };
+    copy.open('week-03.json', [post('p0', dayOf(monday, 0)), named]);
+    writeFileSync(join(dir, 'week-03.json'), JSON.stringify({ posts: [{ id: 'p0', date: `${dayOf(monday, 0)}T14:30:00+05:30` }, { id: 'p1', date: `${dayOf(monday, 1)}T10:00:00+05:30` }] }));
+    const move = (id: string, day: unknown): Promise<Response> => s.call(`/review/copy/bb-acme/week-03.json/${id}/move`, { day });
+    const done = await move('p0', dayOf(monday, 3));
+    assert.equal(done.status, 200, JSON.stringify(await done.clone().json()));
+    const answer = (await done.json()) as { batch: { posts: Array<{ postId: string; date: string }> }; moved: boolean; warnings: string[] };
+    assert.deepEqual([answer.moved, answer.warnings, answer.batch.posts.find((p) => p.postId === 'p0')?.date], [true, [], dayOf(monday, 3)]);
+    const plan = JSON.parse(readFileSync(join(dir, 'week-03.json'), 'utf8')) as { posts: Array<{ id: string; date: string }> };
+    assert.equal(plan.posts.find((p) => p.id === 'p0')?.date, `${dayOf(monday, 3)}T14:30:00+05:30`, 'the plan file has the new day and the same time');
+    assert.equal(plan.posts.find((p) => p.id === 'p1')?.date, `${dayOf(monday, 1)}T10:00:00+05:30`, 'the other post is untouched');
+    const warned = (await (await move('p1', dayOf(monday, 5))).json()) as { warnings: string[] };
+    assert.deepEqual(warned.warnings, ['WORDS_NAME_A_DAY']);
+    const same = (await (await move('p1', dayOf(monday, 5))).json()) as { moved: boolean; warnings: string[] };
+    assert.deepEqual([same.moved, same.warnings], [false, []]);
+    const refused = async (res: Response): Promise<{ status: number; code: string }> => ({ status: res.status, code: ((await res.json()) as { code: string }).code });
+    assert.deepEqual(await refused(await move('p0', dayOf(monday, 8))), { status: 400, code: 'OUTSIDE_WEEK' });
+    assert.deepEqual(await refused(await move('p0', todayIst())), { status: 400, code: 'OUTSIDE_WEEK' }, 'today is another week than this post\'s (the passed-day rule is in the stage test)');
+    assert.deepEqual(await refused(await move('p0', 42)), { status: 400, code: 'INVALID' });
+    assert.deepEqual(await refused(await move('nope', dayOf(monday, 2))), { status: 404, code: 'NOT_FOUND' });
+    // A day that is today, in this post's own week (not possible on a Sunday, when the week has no later day).
+    const tomorrow = dayOf(todayIst(), 1);
+    if (mondayOf(tomorrow) === mondayOf(todayIst())) {
+      copy.open('week-04.json', [post('c0', tomorrow)]);
+      writeFileSync(join(dir, 'week-04.json'), JSON.stringify({ posts: [{ id: 'c0', date: `${tomorrow}T10:00:00+05:30` }] }));
+      assert.deepEqual(await refused(await s.call('/review/copy/bb-acme/week-04.json/c0/move', { day: todayIst() })), { status: 400, code: 'DAY_PASSED' });
+    }
+    // Once its week is drawn the day is final.
+    copy.markWeekDrawn('week-03.json', monday);
+    assert.deepEqual(await refused(await move('p0', dayOf(monday, 2))), { status: 409, code: 'ALREADY_DRAWN' });
+  } finally {
+    await s.done();
+  }
+});

@@ -89,6 +89,8 @@ export class EngineError extends Error {
         return 'NOT_FOUND';
       case 400:
         if (this.textReason === 'LINK_NOT_ALLOWED') return 'LINK_NOT_ALLOWED';
+        if (this.engineCode === 'DAY_PASSED') return 'DAY_PASSED';
+        if (this.engineCode === 'OUTSIDE_WEEK') return 'INVALID_DAY';
         return this.textReason !== undefined ? 'TEXT_REFUSED' : 'INVALID_REQUEST';
       case 422:
         return this.engineCode === 'NOTHING_KEPT' ? 'NOTHING_KEPT' : 'WORDS_NOT_ACCEPTED';
@@ -112,7 +114,8 @@ export class EngineError extends Error {
 /** What a product is told about a refusal, by the engine's code and never by the engine's own words. */
 function refusalMessage(status: number, engineCode: string | undefined): string {
   if (engineCode === 'NOTHING_KEPT') return 'keep at least one post before asking for pictures';
-  if (engineCode === 'DAY_PASSED') return 'the day of this post is today or has passed, so a new topic cannot be written for it';
+  if (engineCode === 'DAY_PASSED') return 'that day is today or has passed';
+  if (engineCode === 'OUTSIDE_WEEK') return 'a post can only move to another day of its own week';
   if (engineCode === 'LIMIT') return 'this picture was already drawn again as often as is allowed';
   if (engineCode === 'STALE') return 'a newer picture replaced this one';
   if (engineCode === 'BLOCKED') return 'this picture did not pass the checks, so it cannot be approved';
@@ -669,6 +672,16 @@ export class WorkspaceEngine {
     const job = this.own(isObject(answer) ? answer['job'] : undefined);
     if (!job) throw unavailable();
     return { job, created: isObject(answer) && answer['created'] === true };
+  }
+
+  /** Moves a written post to another day of its own week, before its week is drawn. Answers the batch as it is now and whether its words name a day (they are not rewritten). */
+  async moveWrittenPost(batchId: string, postId: string, day: string, actor: string): Promise<{ batch: BatchView; warnings: string[] }> {
+    if (!PART.test(batchId) || !PART.test(postId)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/copy/${this.brand}/${batchId}/${postId}/move`, actor, { day });
+    const batch = batchViewOf(isObject(answer) ? answer['batch'] : undefined, this.brand);
+    if (!batch) throw unavailable();
+    const warnings = isObject(answer) && Array.isArray(answer['warnings']) ? answer['warnings'].filter((w): w is string => w === 'WORDS_NAME_A_DAY') : [];
+    return { batch, warnings };
   }
 
   /** Keeps or drops one written post. */
