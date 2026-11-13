@@ -23,7 +23,7 @@
  * ("<brand>.<hash>"), and only folders directly under the brands root are ever opened.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
@@ -131,7 +131,9 @@ function fail(res: ServerResponse, error: unknown): void {
 }
 
 const FACTS_STATUS: Record<FactsError['code'], number> = { NOT_FOUND: 404, INVALID: 400, HELD: 409, LOCKED: 503 };
-const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, CLOSED: 409, REJECTED: 422, LOCKED: 503, CONFLICT: 409, LIMIT: 429, DAY_PASSED: 409 };
+/** Words that name a weekday or a relative day: a post that says them and is moved may now say the wrong day. */
+const NAMES_A_DAY = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|today|tonight|tomorrow|this weekend)\b/i;
+const COPY_STATUS: Record<CopyStageError['code'], number> = { NOT_FOUND: 404, INVALID: 400, ALREADY_DRAWN: 409, CLOSED: 409, REJECTED: 422, LOCKED: 503, CONFLICT: 409, LIMIT: 429, DAY_PASSED: 409, OUTSIDE_WEEK: 400 };
 
 const sameSecret = (given: Buffer, secret: string): boolean => {
   const wanted = Buffer.from(secret);
@@ -522,6 +524,40 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           refuseIfDrawAsked(brand, planFile, postId);
           const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
           return send(res, 200, { batch });
+        }
+        // Another day for a written post, within its own Monday-to-Sunday week, before the week is drawn (any state: pending, kept, dropped). The day is changed in the batch and in the plan
+        // file under one lock, so the pictures, the release at approval and the export all carry the new day. Times do not change. Moving to the day it already has changes nothing.
+        if (parts.length === 6 && req.method === 'POST' && verb === 'move') {
+          scope.guard(brand, true);
+          if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          const body = await readJson(req);
+          const day = body['day'];
+          if (typeof day !== 'string') throw new ReviewError('INVALID', 'day must be a day like 2026-11-25');
+          const brandDir = join(root, brand);
+          refuseIfDrawAsked(brand, planFile, postId);
+          const today = tomorrowAt('+05:30', new Date(Date.now() - 86_400_000));
+          const rewritePlan = (id: string, to: string): void => {
+            const file = join(brandDir, planFile);
+            const plan = JSON.parse(readFileSync(file, 'utf8')) as { posts?: Array<{ id?: string; date?: string }> };
+            const entry = plan.posts?.find((p) => p.id === id);
+            if (!entry || typeof entry.date !== 'string') throw new CopyStageError('NOT_FOUND', 'the plan file has no such post');
+            // Only the day changes: the time and offset stay as written.
+            entry.date = `${to}${entry.date.slice(10)}`;
+            const temp = `${file}.${process.pid}.tmp`;
+            writeFileSync(temp, `${JSON.stringify(plan, null, 2)}\n`);
+            renameSync(temp, file);
+          };
+          try {
+            const { batch, moved } = new CopyStage(brandDir, brand).movePost(planFile, postId, day, today, rewritePlan);
+            // The words are not rewritten: when they name a weekday the owner is told, so she can check them.
+            const post = batch.posts.find((p) => p.postId === postId);
+            const words = [post?.headline ?? '', post?.caption ?? '', ...Object.values(post?.captions ?? {}).map((c) => c.text)].join('\n');
+            const warnings = moved && NAMES_A_DAY.test(words) ? ['WORDS_NAME_A_DAY'] : [];
+            return send(res, 200, { batch, moved, warnings });
+          } catch (error) {
+            if (error instanceof CopyStageError && error.code === 'DAY_PASSED') return send(res, 400, { error: error.message, code: 'DAY_PASSED' });
+            throw error;
+          }
         }
         // A new topic for a dropped post of a week that is not drawn yet: one post for the same day, written from the website's facts like the rest of the batch and added to it, undecided.
         // It is a job (the writer runs in the job runner). The same ask while one is waiting or running is the same job; a week may have only so many, and a try that writes nothing does not count.
