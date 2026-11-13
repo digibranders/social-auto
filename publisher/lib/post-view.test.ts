@@ -35,3 +35,16 @@ test('a carousel is shown with the address of every picture, in order', () => {
   assert.deepEqual(view['imageUrls'], ['https://pub.example/posts/c/1.jpg', 'https://pub.example/posts/c/2.jpg']);
   assert.equal(scheduledView(planned, channels, {}, Date.parse('2026-11-02T05:00:00Z'), 'https://pub.example')['imageUrls'], undefined);
 });
+
+test('a post that already went out to an account which later moved to another workspace stays published, and one that never went out there is missed', () => {
+  const after = Date.parse('2026-11-05T05:00:00Z');
+  const aimed = { ...planned, channels: ['instagram:17841499999999999'], fromPlan: true as const };
+  // The account the post was aimed at is no longer connected to this workspace.
+  const sent = { 'w1-d1|instagram:17841499999999999': { remoteId: 'r1', permalink: 'https://instagram.example/p/1', postedAt: '2026-11-04T04:30:00Z' } };
+  const done = scheduledView(aimed, channels, sent, after, 'https://pub.example');
+  assert.equal(done['state'], 'published');
+  assert.deepEqual((done['targets'] as Array<Record<string, unknown>>).map((t) => [t['id'], t['state'], t['permalink']]), [['instagram:17841499999999999', 'published', 'https://instagram.example/p/1']]);
+  const never = scheduledView(aimed, channels, {}, after, 'https://pub.example');
+  assert.equal(never['state'], 'missed');
+  assert.deepEqual((never['targets'] as Array<Record<string, unknown>>).map((t) => [t['id'], t['state'], t['code']]), [['instagram:17841499999999999', 'missed', 'ACCOUNT_DISCONNECTED']]);
+});
