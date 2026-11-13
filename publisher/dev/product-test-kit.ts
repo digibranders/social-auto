@@ -55,7 +55,7 @@ export async function call(handler: Handler, path: string, init: { method?: stri
 export interface FakeJob {
   id: string;
   key: string;
-  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet' | 'carousel' | 'topic';
+  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet' | 'carousel' | 'topic' | 'replace';
   brand: string;
   site: string;
   by: string;
@@ -66,6 +66,7 @@ export interface FakeJob {
   finishedAt?: string;
   planFile?: string;
   week?: string;
+  postId?: string;
   auto?: boolean;
   /** A topic job only: the statement id, the day it goes out and the words (the real engine keeps the words beside the brand, not in the job). */
   topicId?: string;
@@ -259,6 +260,24 @@ export async function fakeEngine(): Promise<FakeEngine> {
       }
       if (req.method === 'GET' && url.pathname === '/review/copy') {
         return send(200, { batches: engine.batches.filter((b) => b.brand === caller && !b.closedAt && !b.drawnAt).map((b) => ({ ...b, networks: ['instagram'], costUsd: 0.5 })), networkRules: { instagram: { maxCaption: 600, recommendedMin: 100, recommendedMax: 300, visibleChars: 125, maxHashtags: 5 } } });
+      }
+      const replaceRoute = /^\/review\/copy\/([^/]+)\/([^/]+)\/([^/]+)\/replace$/.exec(url.pathname);
+      if (replaceRoute && req.method === 'POST') {
+        const [, brand = '', planFile = '', postId = ''] = replaceRoute;
+        const batch = engine.batches.find((b) => b.brand === brand && b.planFile === planFile);
+        const post = batch?.posts.find((p) => p.postId === postId);
+        if (brand !== caller || !batch || !post) return send(404, { error: 'no such post', code: 'NOT_FOUND' });
+        if (batch.drawnAt) return send(409, { error: 'drawing was already asked for /home/social/x', code: 'ALREADY_DRAWN' });
+        const standing = engine.jobs.find((j) => j.brand === brand && j.kind === 'replace' && j.planFile === planFile && j.postId === postId && (j.state === 'queued' || j.state === 'running'));
+        if (standing) return send(200, { job: standing, created: false });
+        if (post.state !== 'dropped' || batch.posts.some((p) => p['replaces'] === postId)) return send(409, { error: 'only a dropped post /home/social/x', code: 'CONFLICT' });
+        if (String(post['date'] ?? '') <= new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10)) return send(409, { error: 'the day has passed /home/social/x', code: 'DAY_PASSED' });
+        const used = batch.posts.filter((p) => p['replaces'] !== undefined).length + engine.jobs.filter((j) => j.brand === brand && j.kind === 'replace' && j.planFile === planFile && (j.state === 'queued' || j.state === 'running')).length;
+        if (used >= 3) return send(429, { error: 'A week may have 3 new topics written /home/social/x', code: 'REPLACE_LIMIT_REACHED', restart: '2026-11-23' });
+        counter += 1;
+        const replaceJob: FakeJob = { id: `job-a${counter.toString(36).padStart(5, '0')}-0123abcd`, key: `replace:${brand}:${planFile}:${postId}`, kind: 'replace', brand, site: 'acme.example', by: header('x-actor') ?? '', networks: ['instagram'], planFile, postId, state: 'queued', createdAt: new Date().toISOString() };
+        engine.jobs.unshift(replaceJob);
+        return send(202, { job: replaceJob, created: true });
       }
       const copyRoute = /^\/review\/copy\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/(keep|drop|edit|close)$/.exec(url.pathname);
       if (copyRoute) {

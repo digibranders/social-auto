@@ -608,3 +608,104 @@ test('a customer\'s topic over HTTP: it always gets a day, the same words again 
     await s.done();
   }
 });
+
+// ---- a dropped topic gives a new one
+
+import { MAX_REPLACEMENTS_PER_WEEK, replaceProblem } from './copy-stage.ts';
+
+const futureWeek = (): string => mondayOf(new Date(Date.now() + 10 * 86_400_000).toISOString().slice(0, 10));
+const dayOf = (monday: string, n: number): string => new Date(Date.parse(`${monday}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const todayIst = (): string => new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+const fresh = (id: string, date: string) => ({ postId: id, date, headline: `New ${id}`, caption: `Caption ${id}`, captions: { instagram: { text: `ig ${id}` }, facebook: { text: `fb ${id}` } } });
+
+test('a dropped post can be given a new topic: same day, undecided, counted per week, never for a post that is kept, drawn, past, or already replaced', () => {
+  const t = topicFixture();
+  try {
+    const monday = futureWeek();
+    const s = new CopyStage(t.dir, 'bb-acme');
+    s.open('week-03.json', [0, 1, 2, 3].map((n) => post(`p${n}`, dayOf(monday, n))));
+    const batch = (): ReturnType<typeof s.get> => s.get('week-03.json');
+    assert.equal(replaceProblem(batch(), 'p0', todayIst())?.code, 'CONFLICT', 'a post that is not dropped');
+    assert.equal(replaceProblem(batch(), 'nope', todayIst())?.code, 'NOT_FOUND');
+    for (const id of ['p0', 'p1', 'p2', 'p3']) s.decide('week-03.json', id, 'dropped', 'u');
+    assert.equal(replaceProblem(batch(), 'p0', todayIst()), null);
+    assert.equal(replaceProblem(batch(), 'p0', dayOf(monday, 0))?.code, 'DAY_PASSED', 'its day is today or has passed');
+
+    const after = s.addReplacement('week-03.json', 'p0', fresh('w03-r1', dayOf(monday, 0)), todayIst());
+    const added = after.posts.find((p) => p.postId === 'w03-r1');
+    assert.deepEqual([added?.date, added?.state, added?.replaces, after.replacedBy, after.replacements], [dayOf(monday, 0), 'pending', 'p0', { p0: 'w03-r1' }, { [monday]: 1 }]);
+    assert.equal(added?.contentHash.length, 64, 'the choice is about these exact words');
+    assert.equal(after.posts.find((p) => p.postId === 'p0')?.state, 'dropped', 'the dropped post stays dropped');
+    assert.equal(replaceProblem(after, 'p0', todayIst())?.code, 'CONFLICT', 'one replacement per dropped post');
+    assert.doesNotThrow(() => s.decide('week-03.json', 'w03-r1', 'kept', 'u'), 'the new post is kept like any other');
+
+    s.addReplacement('week-03.json', 'p1', fresh('w03-r2', dayOf(monday, 1)), todayIst());
+    s.addReplacement('week-03.json', 'p2', fresh('w03-r3', dayOf(monday, 2)), todayIst());
+    assert.equal(MAX_REPLACEMENTS_PER_WEEK, 3);
+    assert.equal(replaceProblem(batch(), 'p3', todayIst())?.code, 'LIMIT', 'a week has three');
+    assert.throws(() => s.addReplacement('week-03.json', 'p3', fresh('w03-r4', dayOf(monday, 3)), todayIst()), (e: Error) => e instanceof CopyStageError && e.code === 'LIMIT');
+
+    s.markWeekDrawn('week-03.json', monday);
+    assert.equal(replaceProblem(batch(), 'p3', todayIst())?.code, 'ALREADY_DRAWN', 'a week that was drawn is final');
+  } finally {
+    t.done();
+  }
+});
+
+test('a new topic over HTTP: only for a dropped post, a job per post, the limit counts those being written, and the words are asked for the connected networks only', async () => {
+  const s = await start();
+  try {
+    const monday = futureWeek();
+    const copy = new CopyStage(join(s.root, 'brands', 'bb-acme'), 'bb-acme');
+    copy.open('week-03.json', [0, 1, 2, 3].map((n) => post(`p${n}`, dayOf(monday, n))));
+    const ask = (id: string): Promise<Response> => s.call(`/review/copy/bb-acme/week-03.json/${id}/replace`, {});
+    const body = async (res: Response): Promise<Record<string, any>> => (await res.json()) as Record<string, any>;
+    const notDropped = await ask('p0');
+    assert.equal(notDropped.status, 409);
+    assert.equal((await body(notDropped)).code, 'CONFLICT');
+    for (const id of ['p0', 'p1', 'p2', 'p3']) assert.equal((await s.call(`/review/copy/bb-acme/week-03.json/${id}/drop`, {})).status, 200);
+    const first = await ask('p0');
+    assert.equal(first.status, 202, JSON.stringify(await first.clone().json()));
+    const { job } = (await body(first)) as { job: { id: string; kind: string; planFile: string; postId: string; networks: string[] } };
+    assert.deepEqual([job.kind, job.planFile, job.postId, job.networks], ['replace', 'week-03.json', 'p0', ['instagram', 'facebook']]);
+    assert.deepEqual(engineArgs(job as never).slice(5), ['--copy-first', '--replace', 'week-03.json', '--replace-post', 'p0', '--networks', 'instagram,facebook']);
+    const again = await ask('p0');
+    assert.equal(again.status, 200, 'the same ask while one runs is the same job');
+    const sameJob = await body(again);
+    assert.equal((sameJob['job'] as { id: string }).id, job.id);
+    assert.equal(sameJob['created'], false);
+
+    // Two more being written use the week's three; the fourth is refused with the day she can ask again.
+    assert.equal((await ask('p1')).status, 202);
+    assert.equal((await ask('p2')).status, 202);
+    const full = await ask('p3');
+    assert.equal(full.status, 429);
+    const limited = await body(full);
+    assert.equal(limited['code'], 'REPLACE_LIMIT_REACHED');
+    assert.equal(limited['restart'], dayOf(monday, 7));
+
+    // A try that wrote nothing is not counted: once it has failed, a new one may be asked for.
+    s.jobs.update(job.id, { state: 'failed', error: { code: 'NOTHING_WRITTEN', message: 'x' } });
+    assert.equal(copy.get('week-03.json').replacements, undefined, 'nothing was added or counted');
+    assert.equal((await ask('p3')).status, 202, 'the failed one freed its place');
+    const retry = await ask('p0');
+    assert.equal(retry.status, 429, 'but the week still has its three being written');
+
+    writeConnected(join(s.root, 'brands', 'bb-acme'), ['facebook']);
+    copy.open('week-04.json', [post('q0', dayOf(monday, 14))]);
+    copy.decide('week-04.json', 'q0', 'dropped', 'u');
+    const connected = await s.call('/review/copy/bb-acme/week-04.json/q0/replace', {});
+    assert.deepEqual(((await body(connected)).job as { networks: string[] }).networks, ['facebook'], 'instagram is not connected');
+    copy.open('week-05.json', [post('r0', dayOf(monday, 21))]);
+    copy.decide('week-05.json', 'r0', 'dropped', 'u');
+    copy.markWeekDrawn('week-05.json', mondayOf(dayOf(monday, 21)));
+    assert.equal((await s.call('/review/copy/bb-acme/week-05.json/r0/replace', {})).status, 409, 'a week that was drawn is final');
+    copy.open('week-06.json', [post('s0', todayIst())]);
+    copy.decide('week-06.json', 's0', 'dropped', 'u');
+    const past = await s.call('/review/copy/bb-acme/week-06.json/s0/replace', {});
+    assert.equal(past.status, 409);
+    assert.equal((await body(past)).code, 'DAY_PASSED');
+  } finally {
+    await s.done();
+  }
+});
