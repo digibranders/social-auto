@@ -1,0 +1,18 @@
+[Unit]
+Description=Social Auto release now (hands approved posters to the publisher right after a customer approves, without waiting for the 5-minute timer)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=social
+Group=social
+WorkingDirectory=/home/social/social-auto/scheduler/engine
+EnvironmentFile=/etc/social-auto/engine.env
+Environment=LOCAL_STORE_DIR=/var/lib/social-auto
+# Only the release step: it never starts a batch, so it does not wait for one that is being made. It takes turns with the timer's own release through a lock.
+ExecStart=/home/social/.local/node/bin/node src/campaign-runner.ts --release-only --clients /var/lib/social-auto/clients.json --brands brands --publisher /home/social/social-auto/publisher
+TimeoutStartSec=10min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/social-auto /home/social/social-auto/scheduler/engine /home/social/social-auto/publisher/data

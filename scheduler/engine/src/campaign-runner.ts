@@ -24,6 +24,11 @@ import { checkLeadTime, type LeadTimeNotice } from './lead-time.ts';
 import { ntfySender } from './owner-notice.ts';
 import { ProductBrands } from './product-brands.ts';
 
+/** The lock one release pass holds while it writes the publisher's schedule, in the brands folder beside the campaign runner's own lease. */
+export const RELEASE_LOCK = '.release.lock';
+/** How long a pass waits for another release to finish: a release is a matter of seconds. */
+const RELEASE_WAIT_MS = 2 * 60_000;
+
 export type BatchStatus = 'pending' | 'running' | 'done' | 'failed' | 'interrupted';
 /** What a running batch is doing, as far as the autopilot's own progress lines say. */
 export type BatchStage = 'reading' | 'writing' | 'drawing' | 'finishing';
@@ -94,6 +99,8 @@ export interface RunnerDeps {
   now?: () => Date;
   /** Whether publishing is switched on; release is skipped, and says so, when it is not. */
   publishingEnabled: () => boolean;
+  /** A release pass that runs beside a working batch (see releaseNow) writes none of the campaign records: the batch's own run owns them. */
+  readOnlyState?: boolean;
   log?: (message: string) => void;
 }
 
@@ -401,7 +408,7 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
       const state = await readState(file);
       if (!state || !state.batches.some((b) => b.status === 'done')) continue;
       if (!deps.publishingEnabled()) {
-        if (state.releaseNote !== 'publishing is switched off, so nothing was released') { state.releaseNote = 'publishing is switched off, so nothing was released'; await writeState(file, state); }
+        if (state.releaseNote !== 'publishing is switched off, so nothing was released' && !deps.readOnlyState) { state.releaseNote = 'publishing is switched off, so nothing was released'; await writeState(file, state); }
         continue;
       }
       groups.set(state.brand, [...(groups.get(state.brand) ?? []), { file, state }]);
@@ -433,7 +440,7 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
             state.released = { at: stamp(deps), posts };
             delete state.releaseNote;
             state.updatedAt = stamp(deps);
-            await writeState(file, state);
+            if (!deps.readOnlyState) await writeState(file, state);
           }
           released.push(state);
         }
@@ -441,7 +448,7 @@ export async function releaseCampaigns(brandsRoot: string, deps: RunnerDeps): Pr
       } catch (error) {
         for (const { file, state } of members) {
           state.releaseNote = `release failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300);
-          await writeState(file, state);
+          if (!deps.readOnlyState) await writeState(file, state);
         }
         log(`${client}: release failed: ${error instanceof Error ? error.message : String(error)}`.slice(0, 320));
       }
@@ -481,9 +488,31 @@ export async function acquireLease(path: string): Promise<(() => Promise<void>) 
   return null;
 }
 
+/**
+ * Runs `work` while holding the release lock, waiting up to `waitMs` for it. Only one release pass writes the publisher's schedule at a time (it is one
+ * shared file); the timer's pass and the pass an approval asks for take turns. Returns false when the lock could not be had in time.
+ */
+export async function withReleaseLock(path: string, waitMs: number, work: () => Promise<void>, pollMs = 500): Promise<boolean> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const giveBack = await acquireLease(path);
+    if (giveBack) {
+      try {
+        await work();
+      } finally {
+        await giveBack();
+      }
+      return true;
+    }
+    if (Date.now() >= deadline) return false;
+    await new Promise((done) => setTimeout(done, pollMs));
+  }
+}
+
 async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
+      'release-only': { type: 'boolean', default: false },
       clients: { type: 'string' },
       brands: { type: 'string', default: 'brands' },
       publisher: { type: 'string', default: '../../publisher' },
@@ -521,16 +550,24 @@ async function main(): Promise<void> {
     release: async (brandDir, options) => (await exportToPublisher(brandDir, publisherDir, Date.now(), options)).length,
     publishingEnabled: () => process.env['SOCIAL_PUBLISHING_ENABLED'] === 'true',
     approvalMode: (brand) => clients.find((c) => c.brand === brand)?.approvalMode ?? 'manual',
-    notify: ntfySender(),
+    // A release asked for by an approval only hands over what is approved: it tells nobody and leaves the campaign records to the run that owns them.
+    ...(values['release-only'] ? { readOnlyState: true } : { notify: ntfySender() }),
     log: (m) => console.log(m),
   };
   await mkdir(brandsRoot, { recursive: true });
+  if (values['release-only']) {
+    // Does not wait for a batch being made (that can take an hour): approved posters reach the calendar in seconds.
+    const done = await withReleaseLock(join(brandsRoot, RELEASE_LOCK), 5 * 60_000, async () => { await releaseCampaigns(brandsRoot, deps); });
+    if (!done) throw new Error('another release kept working for five minutes; asking again will release');
+    return;
+  }
   // One runner at a time: a second one started by the timer while this runs leaves at once instead of repeating work.
   const giveBack = await acquireLease(join(brandsRoot, '.campaigns.lease'));
   if (!giveBack) { console.log('another campaign runner is working; leaving it to finish'); return; }
   try {
     await makeCampaigns(clients, brandsRoot, deps);
-    await releaseCampaigns(brandsRoot, deps);
+    const released = await withReleaseLock(join(brandsRoot, RELEASE_LOCK), RELEASE_WAIT_MS, async () => { await releaseCampaigns(brandsRoot, deps); });
+    if (!released) console.log('another release is working; the next run will release');
   } finally {
     await giveBack();
   }
