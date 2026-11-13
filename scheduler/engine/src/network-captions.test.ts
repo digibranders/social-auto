@@ -93,7 +93,7 @@ test('the writer is told how long each network\'s caption should be and that the
   ] }]);
   await writeNetworkCaptions({ ai, posts, networks: ['linkedin', 'google'], fetchFn });
   const asked = requests[0] ?? '';
-  assert.match(asked, /linkedin: .*Aim for about 400 to 800 characters/);
+  assert.match(asked, /linkedin: .*Aim for about 900 to 1200 characters/);
   assert.match(asked, /google: .*Aim for about 150 to 300 characters/);
   assert.match(asked, /the hook comes first/);
 });
