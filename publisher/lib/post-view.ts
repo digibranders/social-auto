@@ -1,6 +1,6 @@
 import { NO_PAUSES, type PauseFile } from './pauses.js';
 import { crosspostStatusFor, type CrosspostStatus } from './crosspost.js';
-import { channelsFor, type ChannelFile, type PostedLog } from './channels.js';
+import { channelsFor, postedKey, type ChannelFile, type PostedLog } from './channels.js';
 import { toScheduled, type ManualPost } from './manual.js';
 import type { ScheduledPost } from './schedule.js';
 import { dueWindowFor } from './schedule.js';
@@ -28,9 +28,10 @@ const isPlatformName = (value: string): boolean => value === 'instagram' || valu
 /**
  * What a post is aimed at that is no longer there: an account (an id) that is not connected, or a whole platform (a bare name, which is how written-and-approved
  * posts name where they go) with no connected account at all. The team's own Instagram is not a customer's account, so a post that is not from a plan does not count it.
+ * An account the post has already gone out to is not "gone": it was sent while it was connected, and moving the account to another workspace later does not undo that.
  */
-export const goneAims = (post: Pick<ScheduledPost, 'channels' | 'fromPlan'>, connectedIds: ReadonlySet<string>, connectedPlatforms: ReadonlySet<string>): string[] =>
-  (post.channels ?? []).filter((c) => (c.includes(':') ? !connectedIds.has(c) : isPlatformName(c) && !connectedPlatforms.has(c) && (c !== 'instagram' || post.fromPlan === true)));
+export const goneAims = (post: Pick<ScheduledPost, 'id' | 'channels' | 'fromPlan'>, connectedIds: ReadonlySet<string>, connectedPlatforms: ReadonlySet<string>, posted: PostedLog = {}): string[] =>
+  (post.channels ?? []).filter((c) => (c.includes(':') ? !connectedIds.has(c) && posted[postedKey(post.id, c)] === undefined : isPlatformName(c) && !connectedPlatforms.has(c) && (c !== 'instagram' || post.fromPlan === true)));
 
 export interface Target {
   id: string;
@@ -47,12 +48,18 @@ export interface Target {
  * Where a post is meant to go: every connected account it goes to, and every account it was aimed at that is no longer connected. A post aimed at an
  * account that was disconnected is held (not lost): connecting the same account again lets it go out while its time window is still open; after that it is missed.
  */
-export function targetsOf(post: ScheduledPost, states: readonly CrosspostStatus[], connectedIds: ReadonlySet<string>, now: number, connectedPlatforms: ReadonlySet<string> = new Set()): Target[] {
+export function targetsOf(post: ScheduledPost, states: readonly CrosspostStatus[], connectedIds: ReadonlySet<string>, now: number, connectedPlatforms: ReadonlySet<string> = new Set(), posted: PostedLog = {}): Target[] {
   const at = Date.parse(post.date);
   const known = states.map((s): Target => ({ id: s.id, platform: s.platform, account: s.account, state: s.state, permalink: s.permalink }));
-  const gone = goneAims(post, connectedIds, connectedPlatforms);
+  const gone = goneAims(post, connectedIds, connectedPlatforms, posted);
+  // Accounts the post already went out to but that are not connected to this workspace any more (moved or disconnected): still published.
+  const sentThere = (post.channels ?? []).filter((c) => c.includes(':') && !connectedIds.has(c) && posted[postedKey(post.id, c)] !== undefined);
   return [
     ...known,
+    ...sentThere.map((id): Target => {
+      const done = posted[postedKey(post.id, id)];
+      return { id, platform: id.slice(0, id.indexOf(':')), account: null, state: done?.skipped ? 'skipped' : 'published', permalink: done?.skipped ? null : (done?.permalink ?? null) };
+    }),
     ...gone.map((id): Target => ({
       id,
       platform: id.includes(':') ? id.slice(0, id.indexOf(':')) : id,
@@ -83,9 +90,9 @@ export function scheduledView(post: ScheduledPost, channels: ChannelFile, posted
     manual: post.manual === true,
     // Only the platforms that have a version of their own are listed; the others use the main caption and picture.
     ...(post.variants ? { variants: Object.fromEntries(PLATFORMS.flatMap((p) => { const v = post.variants?.[p]; return v ? [[p, { ...(v.caption !== undefined ? { caption: v.caption } : {}), ...(v.image && origin ? { imageUrl: `${origin}${v.image}` } : {}) }]] : []; })) } : {}),
-    state: overallState(targetsOf(post, states, connectedIds, now, connectedPlatforms), Date.parse(post.date), now),
+    state: overallState(targetsOf(post, states, connectedIds, now, connectedPlatforms, posted), Date.parse(post.date), now),
     channels: states.map((s) => ({ id: s.id, platform: s.platform, account: s.account, state: s.state, permalink: s.permalink })),
-    targets: targetsOf(post, states, connectedIds, now, connectedPlatforms),
+    targets: targetsOf(post, states, connectedIds, now, connectedPlatforms, posted),
   };
 }
 

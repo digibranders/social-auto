@@ -185,7 +185,7 @@ export function problemEvents(
     const brand = post.brand ?? 'default';
     if (!owned(brand) || post.skipped === true || at > now || now - at >= dueWindowFor(post) || brandIsPaused(pauses, brand)) return [];
     const ours = channelsFor(channels, brand);
-    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)))
+    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)), log)
       .filter((id) => !isAnnounced(outbox, `held:${post.id}|${id}`))
       .map((channelId) => ({ brand, postId: post.id, channelId, platform: channelId.includes(':') ? channelId.slice(0, channelId.indexOf(':')) : channelId, date: post.date }));
   });
@@ -195,7 +195,7 @@ export function problemEvents(
     const brand = post.brand ?? 'default';
     if (!owned(brand) || post.skipped === true || now - at < dueWindowFor(post) || now - at >= MISSED_REPORT_HOURS * 3_600_000 || brandIsPaused(pauses, brand)) return [];
     const ours = channelsFor(channels, brand);
-    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)))
+    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)), log)
       .filter((id) => !isAnnounced(outbox, `missed:${post.id}|${id}`))
       .map((channelId) => ({ key: `${post.id}|${channelId}`, brand, postId: post.id, channelId, account: channelId, date: post.date }));
   });
