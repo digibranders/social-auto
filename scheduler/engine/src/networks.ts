@@ -24,9 +24,9 @@ export interface NetworkRules {
 }
 
 export const NETWORK_RULES: Record<Network, NetworkRules> = {
-  instagram: { maxCaption: 600, recommended: { min: 100, max: 300 }, visibleChars: 125, maxHashtags: 5, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'short, warm and visual; two or three short lines; hashtags allowed', linkInBio: true },
-  facebook: { maxCaption: 600, recommended: { min: 100, max: 250 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'friendly and conversational, a little longer than Instagram; the web address can be written out', linkInBio: false },
-  linkedin: { maxCaption: 1300, recommended: { min: 400, max: 800 }, visibleChars: 140, maxHashtags: 3, picture: { shape: 'wide', width: 1536, height: 1024 }, voice: 'professional and plain; lead with what the business does for its customers; no slang; few hashtags', linkInBio: false },
+  instagram: { maxCaption: 800, recommended: { min: 300, max: 600 }, visibleChars: 125, maxHashtags: 5, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'short, warm and visual; two or three short lines; hashtags allowed', linkInBio: true },
+  facebook: { maxCaption: 800, recommended: { min: 300, max: 600 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'friendly and conversational, a little longer than Instagram; the web address can be written out', linkInBio: false },
+  linkedin: { maxCaption: 1500, recommended: { min: 900, max: 1200 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'wide', width: 1536, height: 1024 }, voice: 'professional and plain; lead with what the business does for its customers; no slang; few hashtags', linkInBio: false },
   google: { maxCaption: 1000, recommended: { min: 150, max: 300 }, visibleChars: 100, maxHashtags: 0, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'plain text, factual, no hashtags and no emoji, as a local business would post on its listing', linkInBio: false },
 };
 
