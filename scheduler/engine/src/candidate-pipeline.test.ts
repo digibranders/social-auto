@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { candidateCount, headlineLengthScore, noveltyScore, scoreCandidate, selectBest, type Candidate } from './candidate-selection.ts';
-import { assessVerdict, materialSentences, parseClaimVerdict, type ClaimVerdict } from './claim-verdict.ts';
+import { assessVerdict, isEmptyQuestion, materialSentences, parseClaimVerdict, type ClaimVerdict } from './claim-verdict.ts';
 import { buildRewriteRequest, validateRewrite } from './copy-rewrite.ts';
 import type { EvidenceFact } from './evidence.ts';
 
@@ -86,6 +86,21 @@ test('B2: SUPPORTED while the caption holds an unmapped promise is invalid and g
   const result = assessVerdict(supported(), loaded, evidence);
   assert.equal(result.action, 'adjudicate');
   assert.match((result as { problems: string[] }).problems.join(' '), /Every question is answered in seconds/);
+});
+
+test('B2b: a hook question that asserts nothing needs no quote, but a question that carries a claim, and every statement, still does', () => {
+  assert.equal(isEmptyQuestion('Ready to talk?'), true);
+  assert.equal(isEmptyQuestion('Which kind of digital support are you looking for?'), true);
+  assert.equal(isEmptyQuestion('Why is it the fastest?'), false, 'a superlative inside a question is a claim');
+  assert.equal(isEmptyQuestion('Want 50% off?'), false, 'a figure inside a question is a claim');
+  assert.equal(isEmptyQuestion('Help visitors find answers drawn from your website content.'), false, 'a statement is never skipped');
+  const asked = { ...draft, headline: 'Which kind of support are you looking for?' };
+  const forQuestion = supported({ coverage: supported().coverage.filter((x) => x.field !== 'headline') });
+  assert.deepEqual(assessVerdict(forQuestion, asked, evidence), { action: 'continue' }, 'the question needs no quote');
+  const claimed = { ...asked, headline: 'Why is it the fastest?' };
+  assert.equal(assessVerdict(forQuestion, claimed, evidence).action, 'adjudicate', 'a question with a claim still needs its quote');
+  const loaded = { ...asked, caption: `${draft.caption} Every question is answered in seconds.` };
+  assert.equal(assessVerdict(forQuestion, loaded, evidence).action, 'adjudicate', 'a statement beside the question is still checked');
 });
 
 test('B3: UNSUPPORTED that names the exact phrase and explains it means one rewrite', () => {
