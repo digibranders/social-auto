@@ -13,6 +13,8 @@ test('her own plain words are usable; what needs proof, a link, or too little is
   assert.match(checkCustomerText('hi') ?? '', /a little more/);
   assert.match(checkCustomerText('x'.repeat(1001)) ?? '', /under 1000/);
   assert.match(checkCustomerText('See https://currycook.com/diwali for the 20% off offer') ?? '', /Links are not read/);
+  for (const text of ['See www.example.com for our new menu', 'Our new menu is on brandbasket.in starting today', 'Write to hello@example.com for the offer', 'Order at CurryCook.COM before midnight', 'Visit shop.currycook.co.in this week']) assert.match(checkCustomerText(text) ?? '', /Links are not read/, text);
+  for (const text of ['Diwali special: 20% off all thalis until 2 Nov.', 'Weekend special: Butter Chicken thali at Rs 399. Order before midnight.', 'Open 11.30 am to 10 pm, Mon.-Fri. only, e.g. lunch combos at 4.5 percent less.']) assert.equal(checkCustomerText(text), null, text);
   assert.match(checkCustomerText(42) ?? '', /Write what the post is about/);
   assert.match(checkCustomerText('The best thali in town, 20% off this week') ?? '', /"best" is a claim that needs proof/);
   assert.match(checkCustomerText('Guaranteed delivery in 30 minutes for every order') ?? '', /guarantee/);

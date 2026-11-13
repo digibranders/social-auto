@@ -41,7 +41,8 @@ import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
-import { checkCustomerText, saveStatement } from './customer-facts.ts';
+import { customerTextProblem, readStatements, saveStatement } from './customer-facts.ts';
+import { topicRequests } from './topic-requests.ts';
 import { carouselRoom } from './carousel-limit.ts';
 import { readHistory as readCarouselHistory } from './carousel-run.ts';
 import { tomorrowAt } from './posting-plan.ts';
@@ -376,6 +377,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             }
             let topicBrand: string;
             let topicFor = [...new Set(asked as string[])];
+            // A product's topic always has a day (tomorrow when none is given), so the one-a-week rule can count it.
+            if (caller.role === 'product' && topicDay === undefined) topicDay = tomorrowAt('+05:30');
             if (caller.role === 'product') {
               if (body['brand'] !== caller.brand) throw new ReviewError('INVALID', 'brand must be the brand named in X-Brand');
               topicBrand = caller.brand;
@@ -393,6 +396,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               if (topicFor.length === 0) throw new ReviewError('INVALID', 'none of those channels is connected, so there is nothing to write the post for');
               const week = mondayOf(topicDay ?? tomorrowAt('+05:30'));
               const thisWeek = jobs.list({ brand: topicBrand }).filter((j) => j.kind === 'topic' && j.state !== 'failed' && typeof j.startDate === 'string' && mondayOf(j.startDate) === week);
+              // The same words asked for again for the same week are the same request: no second job, nothing written or spent twice.
+              const plainly = (text: string): string => text.replace(/\s+/g, ' ').trim().toLowerCase();
+              const sameWords = typeof body['text'] === 'string' ? plainly(body['text']) : null;
+              const kept = readStatements(topicDir);
+              const repeat = sameWords === null ? undefined : thisWeek.find((j) => kept.some((st) => st.id === j.topicId && plainly(st.text) === sameWords));
+              if (repeat) return send(res, 200, { job: repeat, created: false });
               if (thisWeek.length > 0) {
                 const restart = new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
                 return send(res, 429, { error: `You have already added a topic for the week of ${week}. You can add another from ${restart}.`, code: 'TOPIC_LIMIT_REACHED', restart });
@@ -401,8 +410,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             // One at a time: a second ask while one is being written is the same job, and its words are not kept.
             const standing = jobs.list({ brand: topicBrand }).find((j) => j.kind === 'topic' && (j.state === 'queued' || j.state === 'running'));
             if (standing) return send(res, 200, { job: standing, created: false });
-            const problem = checkCustomerText(body['text']);
-            if (problem !== null) throw new ReviewError('INVALID', problem);
+            const problem = customerTextProblem(body['text']);
+            if (problem !== null) return send(res, 400, { error: problem.message, code: 'INVALID', reason: problem.reason });
             const by = scope.by(body['by']);
             if (by.trim() === '') throw new ReviewError('INVALID', 'who is asking must be given');
             const topicId = `t-${Date.now().toString(36)}-${randomBytes(3).toString('hex')}`;
@@ -655,6 +664,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { enabled: body['enabled'] });
         }
         return send(res, 405, { error: 'Method not allowed' });
+      }
+      // The topics a customer asked for in her own words (a product sees its own), newest first, the last ten, each with where it stands, its words and what drawing it would cost.
+      if (parts[0] === 'review' && parts[1] === 'topic-requests' && parts.length === 2 && req.method === 'GET') {
+        const topicsBrand = caller.role === 'product' ? caller.brand : url.searchParams.get('brand') ?? '';
+        if (!BRAND.test(topicsBrand)) return send(res, 400, { error: 'brand is not a brand name' });
+        scope.guard(topicsBrand, false);
+        if (!brands().includes(topicsBrand)) return send(res, 200, { requests: [] });
+        const topicsDir = join(root, topicsBrand);
+        return send(res, 200, { requests: topicRequests({ brandDir: topicsDir, brand: topicsBrand, jobs: jobs.list({ brand: topicsBrand }), made: (planFile) => madeFor(topicsBrand, planFile), connected: readConnected(topicsDir) }) });
       }
       // The carousels made for a brand (a product sees its own), newest first, with where each stands.
       if (parts[0] === 'review' && parts[1] === 'carousels' && parts.length === 2 && req.method === 'GET') {

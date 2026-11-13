@@ -33,20 +33,33 @@ const NEEDS_PROOF: ReadonlyArray<[RegExp, string]> = [
   [/\b\d[\d,.]*\+?\s*(happy\s+|satisfied\s+)?(customers|clients|patients|users|families)\b/i, 'a count of customers'],
   [/\b(better than|cheaper than|faster than|unlike (our )?competitors?|than (any )?(other|others|competitors?))\b/i, 'a comparison with others'],
 ];
-const LINK = /https?:\/\/|www\.[a-z0-9-]+\.[a-z]{2,}/i;
+/** A link in any of its forms: an address with a scheme, www., a bare domain (name.com, shop.in, ...) or an email address. */
+const TLDS = 'com|in|co|org|net|io|app|shop|store|online|site|me|info|biz|dev|xyz|uk|us|ca|au|ae|sg|de|fr|tv|ly|link|page|food|cafe|menu';
+const LINK = new RegExp(`https?:\\/\\/|www\\.[a-z0-9-]+\\.[a-z]{2,}|[^\\s@]+@[^\\s@]+\\.[a-z]{2,}|\\b[a-z0-9][a-z0-9-]*(?:\\.[a-z0-9-]+)*\\.(?:${TLDS})\\b(?![a-z0-9-])`, 'i');
 
-/** Why this text cannot be used as it is, in a plain sentence to show her; null when it can. */
-export function checkCustomerText(value: unknown): string | null {
-  if (typeof value !== 'string') return 'Write what the post is about.';
+/** A fixed code for why her text cannot be used, so a product can say it in its own words. */
+export type TextProblemReason = 'NOT_TEXT' | 'TOO_SHORT' | 'TOO_LONG' | 'LINK_NOT_ALLOWED' | 'NEEDS_PROOF';
+export interface TextProblem {
+  reason: TextProblemReason;
+  /** A plain sentence to show her. */
+  message: string;
+}
+
+/** Why this text cannot be used as it is, as a code and a plain sentence; null when it can. */
+export function customerTextProblem(value: unknown): TextProblem | null {
+  if (typeof value !== 'string') return { reason: 'NOT_TEXT', message: 'Write what the post is about.' };
   const text = value.trim();
-  if (text.length < MIN_TOPIC_CHARS) return 'Write a little more: what is it, and when or for how long.';
-  if (text.length > MAX_TOPIC_CHARS) return `Keep it under ${MAX_TOPIC_CHARS} characters.`;
-  if (LINK.test(text)) return 'Links are not read in this box. Write the details in words, or add the page to the website first.';
+  if (text.length < MIN_TOPIC_CHARS) return { reason: 'TOO_SHORT', message: 'Write a little more: what is it, and when or for how long.' };
+  if (text.length > MAX_TOPIC_CHARS) return { reason: 'TOO_LONG', message: `Keep it under ${MAX_TOPIC_CHARS} characters.` };
+  if (LINK.test(text)) return { reason: 'LINK_NOT_ALLOWED', message: 'Links are not read in this box. Write the details in words, or add the page to the website first.' };
   const hold = present(defaultClaimConfig.guarantees, text)[0] ?? present(defaultClaimConfig.superlatives, text)[0];
-  if (hold !== undefined) return `"${hold.split('|')[0]}" is a claim that needs proof, so it cannot be used. Say it in plain words, for example what the offer includes.`;
-  for (const [pattern, what] of NEEDS_PROOF) if (pattern.test(text)) return `The text has ${what}, which needs proof. Take it out, or ask for it to be added from a page that states it.`;
+  if (hold !== undefined) return { reason: 'NEEDS_PROOF', message: `"${hold.split('|')[0]}" is a claim that needs proof, so it cannot be used. Say it in plain words, for example what the offer includes.` };
+  for (const [pattern, what] of NEEDS_PROOF) if (pattern.test(text)) return { reason: 'NEEDS_PROOF', message: `The text has ${what}, which needs proof. Take it out, or ask for it to be added from a page that states it.` };
   return null;
 }
+
+/** Why this text cannot be used as it is, in a plain sentence to show her; null when it can. */
+export const checkCustomerText = (value: unknown): string | null => customerTextProblem(value)?.message ?? null;
 
 /** The facts of one statement: each sentence of her text as a usable fact whose source is her statement. */
 export function factsOfStatement(statement: CustomerStatement): EvidenceFact[] {
