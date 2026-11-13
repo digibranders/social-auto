@@ -19,7 +19,9 @@ import { applyReview, loadReview } from './fact-review.ts';
 import { isNetwork, NETWORKS, type Network } from './networks.ts';
 import { BudgetError, budgetLimitsFromEnv, PaidLedger } from './paid-ledger.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
+import { registerManualRelease } from './manual-release.ts';
 import { tomorrowAt } from './posting-plan.ts';
+import { ProductBrands } from './product-brands.ts';
 
 const BRANDS_ROOT = resolve('brands');
 const OUT_ROOT = resolve('out');
@@ -79,6 +81,10 @@ async function main(): Promise<void> {
     // Local testing with no picture model (PICTURE_MODE=placeholder and LOCAL_PLACEHOLDER_PICTURES=yes): plain stand-ins, everything after them the normal pipeline.
     ...(placeholderEnabled(process.env) ? { deps: { slides: placeholderDeps({ ai }) } } : {}),
   });
+  // A product's customer: the carousel can reach her calendar once she approves it (only approved versions are ever released), so its release record is made now.
+  if (result.status === 'queued' && result.planFile && new ProductBrands(BRANDS_ROOT).has(slug)) {
+    registerManualRelease({ brandDir, siteBrand: slug, client: slug, site: values.site, planFile: result.planFile });
+  }
   console.log(ai.usage.format());
   if (result.status !== 'queued') {
     const reason = result.reason ?? result.status;

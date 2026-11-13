@@ -102,7 +102,7 @@ test('the carousel is listed and shown whole with its slides and the words for e
     const brand = await workspace('shop-1');
     addCarousel(engine, brand);
     const list = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1');
-    assert.deepEqual(list.body, { carousels: [{ id: 'car-1', topic: 'Why it works', date: '2026-11-17T10:00:00+05:30', count: 3, status: 'pending' }] });
+    assert.deepEqual(list.body, { carousels: [{ id: 'car-1', topic: 'Why it works', date: '2026-11-17T10:00:00+05:30', count: 3, status: 'pending' }], weekly: false });
     const one = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1&id=car-1');
     assert.equal(one.status, 200, JSON.stringify(one.body));
     const carousel = one.body['carousel'] as { id: string; count: number; status: string; slides: Array<Record<string, unknown>>; captions: Array<{ network: string; caption: string }> };
@@ -150,5 +150,21 @@ test('the customer approves or rejects the whole carousel with her name; an unfi
     assert.equal(unfinished.status, 400);
     assert.equal((await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'shop-1', action: 'approve', id: 'car-404' } })).status, 404);
     assert.equal((await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'shop-1', action: 'nonsense' } })).status, 400);
+  });
+});
+
+test('the weekly carousel is switched on or off by the customer and the list says whether it is on', async () => {
+  await withEngine(async (engine) => {
+    await workspace('shop-1');
+    assert.equal(((await call(carouselsGet, '/api/v1/carousels?externalId=shop-1')).body as { weekly: boolean }).weekly, false);
+    const on = await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'shop-1', action: 'weekly', enabled: true } });
+    assert.equal(on.status, 200, JSON.stringify(on.body));
+    assert.deepEqual(on.body, { weekly: true });
+    assert.equal(engine.carouselWeekly, true);
+    assert.equal(((await call(carouselsGet, '/api/v1/carousels?externalId=shop-1')).body as { weekly: boolean }).weekly, true);
+    assert.equal((await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'shop-1', action: 'weekly', enabled: 'yes' } })).status, 400);
+    assert.equal((await call(carouselsPost, '/api/v1/carousels', { json: { externalId: 'shop-1', action: 'weekly', enabled: false } })).status, 400, 'a person is named');
+    assert.deepEqual((await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'shop-1', action: 'weekly', enabled: false } })).body, { weekly: false });
+    assert.equal((await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'nobody', action: 'weekly', enabled: true } })).status, 404);
   });
 });
