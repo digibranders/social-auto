@@ -3,6 +3,7 @@
  * The week runs from Monday 00:00 to Sunday 24:00 India time, so it restarts every Monday. Only pictures actually bought count (a try the provider failed
  * does not), and every one counts: the first draw, a redraw and the picture of a network added later. Staff clients are not limited this way.
  */
+import { productLimitsOff, UNLIMITED } from './limits-switch.ts';
 import { join, resolve } from 'node:path';
 import { NETWORKS, type Network } from './networks.ts';
 import type { PaidCall } from './paid-ledger.ts';
@@ -14,6 +15,8 @@ export const PICTURES_PER_CHANNEL_WEEK_CEILING = 20;
 
 /** The weekly limit per channel for a product's customers: PRODUCT_PICTURES_PER_CHANNEL_WEEK, 5 when it is not set. A bad value is an error, never ignored. */
 export function weeklyLimitFromEnv(env: Record<string, string | undefined>): number {
+  // PRODUCT_LIMITS=off lifts the weekly limit (testing only; the brand's monthly ceiling stays).
+  if (productLimitsOff(env)) return UNLIMITED;
   const raw = env['PRODUCT_PICTURES_PER_CHANNEL_WEEK'];
   if (raw === undefined || raw === '') return PICTURES_PER_CHANNEL_PER_WEEK;
   const value = Number(raw);

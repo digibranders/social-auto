@@ -15,6 +15,7 @@ import { channelsFor } from '../../lib/channels.js';
 import { normalizePage, normalizeWebsite, setWebsite } from '../../lib/clients.js';
 import { EngineError, type JobView } from '../../lib/engine-client.js';
 import { json } from '../../lib/http.js';
+import { productLimitsOff } from '../../lib/limits-switch.js';
 import { EditError } from '../../lib/overrides.js';
 import { archivedAnswer, engineFor, workspaceFor } from '../../lib/product-workspace.js';
 import { syncConnected } from '../../lib/connected-sync.js';
@@ -102,7 +103,8 @@ export async function POST(request: Request): Promise<Response> {
     // A batch already waiting or running is returned as it is; otherwise the day and month limits apply.
     const jobs = await engine.listJobs(by);
     const standing = jobs.find((j) => j.kind === 'write' && (j.state === 'queued' || j.state === 'running'));
-    if (!standing) {
+    // PRODUCT_LIMITS=off lifts the day and month limits (testing only).
+    if (!standing && !productLimitsOff()) {
       const now = Date.now();
       const writes = jobs.filter((j) => j.kind === 'write');
       const since = (ms: number): number => writes.filter((j) => now - Date.parse(j.createdAt) < ms).length;

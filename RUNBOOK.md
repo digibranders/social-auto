@@ -194,3 +194,10 @@ Known limits: a table is trusted as plan and attribute only when the plan name a
 - Vercel's free plan runs the daily job somewhere in the 10:00-10:59 hour, allows two cron jobs (both used), and is meant for non-commercial use.
 - The Instagram token lasts about 60 days and is renewed weekly. As of 29 Oct 2026 the first real renewal had not run yet: if Instagram turns out to hand back a different token, the alert above fires and the token must be replaced by hand.
 - The Mac only has to be on for the Monday job. Posts are booked about six weeks ahead, so a few missed Mondays cause no gap.
+
+
+## Lifting the customer limits while testing (`PRODUCT_LIMITS=off`)
+
+One setting lifts what a product's customers are held to: the batches a customer may start (3 a day, 10 a month), the asks for pictures, the weekly pictures of a channel (shown as 1000 left), the redraws of a picture, the one topic and the one carousel a week, and the new topics of a dropped post. It does **not** lift the monthly picture ceiling of a brand (200) or the spending limits of the paid-call ledger, which protect the owner's money.
+
+To switch it on, add `PRODUCT_LIMITS=off` to `/etc/social-auto/publisher.env`, `/etc/social-auto/review.env` and `/etc/social-auto/engine.env` (the same value in all three), then `systemctl restart social-publisher social-review social-jobs`. To put every limit back, delete the line from the three files and restart the same three services. Only exactly `off` counts; anything else, or no setting, leaves every limit in force.
