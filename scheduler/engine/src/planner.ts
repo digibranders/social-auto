@@ -55,6 +55,12 @@ export function scheduleDates({ startDate, time, utcOffset, count, weekdays }: P
   return days.map((day) => `${day}T${time}:00${utcOffset}`);
 }
 
+/** Writing tries per chunk: the first answer and two corrections, each naming every check that failed, before a post is left out. */
+const WRITE_TRIES = 3;
+
+/** What the writer is told about a caption and a proof point, in the first request and again in a top-up. It states the checks; it loosens none of them. */
+export const CAPTION_RULES = 'Write each caption so it opens with what the headline promises and then adds one different detail: never say the headline again in other words, never repeat the hook, and never say the same thing twice in two sentences. When a post is built on a proof point or a fact, quote its wording, figures and meaning unchanged, in the headline, subline or caption, rather than rephrasing it.';
+
 const SYSTEM_PROMPT = `You are a senior social media copywriter and art director for businesses of every size.
 You write Instagram posts that each address one real customer pain point and show how the brand solves it.
 Hard rules:
@@ -126,7 +132,7 @@ ${JSON.stringify(profileForPrompt(brand, withFacts), null, 2)}
 Pain points already used in earlier weeks (do NOT repeat or rephrase these):
 ${usedPainPoints.length ? usedPainPoints.map((p) => `- ${p}`).join('\n') : '- none yet'}
 
-Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post and what is offered or solved. Write each headline as a standalone advertising message, never as a label naming the company: the brand's name is shown separately on the poster, so do not begin a headline with "${brand.name}" followed by a colon or dash, and put the name inside a headline only when it is a natural part of the sentence and the message is clearer with it. When a figure or limit belongs to a named plan in the facts, name the plan in the headline ("Free plan: 5 active projects") or leave the figure out. Use plain words, no jargon, no internal product terms. ${figureRule} The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead.${assignmentLines(assignments, facts)}${conceptLines(recentConcepts)}
+Write ${count} posts, each on a different idea the audience cares about. Write every post for someone who has never heard of ${brand.name} and is scrolling fast: in three seconds they must understand the point of the post and what is offered or solved. Write each headline as a standalone advertising message, never as a label naming the company: the brand's name is shown separately on the poster, so do not begin a headline with "${brand.name}" followed by a colon or dash, and put the name inside a headline only when it is a natural part of the sentence and the message is clearer with it. When a figure or limit belongs to a named plan in the facts, name the plan in the headline ("Free plan: 5 active projects") or leave the figure out. Use plain words, no jargon, no internal product terms. ${figureRule} The hook is a pain they recognise from their own day, or a plain promise of the result, never a vague slogan; a post that is not about a pain states its point plainly instead. ${CAPTION_RULES}${assignmentLines(assignments, facts)}${conceptLines(recentConcepts)}
 
 Return JSON:
 {
@@ -400,6 +406,7 @@ export async function planWeek(options: {
     let droppedHere: string[] = [];
     const writeChunk = (retryNote?: string): Promise<PlannedPost[]> => chatJson({
       ai: options.ai,
+      attempts: WRITE_TRIES,
       ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
       system: SYSTEM_PROMPT,
       user: userPrompt(brand, chunkDates.length, usedPainPoints, plans.slice(offset, offset + chunkDates.length), [...recentConcepts, ...acceptedRecords], evidenceMode ? factsPerPost.slice(offset, offset + chunkDates.length) : undefined) + [options.requestNote, retryNote].filter((n): n is string => n !== undefined && n !== '').map((n) => `\n\n${n}`).join(''),
@@ -413,7 +420,10 @@ export async function planWeek(options: {
         const builtSoFar: PlannedPost[] = [];
         const records: ConceptRecord[] = [];
         const kept: PlannedPost[] = [];
+        // Every post that needs a correction is named in one message, so the next try fixes them all (the model is told which check each one failed), not only the first.
+        const problems: string[] = [];
         (drafts as DraftPost[]).forEach((d, i) => {
+          try {
           const assigned = plans[offset + i] as PostPlan;
           let draft = d;
           let used = assigned.hook as string;
@@ -421,11 +431,11 @@ export async function planWeek(options: {
             validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode, facts: factsPerPost[offset + i] ?? [] });
           } catch (error) {
             // On the last try a post whose copy the claim gate still turns back, or that does not stay with its fact, is left out (fewer posts, never unsupported copy); the others stay.
-            if (attempt >= 2 && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point|headline rule:|failed the writing check/.test(error.message)) {
+            if (attempt >= WRITE_TRIES && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point|headline rule:|failed the writing check/.test(error.message)) {
               droppedHere.push(error.message);
               return;
             }
-            if (!(error instanceof HookError) || attempt < 2) throw error;
+            if (!(error instanceof HookError) || attempt < WRITE_TRIES) throw error;
             const headline = fallbackHeadline({ ...(assigned.anchor ? { anchor: assigned.anchor } : {}), ...(identityLine ? { identityLine } : {}), maxChars: MAX_HEADLINE_CHARS });
             if (!headline) throw error;
             draft = { ...d, headline };
@@ -446,7 +456,7 @@ export async function planWeek(options: {
           );
           if (decision.status === 'duplicate_message' || decision.status === 'duplicate_visual') {
             const why = decision.reasons.join('; ');
-            if (attempt < 2) {
+            if (attempt < WRITE_TRIES) {
               const fix = decision.status === 'duplicate_visual' ? 'keep the message, but write a new picture idea (the visual fields and "visual")' : 'write a different message or angle, supported by the profile';
               throw new Error(`post ${i + 1} repeats an earlier idea: ${why}. Please ${fix}`);
             }
@@ -456,7 +466,7 @@ export async function planWeek(options: {
           // Editorial: a subline that only says the headline or identity line again goes back to the writer; on the last try it stays, with the reason noted for the reviewer.
           const cited = evidenceMode ? (factsPerPost[offset + i] ?? []).map((f) => ({ text: f.text, category: f.category })) : [];
           const editorial = validateEditorial({ headline: draft.headline, subline: draft.subline, caption: draft.caption }, { brandName: brand.name, ...(identityLine ? { identityLine } : {}), cta: assigned.cta?.text ?? brand.callToAction, citedFacts: cited }, evidenceMode ? { nearIdentical: 0.5 } : { nearIdentical: 0.6 });
-          if (editorial.hard.length > 0 && attempt < 2) throw new Error(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
+          if (editorial.hard.length > 0 && attempt < WRITE_TRIES) throw new Error(`post ${i + 1}: ${editorial.hard.map((h) => h.message).join('; ')}`);
           // A subline that says the headline again, exactly or in nearly the same words with nothing new supported, is not copy. With facts the subline is optional, so on the last
           // try it is taken away and the post stays (a redundant subline is worse than none); without facts the post is left out.
           let removedSubline = false;
@@ -481,7 +491,12 @@ export async function planWeek(options: {
           builtSoFar.push(built);
           records.push(conceptRecordOf(built) as ConceptRecord);
           kept.push(built);
+          } catch (error) {
+            if (attempt < WRITE_TRIES && error instanceof Error) problems.push(error.message);
+            else throw error;
+          }
         });
+        if (problems.length > 0) throw new Error(`${problems.join('\n')}\nRewrite the posts named above, fixing exactly what is said for each, and return all the posts; keep the others as they were. Do not loosen the facts: say what the facts say, in their words`);
         if (kept.length === 0) return [];
         return parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts: kept }, `week-${week}`).posts;
       },

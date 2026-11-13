@@ -107,7 +107,7 @@ test('a brand without proof points gets a week without proof or education posts'
 
 test('headlines that ignore their hook are sent back once, then replaced by a complete safe line, with the requested hook kept apart from the real one', async () => {
   const { result, prompts } = await plan(7, {}, { ignoreHooks: true });
-  assert.equal(prompts.length, 2);
+  assert.equal(prompts.length, 3);
   const replaced = result.posts.filter((p) => p.requestedHook !== undefined);
   assert.ok(replaced.length > 0);
   for (const post of replaced) {
@@ -174,7 +174,7 @@ test('a duplicate inside the same plan is caught like a duplicate of history', a
 
 test('a draft that still repeats after the last try is left out: a narrow brand gets fewer posts, never a repeat, and the plan says why', async () => {
   const { result, prompts } = await sevenWeek({ concept: (slot, _call, own) => (slot < 2 ? oldConcept(5) : own) }, { recentConcepts: historyOf(5) });
-  assert.equal(prompts.length, 2);
+  assert.equal(prompts.length, 3);
   assert.equal(result.posts.length, 5);
   assert.equal(result.insufficientConcepts?.requested, 7);
   assert.equal(result.insufficientConcepts?.produced, 5);
@@ -216,16 +216,11 @@ test('a rewritten caption gets its closing line back on a line of its own, never
 
 test('one chunk the writer cannot get right is asked for once more, and when that fails too only that chunk is left out and the plan says so; the rest is delivered', async () => {
   const good = model();
-  let chunkCalls = 0;
   const result = await planWeek({
     ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 14 }, usedPainPoints: [],
     fetchFn: (async (url: string, init?: RequestInit) => {
-      // The posts are written in chunks; the second chunk's answers are always invalid.
-      const body = String(init?.body);
-      const first = /Post 1 \(/.test(body) && !/Post 11 \(/.test(body);
-      void first;
-      chunkCalls += 1;
-      const isSecondChunk = chunkCalls > 2;
+      // The posts are written in chunks of 10 and then 4; the second chunk's answers are always invalid.
+      const isSecondChunk = /Write 4 posts/.test(String(init?.body));
       if (isSecondChunk) return new Response(JSON.stringify({ choices: [{ message: { content: 'this is not json' } }] }), { status: 200 });
       return good.fetchFn(url, init);
     }) as typeof fetch,
@@ -279,11 +274,59 @@ test('a chunk the writer cannot get right is asked for again with a different re
     const bodies: string[] = [];
     const fetchFn = (async (_url: string, init?: RequestInit) => { bodies.push(String(init?.body)); return new Response(JSON.stringify({ choices: [{ message: { content: 'not json' } }], usage: { prompt_tokens: 1, completion_tokens: 1 } }), { status: 200 }); }) as typeof fetch;
     await assert.rejects(planWeek({ ai: guarded, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 2 }, usedPainPoints: [], fetchFn }), (error: Error) => error instanceof InsufficientConceptsError && /gave no valid answer twice/.test(JSON.stringify((error as { reasons?: unknown }).reasons ?? '') + error.message));
-    // The first request is corrected once inside the call (2 bodies), then asked for again as a different request (2 more); none was refused as a repeat.
-    assert.equal(bodies.length, 4);
-    assert.notEqual(bodies[0], bodies[2], 'the second request is not the same text as the first');
-    assert.match(bodies[2] ?? '', /could not be used.*from scratch/);
+    // The first request is corrected twice inside the call (3 bodies), then asked for again as a different request (3 more); none was refused as a repeat.
+    assert.equal(bodies.length, 6);
+    assert.notEqual(bodies[0], bodies[3], 'the second request is not the same text as the first');
+    assert.match(bodies[3] ?? '', /could not be used.*from scratch/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---- the writer is told what the captions and proof points need, and corrected twice, naming every failing post
+
+/** Answers with the first model for the first `badCalls` requests and with the second for the rest. */
+function badThenGood(badCalls: number) {
+  const bad = model({ anchored: false });
+  const good = model({ anchored: true });
+  const sent: string[] = [];
+  const fetchFn = (async (url: string, init?: RequestInit) => {
+    sent.push(String(init?.body));
+    return (sent.length <= badCalls ? bad : good).fetchFn(url, init);
+  }) as typeof fetch;
+  return { fetchFn, sent };
+}
+
+test('the writer is told to open a caption with what the headline promises, never repeat the headline or hook, and quote a proof point unchanged', async () => {
+  const { prompts } = await plan(3);
+  assert.match(prompts[0] ?? '', /opens with what the headline promises/);
+  assert.match(prompts[0] ?? '', /never say the headline again/);
+  assert.match(prompts[0] ?? '', /quote its wording, figures and meaning unchanged/);
+});
+
+test('one correction names every post that failed and what each failed, not only the first', async () => {
+  const m = badThenGood(1);
+  const result = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 7 }, usedPainPoints: [], fetchFn: m.fetchFn });
+  assert.equal(m.sent.length, 2);
+  const correction = m.sent[1] ?? '';
+  assert.ok((correction.match(/must be built on this proof point/g) ?? []).length >= 2, 'more than one post is named');
+  assert.match(correction, /fixing exactly what is said for each/);
+  assert.equal(result.posts.length, 7);
+});
+
+test('a post that fails twice is corrected a second time and kept when the third answer is right', async () => {
+  const m = badThenGood(2);
+  const result = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 7 }, usedPainPoints: [], fetchFn: m.fetchFn });
+  assert.equal(m.sent.length, 3);
+  assert.equal(result.posts.length, 7);
+  assert.equal(result.insufficientConcepts, undefined);
+});
+
+test('the claim checks are not loosened: a post that still fails on the third try is left out, never published', async () => {
+  const m = badThenGood(99);
+  const result = await planWeek({ ai, brand, brandSlug: 'acme', weekNumber: 1, schedule: { ...schedule, count: 7 }, usedPainPoints: [], fetchFn: m.fetchFn });
+  assert.equal(m.sent.length, 3);
+  assert.ok(result.posts.length > 0 && result.posts.length < 7, String(result.posts.length));
+  assert.ok(result.posts.every((p) => p.pillar !== 'proof' && p.pillar !== 'education'));
+  assert.ok(result.insufficientConcepts?.reasons.some((r) => /must be built on this proof point/.test(r)), JSON.stringify(result.insufficientConcepts));
 });
