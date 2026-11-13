@@ -97,7 +97,7 @@ function viewOf(job: Job, input: TopicRequestInput): TopicRequestView | null {
   // Pictures exist: it is drawn, whatever the week's record says (a draw that failed early and was retried leaves the week unmarked).
   if ([...made].some((key) => key.startsWith(`${post.postId}|`))) return { ...written, state: 'drawn' };
   // The week was sent to be drawn and nothing was made.
-  if (batch.weekDrawn?.[week] !== undefined || batch.drawnAt !== undefined) return { ...written, state: 'not_made', reason: 'DRAW_FAILED' };
+  if (batch.weekDrawn?.[week] !== undefined || batch.drawnAt !== undefined || post.drawnAt !== undefined) return { ...written, state: 'not_made', reason: 'DRAW_FAILED' };
   // Waiting for her: the words are ready to confirm. What drawing would cost is one picture for each connected channel it is written for.
   const wanted = Object.keys(post.captions ?? {}).filter((n) => isNetwork(n) && (input.connected === null || input.connected.has(n)) && !made.has(`${post.postId}|${n}`)).length;
   return { ...written, state: 'waiting_for_words', picturesToDraw: wanted };

@@ -249,6 +249,7 @@ async function main(): Promise<void> {
       'replace-post': { type: 'string' },
       'draw-kept': { type: 'string' },
       'draw-week': { type: 'string' },
+      'draw-posts': { type: 'string' },
       'redraw-missing': { type: 'boolean', default: false },
       'redraw-post': { type: 'string' },
       'add-network': { type: 'string' },
@@ -490,6 +491,12 @@ async function main(): Promise<void> {
       const drawWeek = values['draw-week'];
       if (drawWeek !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(drawWeek)) throw new Error('--draw-week must be the Monday of the week, like 2026-11-16');
       const { postIds, changed } = copy.toDraw(keptFile, stored.posts.map((p) => ({ postId: p.id, headline: p.headline, caption: composeCaption(p), ...(variantTexts(p) ? { captions: variantTexts(p) as Record<string, string> } : {}) })), drawWeek);
+      // A draw of a set of posts (the rest of their week stays open): only those, and each is made final on its own.
+      const onlyPosts = values['draw-posts'] === undefined ? undefined : new Set(values['draw-posts'].split(',').map((id) => id.trim()).filter((id) => id !== ''));
+      if (onlyPosts) {
+        postIds.splice(0, postIds.length, ...postIds.filter((id) => onlyPosts.has(id)));
+        changed.splice(0, changed.length, ...changed.filter((id) => onlyPosts.has(id)));
+      }
       for (const id of changed) console.log(`    ${id}: its words changed after the owner kept it, so it is not drawn.`);
       // The facts are looked at again now: a plan is written at once and drawn weeks later, so a price or an offer can have gone stale, or a fact can have been taken out.
       let outdatedAny = false;
@@ -528,7 +535,8 @@ async function main(): Promise<void> {
         if (drawIds.length === 0) throw new Error(`every kept post of ${keptFile} already has its pictures: nothing is left to draw`);
       } else {
         // The batch (or the week of it) is closed before anything is bought, so a crash part-way can never make a second run buy the same pictures again.
-        if (drawWeek !== undefined) copy.markWeekDrawn(keptFile, drawWeek);
+        if (onlyPosts) copy.markPostsDrawn(keptFile, drawIds);
+        else if (drawWeek !== undefined) copy.markWeekDrawn(keptFile, drawWeek);
         else copy.markDrawn(keptFile);
       }
       console.log(`3/4 Drawing ${drawIds.length} kept post${drawIds.length === 1 ? '' : 's'} of ${keptFile}…`);

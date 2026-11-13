@@ -93,7 +93,7 @@ export interface FakeBatch {
   drawnAt?: string;
   closedAt?: string;
   /** The weeks of a batch written for several weeks (as the review service lists them). */
-  weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'drawn' | 'lapsed'; postIds: string[] }>;
+  weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'partly_drawn' | 'drawn' | 'lapsed'; postIds: string[]; openPostIds?: string[] }>;
   posts: Array<Record<string, unknown> & { postId: string; headline: string; caption: string; state: string }>;
 }
 
@@ -351,7 +351,9 @@ export async function fakeEngine(): Promise<FakeEngine> {
         if (week !== undefined && !found.weeks?.some((w) => w.from === week)) return send(400, { error: 'week must be the Monday of one of this batch\'s weeks', code: 'INVALID' });
         const latest = engine.jobs.find((j) => j.brand === brand && j.kind === 'draw' && j.planFile === planFile && j.week === week);
         const retry = body?.['retry'] === true && latest?.state === 'failed';
-        if (latest && !retry) return send(200, { job: latest, created: false });
+        // A week that is drawn by the post (partly drawn) takes another round; a draw that is still running is the same ask.
+        const another = found.weeks?.find((w) => w.from === week)?.state === 'partly_drawn' && latest?.state !== 'queued' && latest?.state !== 'running';
+        if (latest && !retry && !another) return send(200, { job: latest, created: false });
         if (!found.posts.some((p) => p.state === 'kept')) return send(422, { error: 'keep at least one post before drawing /home/social/x', code: 'REJECTED' });
         if (found.posts.some((p) => p.noSite === true)) return send(422, { error: 'this brand has no website saved /home/social/x', code: 'REJECTED' });
         counter += 1;

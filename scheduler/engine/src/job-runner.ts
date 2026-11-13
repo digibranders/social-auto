@@ -31,7 +31,7 @@ export function engineArgs(job: Job): string[] {
   }
   if (job.kind === 'draw') {
     if (!job.planFile) throw new Error('a draw job needs the batch to draw');
-    return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--draw-kept', job.planFile, ...(job.week ? ['--draw-week', job.week] : []), ...(job.retry ? ['--redraw-missing'] : [])];
+    return ['src/autopilot.ts', '--site', job.site, '--brand', job.brand, '--draw-kept', job.planFile, ...(job.week ? ['--draw-week', job.week] : []), ...(job.postIds && job.postIds.length > 0 ? ['--draw-posts', job.postIds.join(',')] : []), ...(job.retry ? ['--redraw-missing'] : [])];
   }
   if (job.kind === 'replace') {
     if (!job.planFile || !job.postId) throw new Error('a replace job needs the batch and the dropped post');

@@ -827,3 +827,130 @@ test('moving a post over HTTP changes its day in the batch and in the plan file,
     await s.done();
   }
 });
+
+// ---- the lock is on each post, not on the week
+
+import { drawCandidates, openPosts, postLocked } from './copy-stage.ts';
+
+test('a post sent to be drawn is final on its own: the rest of its week stays open, a kept post that got no picture is open again, and a week an older draw closed still locks every post', () => {
+  const s = stage();
+  try {
+    const refused = (work: () => unknown): string | undefined => { try { work(); } catch (error) { return error instanceof CopyStageError ? error.code : String(error); } return undefined; };
+    s.stage.decide('week-01.json', 'w1-d1', 'kept', 'u');
+    s.stage.decide('week-01.json', 'w1-d2', 'kept', 'u');
+    s.stage.markPostsDrawn('week-01.json', ['w1-d1']);
+    const batch = s.stage.get('week-01.json');
+    assert.equal(postLocked(batch, batch.posts[0] as never), true, 'the drawn post is final');
+    assert.equal(postLocked(batch, batch.posts[1] as never), false, 'its neighbour in the same week is not');
+    assert.equal(batch.weekDrawn, undefined, 'the week itself is not marked');
+    assert.equal(refused(() => s.stage.decide('week-01.json', 'w1-d1', 'dropped', 'u')), 'ALREADY_DRAWN');
+    assert.equal(refused(() => s.stage.edit('week-01.json', 'w1-d1', { headline: 'New', caption: 'New' }, 'u', () => undefined)), 'ALREADY_DRAWN');
+    assert.equal(refused(() => s.stage.markPostsDrawn('week-01.json', ['w1-d1'])), 'ALREADY_DRAWN', 'a post is never sent to be drawn twice');
+    assert.equal(refused(() => s.stage.decide('week-01.json', 'w1-d2', 'dropped', 'u')), undefined, 'an undrawn post of the same week can still be changed');
+    assert.equal(refused(() => s.stage.markPostsDrawn('week-01.json', ['w2-d1'])), 'REJECTED', 'only a kept post is drawn');
+    assert.equal(refused(() => s.stage.markPostsDrawn('week-01.json', ['nope'])), 'NOT_FOUND');
+    // Nothing is changed when one of them is refused.
+    s.stage.decide('week-01.json', 'w1-d2', 'kept', 'u');
+    assert.equal(refused(() => s.stage.markPostsDrawn('week-01.json', ['w1-d2', 'w1-d1'])), 'ALREADY_DRAWN');
+    assert.equal(s.stage.get('week-01.json').posts[1]?.drawnAt, undefined);
+    // A drawn post that got no picture is open again, like any kept post without one.
+    s.stage.setNotDrawn('week-01.json', { 'w1-d1': { code: 'NO_PICTURE', reason: 'no picture' } as never });
+    assert.equal(postLocked(s.stage.get('week-01.json'), s.stage.get('week-01.json').posts[0] as never), false);
+
+    // An older batch (its week was closed as a whole) locks every post of the week, as before.
+    const old = stage();
+    try {
+      old.stage.markWeekDrawn('week-01.json', W1);
+      assert.equal(refused(() => old.stage.decide('week-01.json', 'w1-d2', 'kept', 'u')), 'ALREADY_DRAWN');
+    } finally {
+      old.done();
+    }
+  } finally {
+    s.done();
+  }
+});
+
+test('what a draw asked for now would draw: kept posts of the week with no picture, whose day is ahead, and not part of a draw that is running; the open posts are those not sent to be drawn', () => {
+  const s = stage();
+  try {
+    for (const id of ['w1-d1', 'w1-d2']) s.stage.decide('week-01.json', id, 'kept', 'u');
+    s.stage.decide('week-01.json', 'w2-d1', 'kept', 'u');
+    const get = () => s.stage.get('week-01.json');
+    assert.deepEqual(drawCandidates(get(), W1, new Set(), '2026-11-12'), ['w1-d1', 'w1-d2']);
+    assert.deepEqual(drawCandidates(get(), W1, new Set(), '2026-11-16'), ['w1-d2'], 'the day of a post is today: not drawn for a customer');
+    assert.deepEqual(drawCandidates(get(), W1, new Set(['w1-d1|instagram']), '2026-11-12'), ['w1-d2'], 'a post that has a picture');
+    assert.deepEqual(drawCandidates(get(), W1, new Set(), '2026-11-12', new Set(['w1-d2'])), ['w1-d1'], 'a post in a draw that is running');
+    assert.deepEqual(drawCandidates(get(), W2, new Set(), '2026-11-12'), ['w2-d1'], 'another week of the batch');
+    s.stage.markPostsDrawn('week-01.json', ['w1-d1']);
+    assert.deepEqual(drawCandidates(get(), W1, new Set(), '2026-11-12'), ['w1-d2'], 'a post that was sent to be drawn is not drawn again');
+    assert.deepEqual(openPosts(get(), W1, '2026-11-12'), ['w1-d2'], 'the drawn post is no longer open');
+    assert.deepEqual(openPosts(get(), W1, '2026-11-17'), [], 'and a post whose day is today is not open');
+  } finally {
+    s.done();
+  }
+});
+
+test('drawing by the post over HTTP: each ask draws only the kept posts with no picture, the rest of the week stays open, a double tap is one job, and the week reads partly drawn', async () => {
+  const s = await start();
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    const store = new ReviewStore(dir, 'bb-acme');
+    const image = join(s.root, 'pic.jpg');
+    writeFileSync(image, 'pic');
+    const base = { planFile: 'week-01.json', headline: 'H', caption: 'C', ctaUrl: 'https://acme.example', factIds: ['f1'], evidence: [{ factId: 'f1', text: 't', quote: 'q', url: 'https://acme.example/', context: 'c' }], imagePath: image, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0 };
+    const call = (path: string, body: unknown = {}): Promise<Response> => s.call(path, body);
+    const json = async (res: Response): Promise<Record<string, any>> => (await res.json()) as Record<string, any>;
+    const listed = async (): Promise<{ weeks: Array<{ from: string; state: string; openPostIds?: string[] }>; posts: Array<{ postId: string; drawn: boolean; locked: boolean; state: string }> }> => ((await (await s.call('/review/copy')).json()) as { batches: Array<any> }).batches[0];
+
+    for (const id of ['w1-d1']) assert.equal((await call(`/review/copy/bb-acme/week-01.json/${id}/keep`)).status, 200);
+    const first = await call('/review/copy/bb-acme/week-01.json/draw', { week: W1 });
+    assert.equal(first.status, 202, JSON.stringify(await first.clone().json()));
+    const one = (await json(first)) as { job: { id: string; week: string; postIds: string[] }; created: boolean };
+    assert.deepEqual([one.job.week, one.job.postIds, one.created], [W1, ['w1-d1'], true]);
+    assert.deepEqual(engineArgs(one.job as never).slice(-4), ['--draw-week', W1, '--draw-posts', 'w1-d1']);
+    // While it runs, the post in it is locked and a double tap is the same job; the others of the week are open.
+    assert.equal((await call('/review/copy/bb-acme/week-01.json/w1-d1/drop')).status, 409, 'a post in a running draw is final');
+    const again = await call('/review/copy/bb-acme/week-01.json/draw', { week: W1 });
+    assert.equal(again.status, 200);
+    assert.equal(((await json(again)).job as { id: string }).id, one.job.id, 'a double tap is the same job, nothing is bought twice');
+    assert.equal((await call('/review/copy/bb-acme/week-01.json/w1-d2/keep')).status, 200, 'another post of the same week can still be kept');
+    // The draw job does what autopilot does: it marks its posts and the pictures appear.
+    new CopyStage(dir, 'bb-acme').markPostsDrawn('week-01.json', ['w1-d1']);
+    store.addVersion({ ...base, postId: 'w1-d1', network: 'instagram' });
+    s.jobs.update(one.job.id, { state: 'succeeded' });
+
+    const mid = await listed();
+    assert.deepEqual([mid.weeks[0]?.state, mid.weeks[0]?.openPostIds], ['partly_drawn', ['w1-d2']], 'one post drawn, the others open');
+    assert.deepEqual(mid.posts.map((p) => [p.postId, p.drawn, p.locked]), [['w1-d1', true, true], ['w1-d2', false, false], ['w2-d1', false, false], ['w2-d2', false, false]]);
+
+    // A second ask draws only what was kept since.
+    const second = await call('/review/copy/bb-acme/week-01.json/draw', { week: W1 });
+    assert.equal(second.status, 202, JSON.stringify(await second.clone().json()));
+    const later = (await json(second)) as { job: { postIds: string[] } };
+    assert.deepEqual(later.job.postIds, ['w1-d2']);
+    // With nothing new kept, there is nothing to draw.
+    new CopyStage(dir, 'bb-acme').markPostsDrawn('week-01.json', ['w1-d2']);
+    s.jobs.update(((later.job as unknown) as { id: string }).id, { state: 'succeeded' });
+    store.addVersion({ ...base, postId: 'w1-d2', network: 'instagram' });
+    const none = await call('/review/copy/bb-acme/week-01.json/draw', { week: W1 });
+    assert.equal(none.status, 422);
+    const after = await listed();
+    assert.equal(after.weeks[0]?.state, 'drawn', 'no open post is left in the week');
+    assert.equal(after.weeks[1]?.state, 'waiting', 'the other week is untouched');
+  } finally {
+    await s.done();
+  }
+});
+
+test('keeping a post whose day is today or has passed is refused with DAY_PASSED, by the clock the service has', async () => {
+  const s = await start('2026-11-16T06:30:00Z');
+  try {
+    const refused = await s.call('/review/copy/bb-acme/week-01.json/w1-d1/keep', {});
+    assert.equal(refused.status, 400);
+    assert.equal(((await refused.json()) as { code: string }).code, 'DAY_PASSED');
+    assert.equal((await s.call('/review/copy/bb-acme/week-01.json/w1-d2/keep', {})).status, 200, 'a later day is fine');
+    assert.equal((await s.call('/review/copy/bb-acme/week-01.json/w1-d1/drop', {})).status, 200, 'dropping a post whose day passed is still fine');
+  } finally {
+    await s.done();
+  }
+});

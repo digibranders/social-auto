@@ -7,11 +7,11 @@
  *   - carousel: one active job per client (a new one can start once the last has finished);
  *   - replace: one active job per dropped post (a new topic written for its day); a new one can start once the last has finished;
  *   - topic: one active job per client (a post written from the customer's own statement; a new one can start once the last has finished);
- *   - draw: one job per written batch, so a repeated click can never buy the pictures twice; once it has failed, one more may draw only what it did not finish.
+ *   - draw: one job per written batch (or, for a draw of a set of posts, one active job per set), so a repeated click can never buy the pictures twice; once it has failed, one more may draw only what it did not finish.
  * At most one job per brand runs at a time (two would fight over the same week files); different brands run side by side.
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { LockError, syncDir, withFileLock } from './file-lock.ts';
 
@@ -58,6 +58,8 @@ export interface JobSpec {
   auto?: boolean;
   /** The customer's own statement a post is written from (topic only): its words are kept beside the brand (customer-facts.ts), never in the job. */
   topicId?: string;
+  /** A draw of these posts of a written batch only (the rest of their week stays open). Without it a draw covers every kept post of the week, as batches drawn before this did. */
+  postIds?: string[];
 }
 
 /** What an add-a-network job found, per topic of the batch. */
@@ -98,8 +100,8 @@ const LOG_LINE_CHARS = 300;
 /** A key that looks like one of ours must never be shown, whatever the engine printed. */
 export const scrub = (line: string): string => line.replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{10,}/g, '[key removed]').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{10,}/gi, 'Bearer [removed]').slice(0, LOG_LINE_CHARS);
 
-export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network' | 'week'>): string =>
-  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'topic' ? `topic:${spec.brand}` : spec.kind === 'replace' ? `replace:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
+export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network' | 'week' | 'postIds'>): string =>
+  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}${spec.postIds && spec.postIds.length > 0 ? `:${createHash('sha1').update([...spec.postIds].sort().join(',')).digest('hex').slice(0, 10)}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'topic' ? `topic:${spec.brand}` : spec.kind === 'replace' ? `replace:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
 
 export class JobStore {
   private readonly dir: string;
@@ -149,7 +151,8 @@ export class JobStore {
       const last = existing.at(-1);
       // A draw is asked for once; only after it has failed may what it did not finish be asked for again (never while one is waiting, running or done).
       const retrying = spec.kind === 'draw' && spec.retry === true && last?.state === 'failed';
-      const standing = retrying ? undefined : spec.kind === 'draw' ? last : existing.find((j) => j.state === 'queued' || j.state === 'running');
+      // A draw of a set of posts is the same ask only while one for that very set is waiting or running: once it has finished, the posts it did not finish may be asked for again.
+      const standing = retrying ? undefined : spec.kind === 'draw' && !spec.postIds ? last : existing.find((j) => j.state === 'queued' || j.state === 'running');
       if (standing) return { job: standing, created: false };
       // Jobs run in the order they were asked for: two asked in the same millisecond still get distinct, increasing times.
       const newest = this.readAll().reduce((latest, j) => Math.max(latest, Date.parse(j.createdAt)), 0);
@@ -173,6 +176,7 @@ export class JobStore {
         ...(spec.week ? { week: spec.week } : {}),
         ...(spec.auto ? { auto: true as const } : {}),
         ...(spec.topicId ? { topicId: spec.topicId } : {}),
+        ...(spec.postIds && spec.postIds.length > 0 ? { postIds: [...spec.postIds] } : {}),
         ...(spec.network ? { network: spec.network } : {}),
         state: 'queued',
         createdAt: stamp.toISOString(),
