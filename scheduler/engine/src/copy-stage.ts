@@ -15,7 +15,7 @@ import type { NotDrawn } from './not-drawn.ts';
 export type CopyState = 'pending' | 'kept' | 'dropped';
 
 export class CopyStageError extends Error {
-  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'CLOSED' | 'REJECTED' | 'LOCKED' | 'CONFLICT' | 'LIMIT' | 'DAY_PASSED';
+  readonly code: 'NOT_FOUND' | 'INVALID' | 'ALREADY_DRAWN' | 'CLOSED' | 'REJECTED' | 'LOCKED' | 'CONFLICT' | 'LIMIT' | 'DAY_PASSED' | 'OUTSIDE_WEEK';
   constructor(code: CopyStageError['code'], message: string) {
     super(message);
     this.name = 'CopyStageError';
@@ -265,6 +265,34 @@ export class CopyStage {
       const added: CopyPost = { postId: post.postId, date: gone.date as string, headline: post.headline, caption: post.caption, contentHash: copyHash(post.headline, post.caption, textsOf(post.captions)), ...(post.captions && Object.keys(post.captions).length > 0 ? { captions: post.captions } : {}), ...(post.advice ? { advice: post.advice.slice(0, 300) } : {}), state: 'pending', replaces: droppedId };
       const next: CopyBatch = { ...batch, posts: [...batch.posts, added], replacements: { ...(batch.replacements ?? {}), [week]: (batch.replacements?.[week] ?? 0) + 1 }, replacedBy: { ...(batch.replacedBy ?? {}), [droppedId]: post.postId } };
       return { batch: next, result: next };
+    });
+  }
+
+  /**
+   * Moves a written post to another day of its own week (Monday to Sunday), before its week is drawn: whatever its state (pending, kept, dropped). `rewritePlan` is called under the
+   * same lock with the post's id and the new day, so the plan file the pictures are drawn and released from carries the same day; it runs before the batch is written, and a failure
+   * leaves the batch as it was. Moving to the day it already has changes nothing. `today` is the day in India time (YYYY-MM-DD).
+   */
+  movePost(planFile: string, postId: string, day: string, today: string, rewritePlan: (postId: string, day: string) => void): { batch: CopyBatch; moved: boolean } {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || Number.isNaN(Date.parse(`${day}T00:00:00Z`)) || new Date(`${day}T00:00:00Z`).toISOString().slice(0, 10) !== day) throw new CopyStageError('INVALID', 'the day must be a real day like 2026-11-25');
+    return this.change<{ batch: CopyBatch; moved: boolean }>(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be changed');
+      const post = batch.posts.find((p) => p.postId === postId);
+      if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
+      if (postLocked(batch, post)) throw new CopyStageError('ALREADY_DRAWN', 'this post was already sent to be drawn, so its day is final');
+      if (post.date === undefined) throw new CopyStageError('INVALID', 'this post has no day, so it cannot be moved');
+      if (post.date === day) return { batch, result: { batch, moved: false } };
+      if (mondayOf(day) !== weekOfPost(post)) throw new CopyStageError('OUTSIDE_WEEK', 'a post can only move to another day of its own week');
+      if (day <= today) throw new CopyStageError('DAY_PASSED', 'that day is today or has passed');
+      rewritePlan(postId, day);
+      const from = post.date;
+      const posts = batch.posts.map((p) => (p.postId === postId ? { ...p, date: day } : p));
+      // A day the plan asked for that this post leaves (and no other post is on) is now the day it was moved to, so it is not reported as a day with no post.
+      const left = !posts.some((p) => p.date === from);
+      const requestedDays = batch.requestedDays && left && batch.requestedDays.includes(from) ? [...new Set(batch.requestedDays.map((d) => (d === from ? day : d)))].sort() : batch.requestedDays;
+      const next: CopyBatch = { ...batch, posts, ...(requestedDays ? { requestedDays } : {}) };
+      return { batch: next, result: { batch: next, moved: true } };
     });
   }
 

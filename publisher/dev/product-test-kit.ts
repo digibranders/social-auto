@@ -119,6 +119,9 @@ export interface FakePoster {
   rejectedFor?: string;
   /** A slide or a caption of a carousel: shown with the carousel, never as a picture of its own. */
   carousel?: { id: string; position: number; count: number };
+  /** The day and time (India time) the post is planned for, as the engine reads them from the plan file. */
+  date?: string;
+  time?: string;
 }
 
 export interface FakeCarousel {
@@ -260,6 +263,21 @@ export async function fakeEngine(): Promise<FakeEngine> {
       }
       if (req.method === 'GET' && url.pathname === '/review/copy') {
         return send(200, { batches: engine.batches.filter((b) => b.brand === caller && !b.closedAt && !b.drawnAt).map((b) => ({ ...b, networks: ['instagram'], costUsd: 0.5 })), networkRules: { instagram: { maxCaption: 600, recommendedMin: 100, recommendedMax: 300, visibleChars: 125, maxHashtags: 5 } } });
+      }
+      const moveRoute = /^\/review\/copy\/([^/]+)\/([^/]+)\/([^/]+)\/move$/.exec(url.pathname);
+      if (moveRoute && req.method === 'POST') {
+        const [, brand = '', planFile = '', postId = ''] = moveRoute;
+        const batch = engine.batches.find((b) => b.brand === brand && b.planFile === planFile);
+        const post = batch?.posts.find((p) => p.postId === postId);
+        if (brand !== caller || !batch || !post) return send(404, { error: 'no such post', code: 'NOT_FOUND' });
+        if (batch.drawnAt || batch.closedAt) return send(409, { error: 'drawing was already asked for /home/social/x', code: 'ALREADY_DRAWN' });
+        const to = String(body?.['day']);
+        const week = (d: string): string => mondayOfDay(d);
+        if (post['date'] === to) return send(200, { batch, moved: false, warnings: [] });
+        if (week(to) !== week(String(post['date']))) return send(400, { error: 'outside the week /home/social/x', code: 'OUTSIDE_WEEK' });
+        if (to <= new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10)) return send(400, { error: 'the day has passed /home/social/x', code: 'DAY_PASSED' });
+        post['date'] = to;
+        return send(200, { batch, moved: true, warnings: /friday/i.test(`${post.headline} ${post.caption}`) ? ['WORDS_NAME_A_DAY'] : [] });
       }
       const replaceRoute = /^\/review\/copy\/([^/]+)\/([^/]+)\/([^/]+)\/replace$/.exec(url.pathname);
       if (replaceRoute && req.method === 'POST') {

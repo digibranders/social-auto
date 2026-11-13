@@ -89,6 +89,8 @@ export class EngineError extends Error {
         return 'NOT_FOUND';
       case 400:
         if (this.textReason === 'LINK_NOT_ALLOWED') return 'LINK_NOT_ALLOWED';
+        if (this.engineCode === 'DAY_PASSED') return 'DAY_PASSED';
+        if (this.engineCode === 'OUTSIDE_WEEK') return 'INVALID_DAY';
         return this.textReason !== undefined ? 'TEXT_REFUSED' : 'INVALID_REQUEST';
       case 422:
         return this.engineCode === 'NOTHING_KEPT' ? 'NOTHING_KEPT' : 'WORDS_NOT_ACCEPTED';
@@ -112,7 +114,8 @@ export class EngineError extends Error {
 /** What a product is told about a refusal, by the engine's code and never by the engine's own words. */
 function refusalMessage(status: number, engineCode: string | undefined): string {
   if (engineCode === 'NOTHING_KEPT') return 'keep at least one post before asking for pictures';
-  if (engineCode === 'DAY_PASSED') return 'the day of this post is today or has passed, so a new topic cannot be written for it';
+  if (engineCode === 'DAY_PASSED') return 'that day is today or has passed';
+  if (engineCode === 'OUTSIDE_WEEK') return 'a post can only move to another day of its own week';
   if (engineCode === 'LIMIT') return 'this picture was already drawn again as often as is allowed';
   if (engineCode === 'STALE') return 'a newer picture replaced this one';
   if (engineCode === 'BLOCKED') return 'this picture did not pass the checks, so it cannot be approved';
@@ -160,6 +163,8 @@ export interface JobView {
 const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel', topic: 'topic', replace: 'replace' };
 const CODE = /^[A-Z][A-Z_]{1,40}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** A time of day, HH:MM (24 hour). */
+const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 const STATE: Record<string, JobView['state']> = { queued: 'queued', running: 'running', succeeded: 'done', failed: 'failed' };
 
@@ -212,8 +217,9 @@ export type NetworkCaption = { text: string; edited?: boolean; fallback?: boolea
 
 export interface WrittenPostView {
   id: string;
-  /** The day the post goes out (YYYY-MM-DD, India time), when the batch records it. */
+  /** The day the post goes out (YYYY-MM-DD, India time), when the batch records it, and its time (HH:MM, India time) when the plan says. */
   date?: string;
+  time?: string;
   /** Set when the post was kept but got no picture in its week's draw. */
   notDrawn?: { code: NotDrawnCode; message: string };
   headline: string;
@@ -317,7 +323,8 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
     const advice = str(p['advice'], 300);
     const date = typeof p['date'] === 'string' && DAY.test(p['date']) ? p['date'] : undefined;
     const nd = isObject(p['notDrawn']) && typeof p['notDrawn']['code'] === 'string' && NOT_DRAWN_CODES.includes(p['notDrawn']['code']) ? (p['notDrawn']['code'] as NotDrawnCode) : undefined;
-    return [{ id: p['postId'], ...(date ? { date } : {}), ...(nd ? { notDrawn: { code: nd, message: NOT_DRAWN_REASON[nd] } } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}), ...(typeof p['replaces'] === 'string' && PART.test(p['replaces']) ? { replaces: p['replaces'] } : {}), ...(typeof replacedBy[p['postId']] === 'string' && PART.test(replacedBy[p['postId']] as string) ? { replacedBy: replacedBy[p['postId']] as string } : {}) }];
+    const time = typeof p['time'] === 'string' && CLOCK.test(p['time']) ? p['time'] : undefined;
+    return [{ id: p['postId'], ...(date ? { date } : {}), ...(time ? { time } : {}), ...(nd ? { notDrawn: { code: nd, message: NOT_DRAWN_REASON[nd] } } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}), ...(typeof p['replaces'] === 'string' && PART.test(p['replaces']) ? { replaces: p['replaces'] } : {}), ...(typeof replacedBy[p['postId']] === 'string' && PART.test(replacedBy[p['postId']] as string) ? { replacedBy: replacedBy[p['postId']] as string } : {}) }];
   });
   // The list names the networks; an answer to a decision does not, so they are read from the captions then.
   const named = Array.isArray(raw['networks']) ? raw['networks'].filter((n): n is string => typeof n === 'string').slice(0, 10) : [];
@@ -368,6 +375,9 @@ export interface PosterView {
   canRedraw: boolean;
   redrawsLeft: number;
   createdAt: string;
+  /** The day (YYYY-MM-DD) and time (HH:MM), India time, the post is planned for. Left out when the plan does not say. */
+  date?: string;
+  time?: string;
   /** The OTHER networks whose current picture of this post is the very same drawing (for example Facebook and Google share Instagram's square). Left out when none. */
   sharedWith?: string[];
 }
@@ -503,6 +513,8 @@ function posterOf(raw: unknown, brand: string): PosterView | null {
     canRedraw: raw['canRedraw'] === true,
     redrawsLeft: Math.max(0, Math.floor(num(raw['redrawsLeft']))),
     createdAt: str(raw['createdAt'], 40) ?? '',
+    ...(typeof raw['date'] === 'string' && DAY.test(raw['date']) ? { date: raw['date'] } : {}),
+    ...(typeof raw['time'] === 'string' && CLOCK.test(raw['time']) ? { time: raw['time'] } : {}),
   };
   if (typeof raw['imageSha256'] === 'string' && /^[a-f0-9]{64}$/.test(raw['imageSha256'])) IMAGE_HASH.set(view, raw['imageSha256']);
   return view;
@@ -669,6 +681,16 @@ export class WorkspaceEngine {
     const job = this.own(isObject(answer) ? answer['job'] : undefined);
     if (!job) throw unavailable();
     return { job, created: isObject(answer) && answer['created'] === true };
+  }
+
+  /** Moves a written post to another day of its own week, before its week is drawn. Answers the batch as it is now and whether its words name a day (they are not rewritten). */
+  async moveWrittenPost(batchId: string, postId: string, day: string, actor: string): Promise<{ batch: BatchView; warnings: string[] }> {
+    if (!PART.test(batchId) || !PART.test(postId)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/copy/${this.brand}/${batchId}/${postId}/move`, actor, { day });
+    const batch = batchViewOf(isObject(answer) ? answer['batch'] : undefined, this.brand);
+    if (!batch) throw unavailable();
+    const warnings = isObject(answer) && Array.isArray(answer['warnings']) ? answer['warnings'].filter((w): w is string => w === 'WORDS_NAME_A_DAY') : [];
+    return { batch, warnings };
   }
 
   /** Keeps or drops one written post. */
