@@ -76,6 +76,14 @@ What the system then does for her, and only this, **with every automatic check s
 
 The days are used when a batch is written (`POST /api/v1/site-jobs`, see `weekdays`): **a week already written or drawn never moves**, and changing them changes only batches started afterwards. A topic request still goes out on the day the customer picks, whatever her days are.
 
+## Disconnecting a channel (`/api/v1/channels`)
+
+A customer may disconnect one of her connected channels (`instagram:<id>`, `facebook:<page id>`, `linkedin:<id>`, `google:<location id>`: the ids in the workspace's `channels`).
+
+- `GET /api/v1/channels?externalId=&channelId=` shows what disconnecting would stop, so the screen can say it before she confirms: `{scheduled, days, approved, running, onlyChannel}`. `scheduled` is how many posts are still to go out on that channel (not skipped, not sent to it yet, time not past its window) and `days` their days (`YYYY-MM-DD`, India time, earliest first); `approved` how many pictures she approved for that network are for a day not yet over; `running` the kinds of work in progress that touch the channel (`write`, `draw`, ...); `onlyChannel` whether it is the only channel she has connected. `404 NOT_FOUND` for a channel that is not hers, `400 INVALID_REQUEST` for a bad id.
+- `POST /api/v1/channels {externalId, action: "disconnect", channelId, confirmOnly?: true}` (`X-Social-Actor` required) disconnects it and answers `{workspace}` (the same shape as the workspace read). **Our saved login is deleted at once**, and the network is asked to forget the access where it allows (best effort, never blocks the disconnect): Google, and LinkedIn when our app's credentials are set on the server; for Instagram and Facebook she removes the app in her own Facebook or Instagram settings. **Posts are not deleted:** a post aimed at the channel is held for it (`ACCOUNT_DISCONNECTED` in its `targets`) while it still goes to her other channels, and if the **same account is connected again** while the post's time window is open (20 hours after its time) it goes out; a post whose time has passed is not sent late. Approved pictures stay approved. Numbers already collected (analytics) stay. Nothing new is drawn for the channel (the poster service is told which networks are still connected); work already running finishes. A channel that is already gone is a `200` that changes nothing.
+- Refusals: `409 CONFLICT` with a ready sentence in `error` while pictures or posts are being made for the channel (wait, then disconnect); `409 ONLY_CHANNEL` when it is her only connected channel and `confirmOnly` is not `true` (send `confirmOnly: true` after she confirms); `400 ACTOR_REQUIRED`; `400 INVALID_REQUEST` (a bad `channelId`, `action` or `confirmOnly`); `404 WORKSPACE_NOT_FOUND`.
+
 ## Facts and written posts
 
 Both need `X-Social-Actor` (the customer's person) to **decide**; reading works without it. Nothing here is drawn or paid for.
@@ -213,6 +221,7 @@ Every error answers `{"error": "<a plain sentence>", "code": "<CODE>"}`. The sen
 | `INVALID_SITE` | 400 | `site` is missing or not a public website address |
 | `SITE_MISMATCH` | 400 | the customer already uses a different website |
 | `INVALID_NETWORKS` | 400 | `networks` is not a list of `instagram`, `facebook`, `linkedin`, `google` |
+| `ONLY_CHANNEL` | 409 | disconnecting her only connected channel needs `confirmOnly: true` |
 | `CONSENT_REQUIRED` | 400 | switching automatic posting on needs `consent: true` after she accepted your consent text |
 | `INVALID_DAYS` | 400 | `weekdays` or a channel's days is not a non-empty list of `mon` to `sun` |
 | `CHANNEL_DAYS_DIFFER` | 400 | the networks of the batch were saved with different days: start one batch for each channel |
