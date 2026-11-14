@@ -102,12 +102,12 @@ test('the carousel is listed and shown whole with its slides and the words for e
     const brand = await workspace('shop-1');
     addCarousel(engine, brand);
     const list = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1');
-    assert.deepEqual(list.body, { carousels: [{ id: 'car-1', topic: 'Why it works', date: '2026-11-17T10:00:00+05:30', count: 3, status: 'pending' }], weekly: false });
+    assert.deepEqual(list.body, { carousels: [{ id: 'car-1', topic: 'Why it works', date: '2026-11-17T10:00:00+05:30', count: 3, status: 'pending', headlines: ['Slide 1 words', 'Slide 2 words', 'Slide 3 words'] }], weekly: false });
     const one = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1&id=car-1');
     assert.equal(one.status, 200, JSON.stringify(one.body));
     const carousel = one.body['carousel'] as { id: string; count: number; status: string; slides: Array<Record<string, unknown>>; captions: Array<{ network: string; caption: string }> };
     assert.deepEqual([carousel.id, carousel.count, carousel.status], ['car-1', 3, 'pending']);
-    assert.deepEqual(carousel.slides, [{ position: 1, status: 'pending' }, { position: 2, status: 'pending' }, { position: 3, status: 'pending' }]);
+    assert.deepEqual(carousel.slides, [{ position: 1, status: 'pending', headline: 'Slide 1 words' }, { position: 2, status: 'pending', headline: 'Slide 2 words' }, { position: 3, status: 'pending', headline: 'Slide 3 words' }], 'each slide says what is printed on it, without the emphasis marks');
     assert.deepEqual(carousel.captions.map((c) => [c.network, c.caption]), [['linkedin', 'For LinkedIn.']]);
     assert.doesNotMatch(JSON.stringify(one.body), /versionId|bb-|\.0000/, 'no engine ids or brand names are passed on');
     const posters = await call(postersGet, '/api/v1/posters?externalId=shop-1&status=all');
