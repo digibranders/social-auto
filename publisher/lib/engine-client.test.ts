@@ -62,7 +62,7 @@ test('a site job is started with the product\'s own secret, under the workspace\
     assert.deepEqual([sent.method, sent.url, sent.authorization], ['POST', '/review/jobs', `Bearer ${SECRET}`]);
     assert.deepEqual([sent.brand, sent.actor], ['shop-one-aaaaaa', 'brandbasket:u1']);
     assert.deepEqual(sent.body, { kind: 'copy', site: 'https://acme.example.com', networks: ['instagram', 'linkedin'], brand: 'shop-one-aaaaaa' });
-    assert.deepEqual(made, { job: { id: 'job-abc123-0123abcd', kind: 'write', state: 'queued', createdAt: '2026-11-11T08:00:00.000Z' }, created: true });
+    assert.deepEqual(made, { job: { id: 'job-abc123-0123abcd', kind: 'write', state: 'queued', createdAt: '2026-11-11T08:00:00.000Z', networks: ['instagram'] }, created: true });
     assert.doesNotMatch(JSON.stringify(made), /runnerPid|logTail|sk-secret|home\/social|product:brandbasket|key/);
   } finally {
     await engine.close();
