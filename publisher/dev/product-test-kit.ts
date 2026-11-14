@@ -55,7 +55,9 @@ export async function call(handler: Handler, path: string, init: { method?: stri
 export interface FakeJob {
   id: string;
   key: string;
-  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet' | 'carousel' | 'topic' | 'replace';
+  kind: 'copy' | 'draw' | 'redraw' | 'network' | 'newnet' | 'carousel' | 'carouseldraw' | 'topic' | 'replace';
+  /** For a carousel drawing job: which carousel. */
+  carouselId?: string;
   brand: string;
   site: string;
   by: string;
@@ -131,7 +133,9 @@ export interface FakeCarousel {
   id: string;
   topic: string;
   date: string;
-  status: 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
+  status: 'topic' | 'kept' | 'dropped' | 'drawing' | 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
+  /** The words of each slide while the carousel is only a topic (no picture yet). */
+  headlines?: string[];
   /** The version ids of its slides, in order, and the words for each channel. */
   slides: string[];
   captions: Array<{ network: string; caption: string }>;
@@ -393,12 +397,34 @@ export async function fakeEngine(): Promise<FakeEngine> {
         if (req.method === 'PUT' && body) engine.carouselWeekly = body['enabled'] === true;
         return send(200, { enabled: engine.carouselWeekly });
       }
-      if (req.method === 'GET' && url.pathname === '/review/carousels') return send(200, { carousels: engine.carousels.filter((c) => c.brand === caller).map((c) => ({ id: c.id, topic: c.topic, date: c.date, createdAt: c.date, planFile: 'week-09.json', count: c.slides.length, status: c.status, headlines: c.slides.map((_, i) => `Slide |${i + 1}| words`) })).reverse() });
-      const carousel = /^\/review\/carousels\/([^/]+)\/([^/]+)(?:\/(approve|reject|move))?$/.exec(url.pathname);
+      if (req.method === 'GET' && url.pathname === '/review/carousels') return send(200, { carousels: engine.carousels.filter((c) => c.brand === caller).map((c) => ({ id: c.id, topic: c.topic, date: c.date, createdAt: c.date, planFile: 'week-09.json', count: c.headlines ? c.headlines.length : c.slides.length, status: c.status, headlines: c.headlines ?? c.slides.map((_, i) => `Slide |${i + 1}| words`) })).reverse() });
+      const carousel = /^\/review\/carousels\/([^/]+)\/([^/]+)(?:\/(approve|reject|move|keep|drop|reset|draw))?$/.exec(url.pathname);
       if (carousel) {
         const [, carouselBrand = '', carouselId = '', verb] = carousel;
         const found = engine.carousels.find((c) => c.brand === carouselBrand && c.id === carouselId);
         if (carouselBrand !== caller || !found) return send(404, { error: 'no such carousel', code: 'NOT_FOUND' });
+        const topicStage = found.status === 'topic' || found.status === 'kept' || found.status === 'dropped' || found.status === 'drawing';
+        if (!verb && topicStage) return send(200, { id: found.id, count: (found.headlines ?? []).length, status: found.status, slides: (found.headlines ?? []).map((headline, i) => ({ position: i + 1, versionId: null, status: found.status, headline })), captions: found.captions.map((c) => ({ ...c, status: found.status })), reasons: ['weak_copy', 'other', 'style'] });
+        if (verb === 'keep' || verb === 'drop' || verb === 'reset') {
+          const today = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+          if (!topicStage || found.status === 'drawing') return send(409, { error: 'this carousel was already drawn', code: 'ALREADY_DRAWN' });
+          if (verb !== 'drop' && found.date.slice(0, 10) <= today) return send(400, { error: 'the day of this carousel is today or has passed', code: 'DAY_PASSED' });
+          found.status = verb === 'keep' ? 'kept' : verb === 'drop' ? 'dropped' : 'topic';
+          return send(200, { id: found.id, status: found.status });
+        }
+        if (verb === 'draw') {
+          const today = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+          const standing = engine.jobs.find((j) => j.kind === 'carouseldraw' && j.carouselId === found.id && (j.state === 'queued' || j.state === 'running'));
+          if (standing) return send(200, { job: standing, created: false });
+          if (!topicStage) return send(409, { error: 'this carousel was already drawn', code: 'ALREADY_DRAWN' });
+          if (found.status !== 'kept') return send(409, { error: 'keep the carousel before drawing it', code: 'CONFLICT' });
+          if (found.date.slice(0, 10) <= today) return send(400, { error: 'the day of this carousel is today or has passed', code: 'DAY_PASSED' });
+          counter += 1;
+          const drawJob: FakeJob = { id: `job-a${counter.toString(36).padStart(5, '0')}-0123abcd`, key: `carouseldraw:${found.id}`, kind: 'carouseldraw', brand: caller, site: 'https://acme.example', by: header('x-actor') ?? '', networks: [], carouselId: found.id, state: 'queued', createdAt: new Date().toISOString() };
+          engine.jobs.unshift(drawJob);
+          found.status = 'drawing';
+          return send(202, { job: drawJob, created: true });
+        }
         if (!verb) return send(200, { id: found.id, count: found.slides.length, status: found.status, slides: found.slides.map((versionId, i) => ({ position: i + 1, versionId, status: found.status === 'approved' ? 'approved' : 'pending', headline: `Slide |${i + 1}| words`, caption: '' })), captions: found.captions.map((c) => ({ ...c, versionId: `${caller}.${'c'.repeat(16)}`, status: found.status === 'approved' ? 'approved' : 'pending' })), reasons: ['weak_copy', 'other'] });
         if (verb === 'move') {
           const day = String(body?.['day']);

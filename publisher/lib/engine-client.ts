@@ -150,6 +150,8 @@ export interface JobView {
   week?: string;
   /** True for a draw the system started by itself (the weekly draw); it is not one of the customer's own asks. */
   auto?: boolean;
+  /** For a `carousel` job that draws the slides of a kept carousel: which carousel. */
+  carouselId?: string;
   /** The channels a `write`, `draw` or `network` job is for (for example ["instagram"]); left out when the engine does not say. */
   networks?: string[];
   state: 'queued' | 'running' | 'done' | 'failed';
@@ -162,7 +164,7 @@ export interface JobView {
   finishedAt?: string;
 }
 
-const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel', topic: 'topic', replace: 'replace' };
+const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel', carouseldraw: 'carousel', topic: 'topic', replace: 'replace' };
 const CODE = /^[A-Z][A-Z_]{1,40}$/;
 const NETWORK_NAMES: readonly string[] = ['instagram', 'facebook', 'linkedin', 'google'];
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -185,6 +187,7 @@ function jobView(raw: unknown): { view: JobView; brand: string } | null {
   if ((JOB_KIND[kind] === 'draw' || JOB_KIND[kind] === 'network' || JOB_KIND[kind] === 'replace') && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
   if (JOB_KIND[kind] === 'draw' && typeof raw['week'] === 'string' && DAY.test(raw['week'])) view.week = raw['week'];
   if (JOB_KIND[kind] === 'replace' && typeof raw['postId'] === 'string' && PART.test(raw['postId'])) view.postId = raw['postId'];
+  if (kind === 'carouseldraw' && typeof raw['carouselId'] === 'string' && CAROUSEL_ID.test(raw['carouselId'])) view.carouselId = raw['carouselId'];
   if (raw['auto'] === true) view.auto = true;
   if (view.kind === 'write' || view.kind === 'draw' || view.kind === 'network') {
     const listed = Array.isArray(raw['networks']) ? raw['networks'].filter((n): n is string => typeof n === 'string' && NETWORK_NAMES.includes(n)) : [];
@@ -399,9 +402,12 @@ export interface PosterView {
   sharedWith?: string[];
 }
 
-/** Where a carousel stands as a whole. `incomplete`: not every slide is ready; `pending`: waiting for the customer. */
-export type CarouselStatus = 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
-const CAROUSEL_STATUSES: readonly string[] = ['incomplete', 'blocked', 'rejected', 'approved', 'pending'];
+/**
+ * Where a carousel stands as a whole. Its topic comes first: `topic` (words only, she has not decided), `kept` (she chose it, not drawn yet), `dropped`, `drawing` (the slides are being drawn).
+ * Then, once drawn: `incomplete` (not every slide is ready), `pending` (waiting for the customer), `approved`, `rejected`, `blocked`.
+ */
+export type CarouselStatus = 'topic' | 'kept' | 'dropped' | 'drawing' | 'incomplete' | 'blocked' | 'rejected' | 'approved' | 'pending';
+const CAROUSEL_STATUSES: readonly string[] = ['topic', 'kept', 'dropped', 'drawing', 'incomplete', 'blocked', 'rejected', 'approved', 'pending'];
 const carouselStatus = (value: unknown): CarouselStatus => (typeof value === 'string' && CAROUSEL_STATUSES.includes(value) ? (value as CarouselStatus) : 'incomplete');
 
 export type TopicState = 'writing' | 'waiting_for_words' | 'drawing' | 'drawn' | 'not_made';
@@ -868,10 +874,26 @@ export class WorkspaceEngine {
       const position = Math.floor(num(s['position']));
       if (position < 1 || position > 10) return [];
       const versionId = typeof s['versionId'] === 'string' && VERSION_ID.test(s['versionId']) && s['versionId'].startsWith(`${this.brand}.`) ? s['versionId'] : null;
-      return [{ position, status: versionId ? (str(s['status'], 20) ?? 'pending') : 'missing', headline: (str(s['headline'], 300) ?? '').replaceAll('|', ''), ...(versionId ? { versionId } : {}) }];
+      return [{ position, status: versionId ? (str(s['status'], 20) ?? 'pending') : (s['status'] === 'topic' || s['status'] === 'kept' || s['status'] === 'dropped' || s['status'] === 'drawing' ? s['status'] : 'missing'), headline: (str(s['headline'], 300) ?? '').replaceAll('|', ''), ...(versionId ? { versionId } : {}) }];
     });
     const captions = (Array.isArray(answer['captions']) ? answer['captions'] : []).flatMap((c): CarouselDetail['captions'] => (isObject(c) && typeof c['network'] === 'string' && NETWORK_ORDER.includes(c['network']) ? [{ network: c['network'], caption: str(c['caption'], 3000) ?? '', status: str(c['status'], 20) ?? 'pending' }] : []));
     return { id, count: Math.max(0, Math.floor(num(answer['count']))), status: carouselStatus(answer['status']), slides, captions };
+  }
+
+  /** Her choice about a carousel's topic: keep it, drop it, or put it back to undecided. Answers where it stands now. */
+  async decideCarousel(id: string, verb: 'keep' | 'drop' | 'reset', actor: string): Promise<{ id: string; status: CarouselStatus }> {
+    if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/carousels/${this.brand}/${id}/${verb}`, actor, {});
+    return { id, status: carouselStatus(isObject(answer) ? answer['status'] : undefined) };
+  }
+
+  /** Draws the slides of a kept carousel: a job of its own (asking again while it runs answers the same job). */
+  async drawCarousel(id: string, actor: string): Promise<{ job: JobView; created: boolean }> {
+    if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/carousels/${this.brand}/${id}/draw`, actor, {});
+    const job = this.own(isObject(answer) ? answer['job'] : undefined);
+    if (!job) throw unavailable();
+    return { job, created: isObject(answer) && answer['created'] === true };
   }
 
   /** Moves a waiting or approved carousel to another day of its own week; the answer is its id and its day now. */

@@ -10,7 +10,7 @@ import { ProductBrands } from './product-brands.ts';
 import { readCarouselWeekly, runWeeklyCarousels, WEEKLY_CAROUSEL_BY, writeCarouselWeekly } from './weekly-carousel.ts';
 import type { CarouselMade } from './carousel-limit.ts';
 
-// Thursday 2026-11-12 10:00 India time is the moment the week of Monday 2026-11-16 is due; Monday 2026-11-09's Friday is 2026-11-13.
+// The topic of the week of Monday 2026-11-16 is due from Monday 2026-11-09 10:00 India time; on Thursday 2026-11-12 both that week and the current one (Friday 2026-11-13) are open.
 const THU = new Date('2026-11-12T04:30:00Z');
 
 function setup(over: { enabled?: boolean; connected?: string[] | null; batch?: boolean; brandJson?: boolean } = {}) {
@@ -45,7 +45,7 @@ test('it is off until the customer switches it on, and the switch is kept', () =
   }
 });
 
-test('on the Thursday it makes the week\'s carousel for the Friday, by the system, for her connected channels, and asks only once', () => {
+test('it makes the week\'s carousel topic for the Friday, by the system, for her connected channels, and asks only once', () => {
   const s = setup();
   try {
     const first = s.run(THU);
@@ -95,13 +95,14 @@ test('nothing is made for a customer who is not set up: no connected channels kn
   }
 });
 
-test('the next week is not made before its own Thursday 10:00 India time', () => {
+test('the next week\'s topic is made from the Monday before it at 10:00 India time, not earlier', () => {
   const s = setup();
   try {
-    assert.deepEqual(s.run(new Date('2026-11-05T04:29:00Z')), [{ brand: 'bb-one', week: '2026-11-02', date: '2026-11-06' }], 'only the current week, whose Friday is still ahead');
+    assert.deepEqual(s.run(new Date('2026-11-02T04:29:00Z')), [{ brand: 'bb-one', week: '2026-11-02', date: '2026-11-06' }], 'only the current week, whose Friday is still ahead');
     for (const j of s.jobs.list({ brand: 'bb-one' })) s.jobs.update(j.id, { state: 'succeeded' });
-    assert.deepEqual(s.run(new Date('2026-11-05T04:29:30Z')), [], 'the week of 2026-11-09 is not due for another half minute');
-    assert.deepEqual(s.run(new Date('2026-11-05T04:30:00Z')), [{ brand: 'bb-one', week: '2026-11-09', date: '2026-11-13' }]);
+    assert.deepEqual(s.run(new Date('2026-11-02T04:29:30Z')), [], 'the week of 2026-11-09 is not due for another half minute');
+    assert.deepEqual(s.run(new Date('2026-11-02T04:30:00Z')), [{ brand: 'bb-one', week: '2026-11-09', date: '2026-11-13' }]);
+    assert.equal(s.jobs.list({ brand: 'bb-one' }).every((j) => j.topicOnly === true), true, 'the system writes only the topic, never draws');
   } finally {
     s.done();
   }
