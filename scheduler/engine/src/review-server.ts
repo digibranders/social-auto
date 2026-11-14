@@ -854,8 +854,15 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const carousels = readCarouselHistory(join(root, listBrand)).map((h) => {
           let status: string;
           let count = 0;
-          try { status = listStore.carouselStatus(h.id); count = listStore.carouselSlides(h.id).count; } catch { status = 'incomplete'; }
-          return { id: h.id, topic: h.topic, date: h.date ?? h.createdAt, createdAt: h.createdAt, planFile: h.planFile, count, status };
+          let headlines: string[] = [];
+          try {
+            status = listStore.carouselStatus(h.id);
+            const shown = listStore.carouselSlides(h.id);
+            count = shown.count;
+            // What is printed on each slide, in order (a slide with no picture yet reads as empty), so a week grid needs no second call.
+            headlines = shown.slides.map((item) => (item ? item.version.headline.replaceAll('|', '') : ''));
+          } catch { status = 'incomplete'; }
+          return { id: h.id, topic: h.topic, date: h.date ?? h.createdAt, createdAt: h.createdAt, planFile: h.planFile, count, status, headlines };
         }).reverse();
         return send(res, 200, { carousels });
       }

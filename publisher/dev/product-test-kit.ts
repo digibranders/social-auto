@@ -393,13 +393,13 @@ export async function fakeEngine(): Promise<FakeEngine> {
         if (req.method === 'PUT' && body) engine.carouselWeekly = body['enabled'] === true;
         return send(200, { enabled: engine.carouselWeekly });
       }
-      if (req.method === 'GET' && url.pathname === '/review/carousels') return send(200, { carousels: engine.carousels.filter((c) => c.brand === caller).map((c) => ({ id: c.id, topic: c.topic, date: c.date, createdAt: c.date, planFile: 'week-09.json', count: c.slides.length, status: c.status })).reverse() });
+      if (req.method === 'GET' && url.pathname === '/review/carousels') return send(200, { carousels: engine.carousels.filter((c) => c.brand === caller).map((c) => ({ id: c.id, topic: c.topic, date: c.date, createdAt: c.date, planFile: 'week-09.json', count: c.slides.length, status: c.status, headlines: c.slides.map((_, i) => `Slide |${i + 1}| words`) })).reverse() });
       const carousel = /^\/review\/carousels\/([^/]+)\/([^/]+)(?:\/(approve|reject))?$/.exec(url.pathname);
       if (carousel) {
         const [, carouselBrand = '', carouselId = '', verb] = carousel;
         const found = engine.carousels.find((c) => c.brand === carouselBrand && c.id === carouselId);
         if (carouselBrand !== caller || !found) return send(404, { error: 'no such carousel', code: 'NOT_FOUND' });
-        if (!verb) return send(200, { id: found.id, count: found.slides.length, status: found.status, slides: found.slides.map((versionId, i) => ({ position: i + 1, versionId, status: found.status === 'approved' ? 'approved' : 'pending', headline: 'H', caption: '' })), captions: found.captions.map((c) => ({ ...c, versionId: `${caller}.${'c'.repeat(16)}`, status: found.status === 'approved' ? 'approved' : 'pending' })), reasons: ['weak_copy', 'other'] });
+        if (!verb) return send(200, { id: found.id, count: found.slides.length, status: found.status, slides: found.slides.map((versionId, i) => ({ position: i + 1, versionId, status: found.status === 'approved' ? 'approved' : 'pending', headline: `Slide |${i + 1}| words`, caption: '' })), captions: found.captions.map((c) => ({ ...c, versionId: `${caller}.${'c'.repeat(16)}`, status: found.status === 'approved' ? 'approved' : 'pending' })), reasons: ['weak_copy', 'other'] });
         if (verb === 'reject' && !['weak_copy', 'other', 'style'].includes(String(body?.['reason']))) return send(400, { error: 'the reason must be one of', code: 'INVALID' });
         if (found.status === 'incomplete') return send(400, { error: 'slide 2 has no picture yet', code: 'INVALID' });
         found.status = verb === 'approve' ? 'approved' : 'rejected';
