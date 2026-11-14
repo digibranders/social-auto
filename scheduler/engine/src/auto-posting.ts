@@ -4,7 +4,7 @@
  * It is the customer's own choice (the product records her consent and tells the poster service), kept per brand in `auto-posting.json` in the brand's folder, as the list
  * of channels she chose it for. A channel she connects later is not on the list until she chooses again, so what she agreed to is always what she saw.
  * While it is on, the system does the steps she would otherwise do, and only those, with every automatic check still in force:
- *   keep     a written topic that carries no warning from the checks is kept (a topic with a warning waits for her, as before)
+ *   keep     a written topic that carries no warning from the checks is kept, in a batch written only for channels she chose (a topic with a warning waits for her, as before)
  *   draw     the kept topics of the first week are drawn at once (the weekly draw does the later weeks on their Thursday, as always)
  *   (her own topic requests are never kept or approved here: her words are hers to confirm)
  *   approve  a picture that PASSED the checks is approved once its posting time is within the safety window (default 24 hours before), never before, so she
@@ -14,7 +14,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { readConnected } from './connected-networks.ts';
-import { CopyStage, weekOfPost } from './copy-stage.ts';
+import { CopyStage, weekOfPost, type CopyBatch } from './copy-stage.ts';
 import { isNetwork, type Network } from './networks.ts';
 import type { ProductBrands } from './product-brands.ts';
 import { ReviewStore } from './review-store.ts';
@@ -52,6 +52,18 @@ export function readAutoPosting(brandDir: string): AutoPosting | null {
   } catch {
     return null;
   }
+}
+
+/** The channels a written batch has words for. */
+export const batchNetworks = (batch: Pick<CopyBatch, 'posts'>): Network[] => [...new Set(batch.posts.flatMap((p) => Object.keys(p.captions ?? {})).filter(isNetwork))].sort();
+
+/**
+ * Whether the system keeps and draws this batch for her: only when EVERY channel it is written for is one she chose automatic posting for. A batch for a channel she
+ * kept manual stays fully hers (nothing is kept, no picture is bought), and so does a batch that also covers a manual channel.
+ */
+export function isAutomaticBatch(setting: AutoPosting | null, batch: Pick<CopyBatch, 'posts'>): boolean {
+  const networks = batchNetworks(batch);
+  return setting !== null && networks.length > 0 && networks.every((n) => setting.channels.includes(n));
 }
 
 /** Whether the customer has automatic posting on for any channel. */
@@ -124,10 +136,10 @@ export function runAutoPosting(deps: AutoDeps): AutoAction[] {
     let kept = 0;
     let approved = 0;
     try {
-      // Keep: a topic the checks gave no warning about, for a day still ahead and a week not yet drawn (a drawn week's topics are final).
+      // Keep: in a batch written only for channels she chose, a topic the checks gave no warning about, for a day still ahead and a week not yet drawn (a drawn week's topics are final).
       const stage = new CopyStage(brandDir, brand);
       for (const batch of stage.list()) {
-        if (batch.closedAt || batch.drawnAt || deps.isTopicPlan?.(brand, batch.planFile) === true) continue;
+        if (batch.closedAt || batch.drawnAt || deps.isTopicPlan?.(brand, batch.planFile) === true || !isAutomaticBatch(setting, batch)) continue;
         for (const post of batch.posts) {
           if (post.state !== 'pending' || post.advice !== undefined || post.date === undefined || Date.parse(`${post.date}T23:59:59+05:30`) <= now) continue;
           const week = weekOfPost(post);

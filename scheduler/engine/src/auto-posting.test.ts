@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AUTO_POST_BY, AutoPostingError, isAutomatic, readAutoPosting, runAutoPosting, writeAutoPosting } from './auto-posting.ts';
+import { AUTO_POST_BY, AutoPostingError, isAutomatic, isAutomaticBatch, readAutoPosting, runAutoPosting, writeAutoPosting } from './auto-posting.ts';
 import { writeConnected } from './connected-networks.ts';
 import { CopyStage } from './copy-stage.ts';
 import { JobStore } from './job-store.ts';
@@ -14,11 +14,11 @@ import { ReviewStore } from './review-store.ts';
 import { runWeeklyDraws, type WeeklyDeps } from './weekly-draw.ts';
 
 const caps = (network: string, id: string): { text: string } => ({ text: `${network} ${id}` });
-const post = (id: string, date: string, extra: { advice?: string } = {}) => ({ postId: id, date, headline: `H ${id}`, caption: 'C', captions: { instagram: caps('instagram', id), linkedin: caps('linkedin', id) }, ...extra });
+const post = (id: string, date: string, extra: { advice?: string } = {}, nets: string[] = ['instagram']) => ({ postId: id, date, headline: `H ${id}`, caption: 'C', captions: Object.fromEntries(nets.map((n) => [n, caps(n, id)])), ...extra });
 // Friday 20 November 2026, 12:00 India time.
 const NOW = '2026-11-20T06:30:00Z';
 
-function setup(channels: string[] = ['instagram']) {
+function setup(channels: string[] = ['instagram'], nets: string[] = ['instagram']) {
   const root = mkdtempSync(join(tmpdir(), 'auto-posting-'));
   const brandsRoot = join(root, 'brands');
   const dir = join(brandsRoot, 'bb-acme');
@@ -30,7 +30,7 @@ function setup(channels: string[] = ['instagram']) {
   const times: Record<string, string> = { 'w1-d1': '2026-11-21T10:00:00+05:30', 'w1-d2': '2026-11-24T10:00:00+05:30', 'w1-d3': '2026-11-19T10:00:00+05:30', 'w1-d4': '2026-11-22T10:00:00+05:30' };
   writeFileSync(join(dir, 'week-01.json'), JSON.stringify({ posts: Object.entries(times).map(([id, date]) => ({ id, date })) }));
   const stage = new CopyStage(dir, 'bb-acme');
-  stage.open('week-01.json', [post('w1-d1', '2026-11-21'), post('w1-d2', '2026-11-24'), post('w1-d3', '2026-11-19'), post('w1-d4', '2026-11-22', { advice: 'weak headline' })]);
+  stage.open('week-01.json', [post('w1-d1', '2026-11-21', {}, nets), post('w1-d2', '2026-11-24', {}, nets), post('w1-d3', '2026-11-19', {}, nets), post('w1-d4', '2026-11-22', { advice: 'weak headline' }, nets)]);
   const picture = join(root, 'p.jpg');
   writeFileSync(picture, 'a picture');
   const store = new ReviewStore(dir, 'bb-acme', () => new Date(NOW));
@@ -92,6 +92,30 @@ test('automatic posting keeps the topics that carry no warning and approves only
   }
 });
 
+test('a batch is kept and drawn by the system only when every channel it is written for is one she chose; a batch for a manual channel, or one that also covers a manual channel, stays hers', () => {
+  // She chose Instagram only. A Facebook batch, and a batch for Instagram and Facebook, are not touched.
+  for (const nets of [['facebook'], ['instagram', 'facebook']]) {
+    const s = setup(['instagram'], nets);
+    try {
+      s.add('w1-d1', 'facebook');
+      assert.deepEqual(s.run(NOW), [], `nothing is kept for a batch written for ${nets.join(' and ')}`);
+      assert.deepEqual(s.stage.get('week-01.json').posts.map((p) => p.state), ['pending', 'pending', 'pending', 'pending']);
+      const jobs = new JobStore(join(s.root, 'jobs'));
+      const draws = runWeeklyDraws({ brandsRoot: s.brandsRoot, jobs, owners: s.owners, now: new Date('2026-11-17T06:30:00Z'), made: () => new Set(), room: () => null, siteOf: () => 'https://acme.example', register: () => undefined, automatic: (brand, batch) => isAutomaticBatch(readAutoPosting(join(s.brandsRoot, brand)), batch) });
+      assert.deepEqual(draws, [], 'and no picture is bought for it');
+    } finally {
+      s.done();
+    }
+  }
+  // She chose both: a batch for both is hers to leave to the system.
+  const both = setup(['instagram', 'facebook'], ['instagram', 'facebook']);
+  try {
+    assert.equal(both.run(NOW)[0]?.kept, 2);
+  } finally {
+    both.done();
+  }
+});
+
 test('a customer\'s own topic request is never kept or approved by the system, even when its picture passed the checks', () => {
   const s = setup(['instagram']);
   try {
@@ -139,7 +163,7 @@ test('the weekly draw draws the first week at once only for a customer who chose
   try {
     s.run(NOW);
     const jobs = new JobStore(join(s.root, 'jobs'));
-    const deps = (automatic: boolean): WeeklyDeps => ({ brandsRoot: s.brandsRoot, jobs, owners: s.owners, now: new Date('2026-11-17T06:30:00Z'), made: () => new Set(), room: () => null, siteOf: () => 'https://acme.example', register: () => undefined, automatic: () => automatic });
+    const deps = (automatic: boolean): WeeklyDeps => ({ brandsRoot: s.brandsRoot, jobs, owners: s.owners, now: new Date('2026-11-17T06:30:00Z'), made: () => new Set(), room: () => null, siteOf: () => 'https://acme.example', register: () => undefined, automatic: (brand, batch) => automatic && isAutomaticBatch(readAutoPosting(join(s.brandsRoot, brand)), batch) });
     assert.deepEqual(runWeeklyDraws(deps(false)), [], 'she asks for the first week herself (the second week is not due until Thursday)');
     const drawn = runWeeklyDraws(deps(true));
     assert.deepEqual(drawn.map((a) => [a.week, a.action]), [['2026-11-16', 'drawing']]);
