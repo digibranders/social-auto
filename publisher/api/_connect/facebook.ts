@@ -5,6 +5,7 @@
  *
  * POST /api/facebook-connect   {"code": "...", "redirectUri": "...", "brand": "brandbasket"}
  */
+import { accountInUse, checkHolders, holderOptions } from '../../lib/channel-holder.js';
 import { scheduleData } from '../../lib/schedule-source.js';
 import { addFacebookPages } from '../../lib/channels.js';
 import { parseKey } from '../../lib/crypto.js';
@@ -29,7 +30,8 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof code !== 'string' || typeof redirectUri !== 'string' || typeof brand !== 'string' || !code || !redirectUri || !brand) {
     return json(400, { error: 'code, redirectUri and brand are required' });
   }
-  const knownBrands = allBrands(plannedBrands(), (await loadClients()).file);
+  const clients = (await loadClients()).file;
+  const knownBrands = allBrands(plannedBrands(), clients);
   if (!knownBrands.has(brand)) return json(400, { error: `unknown client "${brand}"` });
 
   try {
@@ -40,6 +42,8 @@ export async function POST(request: Request): Promise<Response> {
     if (pages.length === 0) return json(422, { error: 'No Pages were approved. Choose at least one Page you manage.' });
 
     const { file, etag } = await loadChannels();
+    const verdict = checkHolders(file, clients, brand, pages.map((p) => `facebook:${p.id}`), holderOptions(body));
+    if (!verdict.ok) return accountInUse(verdict);
     await saveChannels(addFacebookPages(file, brand, pages, key, Date.now()), etag);
     return json(200, { pages: pages.map((p) => ({ id: p.id, name: p.name })) });
   } catch (error) {

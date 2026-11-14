@@ -3,6 +3,7 @@
  * GET /api/facebook-start?invite=<link made by a product or the dashboard>   (a customer connecting their own Pages)
  * Sends the person to Facebook to approve the Pages for one client.
  */
+import { attachInvite } from '../../lib/connect-guard.js';
 import { authorizeLink, callbackUrl, connectCookie, isBrand, newState } from '../../lib/facebook-flow.js';
 import { verifyInvite } from '../../lib/linkedin-flow.js';
 import { isSignedIn } from '../../lib/security.js';
@@ -30,8 +31,8 @@ export function GET(request: Request): Response {
   const state = newState();
   const configId = process.env['FACEBOOK_CONFIG_ID'];
   const link = authorizeLink({ appId, redirectUri: callbackUrl(request), state, ...(configId ? { configId } : {}) });
-  return new Response(null, {
+  return attachInvite(new Response(null, {
     status: 302,
     headers: { Location: link, 'Set-Cookie': connectCookie(state, brand, invited?.returnUrl ?? null), 'Cache-Control': 'no-store' },
-  });
+  }), token);
 }

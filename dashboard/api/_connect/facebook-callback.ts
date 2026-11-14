@@ -4,6 +4,7 @@
  * publisher (which swaps it for Page tokens and stores them encrypted). Where the person lands afterwards is
  * decided in lib/connect-result.ts.
  */
+import { guardFor, refusal } from '../../lib/connect-guard.js';
 import { describeError } from '../../lib/http.js';
 import { callbackUrl, clearedConnectCookie, CONNECT_COOKIE, parseConnectCookie, statesMatch } from '../../lib/facebook-flow.js';
 import { finishConnect, type Outcome } from '../../lib/connect-result.js';
@@ -11,8 +12,8 @@ import { readCookie } from '../../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
 
-const finish = (request: Request, outcome: Outcome, brand?: string, returnUrl: string | null = null): Response =>
-  finishConnect({ request, platform: 'facebook', outcome, clearCookie: clearedConnectCookie(), ...(brand ? { brand } : {}), returnUrl });
+const finish = (request: Request, outcome: Outcome, brand?: string, returnUrl: string | null = null, heldBy?: string): Response =>
+  finishConnect({ request, platform: 'facebook', outcome, clearCookie: clearedConnectCookie(), ...(brand ? { brand } : {}), returnUrl, ...(heldBy ? { heldBy } : {}) });
 
 export async function GET(request: Request): Promise<Response> {
   const params = new URL(request.url).searchParams;
@@ -32,9 +33,11 @@ export async function GET(request: Request): Promise<Response> {
     const response = await fetch(new URL('/api/facebook-connect', target), {
       method: 'POST',
       headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, redirectUri: callbackUrl(request), brand: saved.brand }),
+      body: JSON.stringify({ code, redirectUri: callbackUrl(request), brand: saved.brand, ...guardFor(request) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+    const refused = await refusal(response);
+    if (refused) return finish(request, 'inuse', saved.brand, saved.returnUrl, refused.heldBy);
     if (!response.ok) console.error(`facebook-connect answered ${response.status}`);
     return finish(request, response.ok ? 'connected' : 'failed', saved.brand, saved.returnUrl);
   } catch (error) {

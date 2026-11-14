@@ -69,7 +69,7 @@ test('a connect link is signed so the dashboard can trust the client and the ret
   const secret = 's'.repeat(40);
   const link = createInvite(secret, 'brandbasket-biz-123-e87367', Date.parse('2026-11-02T08:00:00Z'), 'https://app.brandbasket.in/social');
   const [payload, signature] = link.split('.') as [string, string];
-  assert.deepEqual(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')), { b: 'brandbasket-biz-123-e87367', e: Date.parse('2026-11-02T09:00:00Z') / 1000, r: 'https://app.brandbasket.in/social' });
+  assert.deepEqual(JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')), { b: 'brandbasket-biz-123-e87367', e: Date.parse('2026-11-02T09:00:00Z') / 1000, g: 1, r: 'https://app.brandbasket.in/social' });
   assert.match(signature, /^[A-Za-z0-9_-]{43}$/);
   assert.notEqual(createInvite('t'.repeat(40), 'brandbasket-biz-123-e87367', 0), createInvite(secret, 'brandbasket-biz-123-e87367', 0));
 });

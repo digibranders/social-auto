@@ -8,7 +8,7 @@ const NOW = Date.parse('2026-11-02T10:00:00Z');
 
 test('an invite names its client and works until it ends', () => {
   const invite = createInvite(SECRET, 'brandbasket', NOW);
-  assert.deepEqual(verifyInvite(invite, SECRET, NOW + 1000), { brand: 'brandbasket', returnUrl: null });
+  assert.deepEqual(verifyInvite(invite, SECRET, NOW + 1000), { brand: 'brandbasket', returnUrl: null, moveFrom: null });
   assert.equal(verifyInvite(invite, SECRET, NOW + 6 * 86_400_000)?.brand, 'brandbasket');
   assert.equal(verifyInvite(invite, SECRET, NOW + 8 * 86_400_000), null);
 });
@@ -49,7 +49,7 @@ test('the LinkedIn link asks for sign-in and posting rights and returns to this 
 test('an invite can carry the page to return to, and that survives the trip through the cookie; unsafe addresses never do', () => {
   const back = 'https://app.brandbasket.in/social?tab=channels';
   const invite = createInvite(SECRET, 'brandbasket', NOW, undefined, back);
-  assert.deepEqual(verifyInvite(invite, SECRET, NOW), { brand: 'brandbasket', returnUrl: back });
+  assert.deepEqual(verifyInvite(invite, SECRET, NOW), { brand: 'brandbasket', returnUrl: back, moveFrom: null });
   const state = 'b'.repeat(32);
   const value = connectCookie(state, 'brandbasket', back, true).split(';')[0]!.split('=')[1];
   assert.deepEqual(parseConnectCookie(value), { state, brand: 'brandbasket', returnUrl: back });
