@@ -49,6 +49,7 @@ import { carouselRoom } from './carousel-limit.ts';
 import { productLimitsOff } from './limits-switch.ts';
 import { readHistory as readCarouselHistory } from './carousel-run.ts';
 import { CarouselMoveError, moveCarousel } from './carousel-move.ts';
+import { carouselStatusOf, CarouselStageError, countedCarousels, decideCarousel, drawProblem, isTopicStage, topicWords } from './carousel-stage.ts';
 import { tomorrowAt } from './posting-plan.ts';
 import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
 import { readCarouselWeekly, runWeeklyCarousels, writeCarouselWeekly } from './weekly-carousel.ts';
@@ -396,10 +397,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               if (carouselFor.length === 0) throw new ReviewError('INVALID', 'none of those channels is connected, so there is nothing to make a carousel for');
               const onDay = `${carouselDay ?? tomorrowAt('+05:30')}T${carouselTime ?? '10:00'}:00+05:30`;
               const carouselStore = storeFor(carouselBrand);
-              const room = carouselRoom(readCarouselHistory(join(root, carouselBrand)).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return carouselStore.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })), onDay);
+              const room = carouselRoom(countedCarousels(readCarouselHistory(join(root, carouselBrand))).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return carouselStore.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })), onDay);
               if (!room.ok && !productLimitsOff()) return send(res, 429, { error: room.message, code: 'CAROUSEL_LIMIT_REACHED', restart: room.restart });
             }
-            const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: scope.by(body['by']), networks: carouselFor, ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
+            // A product's customer gets the topic first (words only, no picture): the slides are drawn once she keeps it.
+            const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: scope.by(body['by']), networks: carouselFor, ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}), ...(caller.role === 'product' ? { topicOnly: true } : {}) });
             return send(res, created ? 202 : 200, { job, created });
           }
           if (body['kind'] === 'topic') {
@@ -852,23 +854,30 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         scope.guard(listBrand, false);
         if (!brands().includes(listBrand)) return send(res, 200, { carousels: [] });
         const listStore = storeFor(listBrand);
+        const drawing = (id: string): boolean => jobs.list({ brand: listBrand }).some((j) => j.kind === 'carouseldraw' && j.carouselId === id && (j.state === 'queued' || j.state === 'running'));
         const carousels = readCarouselHistory(join(root, listBrand)).map((h) => {
-          let status: string;
           let count = 0;
           let headlines: string[] = [];
-          try {
-            status = listStore.carouselStatus(h.id);
-            const shown = listStore.carouselSlides(h.id);
-            count = shown.count;
-            // What is printed on each slide, in order (a slide with no picture yet reads as empty), so a week grid needs no second call.
-            headlines = shown.slides.map((item) => (item ? item.version.headline.replaceAll('|', '') : ''));
-          } catch { status = 'incomplete'; }
-          return { id: h.id, topic: h.topic, date: h.date ?? h.createdAt, createdAt: h.createdAt, planFile: h.planFile, count, status, headlines };
+          const status = carouselStatusOf(h, drawing(h.id), () => {
+            try {
+              const shown = listStore.carouselSlides(h.id);
+              count = shown.count;
+              // What is printed on each slide, in order (a slide with no picture yet reads as empty), so a week grid needs no second call.
+              headlines = shown.slides.map((item) => (item ? item.version.headline.replaceAll('|', '') : ''));
+              return listStore.carouselStatus(h.id);
+            } catch { return 'incomplete'; }
+          });
+          // A carousel whose slides are not drawn yet has its slides' words only.
+          if (isTopicStage(h)) {
+            headlines = topicWords(h).headlines;
+            count = headlines.length;
+          }
+          return { id: h.id, topic: h.topic, date: h.date ?? h.createdAt, createdAt: h.createdAt, ...(h.planFile ? { planFile: h.planFile } : {}), count, status, headlines };
         }).reverse();
         return send(res, 200, { carousels });
       }
       // A carousel: shown whole, and approved or rejected as one step. Its pictures are served by the ordinary picture route, by each slide's version id.
-      if (parts[0] === 'review' && parts[1] === 'carousels' && (parts.length === 4 || (parts.length === 5 && req.method === 'POST' && (parts[4] === 'approve' || parts[4] === 'reject' || parts[4] === 'move')))) {
+      if (parts[0] === 'review' && parts[1] === 'carousels' && (parts.length === 4 || (parts.length === 5 && req.method === 'POST' && (parts[4] === 'approve' || parts[4] === 'reject' || parts[4] === 'move' || parts[4] === 'keep' || parts[4] === 'drop' || parts[4] === 'reset' || parts[4] === 'draw')))) {
         const carouselBrand = decodeURIComponent(parts[2] ?? '');
         const carouselId = decodeURIComponent(parts[3] ?? '');
         scope.guard(carouselBrand, parts.length === 5);
@@ -881,7 +890,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (parts[4] === 'move') {
             if (typeof body['day'] !== 'string') throw new ReviewError('INVALID', 'day must be a day like 2026-11-25');
             try {
-              const moved = moveCarousel({ brandDir: join(root, carouselBrand), id: carouselId, day: body['day'], today: todayIst(), status: ((): string => { try { return carouselStore.carouselStatus(carouselId); } catch { return 'incomplete'; } })() });
+              const moved = moveCarousel({ brandDir: join(root, carouselBrand), id: carouselId, day: body['day'], today: todayIst(), status: carouselStatusOf(readCarouselHistory(join(root, carouselBrand)).find((h) => h.id === carouselId) ?? { id: carouselId, topic: '', createdAt: '' }, false, () => { try { return carouselStore.carouselStatus(carouselId); } catch { return 'incomplete'; } }) });
               if (moved.moved) requestRelease(root);
               return send(res, 200, { id: carouselId, date: moved.date, moved: moved.moved });
             } catch (error) {
@@ -889,6 +898,31 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               throw error;
             }
           }
+          const carouselDir = join(root, carouselBrand);
+          const drawActive = jobs.list({ brand: carouselBrand }).some((j) => j.kind === 'carouseldraw' && j.carouselId === carouselId && (j.state === 'queued' || j.state === 'running'));
+          const stageError = (error: unknown): void => {
+            if (!(error instanceof CarouselStageError)) throw error;
+            send(res, error.code === 'NOT_FOUND' ? 404 : error.code === 'DAY_PASSED' ? 400 : 409, { error: error.message, code: error.code });
+          };
+          // Her choice about a topic whose slides are not drawn yet: keep, drop, or back to undecided.
+          if (parts[4] === 'keep' || parts[4] === 'drop' || parts[4] === 'reset') {
+            try {
+              const entry = decideCarousel({ brandDir: carouselDir, id: carouselId, choice: parts[4] === 'keep' ? 'kept' : parts[4] === 'drop' ? 'dropped' : 'topic', today: todayIst(), drawActive });
+              return send(res, 200, { id: carouselId, status: carouselStatusOf(entry, false, () => 'pending') });
+            } catch (error) {
+              return stageError(error);
+            }
+          }
+          // The slides of a kept carousel are drawn on her ask: a job of its own (about 9 cents), the same ask again is the same job.
+          if (parts[4] === 'draw') {
+            const entry = readCarouselHistory(carouselDir).find((h) => h.id === carouselId);
+            const problem = drawProblem(entry, todayIst());
+            if (problem) return stageError(problem);
+            const { job, created } = jobs.enqueue({ kind: 'carouseldraw', brand: carouselBrand, site: siteOf(carouselBrand), by, carouselId });
+            return send(res, created ? 202 : 200, { job, created });
+          }
+          const stageNow = ((): string => { const e = readCarouselHistory(carouselDir).find((h) => h.id === carouselId); return e && isTopicStage(e) ? 'topic' : 'drawn'; })();
+          if ((parts[4] === 'approve' || parts[4] === 'reject') && stageNow === 'topic') return send(res, 409, { error: 'this carousel is not drawn yet: keep it and draw it first', code: 'CONFLICT' });
           if (parts[4] === 'approve') {
             carouselStore.approveCarousel(carouselId, by);
             // A customer's carousel reaches her calendar through a release record like her pictures do. It is made here too, so one made before the record was made with it (or for a
@@ -908,6 +942,19 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { status: carouselStore.carouselStatus(carouselId) });
         }
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
+        const entryNow = readCarouselHistory(join(root, carouselBrand)).find((h) => h.id === carouselId);
+        // A carousel whose slides are not drawn yet shows its words (no picture): the topic, each slide's headline and the words for each channel.
+        if (entryNow && isTopicStage(entryNow)) {
+          const words = topicWords(entryNow);
+          const active = jobs.list({ brand: carouselBrand }).some((j) => j.kind === 'carouseldraw' && j.carouselId === carouselId && (j.state === 'queued' || j.state === 'running'));
+          const status = carouselStatusOf(entryNow, active, () => 'pending');
+          return send(res, 200, {
+            id: carouselId, count: words.headlines.length, status,
+            slides: words.headlines.map((headline, index) => ({ position: index + 1, versionId: null, status, headline })),
+            captions: words.captions.map((c) => ({ ...c, status })),
+            reasons: REJECTION_REASONS,
+          });
+        }
         const { count, slides, captions } = carouselStore.carouselSlides(carouselId);
         return send(res, 200, {
           id: carouselId, count, status: carouselStore.carouselStatus(carouselId),
@@ -1067,7 +1114,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         // The weekly carousel of each customer who switched it on: made for the Friday of the week, from the Thursday before.
         runWeeklyCarousels({
           brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(),
-          made: (brand) => { const dir = join(root, brand); const st = storeFor(brand); return readCarouselHistory(dir).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return st.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })); },
+          made: (brand) => { const dir = join(root, brand); const st = storeFor(brand); return countedCarousels(readCarouselHistory(dir)).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return st.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })); },
           siteOf: (brand) => { try { return siteOf(brand); } catch { return null; } },
         });
         // Pictures a drawn topic still lacks for a connected channel (added later, or no room at the time): drawn as this week's room allows.

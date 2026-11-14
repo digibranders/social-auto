@@ -11,7 +11,7 @@ import { parseArgs } from 'node:util';
 import { aiConfigFromEnv } from './ai.ts';
 import { slugFromSite } from './analyze.ts';
 import { COMPOSITOR_READY, assertMayDraw, freezeLogo, logoPathFor, resolveBranding } from './branding.ts';
-import { runCarousel } from './carousel-run.ts';
+import { drawCarousel, planCarouselTopic, runCarousel } from './carousel-run.ts';
 import { parseBrand, readJson } from './content.ts';
 import { isCustomerFact } from './customer-facts.ts';
 import { loadFacts } from './evidence-pipeline.ts';
@@ -31,10 +31,10 @@ async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
       site: { type: 'string' }, brand: { type: 'string' }, networks: { type: 'string' }, start: { type: 'string' }, time: { type: 'string', default: '10:00' }, 'utc-offset': { type: 'string', default: '+05:30' },
-      env: { type: 'string' }, 'require-logo': { type: 'boolean', default: false }, 'month-cap-usd': { type: 'string' },
+      env: { type: 'string' }, 'require-logo': { type: 'boolean', default: false }, 'month-cap-usd': { type: 'string' }, 'topic-only': { type: 'boolean', default: false }, draw: { type: 'string' },
     },
   });
-  if (!values.site) throw new Error('Usage: --site <website> --networks <instagram,linkedin,...> [--start YYYY-MM-DD] [--time HH:MM]');
+  if (!values.site) throw new Error('Usage: --site <website> --networks <instagram,linkedin,...> [--start YYYY-MM-DD] [--time HH:MM] [--topic-only]   or   --site <website> --brand <name> --draw <carousel id>');
   const networks = (values.networks ?? '').split(',').map((n) => n.trim()).filter((n) => n !== '');
   for (const n of networks) if (!isNetwork(n)) throw new Error(`--networks names ${NETWORKS.join(', ')}; "${n}" is not one of them`);
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(values.time)) throw new Error('--time must be HH:MM');
@@ -76,18 +76,24 @@ async function main(): Promise<void> {
   if (placeholderEnabled(process.env)) console.log('    PLACEHOLDER PICTURES: no picture model is called; these are plain stand-ins for local testing, never for a real customer.');
 
   const start = values.start ?? tomorrowAt(values['utc-offset']);
-  const result = await runCarousel({
-    ai, brand, brandSlug: slug, brandDir, facts, networks: networks as Network[], date: `${start}T${values.time}:00${values['utc-offset']}`, outRoot: OUT_ROOT, ...(logo ? { logo } : {}),
-    log: (m) => console.log(m),
+  const common = {
+    ai, brand, brandSlug: slug, brandDir, facts, outRoot: OUT_ROOT, ...(logo ? { logo } : {}),
+    log: (m: string) => console.log(m),
     // Local testing with no picture model (PICTURE_MODE=placeholder and LOCAL_PLACEHOLDER_PICTURES=yes): plain stand-ins, everything after them the normal pipeline.
     ...(placeholderEnabled(process.env) ? { deps: { slides: placeholderDeps({ ai }) } } : {}),
-  });
+  };
+  // --draw: the second stage, for a carousel the customer kept (its topic was written earlier); --topic-only: the first stage alone; neither: both in one go.
+  const result = values.draw !== undefined
+    ? await drawCarousel(common, values.draw)
+    : values['topic-only']
+      ? await planCarouselTopic({ ...common, networks: networks as Network[], date: `${start}T${values.time}:00${values['utc-offset']}` })
+      : await runCarousel({ ...common, networks: networks as Network[], date: `${start}T${values.time}:00${values['utc-offset']}` });
   // A product's customer: the carousel can reach her calendar once she approves it (only approved versions are ever released), so its release record is made now.
   if (result.status === 'queued' && result.planFile && new ProductBrands(BRANDS_ROOT).has(slug)) {
     registerManualRelease({ brandDir, siteBrand: slug, client: slug, site: values.site, planFile: result.planFile });
   }
   console.log(ai.usage.format());
-  if (result.status !== 'queued') {
+  if (result.status !== 'queued' && result.status !== 'topic') {
     const reason = result.reason ?? result.status;
     // A spending stop is reported the way the autopilot reports one, so a client's plan stops trying more days that would be refused the same way.
     console.error(/POSTER_BUDGET|RUN_BUDGET|BRAND_DAY_BUDGET|BRAND_MONTH_BUDGET|GLOBAL_DAY_BUDGET|KILL_SWITCH/.test(reason) ? `BUDGET_EXHAUSTED: ${reason}. Nothing more was bought; what was already made is kept.` : `CAROUSEL_NOT_MADE: ${reason}`);

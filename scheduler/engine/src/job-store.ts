@@ -15,7 +15,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { LockError, syncDir, withFileLock } from './file-lock.ts';
 
-export type JobKind = 'copy' | 'draw' | 'carousel' | 'redraw' | 'network' | 'newnet' | 'topic' | 'replace';
+export type JobKind = 'copy' | 'draw' | 'carousel' | 'carouseldraw' | 'redraw' | 'network' | 'newnet' | 'topic' | 'replace';
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export class JobError extends Error {
@@ -60,6 +60,10 @@ export interface JobSpec {
   topicId?: string;
   /** A draw of these posts of a written batch only (the rest of their week stays open). Without it a draw covers every kept post of the week, as batches drawn before this did. */
   postIds?: string[];
+  /** A carousel job that writes only the topic, the slide headlines and the channel words (no picture); the drawing is a job of its own once the customer kept it (carousel only). */
+  topicOnly?: boolean;
+  /** The carousel to draw (carouseldraw only). */
+  carouselId?: string;
 }
 
 /** What an add-a-network job found, per topic of the batch. */
@@ -100,8 +104,8 @@ const LOG_LINE_CHARS = 300;
 /** A key that looks like one of ours must never be shown, whatever the engine printed. */
 export const scrub = (line: string): string => line.replace(/\b(sk|pk|rk)-[A-Za-z0-9_-]{10,}/g, '[key removed]').replace(/Bearer\s+[A-Za-z0-9._~+/=-]{10,}/gi, 'Bearer [removed]').slice(0, LOG_LINE_CHARS);
 
-export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network' | 'week' | 'postIds'>): string =>
-  spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}${spec.postIds && spec.postIds.length > 0 ? `:${createHash('sha1').update([...spec.postIds].sort().join(',')).digest('hex').slice(0, 10)}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'topic' ? `topic:${spec.brand}` : spec.kind === 'replace' ? `replace:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
+export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postId' | 'network' | 'week' | 'postIds' | 'carouselId'>): string =>
+  spec.kind === 'carouseldraw' ? `carouseldraw:${spec.brand}:${spec.carouselId ?? ''}` : spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}${spec.postIds && spec.postIds.length > 0 ? `:${createHash('sha1').update([...spec.postIds].sort().join(',')).digest('hex').slice(0, 10)}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'topic' ? `topic:${spec.brand}` : spec.kind === 'replace' ? `replace:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
 
 export class JobStore {
   private readonly dir: string;
@@ -178,6 +182,8 @@ export class JobStore {
         ...(spec.topicId ? { topicId: spec.topicId } : {}),
         ...(spec.postIds && spec.postIds.length > 0 ? { postIds: [...spec.postIds] } : {}),
         ...(spec.network ? { network: spec.network } : {}),
+        ...(spec.topicOnly ? { topicOnly: true as const } : {}),
+        ...(spec.carouselId ? { carouselId: spec.carouselId } : {}),
         state: 'queued',
         createdAt: stamp.toISOString(),
         logTail: [],
