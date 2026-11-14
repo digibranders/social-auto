@@ -68,3 +68,28 @@ test('exact weekdays give a post on each of them every week, in week order, and 
 test('bad exact weekdays are refused in plain words', () => {
   for (const bad of [[], 'mon', ['funday'], [3], null]) assert.throws(() => weeklyRhythm({ weekdays: bad }), RhythmError, JSON.stringify(bad));
 });
+
+test('a plan that stops on an end day has a post on each chosen day from the start to the end, so the last week is short and nothing falls after it', async () => {
+  const { postDates } = await import('./cadence.ts');
+  // A billing month: starts Wednesday 18 November, renews Wednesday 16 December, so the last post may fall on Tuesday 15 December.
+  const r = weeklyRhythm({ weeks: 4, postsPerWeek: 5, startDate: '2026-11-18', endDate: '2026-12-15' });
+  assert.deepEqual(r.weekdays, ['mon', 'tue', 'wed', 'thu', 'fri'], 'the usual Monday-to-Friday spread, whatever day it starts on');
+  assert.equal(r.days, 20, 'Wed to Fri, then three full weeks, then Mon and Tue');
+  const dates = postDates('2026-11-18', r.days, r.weekdays);
+  assert.deepEqual([dates[0], dates.at(-1)], ['2026-11-18', '2026-12-15'], 'the first post is on the start day and the last on the end day');
+  assert.ok(dates.every((d) => d <= '2026-12-15'));
+  // Days chosen by the customer: the same range with only Monday and Thursday.
+  const own = weeklyRhythm({ weekdays: ['thu', 'mon'], startDate: '2026-11-18', endDate: '2026-12-15' });
+  assert.deepEqual([own.weekdays, own.days], [['mon', 'thu'], 8], 'Thu 19, Mon 23, Thu 26, Mon 30, Thu 3, Mon 7, Thu 10, Mon 14');
+  assert.equal(weeklyRhythm({ postsPerWeek: 5, startDate: '2026-11-18', endDate: '2026-11-18' }).days, 1, 'a one-day plan');
+});
+
+test('an end day is refused in plain words: no start, not a day, before the start, more than four weeks, or no post in the range', () => {
+  const ok = { postsPerWeek: 5, startDate: '2026-11-18' };
+  assert.throws(() => weeklyRhythm({ postsPerWeek: 5, endDate: '2026-12-15' }), /needs a startDate/);
+  for (const bad of ['tomorrow', '2026-13-40', '', '2026-12-5']) assert.throws(() => weeklyRhythm({ ...ok, endDate: bad }), /real day/, `"${bad}"`);
+  assert.throws(() => weeklyRhythm({ ...ok, endDate: '2026-11-17' }), /before startDate/);
+  assert.doesNotThrow(() => weeklyRhythm({ ...ok, endDate: '2026-12-15' }), 'exactly four weeks counting the start day');
+  assert.throws(() => weeklyRhythm({ ...ok, endDate: '2026-12-16' }), /four weeks/);
+  assert.throws(() => weeklyRhythm({ postsPerWeek: 5, startDate: '2026-11-21', endDate: '2026-11-22' }), /no post falls/, 'a weekend holds no Monday-to-Friday post');
+});
