@@ -30,3 +30,13 @@ test('a client connecting Google sees its own wording, and a missing listing exp
   assert.equal(none.status, 400);
   assert.match(await none.text(), /does not manage a business listing/);
 });
+
+test('a product is told why a connection failed, and more than one cookie can be set', () => {
+  const expired = finishConnect({ request, platform: 'google', outcome: 'expired', clearCookie: 'a=; Max-Age=0', extraCookies: ['b=1'], returnUrl: 'http://localhost:3198/social' });
+  assert.equal(new URL(expired.headers.get('location') as string).searchParams.get('reason'), 'EXPIRED');
+  assert.deepEqual(expired.headers.getSetCookie(), ['a=; Max-Age=0', 'b=1']);
+  const none = finishConnect({ request, platform: 'google', outcome: 'nolocation', clearCookie: 'a=', returnUrl: 'http://localhost:3198/social' });
+  assert.equal(new URL(none.headers.get('location') as string).searchParams.get('reason'), 'NO_LOCATION');
+  const fine = finishConnect({ request, platform: 'google', outcome: 'connected', clearCookie: 'a=', returnUrl: 'http://localhost:3198/social' });
+  assert.equal(new URL(fine.headers.get('location') as string).searchParams.has('reason'), false);
+});

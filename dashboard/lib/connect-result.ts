@@ -33,19 +33,27 @@ export function finishConnect(options: {
   clearCookie: string;
   brand?: string;
   returnUrl?: string | null;
+  /** More cookies to set besides `clearCookie`. */
+  extraCookies?: readonly string[];
 }): Response {
   const { request, platform, outcome } = options;
-  const headers = { 'Set-Cookie': options.clearCookie, 'Cache-Control': 'no-store' };
+  const headers = new Headers({ 'Cache-Control': 'no-store' });
+  headers.append('Set-Cookie', options.clearCookie);
+  for (const cookie of options.extraCookies ?? []) headers.append('Set-Cookie', cookie);
   if (options.returnUrl) {
     const back = new URL(options.returnUrl);
-    // A product only knows connected, denied or failed.
+    // A product only knows connected, denied or failed; why it failed rides along as `reason` for a product that wants to say so.
     back.searchParams.set('social', outcome === 'expired' || outcome === 'nolocation' ? 'failed' : outcome);
     back.searchParams.set('channel', platform);
-    return new Response(null, { status: 302, headers: { ...headers, Location: back.toString() } });
+    if (outcome === 'expired') back.searchParams.set('reason', 'EXPIRED');
+    if (outcome === 'nolocation') back.searchParams.set('reason', 'NO_LOCATION');
+    headers.set('Location', back.toString());
+    return new Response(null, { status: 302, headers });
   }
   if (isSignedIn(request, process.env['SESSION_SECRET'], Date.now())) {
     const where = options.brand ? `#/client/${options.brand}/channels` : '';
-    return new Response(null, { status: 302, headers: { ...headers, Location: new URL(`/?${platform}=${outcome}${where}`, request.url).toString() } });
+    headers.set('Location', new URL(`/?${platform}=${outcome}${where}`, request.url).toString());
+    return new Response(null, { status: 302, headers });
   }
   const { title, body } = messageFor(platform, outcome);
   const html = `<!doctype html>
@@ -66,5 +74,6 @@ export function finishConnect(options: {
   </body>
 </html>
 `;
-  return new Response(html, { status: outcome === 'connected' || outcome === 'denied' ? 200 : 400, headers: { ...headers, 'Content-Type': 'text/html; charset=utf-8' } });
+  headers.set('Content-Type', 'text/html; charset=utf-8');
+  return new Response(html, { status: outcome === 'connected' || outcome === 'denied' ? 200 : 400, headers });
 }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { authorizeLink, callbackUrl, connectCookie, parseConnectCookie, parsePickCookie, pickCookie } from './google-flow.ts';
+import { authorizeLink, callbackUrl, connectCookie, parseConnectCookie, parsePickCookie, pickCookie, doneCookie, parseDoneCookie } from './google-flow.ts';
 
 const SEALED = 'v1.AbC_-123.dEf_-456.gHi_-789';
 
@@ -54,4 +54,18 @@ test('a product\'s return address survives both cookies, and an unsafe one is ne
   assert.equal(parseConnectCookie(`${state}.brandbasket.${unsafe}`), null);
   assert.equal(parsePickCookie(`brandbasket~${SEALED}~${unsafe}`), null);
   assert.throws(() => pickCookie('brandbasket', SEALED, 'http://evil.example/x'), /not a valid return address/);
+});
+
+test('what a finished choice did is remembered for a second press, with the return address, and nothing else is accepted', () => {
+  const back = 'https://app.brandbasket.in/social';
+  const kept = doneCookie('connected', back, true);
+  assert.match(kept, /^g_done=connected\./);
+  assert.match(kept, /Path=\/api/);
+  assert.match(kept, /Max-Age=300/);
+  assert.deepEqual(parseDoneCookie(kept.split(';')[0]!.slice('g_done='.length)), { outcome: 'connected', returnUrl: back });
+  assert.deepEqual(parseDoneCookie('failed'), { outcome: 'failed', returnUrl: null });
+  assert.equal(parseDoneCookie('somethingelse'), null);
+  assert.equal(parseDoneCookie(undefined), null);
+  assert.equal(parseDoneCookie(`connected.${Buffer.from('javascript:alert(1)').toString('base64url')}`), null);
+  assert.throws(() => doneCookie('connected', 'http://evil.example/x'), /not a valid return address/);
 });
