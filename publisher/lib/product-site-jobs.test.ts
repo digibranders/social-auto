@@ -288,3 +288,39 @@ test('a job says which channels it is for: a write job and a draw job list them,
     }
   });
 });
+
+test('with the weekly carousel on a week is 3 single posts (Monday, Tuesday, Thursday) and the carousel; off it stays 5; her saved days and what the call says always win', async () => {
+  const { PUT: schedulePut } = await import('../api/_v1/schedule.ts');
+  await withProducts(async () => {
+    const engine = await fakeEngine();
+    try {
+      await workspace('shop-1', true);
+      const sent = (): Record<string, unknown> => engine.seen.filter((s) => s.method === 'POST' && s.url === '/review/jobs').at(-1)?.body as Record<string, unknown>;
+      const again = async (json: Record<string, unknown> = {}): Promise<Record<string, unknown>> => {
+        engine.jobs.length = 0;
+        assert.equal((await start('shop-1', json)).status, 202);
+        return sent();
+      };
+
+      engine.carouselWeekly = false;
+      let body = await again();
+      assert.deepEqual([body['postsPerWeek'], body['weekdays']], [5, undefined], 'carousel off: 5 singles as before');
+
+      engine.carouselWeekly = true;
+      body = await again();
+      assert.deepEqual(body['weekdays'], ['mon', 'tue', 'thu'], 'carousel on: 3 singles, the Friday left for the carousel');
+      assert.equal((body['weeks'] as number) * (body['weekdays'] as string[]).length, 12, 'four weeks of 3');
+
+      body = await again({ postsPerWeek: 4 });
+      assert.deepEqual([body['postsPerWeek'], body['weekdays']], [4, undefined], 'a number asked for in the call wins');
+      body = await again({ weekdays: ['mon', 'wed'] });
+      assert.deepEqual(body['weekdays'], ['mon', 'wed'], 'days named in the call win');
+
+      assert.equal((await call(schedulePut, '/api/v1/schedule', { method: 'PUT', json: { externalId: 'shop-1', channels: { linkedin: ['tue', 'fri'] } } })).status, 200);
+      body = await again();
+      assert.deepEqual(body['weekdays'], ['tue', 'fri'], 'her own saved days win');
+    } finally {
+      await engine.close();
+    }
+  });
+});

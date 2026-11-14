@@ -30,6 +30,8 @@ type Network = (typeof NETWORKS)[number];
 const DEFAULT_WEEKS = 4;
 const MAX_WEEKS = 4;
 const DEFAULT_POSTS_PER_WEEK = 5;
+/** The days of the week the single posts take when the weekly carousel is on: it is made for the Friday, so the Friday is left free. */
+const WEEKLY_CAROUSEL_SINGLES: readonly Weekday[] = ['mon', 'tue', 'thu'];
 const MAX_POSTS_PER_WEEK = 5;
 /** How many batches one customer may start, so a product cannot spend without limit: a job that is still waiting does not count. */
 const MAX_JOBS_PER_DAY = 3;
@@ -110,6 +112,10 @@ export async function POST(request: Request): Promise<Response> {
 
     const actor = request.headers.has('x-social-actor') ? actorOf(request) : null;
     const by = engineActor(product.id, actor);
+
+    // The weekly carousel takes the Friday of the week: with it on, and nothing said about the days or how many, a week is 3 single posts (Monday, Tuesday, Thursday) plus the
+    // carousel. What the customer saved with PUT /api/v1/schedule, or the call itself, always wins; weeks already written do not change.
+    if (weekdays === undefined && body['postsPerWeek'] === undefined && (await engine.carouselWeekly(by).catch(() => false))) weekdays = [...WEEKLY_CAROUSEL_SINGLES];
 
     // A batch already waiting or running is returned as it is; otherwise the day and month limits apply.
     const jobs = await engine.listJobs(by);
