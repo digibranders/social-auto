@@ -31,7 +31,7 @@ See [`deploy/README.md`](deploy/README.md). Secrets live only in `/etc/social-au
 
 ## Working on it
 
-Work on a branch, open a pull request, merge into `main`. Each folder has its own tests:
+Work on a branch cut from `development`, open a pull request into `development`, then a second pull request `development` into `main` (merging it deploys). See `CLAUDE.md` for the full rules. Each folder has its own tests:
 
 ```bash
 cd publisher && npm test      # and: npx tsc --noEmit
