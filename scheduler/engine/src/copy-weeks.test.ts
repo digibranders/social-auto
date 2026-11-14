@@ -328,6 +328,13 @@ test('a customer sees only her own carousels: the list holds hers, and another b
     writeFileSync(join(dir, 'carousels.json'), JSON.stringify({ carousels: [{ id: 'car-1', topic: 'Why it works', createdAt: '2026-11-12T00:00:00Z', planFile: 'week-02.json', date: '2026-11-17T10:00:00+05:30' }] }));
     const own = (await (await s.call('/review/carousels')).json()) as { carousels: Array<{ id: string; topic: string; status: string; count: number }> };
     assert.deepEqual(own.carousels.map((c) => [c.id, c.topic, c.status, c.count]), [['car-1', 'Why it works', 'incomplete', 0]]);
+    // Once its slides exist the list says what is printed on each, in order, without the emphasis marks, so a week grid needs no second call.
+    const picture = join(s.root, 'slide.jpg');
+    writeFileSync(picture, 'a picture');
+    const store = new ReviewStore(dir, 'bb-acme');
+    for (const [position, headline] of [[1, 'Why |it| works'], [2, 'Start today']] as const) store.addVersion({ postId: `car-1-s${position}`, planFile: 'week-02.json', headline, caption: 'c', ctaUrl: 'https://acme.example', factIds: [], evidence: [], imagePath: picture, validation: { accepted: true, readings: 2, defects: [], reportFile: 'r.json' }, attempts: 1, costUsd: 0.02, carousel: { id: 'car-1', position, count: 2 } } as never);
+    const withSlides = (await (await s.call('/review/carousels')).json()) as { carousels: Array<{ headlines: string[]; count: number }> };
+    assert.deepEqual([withSlides.carousels[0]?.count, withSlides.carousels[0]?.headlines], [2, ['Why it works', 'Start today']]);
     const owners = new ProductBrands(join(s.root, 'brands'));
     mkdirSync(join(s.root, 'brands', 'bb-other'), { recursive: true });
     owners.claim('bb-other', 'brandbasket', () => false);
