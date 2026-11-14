@@ -32,6 +32,8 @@ export interface AddedClient {
   approvalMode?: 'manual' | 'auto';
   /** The days of the week the customer wants posts on, for each channel (see posting-days.ts). A channel with no entry keeps the usual spread. */
   postingDays?: Partial<Record<'instagram' | 'facebook' | 'linkedin' | 'google', Array<'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'>>>;
+  /** Automatic posting, the customer's own choice for the channels listed: the system approves their checked posters inside the safety window (see auto-posting.ts). Missing means every poster waits for her. */
+  autoPosting?: { channels: Array<'instagram' | 'facebook' | 'linkedin' | 'google'>; safetyHours: number; consentBy: string; consentAt: string };
   /** What the AI may cost for this client in a calendar month, in dollars. Missing means the engine's default limit (about $8); the engine refuses to buy anything past it. */
   spendCapUsd?: number;
 }

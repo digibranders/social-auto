@@ -161,6 +161,10 @@ export interface FakeEngine {
   connected: string[] | null;
   /** How many of the next PUT /review/connected calls are refused (404), as before the brand's first job exists. */
   connectedRefusals: number;
+  /** What the engine was told about automatic posting, per brand (the channels, the window, who agreed and when). */
+  autoPosting: Record<string, { channels: string[]; safetyHours: number; consent: { by: string; at: string } }>;
+  /** When set, the next PUT /review/auto-posting answers 503, as an engine that is down. */
+  autoPostingDown: boolean;
   /** Where the customer's plan starts and ends, as the engine's plan read answers. */
   plan: { startsOn: string | null; endsOn: string | null };
   close: () => Promise<void>;
@@ -171,7 +175,7 @@ const mondayOfDay = (day: string): string => new Date(Date.parse(`${day}T00:00:0
 
 /** A pretend review service: it keeps jobs, runs none, and answers a second ask for a brand with a job already waiting by returning that job (as the real one does). */
 export async function fakeEngine(): Promise<FakeEngine> {
-  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], topics: [], topicRefusal: null, carouselRefusal: null, carouselWeekly: false, connected: null, connectedRefusals: 0, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
+  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], topics: [], topicRefusal: null, carouselRefusal: null, carouselWeekly: false, connected: null, connectedRefusals: 0, autoPosting: {}, autoPostingDown: false, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
   let counter = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -195,6 +199,16 @@ export async function fakeEngine(): Promise<FakeEngine> {
       if (req.method === 'PUT' && url.pathname === '/review/connected' && body && engine.connectedRefusals > 0) {
         engine.connectedRefusals -= 1;
         return send(404, { error: 'no such brand', code: 'NOT_FOUND' });
+      }
+      if (req.method === 'PUT' && url.pathname === '/review/auto-posting' && body) {
+        if (engine.autoPostingDown) return send(503, { error: 'down' });
+        if (!Array.isArray(body['channels']) || body['channels'].some((c) => !['instagram', 'facebook', 'linkedin', 'google'].includes(String(c)))) return send(400, { error: 'channels must be a list', code: 'INVALID' });
+        const channels = [...new Set(body['channels'].map(String))].sort();
+        const before = engine.autoPosting[caller];
+        const widened = channels.some((c) => !before?.channels.includes(c));
+        const saved = { channels, safetyHours: Number(body['safetyHours'] ?? 24), consent: widened || !before ? { by: header('x-actor') ?? '', at: new Date().toISOString() } : before.consent };
+        engine.autoPosting[caller] = saved;
+        return send(200, { autoPosting: { ...saved, updatedAt: new Date().toISOString() } });
       }
       if (req.method === 'PUT' && url.pathname === '/review/connected' && body) {
         engine.connected = Array.isArray(body['networks']) ? body['networks'].map(String) : [];

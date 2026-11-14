@@ -38,6 +38,7 @@ import { checkCopyWords, checkNewWords } from './copy-edit.ts';
 import { JobError, JobStore, keyOf, type Job, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
 import { requestRelease } from './release-request.ts';
+import { AutoPostingError, isAutomatic, readAutoPosting, runAutoPosting, writeAutoPosting } from './auto-posting.ts';
 import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
@@ -703,6 +704,25 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         }
         return send(res, 200, writeConnected(join(root, caller.brand), body['networks'] as unknown[], (options.now ?? (() => new Date()))()));
       }
+      // Automatic posting, the customer's own choice, told by the product with her consent (see auto-posting.ts). PUT {"channels": ["instagram", ...], "safetyHours"?, "by"} sets the
+      // channels it is on for (an empty list switches it off); GET reads it.
+      if (parts[0] === 'review' && parts[1] === 'auto-posting' && parts.length === 2) {
+        if (caller.role !== 'product') return send(res, 404, { error: 'Not found' });
+        if (req.method === 'GET') return send(res, 200, { autoPosting: readAutoPosting(join(root, caller.brand)) });
+        if (req.method !== 'PUT') return send(res, 405, { error: 'Method not allowed' });
+        const body = await readJson(req);
+        if (!Array.isArray(body['channels'])) throw new ReviewError('INVALID', 'channels must be a list');
+        // She may choose before her first batch exists: the brand is claimed for the product the way its first job would.
+        if (owners.claim(caller.brand, caller.productId, () => existsSync(join(root, caller.brand)) || jobs.list({ brand: caller.brand }).length > 0) === 'taken') throw new ReviewError('CONFLICT', 'that brand name is not available');
+        mkdirSync(join(root, caller.brand), { recursive: true });
+        try {
+          const saved = writeAutoPosting(join(root, caller.brand), { channels: body['channels'] as unknown[], ...(body['safetyHours'] !== undefined ? { safetyHours: body['safetyHours'] as number } : {}), by: scope.by(body['by']) }, (options.now ?? (() => new Date()))());
+          return send(res, 200, { autoPosting: saved });
+        } catch (error) {
+          if (error instanceof AutoPostingError) throw new ReviewError('INVALID', error.message);
+          throw error;
+        }
+      }
       // What a product's customer has drawn this week for each channel and what is left (read only). Staff may read a product brand's with ?brand=.
       if (parts[0] === 'review' && parts[1] === 'limits' && parts.length === 2) {
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
@@ -944,8 +964,16 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   if (weeklyEvery > 0 && process.env['AUTO_WEEK_DRAW'] !== 'false') {
     const weekly = (): void => {
       try {
+        // Customers who chose automatic posting: their topics are kept and the pictures that passed the checks are approved inside the safety window.
+        runAutoPosting({
+          brandsRoot: root, owners, now: (options.now ?? (() => new Date()))(),
+          isTopicPlan: (brand, planFile) => jobs.list({ brand }).some((j) => j.kind === 'topic' && j.planFileMade === planFile),
+          approved: () => { requestRelease(root); },
+          log: (m) => console.error(m),
+        });
         runWeeklyDraws({
           brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(), made: madeFor,
+          automatic: (brand) => isAutomatic(readAutoPosting(join(root, brand))),
           room: (brand, needed) => {
             try {
               assertPictureRoom(brand, needed);

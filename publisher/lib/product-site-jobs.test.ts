@@ -237,7 +237,7 @@ test('a workspace read shows its channels and, once a job was started, the custo
       await workspace('shop-1', true);
       await start('shop-1');
       const read = await call(workspacesGet, '/api/v1/workspaces?externalId=shop-1');
-      assert.deepEqual(Object.keys(read.body['workspace'] as object).sort(), ['approvalMode', 'archived', 'channels', 'externalId', 'group', 'id', 'name', 'notices', 'paused', 'website']);
+      assert.deepEqual(Object.keys(read.body['workspace'] as object).sort(), ['approvalMode', 'archived', 'autoPosting', 'channels', 'externalId', 'group', 'id', 'name', 'notices', 'paused', 'website']);
       assert.equal((read.body['workspace'] as Record<string, unknown>)['website'], 'https://www.acme.example.com');
     } finally {
       await engine.close();
