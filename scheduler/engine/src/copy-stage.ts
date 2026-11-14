@@ -195,8 +195,8 @@ export class CopyStage {
     return this.read(planFile);
   }
 
-  /** Keeps or drops one post. A choice can be changed until the batch is sent to be drawn. */
-  decide(planFile: string, postId: string, state: 'kept' | 'dropped', by: string): CopyBatch {
+  /** Keeps or drops one post, or (`pending`) takes the choice back so the post is undecided again. A choice can be changed until the post is sent to be drawn. */
+  decide(planFile: string, postId: string, state: CopyState, by: string): CopyBatch {
     if (!POST_ID.test(postId)) throw new CopyStageError('INVALID', 'that is not a post id');
     if (by.trim() === '') throw new CopyStageError('INVALID', 'who is deciding must be given');
     return this.change(planFile, (batch) => {
@@ -205,15 +205,22 @@ export class CopyStage {
       const post = batch.posts.find((p) => p.postId === postId);
       if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
       if (postLocked(batch, post)) throw new CopyStageError('ALREADY_DRAWN', 'this post was already sent to be drawn, so its choices are final');
+      // A dropped post that was given a new topic cannot be taken back to undecided: the new topic stands in its place.
+      if (state === 'pending' && batch.replacedBy?.[postId] !== undefined) throw new CopyStageError('CONFLICT', 'a new topic was already written for this post, so it cannot be put back');
       post.state = state;
-      // A topic she drops is no longer waiting for a picture.
-      if (state === 'dropped' && batch.notDrawn?.[postId] !== undefined) {
+      // A topic she drops, or takes back, is no longer waiting for a picture.
+      if (state !== 'kept' && batch.notDrawn?.[postId] !== undefined) {
         const { [postId]: _gone, ...left } = batch.notDrawn;
         if (Object.keys(left).length > 0) batch.notDrawn = left;
         else delete batch.notDrawn;
       }
-      post.decidedBy = by.trim().slice(0, 80);
-      post.decidedAt = this.now().toISOString();
+      if (state === 'pending') {
+        delete post.decidedBy;
+        delete post.decidedAt;
+      } else {
+        post.decidedBy = by.trim().slice(0, 80);
+        post.decidedAt = this.now().toISOString();
+      }
       return { batch, result: batch };
     });
   }
@@ -275,6 +282,41 @@ export class CopyStage {
       if (!weeksOf(batch).includes(week)) throw new CopyStageError('NOT_FOUND', 'no such week in this batch');
       if (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined) throw new CopyStageError('ALREADY_DRAWN', 'this week was already drawn once; a second run would buy the pictures again');
       return { batch: this.settled({ ...batch, weekDrawn: { ...(batch.weekDrawn ?? {}), [week]: this.now().toISOString() } }), result: undefined };
+    });
+  }
+
+  /**
+   * One-time repair of a week drawn under the old whole-week rule, so it follows the per-post rule: the posts that were kept (and any whose day has passed) stay locked as drawn, each
+   * with its own `drawnAt`, and the others (not kept, day still ahead) are open again to be kept, dropped, edited, moved or drawn on their own. The week's `weekDrawn` mark (and the
+   * batch's `drawnAt`, which would close every week) are removed, and the other weeks that only that mark was holding closed keep their lock. Asking again changes nothing.
+   * Returns what was locked and what was opened; nothing when the week was not drawn under the old rule.
+   */
+  reopenLegacyWeek(planFile: string, week: string, today: string): { locked: string[]; opened: string[] } {
+    return this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      const weeks = weeksOf(batch);
+      const wholeBatch = batch.drawnAt !== undefined && batch.weekDrawn?.[week] === undefined;
+      const at = batch.weekDrawn?.[week] ?? (wholeBatch ? batch.drawnAt : undefined);
+      if (batch.closedAt || !weeks.includes(week) || at === undefined || batch.weekLapsed?.[week] !== undefined) return { batch, result: { locked: [], opened: [] } };
+      const locked: string[] = [];
+      const opened: string[] = [];
+      const posts = batch.posts.map((p) => {
+        if (weekOfPost(p) !== week) return p;
+        if (p.drawnAt !== undefined || p.state === 'kept' || p.date === undefined || p.date <= today) {
+          locked.push(p.postId);
+          return p.drawnAt === undefined ? { ...p, drawnAt: at } : p;
+        }
+        opened.push(p.postId);
+        return p;
+      });
+      const { [week]: _gone, ...restDrawn } = batch.weekDrawn ?? {};
+      // Dropping the whole-batch mark must not unlock the other weeks it was holding closed: each keeps a mark of its own.
+      const marks: Record<string, string> = { ...restDrawn };
+      if (batch.drawnAt !== undefined) for (const w of weeks) if (w !== week && marks[w] === undefined && batch.weekLapsed?.[w] === undefined) marks[w] = batch.drawnAt;
+      const { drawnAt: _batchDrawn, ...rest } = batch;
+      const next: CopyBatch = { ...rest, posts, ...(Object.keys(marks).length > 0 ? { weekDrawn: marks } : {}) };
+      if (Object.keys(marks).length === 0) delete next.weekDrawn;
+      return { batch: opened.length === 0 ? batch : next, result: { locked, opened: opened.length === 0 ? [] : opened } };
     });
   }
 

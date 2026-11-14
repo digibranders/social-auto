@@ -4,7 +4,7 @@
  *
  * GET  /api/v1/batches?externalId=...   {"expired": [{"id", "expiredAt"}] (batches put away because nobody decided in 14 days), "batches": [{"id", "createdAt", "networks", "signoffDefault"?, "posts": [{"id", "headline", "caption", "captions",
  *                                       "state", "edited"?, "signoff"?, "advice"?}]}], "networkRules"}
- * POST /api/v1/batches   {"externalId", "batchId", "action": "keep" | "drop" | "edit" | "close", "postId"?, and for "edit": "headline"?, "caption"?,
+ * POST /api/v1/batches   {"externalId", "batchId", "action": "keep" | "drop" | "reset" | "edit" | "close", "postId"?, and for "edit": "headline"?, "caption"?,
  *                        "network"?, "brandName"?, "domain"?}   answers {"batch"} as it is now
  * POST /api/v1/batches   {"externalId", "batchId", "action": "add-network", "network"}   writes the words for one more of her connected networks for every topic of the
  *                        batch, from the same topics (no website read). A job: 202 {"job", "created"} (kind "network"), followed in GET /api/v1/site-jobs, whose finished
@@ -41,7 +41,7 @@ import { syncConnected } from '../../lib/connected-sync.js';
 import { nextMonday } from '../../lib/plan-days.js';
 
 const MAX_BODY_BYTES = 16 * 1024;
-const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network', 'replace', 'move'] as const;
+const ACTIONS = ['keep', 'drop', 'reset', 'edit', 'close', 'draw', 'add-network', 'replace', 'move'] as const;
 const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 /**
  * How many times a customer may ask for pictures (each one costs money): a draw already waiting or running for the same posts is always just returned. A week is drawn by the post, so a customer
