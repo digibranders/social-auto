@@ -278,6 +278,41 @@ export class CopyStage {
     });
   }
 
+  /**
+   * One-time repair of a week drawn under the old whole-week rule, so it follows the per-post rule: the posts that were kept (and any whose day has passed) stay locked as drawn, each
+   * with its own `drawnAt`, and the others (not kept, day still ahead) are open again to be kept, dropped, edited, moved or drawn on their own. The week's `weekDrawn` mark (and the
+   * batch's `drawnAt`, which would close every week) are removed, and the other weeks that only that mark was holding closed keep their lock. Asking again changes nothing.
+   * Returns what was locked and what was opened; nothing when the week was not drawn under the old rule.
+   */
+  reopenLegacyWeek(planFile: string, week: string, today: string): { locked: string[]; opened: string[] } {
+    return this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      const weeks = weeksOf(batch);
+      const wholeBatch = batch.drawnAt !== undefined && batch.weekDrawn?.[week] === undefined;
+      const at = batch.weekDrawn?.[week] ?? (wholeBatch ? batch.drawnAt : undefined);
+      if (batch.closedAt || !weeks.includes(week) || at === undefined || batch.weekLapsed?.[week] !== undefined) return { batch, result: { locked: [], opened: [] } };
+      const locked: string[] = [];
+      const opened: string[] = [];
+      const posts = batch.posts.map((p) => {
+        if (weekOfPost(p) !== week) return p;
+        if (p.drawnAt !== undefined || p.state === 'kept' || p.date === undefined || p.date <= today) {
+          locked.push(p.postId);
+          return p.drawnAt === undefined ? { ...p, drawnAt: at } : p;
+        }
+        opened.push(p.postId);
+        return p;
+      });
+      const { [week]: _gone, ...restDrawn } = batch.weekDrawn ?? {};
+      // Dropping the whole-batch mark must not unlock the other weeks it was holding closed: each keeps a mark of its own.
+      const marks: Record<string, string> = { ...restDrawn };
+      if (batch.drawnAt !== undefined) for (const w of weeks) if (w !== week && marks[w] === undefined && batch.weekLapsed?.[w] === undefined) marks[w] = batch.drawnAt;
+      const { drawnAt: _batchDrawn, ...rest } = batch;
+      const next: CopyBatch = { ...rest, posts, ...(Object.keys(marks).length > 0 ? { weekDrawn: marks } : {}) };
+      if (Object.keys(marks).length === 0) delete next.weekDrawn;
+      return { batch: opened.length === 0 ? batch : next, result: { locked, opened: opened.length === 0 ? [] : opened } };
+    });
+  }
+
   /** Gives a week up: its time passed, or nothing was kept in it. Nothing of it is drawn any more, and its posts are final. */
   markWeekLapsed(planFile: string, week: string): void {
     this.change(planFile, (batch) => {
