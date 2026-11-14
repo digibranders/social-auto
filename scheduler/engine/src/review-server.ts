@@ -829,8 +829,9 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const weeklyDir = join(root, caller.brand);
         if (req.method === 'GET') return send(res, 200, { enabled: readCarouselWeekly(weeklyDir) });
         if (req.method === 'PUT') {
-          scope.guard(caller.brand, true);
-          if (!brands().includes(caller.brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
+          // She may switch it on before her first batch exists: the brand is claimed for the product the way its first job would, so the first batch already has the weekly rhythm.
+          if (owners.claim(caller.brand, caller.productId, () => existsSync(join(root, caller.brand)) || jobs.list({ brand: caller.brand }).length > 0) === 'taken') throw new ReviewError('CONFLICT', 'that brand name is not available');
+          mkdirSync(weeklyDir, { recursive: true });
           const body = await readJson(req);
           if (typeof body['enabled'] !== 'boolean') throw new ReviewError('INVALID', 'enabled must be true or false');
           writeCarouselWeekly(weeklyDir, body['enabled']);
