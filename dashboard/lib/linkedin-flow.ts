@@ -19,8 +19,8 @@ function sign(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(`linkedin-invite.${payload}`).digest('base64url');
 }
 
-export function createInvite(secret: string, brand: string, nowMs: number, ttlSeconds = INVITE_TTL_SECONDS, returnUrl?: string): string {
-  const payload = Buffer.from(JSON.stringify({ b: brand, e: Math.floor(nowMs / 1000) + ttlSeconds, ...(returnUrl ? { r: returnUrl } : {}) })).toString('base64url');
+export function createInvite(secret: string, brand: string, nowMs: number, ttlSeconds = INVITE_TTL_SECONDS, returnUrl?: string, moveFrom?: string): string {
+  const payload = Buffer.from(JSON.stringify({ b: brand, e: Math.floor(nowMs / 1000) + ttlSeconds, ...(returnUrl ? { r: returnUrl } : {}), ...(moveFrom ? { m: moveFrom } : {}) })).toString('base64url');
   return `${payload}.${sign(payload, secret)}`;
 }
 
@@ -28,6 +28,8 @@ export interface Invite {
   brand: string;
   /** Where to send the person afterwards (a product's own page); missing means show our thank-you page. */
   returnUrl: string | null;
+  /** For a customer's own link made by a product: the one brand she agreed to take an account from. */
+  moveFrom: string | null;
 }
 
 /** The client an invite is for (and where to return to), or null when it is forged, malformed or past its date. */
@@ -40,10 +42,10 @@ export function verifyInvite(token: string | null, secret: string | undefined, n
   const actual = Buffer.from(signature);
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) return null;
   try {
-    const { b, e, r } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { b?: unknown; e?: unknown; r?: unknown };
+    const { b, e, r, m } = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { b?: unknown; e?: unknown; r?: unknown; m?: unknown };
     if (typeof b !== 'string' || !isBrand(b) || typeof e !== 'number' || e * 1000 <= nowMs) return null;
     if (r !== undefined && !isSafeReturnUrl(r)) return null;
-    return { brand: b, returnUrl: r ?? null };
+    return { brand: b, returnUrl: r ?? null, moveFrom: typeof m === 'string' && m ? m : null };
   } catch {
     return null;
   }

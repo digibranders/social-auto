@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
+import { CopyStage } from './copy-stage.ts';
 import { JobStore, scrub, type Job, type NetworkResult } from './job-store.ts';
 import { pictureRoomFor } from './picture-room.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
@@ -52,12 +53,14 @@ export function engineArgs(job: Job): string[] {
 }
 
 /** What one line the engine printed says about the job. */
-export function readLine(line: string, source: 'out' | 'err'): { step?: number; planFile?: string; error?: { code: string; message: string } } {
+export function readLine(line: string, source: 'out' | 'err'): { step?: number; planFile?: string; weeks?: { done: number; total: number }; error?: { code: string; message: string } } {
+  const weeks = /^WEEKS (\d{1,3})\/(\d{1,3})$/.exec(line);
   const step = /^(\d)\/4\s/.exec(line);
   const plan = /\((week-\d{2,4}\.json)\)/.exec(line) ?? /--draw-kept\s+(week-\d{2,4}\.json)/.exec(line);
   const error = source === 'err' ? /^([A-Z][A-Z_]+)(?: \([A-Za-z_]+\))?: (.+)$/.exec(line) : null;
   return {
     ...(step ? { step: Number(step[1]) } : {}),
+    ...(weeks ? { weeks: { done: Number(weeks[1]), total: Number(weeks[2]) } } : {}),
     ...(plan ? { planFile: plan[1] as string } : {}),
     ...(error ? { error: { code: error[1] as string, message: scrub(error[2] as string) } } : {}),
   };
@@ -92,18 +95,33 @@ export const execEngine = (cwd: string): Exec => (args, onLine, timeoutMs) =>
 /** What a runner knows beyond the job: how many more pictures a channel may have this week (null: no limit, a client of ours). */
 export interface RunHooks {
   room?: (brand: string, network: string) => number | null;
+  /** Called when a job that wrote a batch has ended in any way (also after a crash or a timeout), so the batch stops being "still being written". */
+  finished?: (job: Job) => void;
 }
 
 export async function runJob(store: JobStore, job: Job, exec: Exec, hooks: RunHooks = {}): Promise<Job> {
+  const ended = await runJobInner(store, job, exec, hooks);
+  if (job.kind === 'copy') {
+    try {
+      hooks.finished?.(ended);
+    } catch (error) {
+      console.error(`could not close the written batch of job ${job.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return ended;
+}
+
+async function runJobInner(store: JobStore, job: Job, exec: Exec, hooks: RunHooks): Promise<Job> {
   const tail: string[] = [];
   let step: number | undefined;
   let planFileMade: string | undefined = job.kind !== 'copy' ? job.planFile : undefined;
+  let weeks: { done: number; total: number } | undefined;
   let lastError: { code: string; message: string } | undefined;
   let networkResult: NetworkResult | undefined;
   let pending: NodeJS.Timeout | undefined;
   const flush = (): void => {
     pending = undefined;
-    store.update(job.id, { logTail: tail, ...(step !== undefined ? { step } : {}), ...(planFileMade ? { planFileMade } : {}) });
+    store.update(job.id, { logTail: tail, ...(step !== undefined ? { step } : {}), ...(planFileMade ? { planFileMade } : {}), ...(weeks ? { weeksDone: weeks.done, weeksTotal: weeks.total } : {}) });
   };
   const onLine = (line: string, source: 'out' | 'err'): void => {
     if (line.trim() === '') return;
@@ -120,6 +138,7 @@ export async function runJob(store: JobStore, job: Job, exec: Exec, hooks: RunHo
     if (tail.length > 60) tail.shift();
     const read = readLine(line, source);
     if (read.step !== undefined) step = read.step;
+    if (read.weeks) weeks = read.weeks;
     if (read.planFile && (job.kind === 'copy' || job.kind === 'carousel' || job.kind === 'carouseldraw' || job.kind === 'topic' || job.kind === 'replace')) planFileMade = read.planFile;
     if (read.error) lastError = read.error;
     // Progress is written at most once a second, however fast the engine talks.
@@ -127,7 +146,7 @@ export async function runJob(store: JobStore, job: Job, exec: Exec, hooks: RunHo
   };
   const { code, timedOut } = await exec(engineArgs(job), onLine, job.kind === 'copy' || job.kind === 'topic' || job.kind === 'replace' ? COPY_TIMEOUT_MS : DRAW_TIMEOUT_MS);
   if (pending) clearTimeout(pending);
-  const base = { logTail: tail, ...(step !== undefined ? { step } : {}), ...(planFileMade ? { planFileMade } : {}), ...(code !== null ? { exitCode: code } : {}) };
+  const base = { logTail: tail, ...(step !== undefined ? { step } : {}), ...(planFileMade ? { planFileMade } : {}), ...(weeks ? { weeksDone: weeks.done, weeksTotal: weeks.total } : {}), ...(code !== null ? { exitCode: code } : {}) };
   if (code === 0 && !timedOut) {
     if (!networkResult) return store.update(job.id, { ...base, state: 'succeeded' });
     // A topic that has no picture of the new network's shape gets its own draw, one picture, queued now so the product can follow it.
@@ -176,10 +195,19 @@ if (import.meta.main) {
   let stopping = false;
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => (stopping = true));
   console.log(`job runner started: up to ${max} at a time, jobs in ${join(resolve(process.env['JOBS_ROOT'] ?? 'jobs'))}`);
-  store.recover((p) => p !== process.pid && alive(p));
+  const closeBatch = (ended: Job): void => {
+    if (ended.planFileMade) new CopyStage(join(brandsRoot, ended.brand), ended.brand).finishWriting(ended.planFileMade);
+  };
+  for (const lost of store.recover((p) => p !== process.pid && alive(p))) {
+    try {
+      if (lost.kind === 'copy') closeBatch(lost);
+    } catch (error) {
+      console.error(`could not close the written batch of job ${lost.id}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   while (!stopping) {
     for (let job = store.claim(max, process.pid); job; job = store.claim(max, process.pid)) {
-      const work = runJob(store, job, exec, { room: roomHook }).finally(() => active.delete(work));
+      const work = runJob(store, job, exec, { room: roomHook, finished: closeBatch }).finally(() => active.delete(work));
       active.add(work);
     }
     await new Promise((wake) => setTimeout(wake, 3000));

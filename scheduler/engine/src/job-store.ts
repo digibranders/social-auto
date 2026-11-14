@@ -88,6 +88,9 @@ export interface Job extends Omit<JobSpec, 'networks' | 'days' | 'weekdays' | 'p
   step?: number;
   /** The plan file the engine wrote or is drawing, once it is known. */
   planFileMade?: string;
+  /** For a batch written week by week: how many weeks are saved so far and how many there will be. */
+  weeksDone?: number;
+  weeksTotal?: number;
   runnerPid?: number;
   exitCode?: number;
   error?: { code: string; message: string };
@@ -221,7 +224,7 @@ export class JobStore {
   }
 
   /** Records progress or the end of a job. A finished job is never changed again. */
-  update(id: string, patch: Partial<Pick<Job, 'state' | 'step' | 'planFileMade' | 'exitCode' | 'error' | 'logTail' | 'result'>>): Job {
+  update(id: string, patch: Partial<Pick<Job, 'state' | 'step' | 'planFileMade' | 'weeksDone' | 'weeksTotal' | 'exitCode' | 'error' | 'logTail' | 'result'>>): Job {
     return this.locked(() => {
       const job = this.get(id);
       if (job.state === 'succeeded' || job.state === 'failed') return job;

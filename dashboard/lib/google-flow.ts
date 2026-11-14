@@ -86,8 +86,8 @@ export function authorizeLink(options: { clientId: string; redirectUri: string; 
   return `${AUTHORIZE}?${params}`;
 }
 
-export type DoneOutcome = 'connected' | 'denied' | 'failed' | 'expired' | 'nolocation';
-const DONE_OUTCOMES: readonly string[] = ['connected', 'denied', 'failed', 'expired', 'nolocation'];
+export type DoneOutcome = 'connected' | 'denied' | 'failed' | 'expired' | 'nolocation' | 'inuse';
+const DONE_OUTCOMES: readonly string[] = ['connected', 'denied', 'failed', 'expired', 'nolocation', 'inuse'];
 
 /**
  * What the choice just did, kept for a few minutes: "<outcome>[.<return>]". The choice clears the waiting connection, so a second press of a

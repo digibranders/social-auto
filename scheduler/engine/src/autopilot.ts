@@ -30,6 +30,7 @@ import { modelJudge, modelPictureJudge, modelWorthJudge } from './semantic-judge
 import { effectiveTotal, loadWorth, MIN_WORTH, saveWorth, scoreFacts, WORTH_VERSION, type WorthScore } from './worth.ts';
 import { offerableFacts, rankFacts } from './fact-assignment.ts';
 import { fileCache } from './semantic-verifier.ts';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { access, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -73,6 +74,7 @@ import { normalizeHeadline } from './hooks.ts';
 import type { ConceptRecord } from './concepts.ts';
 import { CAPTION_RULES, conceptRecordOf, InsufficientConceptsError, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
 import { topUpPlan } from './plan-topup.ts';
+import { weekChunks } from './week-chunks.ts';
 import { createArtRenderContext, renderPlan, type PostRenderRecord } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
 
@@ -591,79 +593,149 @@ async function main(): Promise<void> {
       await replaceDroppedPost({ brandDir, slug, planFile: values.replace, droppedId: values['replace-post'] as string, networks, time: values.time, utcOffset: values['utc-offset'], history, historyPath, loaded, writePlan, ai });
       return;
     }
-    let plan = await writePlan(schedule);
-    await verdicts?.save();
-    if (plan.candidateReport) {
-      await writeFileAtomic(join(brandDir, `candidates-${planFile}`), `${JSON.stringify(plan.candidateReport, null, 2)}\n`);
-      // Candidates that passed review but were not chosen wait as drafts; before any is used it must pass every check again.
-      if (plan.reserveDrafts && plan.reserveDrafts.length > 0) await writeFileAtomic(join(brandDir, 'reserve-drafts.json'), `${JSON.stringify({ savedAt: new Date().toISOString(), plan: planFile, note: 'drafts only: re-run freshness, claim, cooldown and novelty checks before any is used', drafts: plan.reserveDrafts }, null, 2)}\n`);
-    }
-    console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}${verdicts ? (plan.evidenceCoverage === 'facts' ? ', copy checked against its facts by a model' : ' (the semantic check needs evidence facts and was not used)') : ''}.`);
-    if (plan.insufficientConcepts) {
-      const { requested, produced, reasons } = plan.insufficientConcepts;
-      console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);
-    }
-    // The days that were asked for are remembered, and a plan that came out short is topped up (copy-first plans only): empty days are filled from the drafts that passed
-    // review but were not chosen, then by writing the day once more; a day nobody could write stays empty and is told.
-    const requestedDays = scheduleDates(schedule).map((d) => d.slice(0, 10));
-    if (values['copy-first'] && plan.posts.length > 0 && plan.posts.length < requestedDays.length) {
-      const topped = await topUpPlan({
-        posts: plan.posts,
-        requestedDays,
-        reserve: plan.reserveDrafts ?? [],
-        dateOf: (day) => `${day}T${values.time}:00${values['utc-offset']}`,
-        idOf: (i) => `w${String(weekNumber).padStart(2, '0')}-d${i + 1}`,
-        log: (m) => console.log(`    ${m}`),
-        writeDay: async (day, existing) => {
-          const one = await writePlan({ startDate: day, time: values.time, utcOffset: values['utc-offset'], count: 1, weekdays: [weekdayOf(day)] }, {
-            // A different request from the first one on purpose (the paid-call guard refuses an identical one): the day, and the ideas the plan already has.
-            requestNote: `Write ONE post, for ${day}. It must be about a different fact and a different idea from the posts this plan already has: ${existing.slice(0, 20).map((p) => `"${p.headline.replaceAll('|', '')}"`).join('; ')}. ${CAPTION_RULES}`,
-            recentHeadlines: [...history.weeks.flatMap((w) => w.headlines ?? []), ...existing.map((p) => p.headline)],
-            recentConcepts: [...history.weeks.flatMap((w) => w.concepts ?? []), ...existing.flatMap((p) => { const r = conceptRecordOf(p); return r ? [r] : []; })],
-          });
-          return one.posts[0] ?? null;
-        },
-      });
-      plan = { ...plan, posts: topped.posts };
-      console.log(`    Topped up: ${topped.fromReserve.length} day${topped.fromReserve.length === 1 ? '' : 's'} from the reserve, ${topped.written.length} written once more, ${topped.stillEmpty.length} still empty.`);
-    }
-    // A fully AI plan is marked so that nothing can publish from it except an approved version in the review queue.
-    let finalPlan: WeekPlan = route === 'ai' ? { ...plan, renderMode: 'ai_v1' } : plan;
-    if (artSettings && !values['plan-only']) {
-      console.log('2b/4 Art direction (one batched model call)…');
-      const directed = await artDirectPlan({ ai, plan, brand, history: readArtHistory(history), settings: artSettings, ...(loaded ? { facts: loaded.facts } : {}), ...(values['semantic-check'] ? { pictureJudge: modelPictureJudge(ai) } : {}) });
-      finalPlan = directed.plan;
-      const { counts, flags, requests, status } = directed.report;
-      console.log(`    ${status}: ${counts.directed} directed, ${counts.repaired} repaired, ${counts.fallback} fell back, ${counts.failed} without art direction (${requests} request${requests === 1 ? '' : 's'}).`);
-      for (const flag of flags) console.log(`    FLAG: ${flag}`);
-      await writeFileAtomic(join(brandDir, `art-report-${planFile}`), `${JSON.stringify(directed.report, null, 2)}\n`);
-    }
-    if (networks.length > 0 && finalPlan.posts.length > 0) {
-      console.log(`    Writing a caption for each of ${networks.join(', ')}…`);
-      ai.usage.purpose = 'writing';
-      const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
-      const written = await writeNetworkCaptions({ ai, networks: networks as Network[], posts: finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), caption: p.caption, hashtags: p.hashtags, facts: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) })) });
-      finalPlan = { ...finalPlan, posts: finalPlan.posts.map((p) => (written.variants[p.id] ? { ...p, variants: written.variants[p.id] as PostVariants } : p)) };
-      console.log(`    Captions: ${written.report.written} of ${written.report.requested} written${written.report.retried ? `, ${written.report.retried} asked for again` : ''}${written.report.fallback.length ? `, ${written.report.fallback.length} use the main caption (${written.report.fallback.map((f) => `${f.postId}/${f.network}`).join(', ')})` : ''}.`);
-    }
+    // The posts of one chunk of the plan (the whole plan, or one calendar week of it when it is written week by week) go through the same steps: write, top up, art direction, captions.
+    const produce = async (chunk: PlanSchedule, idBase: number): Promise<{ plan: Awaited<ReturnType<typeof planWeek>>; finalPlan: WeekPlan; requestedDays: string[] }> => {
+      let plan = await writePlan(chunk);
+      await verdicts?.save();
+      if (plan.candidateReport && idBase === 0) {
+        await writeFileAtomic(join(brandDir, `candidates-${planFile}`), `${JSON.stringify(plan.candidateReport, null, 2)}\n`);
+        // Candidates that passed review but were not chosen wait as drafts; before any is used it must pass every check again.
+        if (plan.reserveDrafts && plan.reserveDrafts.length > 0) await writeFileAtomic(join(brandDir, 'reserve-drafts.json'), `${JSON.stringify({ savedAt: new Date().toISOString(), plan: planFile, note: 'drafts only: re-run freshness, claim, cooldown and novelty checks before any is used', drafts: plan.reserveDrafts }, null, 2)}\n`);
+      }
+      console.log(`    Evidence coverage: ${plan.evidenceCoverage ?? 'legacy'}${verdicts ? (plan.evidenceCoverage === 'facts' ? ', copy checked against its facts by a model' : ' (the semantic check needs evidence facts and was not used)') : ''}.`);
+      if (plan.insufficientConcepts) {
+        const { requested, produced, reasons } = plan.insufficientConcepts;
+        console.log(`    Only ${produced} of ${requested} posts: the rest were left out (a repeated idea, or copy the claim gate would not allow).\n    ${reasons.join('\n    ')}`);
+      }
+      // The days that were asked for are remembered, and a plan that came out short is topped up (copy-first plans only): empty days are filled from the drafts that passed
+      // review but were not chosen, then by writing the day once more; a day nobody could write stays empty and is told.
+      const requestedDays = scheduleDates(chunk).map((d) => d.slice(0, 10));
+      if (values['copy-first'] && plan.posts.length > 0 && plan.posts.length < requestedDays.length) {
+        const topped = await topUpPlan({
+          posts: plan.posts,
+          requestedDays,
+          reserve: plan.reserveDrafts ?? [],
+          dateOf: (day) => `${day}T${values.time}:00${values['utc-offset']}`,
+          idOf: (i) => `w${String(weekNumber).padStart(2, '0')}-d${i + 1}`,
+          log: (m) => console.log(`    ${m}`),
+          writeDay: async (day, existing) => {
+            const one = await writePlan({ startDate: day, time: values.time, utcOffset: values['utc-offset'], count: 1, weekdays: [weekdayOf(day)] }, {
+              // A different request from the first one on purpose (the paid-call guard refuses an identical one): the day, and the ideas the plan already has.
+              requestNote: `Write ONE post, for ${day}. It must be about a different fact and a different idea from the posts this plan already has: ${existing.slice(0, 20).map((p) => `"${p.headline.replaceAll('|', '')}"`).join('; ')}. ${CAPTION_RULES}`,
+              recentHeadlines: [...history.weeks.flatMap((w) => w.headlines ?? []), ...existing.map((p) => p.headline)],
+              recentConcepts: [...history.weeks.flatMap((w) => w.concepts ?? []), ...existing.flatMap((p) => { const r = conceptRecordOf(p); return r ? [r] : []; })],
+            });
+            return one.posts[0] ?? null;
+          },
+        });
+        plan = { ...plan, posts: topped.posts };
+        console.log(`    Topped up: ${topped.fromReserve.length} day${topped.fromReserve.length === 1 ? '' : 's'} from the reserve, ${topped.written.length} written once more, ${topped.stillEmpty.length} still empty.`);
+      }
+      // A later week continues the numbering of the weeks already saved, so every post of the batch has an id of its own.
+      if (idBase > 0) plan = { ...plan, posts: plan.posts.map((p, i) => ({ ...p, id: `w${String(weekNumber).padStart(2, '0')}-d${idBase + i + 1}` })) };
+      // A fully AI plan is marked so that nothing can publish from it except an approved version in the review queue.
+      let finalPlan: WeekPlan = route === 'ai' ? { ...plan, renderMode: 'ai_v1' } : plan;
+      if (artSettings && !values['plan-only']) {
+        console.log('2b/4 Art direction (one batched model call)…');
+        const directed = await artDirectPlan({ ai, plan, brand, history: readArtHistory(history), settings: artSettings, ...(loaded ? { facts: loaded.facts } : {}), ...(values['semantic-check'] ? { pictureJudge: modelPictureJudge(ai) } : {}) });
+        finalPlan = directed.plan;
+        const { counts, flags, requests, status } = directed.report;
+        console.log(`    ${status}: ${counts.directed} directed, ${counts.repaired} repaired, ${counts.fallback} fell back, ${counts.failed} without art direction (${requests} request${requests === 1 ? '' : 's'}).`);
+        for (const flag of flags) console.log(`    FLAG: ${flag}`);
+        if (idBase === 0) await writeFileAtomic(join(brandDir, `art-report-${planFile}`), `${JSON.stringify(directed.report, null, 2)}\n`);
+      }
+      if (networks.length > 0 && finalPlan.posts.length > 0) {
+        console.log(`    Writing a caption for each of ${networks.join(', ')}…`);
+        ai.usage.purpose = 'writing';
+        const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
+        const written = await writeNetworkCaptions({ ai, networks: networks as Network[], posts: finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), caption: p.caption, hashtags: p.hashtags, facts: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) })) });
+        finalPlan = { ...finalPlan, posts: finalPlan.posts.map((p) => (written.variants[p.id] ? { ...p, variants: written.variants[p.id] as PostVariants } : p)) };
+        console.log(`    Captions: ${written.report.written} of ${written.report.requested} written${written.report.retried ? `, ${written.report.retried} asked for again` : ''}${written.report.fallback.length ? `, ${written.report.fallback.length} use the main caption (${written.report.fallback.map((f) => `${f.postId}/${f.network}`).join(', ')})` : ''}.`);
+      }
+      return { plan, finalPlan, requestedDays };
+    };
+    const growing = route === 'ai' && values['copy-first'] && !values['plan-only'] && values.topic === undefined && !values.page;
+    const chunks = growing ? weekChunks(schedule) : [schedule];
+    const { plan, finalPlan, requestedDays } = await produce(chunks[0] as PlanSchedule, 0);
     await writeFileAtomic(join(brandDir, planFile), `${JSON.stringify(finalPlan, null, 2)}\n`);
-    history.weeks.push({ file: planFile, createdAt: new Date().toISOString(), painPoints: plan.posts.map((p) => p.painPoint), pillars: plan.posts.map((p) => p.pillar ?? 'problem'), hooks: plan.posts.map((p) => p.hook ?? 'direct_statement'), headlines: plan.posts.map((p) => normalizeHeadline(p.headline)), concepts: plan.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(plan.posts.some((p) => p.factIds) ? { factIds: plan.posts.flatMap((p) => p.factIds ?? []) } : {}) });
+    const recordHistory = (written: Awaited<ReturnType<typeof planWeek>>, first: boolean): void => {
+      const entry = { file: planFile, createdAt: new Date().toISOString(), painPoints: written.posts.map((p) => p.painPoint), pillars: written.posts.map((p) => p.pillar ?? 'problem'), hooks: written.posts.map((p) => p.hook ?? 'direct_statement'), headlines: written.posts.map((p) => normalizeHeadline(p.headline)), concepts: written.posts.flatMap((p) => conceptRecordOf(p) ?? []), ...(written.posts.some((p) => p.factIds) ? { factIds: written.posts.flatMap((p) => p.factIds ?? []) } : {}) };
+      const earlier = first ? undefined : history.weeks.find((w) => w.file === planFile);
+      if (!earlier) {
+        history.weeks.push(entry);
+        return;
+      }
+      earlier.painPoints.push(...entry.painPoints);
+      earlier.pillars = [...(earlier.pillars ?? []), ...entry.pillars];
+      earlier.hooks = [...(earlier.hooks ?? []), ...entry.hooks];
+      earlier.headlines = [...(earlier.headlines ?? []), ...entry.headlines];
+      earlier.concepts = [...(earlier.concepts ?? []), ...entry.concepts];
+      const ids = 'factIds' in entry ? (entry.factIds as string[] | undefined) : undefined;
+      if (ids) earlier.factIds = [...(earlier.factIds ?? []), ...ids];
+    };
+    recordHistory(plan, true);
     await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
 
     if (route === 'ai' && values['copy-first'] && !values['plan-only']) {
       // The editorial gate reads each headline with its fact (one cheap request for the batch) and the owner is told which ones it would drop. It only advises here: the owner decides.
+      const adviceOf = async (written: WeekPlan): Promise<Map<string, string>> => {
       const advice = new Map<string, string>();
       if (headlineGateFromEnv(process.env).enabled) {
         try {
           const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
-          const items = finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), fact: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined).join(' ') || p.anchor || p.painPoint }));
+          const items = written.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), fact: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined).join(' ') || p.anchor || p.painPoint }));
           for (const verdict of judgeHeadlines(await scoreHeadlines(ai, items), headlineGateFromEnv(process.env).config)) if (!verdict.keep && verdict.reason) advice.set(verdict.id, verdict.reason);
         } catch (error) {
           console.log(`    The headline check could not run (${error instanceof Error ? error.message.slice(0, 120) : 'unknown error'}); no advice is shown.`);
         }
       }
-      new CopyStage(brandDir, slug).open(planFile, finalPlan.posts.map((p) => ({ postId: p.id, date: p.date.slice(0, 10), headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) })), requestedDays);
+        return advice;
+      };
+      const copyPostsOf = (written: WeekPlan, advice: Map<string, string>) => written.posts.map((p) => ({ postId: p.id, date: p.date.slice(0, 10), headline: p.headline, caption: composeCaption(p), ...(p.variants ? { captions: Object.fromEntries(Object.entries(p.variants).map(([n, v]) => [n, { text: composeVariant(v), ...(v.fallback ? { fallback: true } : {}) }])) } : {}), ...(advice.has(p.id) ? { advice: advice.get(p.id) as string } : {}) }));
+      const stage = new CopyStage(brandDir, slug);
+      const total = chunks.length;
+      // The job runner reads these lines: how many weeks the batch will have, and how many are saved so far.
+      console.log(`WEEKS 0/${total}`);
+      stage.open(planFile, copyPostsOf(finalPlan, await adviceOf(finalPlan)), requestedDays, total > 1 ? { weeksDone: 1, weeksTotal: total } : undefined);
       console.log(`3/4 Copy first: ${finalPlan.posts.length} posts are waiting for the owner to keep or drop them. No picture was bought. Then: --draw-kept ${planFile}`);
+      console.log(`WEEKS 1/${total}`);
+      if (total === 1) return;
+      // The other weeks are written one at a time, each saved to the same batch as soon as it is done. A week that fails ends the job with the earlier weeks left in place;
+      // a week where nothing could be written is left empty, as a short plan always was; a batch the owner put away stops the writing.
+      const planPath = join(brandDir, planFile);
+      try {
+        for (let k = 1; k < total; k++) {
+          const base = Math.max(0, ...stage.get(planFile).posts.map((p) => Number(/-d(\d+)$/.exec(p.postId)?.[1] ?? 0)));
+          let next: Awaited<ReturnType<typeof produce>>;
+          try {
+            next = await produce(chunks[k] as PlanSchedule, base);
+          } catch (error) {
+            if (!(error instanceof InsufficientConceptsError)) throw error;
+            console.log(`    Week ${k + 1} of ${total}: nothing could be written for it, so it is left empty.`);
+            console.log(`WEEKS ${k + 1}/${total}`);
+            continue;
+          }
+          try {
+            stage.appendWeek(planFile, copyPostsOf(next.finalPlan, await adviceOf(next.finalPlan)), next.requestedDays, { weeksDone: k + 1, weeksTotal: total }, () => {
+              const onDisk = JSON.parse(readFileSync(planPath, 'utf8')) as WeekPlan;
+              const temp = `${planPath}.${process.pid}.tmp`;
+              writeFileSync(temp, `${JSON.stringify({ ...onDisk, posts: [...onDisk.posts, ...next.finalPlan.posts] }, null, 2)}\n`);
+              renameSync(temp, planPath);
+            });
+          } catch (error) {
+            if (error instanceof CopyStageError && error.code === 'CLOSED') {
+              console.log('    The batch was put away while it was being written, so the other weeks are not written.');
+              return;
+            }
+            throw error;
+          }
+          recordHistory(next.plan, false);
+          await writeFileAtomic(historyPath, `${JSON.stringify(history, null, 2)}\n`);
+          console.log(`WEEKS ${k + 1}/${total}`);
+        }
+      } finally {
+        stage.finishWriting(planFile);
+      }
       return;
     }
     if (route === 'ai' && !values['plan-only']) {

@@ -10,7 +10,8 @@
  */
 import { scheduleData } from '../../lib/schedule-source.js';
 import { addGoogleLocation } from '../../lib/channels.js';
-import { allBrands } from '../../lib/clients.js';
+import { accountInUse, checkHolders, holderOptions, type HolderOptions } from '../../lib/channel-holder.js';
+import { allBrands, type ClientsFile } from '../../lib/clients.js';
 import { parseKey } from '../../lib/crypto.js';
 import { accessTokenFor, exchangeCode, GoogleApiError, listLocations, type GoogleLocation } from '../../lib/google.js';
 import { openPending, sealPending } from '../../lib/google-pending.js';
@@ -24,9 +25,13 @@ const plannedBrands = (): string[] => parseSchedule(scheduleData).map((p) => p.b
 const idOf = (place: GoogleLocation): string => place.location.split('/').pop() as string;
 const choices = (places: GoogleLocation[]): Array<{ id: string; title: string }> => places.map((p) => ({ id: idOf(p), title: p.title }));
 
-async function save(brand: string, place: GoogleLocation, refreshToken: string, key: Buffer): Promise<void> {
+/** Saves the location, or answers why it cannot be taken (another workspace already holds it). */
+async function save(brand: string, place: GoogleLocation, refreshToken: string, key: Buffer, clients: ClientsFile, options: HolderOptions): Promise<Response | null> {
   const { file, etag } = await loadChannels();
+  const verdict = checkHolders(file, clients, brand, [`google:${idOf(place)}`], options);
+  if (!verdict.ok) return accountInUse(verdict);
   await saveChannels(addGoogleLocation(file, brand, place, refreshToken, key, Date.now()), etag);
+  return null;
 }
 
 export async function POST(request: Request): Promise<Response> {
@@ -38,7 +43,9 @@ export async function POST(request: Request): Promise<Response> {
   const body = ((await request.json().catch(() => null)) ?? {}) as Record<string, unknown>;
   const { brand } = body;
   if (typeof brand !== 'string' || !brand) return json(400, { error: 'brand is required' });
-  if (!allBrands(plannedBrands(), (await loadClients()).file).has(brand)) return json(400, { error: `unknown client "${brand}"` });
+  const clients = (await loadClients()).file;
+  const options = holderOptions(body);
+  if (!allBrands(plannedBrands(), clients).has(brand)) return json(400, { error: `unknown client "${brand}"` });
 
   try {
     const key = parseKey(process.env['CHANNEL_KEY']);
@@ -53,7 +60,8 @@ export async function POST(request: Request): Promise<Response> {
         return json(422, { error: 'No business locations were found. The Google account must be a manager of the client’s listing.' });
       }
       if (places.length === 1) {
-        await save(brand, places[0] as GoogleLocation, tokens.refreshToken, key);
+        const refused = await save(brand, places[0] as GoogleLocation, tokens.refreshToken, key, clients, options);
+        if (refused) return refused;
         return json(200, { status: 'saved', locations: choices(places) });
       }
       return json(200, { status: 'pick', sealed: sealPending(tokens.refreshToken, brand, key, Date.now()) });
@@ -73,7 +81,8 @@ export async function POST(request: Request): Promise<Response> {
 
       const chosen = places.find((p) => idOf(p) === body['location']);
       if (!chosen) return json(400, { error: 'that location is not available to this Google account' });
-      await save(brand, chosen, refreshToken, key);
+      const refused = await save(brand, chosen, refreshToken, key, clients, options);
+      if (refused) return refused;
       return json(200, { status: 'saved', locations: choices([chosen]) });
     }
     return json(400, { error: 'unknown action' });

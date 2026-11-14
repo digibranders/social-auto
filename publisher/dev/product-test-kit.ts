@@ -65,6 +65,10 @@ export interface FakeJob {
   state: 'queued' | 'running' | 'succeeded' | 'failed';
   createdAt: string;
   step?: number;
+  /** A batch written week by week: the file it is saved in, and the weeks saved so far of the weeks it will have. */
+  planFileMade?: string;
+  weeksDone?: number;
+  weeksTotal?: number;
   finishedAt?: string;
   planFile?: string;
   week?: string;
@@ -94,6 +98,8 @@ export interface FakeBatch {
   createdAt: string;
   drawnAt?: string;
   closedAt?: string;
+  /** Present while the batch is still being written week by week. */
+  writing?: { weeksDone: number; weeksTotal: number };
   /** The weeks of a batch written for several weeks (as the review service lists them). */
   weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'partly_drawn' | 'drawn' | 'lapsed'; postIds: string[]; openPostIds?: string[] }>;
   posts: Array<Record<string, unknown> & { postId: string; headline: string; caption: string; state: string }>;
