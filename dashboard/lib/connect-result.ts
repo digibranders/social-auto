@@ -1,7 +1,7 @@
 import { isSignedIn } from './security.js';
 
 export type Platform = 'facebook' | 'linkedin' | 'instagram' | 'google';
-export type Outcome = 'connected' | 'denied' | 'failed' | 'expired' | 'nolocation';
+export type Outcome = 'connected' | 'denied' | 'failed' | 'expired' | 'nolocation' | 'inuse';
 
 const NAME: Record<Platform, string> = { facebook: 'Facebook', linkedin: 'LinkedIn', instagram: 'Instagram', google: 'Google Business listing' };
 
@@ -16,6 +16,8 @@ function messageFor(platform: Platform, outcome: Outcome): { title: string; body
       return { title: 'This link has run out of time', body: 'Please open the link you were sent again and press Allow. If it keeps failing, tell the person who sent it.' };
     case 'nolocation':
       return { title: 'No business listing found', body: 'That Google account does not manage a business listing. Please open the link again and sign in with the account that manages it. If it keeps failing, tell the person who sent it.' };
+    case 'inuse':
+      return { title: 'That account is already connected', body: `This ${name} is already connected somewhere else, so we did not change anything. Go back and choose whether to move it, or connect a different account.` };
     case 'failed':
       return { title: 'That did not work', body: 'The connection could not be completed. Please open the link again and press Allow. If it keeps failing, tell the person who sent it.' };
   }
@@ -33,14 +35,20 @@ export function finishConnect(options: {
   clearCookie: string;
   brand?: string;
   returnUrl?: string | null;
+  /** With `inuse`: the customer's other brand that holds the account (never set for someone else's). */
+  heldBy?: string;
 }): Response {
   const { request, platform, outcome } = options;
   const headers = { 'Set-Cookie': options.clearCookie, 'Cache-Control': 'no-store' };
   if (options.returnUrl) {
     const back = new URL(options.returnUrl);
     // A product only knows connected, denied or failed.
-    back.searchParams.set('social', outcome === 'expired' || outcome === 'nolocation' ? 'failed' : outcome);
+    back.searchParams.set('social', outcome === 'expired' || outcome === 'nolocation' || outcome === 'inuse' ? 'failed' : outcome);
     back.searchParams.set('channel', platform);
+    if (outcome === 'inuse') {
+      back.searchParams.set('reason', 'ACCOUNT_IN_USE');
+      if (options.heldBy) back.searchParams.set('heldBy', options.heldBy);
+    }
     return new Response(null, { status: 302, headers: { ...headers, Location: back.toString() } });
   }
   if (isSignedIn(request, process.env['SESSION_SECRET'], Date.now())) {

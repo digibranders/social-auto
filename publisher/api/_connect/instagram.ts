@@ -5,6 +5,7 @@
  *
  * POST /api/instagram-connect   {"code": "...", "redirectUri": "...", "brand": "brandbasket"}
  */
+import { accountInUse, checkHolders, holderOptions } from '../../lib/channel-holder.js';
 import { scheduleData } from '../../lib/schedule-source.js';
 import { addInstagramAccount } from '../../lib/channels.js';
 import { parseKey } from '../../lib/crypto.js';
@@ -29,7 +30,8 @@ export async function POST(request: Request): Promise<Response> {
   if (typeof code !== 'string' || typeof redirectUri !== 'string' || typeof brand !== 'string' || !code || !redirectUri || !brand) {
     return json(400, { error: 'code, redirectUri and brand are required' });
   }
-  const knownBrands = allBrands(plannedBrands(), (await loadClients()).file);
+  const clients = (await loadClients()).file;
+  const knownBrands = allBrands(plannedBrands(), clients);
   if (!knownBrands.has(brand)) return json(400, { error: `unknown client "${brand}"` });
 
   try {
@@ -40,6 +42,8 @@ export async function POST(request: Request): Promise<Response> {
     const account = await accountOf(long.accessToken);
 
     const { file, etag } = await loadChannels();
+    const verdict = checkHolders(file, clients, brand, [`instagram:${account.userId}`], holderOptions(body));
+    if (!verdict.ok) return accountInUse(verdict);
     await saveChannels(addInstagramAccount(file, brand, account, long.accessToken, long.expiresInSeconds, key, Date.now()), etag);
     return json(200, { account: { username: account.username }, expiresInDays: Math.floor(long.expiresInSeconds / 86_400) });
   } catch (error) {

@@ -3,6 +3,7 @@
  * GET /api/google/start?brand=<client>                         (a signed-in team member connecting a listing they manage)
  * Sends the person to Google to approve posting for one client's business listing.
  */
+import { attachInvite } from '../../lib/connect-guard.js';
 import { isBrand, newState } from '../../lib/facebook-flow.js';
 import { authorizeLink, callbackUrl, connectCookie } from '../../lib/google-flow.js';
 import { verifyInvite } from '../../lib/linkedin-flow.js';
@@ -29,8 +30,8 @@ export function GET(request: Request): Response {
   }
 
   const state = newState();
-  return new Response(null, {
+  return attachInvite(new Response(null, {
     status: 302,
     headers: { Location: authorizeLink({ clientId, redirectUri: callbackUrl(request), state }), 'Set-Cookie': connectCookie(state, brand, invited?.returnUrl ?? null), 'Cache-Control': 'no-store' },
-  });
+  }), token);
 }

@@ -4,6 +4,7 @@
  * For a client with no login, right after Google sends them back. It works only with the hidden cookie holding the
  * sealed, short-lived token that Google sign-in left, so it cannot be used to connect anything else.
  */
+import { guardFor } from '../../lib/connect-guard.js';
 import { describeError } from '../../lib/http.js';
 import { finishConnect, type Outcome } from '../../lib/connect-result.js';
 import { chooserPage } from '../../lib/google-choose.js';
@@ -17,8 +18,8 @@ const html = (status: number, body: string, extra: Record<string, string> = {}):
 
 const waiting = (request: Request): { brand: string; sealed: string; returnUrl: string | null } | null => parsePickCookie(readCookie(request.headers.get('cookie'), PICK_COOKIE));
 const expired = (request: Request): Response => finishConnect({ request, platform: 'google', outcome: 'expired', clearCookie: clearedPickCookie() });
-const done = (request: Request, pending: { brand: string; returnUrl: string | null }, outcome: Outcome, withBrand = true): Response =>
-  finishConnect({ request, platform: 'google', outcome, clearCookie: clearedPickCookie(), ...(withBrand ? { brand: pending.brand } : {}), returnUrl: pending.returnUrl });
+const done = (request: Request, pending: { brand: string; returnUrl: string | null }, outcome: Outcome, withBrand = true, heldBy?: string): Response =>
+  finishConnect({ request, platform: 'google', outcome, clearCookie: clearedPickCookie(), ...(withBrand ? { brand: pending.brand } : {}), returnUrl: pending.returnUrl, ...(heldBy ? { heldBy } : {}) });
 
 export async function GET(request: Request): Promise<Response> {
   const pending = waiting(request);
@@ -42,8 +43,9 @@ export async function POST(request: Request): Promise<Response> {
   const location = new URLSearchParams(await request.text().catch(() => '')).get('location') ?? '';
   if (!LOCATION_ID.test(location)) return html(400, 'Invalid location');
   try {
-    const { status } = await askPublisher('save', { sealed: pending.sealed, brand: pending.brand, location });
+    const { status, body } = await askPublisher('save', { sealed: pending.sealed, brand: pending.brand, location, ...guardFor(request) });
     if (status === 410) return expired(request);
+    if (status === 409 && body?.['code'] === 'ACCOUNT_IN_USE') return done(request, pending, 'inuse', true, typeof body['heldBy'] === 'string' ? body['heldBy'] : undefined);
     if (status !== 200) console.error(`google-connect save answered ${status}`);
     return done(request, pending, status === 200 ? 'connected' : 'failed');
   } catch (error) {

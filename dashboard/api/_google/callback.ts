@@ -5,6 +5,7 @@
  * once; with several, the person chooses (the sealed token waits in a hidden cookie). A signed-in team member lands in
  * the dashboard; a client with no login sees plain pages.
  */
+import { guardFor, refusal } from '../../lib/connect-guard.js';
 import { describeError } from '../../lib/http.js';
 import { statesMatch } from '../../lib/facebook-flow.js';
 import { finishConnect, type Outcome } from '../../lib/connect-result.js';
@@ -13,8 +14,8 @@ import { isSignedIn, readCookie } from '../../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
 
-const finish = (request: Request, outcome: Outcome, brand?: string, returnUrl: string | null = null): Response =>
-  finishConnect({ request, platform: 'google', outcome, clearCookie: clearedConnectCookie(), ...(brand ? { brand } : {}), returnUrl });
+const finish = (request: Request, outcome: Outcome, brand?: string, returnUrl: string | null = null, heldBy?: string): Response =>
+  finishConnect({ request, platform: 'google', outcome, clearCookie: clearedConnectCookie(), ...(brand ? { brand } : {}), returnUrl, ...(heldBy ? { heldBy } : {}) });
 
 /** Several locations were found: a team member picks in the dashboard, a client (or a product's customer) on a plain page. */
 function choose(request: Request, brand: string, sealed: string, returnUrl: string | null): Response {
@@ -42,9 +43,11 @@ export async function GET(request: Request): Promise<Response> {
     const response = await fetch(new URL('/api/google-connect?action=exchange', target), {
       method: 'POST',
       headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, redirectUri: callbackUrl(request), brand: saved.brand }),
+      body: JSON.stringify({ code, redirectUri: callbackUrl(request), brand: saved.brand, ...guardFor(request) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
+    const refused = await refusal(response);
+    if (refused) return finish(request, 'inuse', saved.brand, saved.returnUrl, refused.heldBy);
     if (response.status === 422) return finish(request, 'nolocation', saved.brand, saved.returnUrl);
     if (!response.ok) {
       console.error(`google-connect answered ${response.status}`);
