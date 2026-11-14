@@ -48,6 +48,7 @@ import { topicRequests } from './topic-requests.ts';
 import { carouselRoom } from './carousel-limit.ts';
 import { productLimitsOff } from './limits-switch.ts';
 import { readHistory as readCarouselHistory } from './carousel-run.ts';
+import { CarouselMoveError, moveCarousel } from './carousel-move.ts';
 import { tomorrowAt } from './posting-plan.ts';
 import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
 import { readCarouselWeekly, runWeeklyCarousels, writeCarouselWeekly } from './weekly-carousel.ts';
@@ -867,7 +868,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         return send(res, 200, { carousels });
       }
       // A carousel: shown whole, and approved or rejected as one step. Its pictures are served by the ordinary picture route, by each slide's version id.
-      if (parts[0] === 'review' && parts[1] === 'carousels' && (parts.length === 4 || (parts.length === 5 && req.method === 'POST' && (parts[4] === 'approve' || parts[4] === 'reject')))) {
+      if (parts[0] === 'review' && parts[1] === 'carousels' && (parts.length === 4 || (parts.length === 5 && req.method === 'POST' && (parts[4] === 'approve' || parts[4] === 'reject' || parts[4] === 'move')))) {
         const carouselBrand = decodeURIComponent(parts[2] ?? '');
         const carouselId = decodeURIComponent(parts[3] ?? '');
         scope.guard(carouselBrand, parts.length === 5);
@@ -876,6 +877,18 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         if (parts.length === 5) {
           const body = await readJson(req);
           const by = scope.by(body['by']);
+          // Another day of its own week, for a carousel that is waiting or approved (the pictures and the approval stay as they are); the release follows the new day.
+          if (parts[4] === 'move') {
+            if (typeof body['day'] !== 'string') throw new ReviewError('INVALID', 'day must be a day like 2026-11-25');
+            try {
+              const moved = moveCarousel({ brandDir: join(root, carouselBrand), id: carouselId, day: body['day'], today: todayIst(), status: ((): string => { try { return carouselStore.carouselStatus(carouselId); } catch { return 'incomplete'; } })() });
+              if (moved.moved) requestRelease(root);
+              return send(res, 200, { id: carouselId, date: moved.date, moved: moved.moved });
+            } catch (error) {
+              if (error instanceof CarouselMoveError) return send(res, error.code === 'NOT_FOUND' ? 404 : error.code === 'CONFLICT' ? 409 : 400, { error: error.message, code: error.code });
+              throw error;
+            }
+          }
           if (parts[4] === 'approve') {
             carouselStore.approveCarousel(carouselId, by);
             // A customer's carousel reaches her calendar through a release record like her pictures do. It is made here too, so one made before the record was made with it (or for a

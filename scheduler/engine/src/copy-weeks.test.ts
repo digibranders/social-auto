@@ -1009,6 +1009,27 @@ test('a dropped post that was given a new topic cannot be put back to undecided'
   }
 });
 
+test('moving a carousel over HTTP: a carousel that is not waiting or approved is a 409, a day that is not text a 400, another brand\'s carousel is not hers to move', async () => {
+  const s = await start('2026-11-16T06:30:00Z');
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    writeFileSync(join(dir, 'week-09.json'), JSON.stringify({ brand: 'bb-acme', posts: [{ id: 'car-1', date: '2026-11-20T10:00:00+05:30' }] }));
+    writeFileSync(join(dir, 'carousels.json'), JSON.stringify({ carousels: [{ id: 'car-1', topic: 'Why it works', createdAt: '2026-11-12T00:00:00Z', planFile: 'week-09.json', date: '2026-11-20T10:00:00+05:30' }] }));
+    const incomplete = await s.call('/review/carousels/bb-acme/car-1/move', { day: '2026-11-19' });
+    assert.equal(incomplete.status, 409, 'it has no slides, so it is incomplete');
+    assert.equal(((await incomplete.json()) as { code: string }).code, 'CONFLICT');
+    assert.equal((await s.call('/review/carousels/bb-acme/car-1/move', { day: 19 })).status, 400);
+    assert.equal(JSON.parse(readFileSync(join(dir, 'week-09.json'), 'utf8')).posts[0].date, '2026-11-20T10:00:00+05:30', 'nothing moved');
+    const owners = new ProductBrands(join(s.root, 'brands'));
+    mkdirSync(join(s.root, 'brands', 'bb-other'), { recursive: true });
+    owners.claim('bb-other', 'brandbasket', () => false);
+    const asOther = await fetch(`${s.base}/review/carousels/bb-acme/car-1/move`, { method: 'POST', headers: { Authorization: `Bearer ${PRODUCT}`, 'X-Brand': 'bb-other', 'X-Actor': 'brandbasket:u', 'Content-Type': 'application/json' }, body: JSON.stringify({ day: '2026-11-19' }) });
+    assert.ok([403, 404].includes(asOther.status), 'another brand\'s carousel is refused');
+  } finally {
+    await s.done();
+  }
+});
+
 // ---- PRODUCT_LIMITS=off lifts the limits for a stretch of testing, and only when it is exactly "off"
 
 import { productLimitsOff, UNLIMITED } from './limits-switch.ts';

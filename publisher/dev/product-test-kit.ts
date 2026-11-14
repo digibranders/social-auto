@@ -394,12 +394,24 @@ export async function fakeEngine(): Promise<FakeEngine> {
         return send(200, { enabled: engine.carouselWeekly });
       }
       if (req.method === 'GET' && url.pathname === '/review/carousels') return send(200, { carousels: engine.carousels.filter((c) => c.brand === caller).map((c) => ({ id: c.id, topic: c.topic, date: c.date, createdAt: c.date, planFile: 'week-09.json', count: c.slides.length, status: c.status, headlines: c.slides.map((_, i) => `Slide |${i + 1}| words`) })).reverse() });
-      const carousel = /^\/review\/carousels\/([^/]+)\/([^/]+)(?:\/(approve|reject))?$/.exec(url.pathname);
+      const carousel = /^\/review\/carousels\/([^/]+)\/([^/]+)(?:\/(approve|reject|move))?$/.exec(url.pathname);
       if (carousel) {
         const [, carouselBrand = '', carouselId = '', verb] = carousel;
         const found = engine.carousels.find((c) => c.brand === carouselBrand && c.id === carouselId);
         if (carouselBrand !== caller || !found) return send(404, { error: 'no such carousel', code: 'NOT_FOUND' });
         if (!verb) return send(200, { id: found.id, count: found.slides.length, status: found.status, slides: found.slides.map((versionId, i) => ({ position: i + 1, versionId, status: found.status === 'approved' ? 'approved' : 'pending', headline: `Slide |${i + 1}| words`, caption: '' })), captions: found.captions.map((c) => ({ ...c, versionId: `${caller}.${'c'.repeat(16)}`, status: found.status === 'approved' ? 'approved' : 'pending' })), reasons: ['weak_copy', 'other'] });
+        if (verb === 'move') {
+          const day = String(body?.['day']);
+          const today = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+          if (found.status !== 'pending' && found.status !== 'approved') return send(409, { error: 'only a carousel that is waiting or approved can be moved', code: 'CONFLICT' });
+          if (found.date.slice(0, 10) <= today) return send(400, { error: 'the day of this carousel is today or has passed', code: 'DAY_PASSED' });
+          if (day === found.date.slice(0, 10)) return send(200, { id: found.id, date: found.date, moved: false });
+          const monday = (d: string): string => new Date(Date.parse(`${d}T00:00:00Z`) - ((new Date(`${d}T00:00:00Z`).getUTCDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10);
+          if (monday(day) !== monday(found.date.slice(0, 10))) return send(400, { error: 'a carousel can only move to another day of its own week', code: 'OUTSIDE_WEEK' });
+          if (day <= today) return send(400, { error: 'that day is today or has passed', code: 'DAY_PASSED' });
+          found.date = `${day}${found.date.slice(10)}`;
+          return send(200, { id: found.id, date: found.date, moved: true });
+        }
         if (verb === 'reject' && !['weak_copy', 'other', 'style'].includes(String(body?.['reason']))) return send(400, { error: 'the reason must be one of', code: 'INVALID' });
         if (found.status === 'incomplete') return send(400, { error: 'slide 2 has no picture yet', code: 'INVALID' });
         found.status = verb === 'approve' ? 'approved' : 'rejected';

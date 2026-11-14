@@ -874,6 +874,15 @@ export class WorkspaceEngine {
     return { id, count: Math.max(0, Math.floor(num(answer['count']))), status: carouselStatus(answer['status']), slides, captions };
   }
 
+  /** Moves a waiting or approved carousel to another day of its own week; the answer is its id and its day now. */
+  async moveCarousel(id: string, day: string, actor: string): Promise<{ id: string; date: string }> {
+    if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/carousels/${this.brand}/${id}/move`, actor, { day });
+    const date = isObject(answer) ? str(answer['date'], 40) : undefined;
+    if (date === undefined || date === '') throw unavailable();
+    return { id, date };
+  }
+
   /** Approves the whole carousel: every slide and every channel's words, exactly as they are now. */
   async approveCarousel(id: string, actor: string): Promise<CarouselSummary['status']> {
     if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
