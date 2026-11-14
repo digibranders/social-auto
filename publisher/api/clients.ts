@@ -7,6 +7,7 @@
  * POST /api/clients?action=set-limit    body: {"brand": "brand-basket", "limit": 3}  (posters a week the website may make for each channel)
  * POST /api/clients?action=set-logo-required  body: {"brand": "brand-basket", "required": true}  (every poster must carry the website's real logo)
  * POST /api/clients?action=set-approval-mode  body: {"brand": "brand-basket", "mode": "auto"}  ("manual": a person approves each poster; "auto": a poster that passes the automatic checks is approved by the system)
+ * POST /api/clients?action=set-posting-days  body: {"brand": "brand-basket", "days": {"instagram": ["mon", "tue", "sat"], "facebook": ["wed", "fri"]}}  (the days of the week each channel posts on; {} clears them; used when a batch is written)
  * POST /api/clients?action=set-spend-cap  body: {"brand": "brand-basket", "cap": 5}  (what the AI may cost for the client in a calendar month, in dollars; null goes back to the default limit)
  * POST /api/clients?action=remove-plan  body: {"brand": "brand-basket", "index": 0}  (stops making posters for that plan)
  * POST /api/clients?action=set-brands-default  body: {"value": 2}  (how many brands a product customer may have unless told otherwise, 1 to 4)
@@ -19,6 +20,7 @@ import { addClient, addPlan, isBrandSlug, isExternalId, removePlan, workspacesIn
 import { BrandSettingsError, withDefaultBrands, withGroupBrands } from '../lib/brands.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
 import { EditError } from '../lib/overrides.js';
+import { parsePostingDays, setPostingDays } from '../lib/posting-days.js';
 import { parseSchedule } from '../lib/schedule.js';
 import { loadBrandSettings, loadChannels, loadClients, loadManual, saveBrandSettings, saveClients, storeConfigured } from '../lib/store.js';
 
@@ -71,6 +73,15 @@ async function spendCap(body: Record<string, unknown>): Promise<Response> {
   if (!isBrandSlug(brand)) throw new EditError('unknown client');
   const { file, etag } = await loadClients();
   await saveClients(setSpendCap(file, brand, body['cap'] ?? null), etag);
+  return json(200, { ok: true });
+}
+
+async function postingDays(body: Record<string, unknown>): Promise<Response> {
+  const brand = body['brand'];
+  if (!isBrandSlug(brand)) throw new EditError('unknown client');
+  const days = parsePostingDays(body['days'] ?? {});
+  const { file, etag } = await loadClients();
+  await saveClients(setPostingDays(file, brand, days), etag);
   return json(200, { ok: true });
 }
 
@@ -129,6 +140,7 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'set-logo-required') return await logoRequired(body);
     if (action === 'set-approval-mode') return await approvalMode(body);
     if (action === 'set-spend-cap') return await spendCap(body);
+    if (action === 'set-posting-days') return await postingDays(body);
     if (action === 'set-brands-default') return await brandsDefault(body);
     if (action === 'set-brands-allowed') return await brandsAllowed(body);
     if (action === 'remove') return await remove(body);

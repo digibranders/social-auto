@@ -1,6 +1,6 @@
 /** What every product API call about a customer's content needs first: the workspace the calling product owns, and the engine scoped to it. */
 import { apiError } from './api-error.js';
-import { findWorkspace, isExternalId } from './clients.js';
+import { findWorkspace, isExternalId, type AddedClient } from './clients.js';
 import { engineFromEnv, WorkspaceEngine } from './engine-client.js';
 import { productOf } from './product-request.js';
 import { loadClients, storeConfigured } from './store.js';
@@ -10,6 +10,8 @@ export interface Workspace {
   website: string | undefined;
   /** The customer put this brand away: nothing new is written, drawn or sent for it. */
   archived: boolean;
+  /** The days of the week the customer chose for her channels (posting-days.ts); empty when she chose none. */
+  postingDays: NonNullable<AddedClient['postingDays']>;
 }
 
 /** The workspace named by externalId, if the calling product owns it; otherwise the response to send. */
@@ -20,7 +22,7 @@ export async function workspaceFor(request: Request, externalId: unknown): Promi
   if (!isExternalId(externalId)) return apiError(400, 'INVALID_EXTERNAL_ID', 'externalId is required');
   const { file } = await loadClients();
   const found = findWorkspace(file, product.id, externalId);
-  return found ? { product, workspace: { brand: found.brand, website: found.website, archived: found.archived === true } } : apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
+  return found ? { product, workspace: { brand: found.brand, website: found.website, archived: found.archived === true, postingDays: found.postingDays ?? {} } } : apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
 }
 
 /** The answer to send when a call that writes, draws or spends is made for a brand that was put away; null when it may go ahead. */

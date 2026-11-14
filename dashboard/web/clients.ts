@@ -1,4 +1,4 @@
-import type { ChannelHealth, ClientPlanData, CostEntry, StatusPost, StatusResponse } from '../shared/status.ts';
+import type { ChannelHealth, ClientPlanData, CostEntry, PostingDaysData, StatusPost, StatusResponse } from '../shared/status.ts';
 import { WEEKLY_LIMIT_DEFAULT } from '../shared/quota.ts';
 import { brandLabel, dayKeyOf, formatTime, weekdayName } from './calendar.ts';
 
@@ -35,6 +35,8 @@ export interface ClientSummary {
   approvalMode: 'manual' | 'auto';
   /** What the AI may cost for this client in a calendar month, in dollars; null when the client has no limit of its own and the default one applies. */
   spendCapUsd: number | null;
+  /** The days of the week each channel posts on, chosen by the customer; a channel with no entry keeps the usual spread. */
+  postingDays: PostingDaysData;
   /** Every post of the client, planned or past; the cost view looks its posts up here. */
   posts: StatusPost[];
   /** What the AI cost for this client, from the content engine's usage log. */
@@ -109,6 +111,7 @@ export function summarizeClients(data: StatusResponse, now: number): ClientSumma
       requireAuthenticLogo: entry?.requireAuthenticLogo === true,
       approvalMode: entry?.approvalMode === 'auto' ? 'auto' : 'manual',
       spendCapUsd: entry?.spendCapUsd ?? null,
+      postingDays: entry?.postingDays ?? {},
       posts,
       costs: data.costs.filter((c) => c.brand === brand),
     };

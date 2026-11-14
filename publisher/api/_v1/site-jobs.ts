@@ -20,6 +20,7 @@ import { EditError } from '../../lib/overrides.js';
 import { archivedAnswer, engineFor, workspaceFor } from '../../lib/product-workspace.js';
 import { syncConnected } from '../../lib/connected-sync.js';
 import { nextMonday } from '../../lib/plan-days.js';
+import { parseDays, type Weekday } from '../../lib/posting-days.js';
 import { loadChannels, loadClients, saveClients } from '../../lib/store.js';
 
 const MAX_BODY_BYTES = 4 * 1024;
@@ -81,6 +82,16 @@ export async function POST(request: Request): Promise<Response> {
     if (weeks === null) return apiError(400, 'INVALID_REQUEST', `weeks must be a whole number from 1 to ${MAX_WEEKS}`);
     const postsPerWeek = whole(body['postsPerWeek'], DEFAULT_POSTS_PER_WEEK, MAX_POSTS_PER_WEEK);
     if (postsPerWeek === null) return apiError(400, 'INVALID_REQUEST', `postsPerWeek must be a whole number from 1 to ${MAX_POSTS_PER_WEEK}`);
+    // Exact days: asked for in this call, else the days the customer saved for her channels. Channels that post on different days cannot share one batch.
+    let weekdays: Weekday[] | undefined;
+    if (body['weekdays'] !== undefined) {
+      weekdays = parseDays(body['weekdays']);
+    } else {
+      const saved = workspace.postingDays;
+      const lists = networks.map((n) => saved[n]?.join(',') ?? '');
+      if (new Set(lists).size > 1) return apiError(400, 'CHANNEL_DAYS_DIFFER', 'these channels post on different days, so start one batch for each channel');
+      weekdays = networks[0] === undefined ? undefined : saved[networks[0]];
+    }
     const startAsked = body['startDate'];
     if (startAsked !== undefined && (typeof startAsked !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(startAsked))) return apiError(400, 'INVALID_REQUEST', 'startDate must be a day like 2026-12-07');
     // The first post goes out on a Monday unless the product says otherwise: the next Monday (India time) after today.
@@ -120,7 +131,7 @@ export async function POST(request: Request): Promise<Response> {
       bound = true;
     }
     try {
-      const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks, postsPerWeek, startDate, actor: by });
+      const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks, postsPerWeek, ...(weekdays ? { weekdays } : {}), startDate, actor: by });
       // The brand is the product's from its first job on: the poster service is told which networks are connected now, before anything is drawn.
       await syncConnected(engine, workspace.brand, by);
       return json(made.created ? 202 : 200, { job: made.job, created: made.created });

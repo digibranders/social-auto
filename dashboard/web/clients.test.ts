@@ -105,6 +105,7 @@ test('a client has its own monthly AI limit only when the feed says so, and the 
     runway: [{ brand: 'capped', postsLeft: 0, spendCapUsd: 3.5 }, { brand: 'plain', postsLeft: 0 }],
   };
   assert.deepEqual(summarizeClients(data, NOW).map((c) => [c.brand, c.spendCapUsd]), [['capped', 3.5], ['plain', null]]);
+  assert.deepEqual(summarizeClients({ ...data, runway: [{ brand: 'days', postsLeft: 0, postingDays: { instagram: ['mon', 'tue', 'sat'] } }, { brand: 'none', postsLeft: 0 }] }, NOW).map((c) => [c.brand, c.postingDays]), [['days', { instagram: ['mon', 'tue', 'sat'] }], ['none', {}]], 'days come from the feed, and a client with none has none');
   const costs = [
     { brand: 'a', post: 'p1', purpose: 'picture' as const, at: '2026-11-03T10:00:00.000Z', usd: 0.03 },
     { brand: 'a', post: 'p1', purpose: 'writing' as const, at: '2026-11-30T23:59:59.000Z', usd: 0.01 },

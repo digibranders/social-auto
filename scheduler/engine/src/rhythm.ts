@@ -2,7 +2,7 @@
  * How often a client posts when the owner does not say otherwise: two posts per channel per week, on days spread through the week. A post goes to every channel
  * the owner approves it for, so the posts of a week are the posts of each of its channels; "weeks" says how many weeks are written at once.
  */
-import { weekdayOf, weekdaysForPostsPerWeek, weekdaysFrom, type Weekday } from './cadence.ts';
+import { parseWeekdays, weekdayOf, weekdaysForPostsPerWeek, weekdaysFrom, type Weekday } from './cadence.ts';
 
 export const DEFAULT_POSTS_PER_WEEK = 2;
 export const MAX_WEEKS = 4;
@@ -54,8 +54,18 @@ export function checkTime(value: unknown): string {
  * The posts to write for a number of weeks at a number of posts a week (two a week for one week when neither is given). With a start day the first post is on
  * that day and the others follow the same spacing; without one the engine chooses the next free day.
  */
-export function weeklyRhythm(input: { weeks?: unknown; postsPerWeek?: unknown; startDate?: string }): Rhythm {
+export function weeklyRhythm(input: { weeks?: unknown; postsPerWeek?: unknown; weekdays?: unknown; startDate?: string }): Rhythm {
   const weeks = input.weeks === undefined ? 1 : whole(input.weeks, 'weeks', 1, MAX_WEEKS);
+  // Exact days (a customer's own choice for a channel): a post on each of them every week, so the posts a week are the days chosen. Wins over postsPerWeek.
+  if (input.weekdays !== undefined) {
+    let chosen: Weekday[];
+    try {
+      chosen = parseWeekdays(input.weekdays);
+    } catch (error) {
+      throw new RhythmError(error instanceof Error ? error.message : 'weekdays must be a list like ["mon", "wed"]');
+    }
+    return { days: Math.min(MAX_POSTS, weeks * chosen.length), weekdays: chosen };
+  }
   const perWeek = input.postsPerWeek === undefined ? DEFAULT_POSTS_PER_WEEK : whole(input.postsPerWeek, 'postsPerWeek', 1, 7);
   // A plan that starts on the first day of the usual spread (a Monday for 5 a week: Monday to Friday) keeps that spread. Evenly spacing 5 posts over all seven days from a
   // Monday would give Monday, Tuesday, Wednesday, Friday and Saturday, which is not the plan the owner approved. Any other start day keeps the first post on it.
