@@ -195,8 +195,8 @@ export class CopyStage {
     return this.read(planFile);
   }
 
-  /** Keeps or drops one post. A choice can be changed until the batch is sent to be drawn. */
-  decide(planFile: string, postId: string, state: 'kept' | 'dropped', by: string): CopyBatch {
+  /** Keeps or drops one post, or (`pending`) takes the choice back so the post is undecided again. A choice can be changed until the post is sent to be drawn. */
+  decide(planFile: string, postId: string, state: CopyState, by: string): CopyBatch {
     if (!POST_ID.test(postId)) throw new CopyStageError('INVALID', 'that is not a post id');
     if (by.trim() === '') throw new CopyStageError('INVALID', 'who is deciding must be given');
     return this.change(planFile, (batch) => {
@@ -205,15 +205,22 @@ export class CopyStage {
       const post = batch.posts.find((p) => p.postId === postId);
       if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
       if (postLocked(batch, post)) throw new CopyStageError('ALREADY_DRAWN', 'this post was already sent to be drawn, so its choices are final');
+      // A dropped post that was given a new topic cannot be taken back to undecided: the new topic stands in its place.
+      if (state === 'pending' && batch.replacedBy?.[postId] !== undefined) throw new CopyStageError('CONFLICT', 'a new topic was already written for this post, so it cannot be put back');
       post.state = state;
-      // A topic she drops is no longer waiting for a picture.
-      if (state === 'dropped' && batch.notDrawn?.[postId] !== undefined) {
+      // A topic she drops, or takes back, is no longer waiting for a picture.
+      if (state !== 'kept' && batch.notDrawn?.[postId] !== undefined) {
         const { [postId]: _gone, ...left } = batch.notDrawn;
         if (Object.keys(left).length > 0) batch.notDrawn = left;
         else delete batch.notDrawn;
       }
-      post.decidedBy = by.trim().slice(0, 80);
-      post.decidedAt = this.now().toISOString();
+      if (state === 'pending') {
+        delete post.decidedBy;
+        delete post.decidedAt;
+      } else {
+        post.decidedBy = by.trim().slice(0, 80);
+        post.decidedAt = this.now().toISOString();
+      }
       return { batch, result: batch };
     });
   }

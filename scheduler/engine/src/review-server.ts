@@ -544,17 +544,17 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
-        if (parts.length === 6 && req.method === 'POST' && (verb === 'keep' || verb === 'drop')) {
+        if (parts.length === 6 && req.method === 'POST' && (verb === 'keep' || verb === 'drop' || verb === 'reset')) {
           scope.guard(brand, true);
           if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const by = scope.by((await readJson(req))['by']);
           refuseIfDrawAsked(brand, planFile, postId);
-          // A post whose day is today or has passed cannot be kept: it would never be drawn in time.
-          if (verb === 'keep') {
+          // A post whose day is today or has passed cannot be kept, or put back to undecided: it would never be drawn in time.
+          if (verb === 'keep' || verb === 'reset') {
             const day = new CopyStage(join(root, brand), brand).get(planFile).posts.find((p) => p.postId === postId)?.date;
-            if (day !== undefined && day <= todayIst()) return send(res, 400, { error: 'the day of this post is today or has passed, so it cannot be kept', code: 'DAY_PASSED' });
+            if (day !== undefined && day <= todayIst()) return send(res, 400, { error: 'the day of this post is today or has passed, so it cannot be kept or put back', code: 'DAY_PASSED' });
           }
-          const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
+          const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : verb === 'drop' ? 'dropped' : 'pending', by);
           return send(res, 200, { batch });
         }
         // Another day for a written post, within its own Monday-to-Sunday week, before the week is drawn (any state: pending, kept, dropped). The day is changed in the batch and in the plan

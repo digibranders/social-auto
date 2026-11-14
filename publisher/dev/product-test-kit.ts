@@ -313,7 +313,7 @@ export async function fakeEngine(): Promise<FakeEngine> {
         engine.jobs.unshift(replaceJob);
         return send(202, { job: replaceJob, created: true });
       }
-      const copyRoute = /^\/review\/copy\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/(keep|drop|edit|close)$/.exec(url.pathname);
+      const copyRoute = /^\/review\/copy\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/(keep|drop|reset|edit|close)$/.exec(url.pathname);
       if (copyRoute) {
         const [, brand = '', planFile = '', postId, verb] = copyRoute;
         const batch = engine.batches.find((b) => b.brand === brand && b.planFile === planFile);
@@ -331,8 +331,10 @@ export async function fakeEngine(): Promise<FakeEngine> {
           if (typeof body?.['caption'] === 'string') post.caption = body['caption'];
           post['edited'] = true;
         } else {
-          post.state = verb === 'keep' ? 'kept' : 'dropped';
-          post['decidedBy'] = header('x-actor');
+          if (verb === 'reset' && String(post.date ?? '9999') <= new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10)) return send(400, { error: 'the day of this post is today or has passed', code: 'DAY_PASSED' });
+          if (verb === 'reset' && post['replacedBy']) return send(409, { error: 'a new topic was already written for this post', code: 'CONFLICT' });
+          post.state = verb === 'keep' ? 'kept' : verb === 'drop' ? 'dropped' : 'pending';
+          post['decidedBy'] = verb === 'reset' ? undefined : header('x-actor');
         }
         return send(200, { batch });
       }
