@@ -378,6 +378,8 @@ export interface PosterView {
   /** The day (YYYY-MM-DD) and time (HH:MM), India time, the post is planned for. Left out when the plan does not say. */
   date?: string;
   time?: string;
+  /** True when the system approved this picture (the customer chose automatic posting for its channel), not a person. */
+  autoApproved?: true;
   /** The OTHER networks whose current picture of this post is the very same drawing (for example Facebook and Google share Instagram's square). Left out when none. */
   sharedWith?: string[];
 }
@@ -515,6 +517,7 @@ function posterOf(raw: unknown, brand: string): PosterView | null {
     createdAt: str(raw['createdAt'], 40) ?? '',
     ...(typeof raw['date'] === 'string' && DAY.test(raw['date']) ? { date: raw['date'] } : {}),
     ...(typeof raw['time'] === 'string' && CLOCK.test(raw['time']) ? { time: raw['time'] } : {}),
+    ...(status === 'approved' && raw['decidedBy'] === 'system:auto-posting' ? { autoApproved: true as const } : {}),
   };
   if (typeof raw['imageSha256'] === 'string' && /^[a-f0-9]{64}$/.test(raw['imageSha256'])) IMAGE_HASH.set(view, raw['imageSha256']);
   return view;
@@ -619,6 +622,15 @@ export class WorkspaceEngine {
     const day = (v: unknown): string | null => (typeof v === 'string' && DAY.test(v) ? v : null);
     if (!isObject(answer)) throw unavailable();
     return { startsOn: day(answer['startsOn']), endsOn: day(answer['endsOn']) };
+  }
+
+  /** Tells the poster service which channels the customer chose automatic posting for (an empty list switches it off). Answers what it saved, with who agreed and when. */
+  async setAutoPosting(input: { channels: readonly string[]; safetyHours: number }, actor: string): Promise<{ channels: string[]; safetyHours: number; consentBy: string; consentAt: string }> {
+    const answer = await this.call('PUT', '/review/auto-posting', actor, { channels: [...input.channels], safetyHours: input.safetyHours, by: actor });
+    const saved = isObject(answer) && isObject(answer['autoPosting']) ? answer['autoPosting'] : null;
+    const consent = saved !== null && isObject(saved['consent']) ? saved['consent'] : null;
+    if (saved === null || consent === null || !Array.isArray(saved['channels']) || typeof saved['safetyHours'] !== 'number' || typeof consent['by'] !== 'string' || typeof consent['at'] !== 'string') throw unavailable();
+    return { channels: saved['channels'].filter((c): c is string => typeof c === 'string'), safetyHours: saved['safetyHours'], consentBy: consent['by'], consentAt: consent['at'] };
   }
 
   /** Tells the poster service which networks the customer has connected accounts for, so no picture is bought for any other. Answers whether it was told; never throws. */

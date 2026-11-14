@@ -53,6 +53,8 @@ export interface WeeklyDeps {
   register: (brand: string, planFile: string, site: string) => void;
   /** Called when a week is given up, so the product can tell the customer (written to the expiry log). */
   onLapse?: (brand: string, planFile: string, week: string) => void;
+  /** Brands whose customer chose automatic posting: their first week is drawn at once, without waiting to be asked. */
+  automatic?: (brand: string) => boolean;
 }
 
 export const WEEKLY_DRAW_BY = 'system:weekly-draw';
@@ -88,7 +90,8 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
             return;
           }
           // The first week is the customer's to ask for; the later ones are drawn on the Thursday before they begin.
-          if (index === 0 || now < drawDueMs(week)) return;
+          // The first week is the customer's to ask for (the system asks for it only when she chose automatic posting); later weeks wait for their Thursday.
+          if (index === 0 ? deps.automatic?.(brand) !== true : now < drawDueMs(week)) return;
           if (asked) return;
           if (!batch.posts.some((p) => p.state === 'kept' && weekOfPost(p) === week)) return;
           const reason = deps.room(brand, neededPictures(batch, week, deps.made(brand, batch.planFile), connected));

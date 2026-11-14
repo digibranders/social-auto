@@ -7,7 +7,7 @@ import type { Product } from './products.js';
 /** A message to a product about something that happened to one of its customers. */
 export interface WebhookEvent {
   id: string;
-  type: 'post.published' | 'post.failed' | 'connection.expiring' | 'job.finished' | 'poster.ready' | 'poster.expiring' | 'poster.expired' | 'week.drawing' | 'week.drawn' | 'week.lapsed' | 'post.held' | 'post.missed';
+  type: 'post.published' | 'post.failed' | 'connection.expiring' | 'job.finished' | 'poster.ready' | 'poster.expiring' | 'poster.expired' | 'week.drawing' | 'week.drawn' | 'week.lapsed' | 'poster.auto_approved' | 'post.held' | 'post.missed';
   /** The place of the event in the product's log (see lib/outbox.ts); present once it was written down. */
   seq?: number;
   createdAt: string;
