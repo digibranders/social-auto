@@ -68,6 +68,13 @@ function workspaceView(client: AddedClient, channels: Channel[], pauses: PauseFi
   };
 }
 
+/** The workspace as a product reads it, built from the stored files: the answer of every call that changes the workspace. */
+export async function workspaceResponse(file: ClientsFile, client: AddedClient): Promise<Record<string, unknown>> {
+  const [{ file: channels }, { file: pauses }, { file: manual }, { overrides }, { settings }] = await Promise.all([loadChannels(), loadPauses(), loadManual(), loadOverrides(), loadBrandSettings()]);
+  const posts = applyOverrides([...releasedSchedule.read().filter((p) => (p.brand ?? 'default') === client.brand), ...manual.posts.filter((p) => p.brand === client.brand).map(toScheduled)], overrides);
+  return workspaceView(client, channelsFor(channels, client.brand), pauses, posts, groupFacts(file, settings, client));
+}
+
 export async function POST(request: Request): Promise<Response> {
   const product = productOf(request);
   if (product instanceof Response) return product;
