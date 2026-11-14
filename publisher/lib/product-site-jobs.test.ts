@@ -41,7 +41,8 @@ test('a site job is started under the workspace\'s own brand, with the monthly r
       assert.equal(made.status, 202, JSON.stringify(made.body));
       assert.equal(made.body['created'], true);
       const job = made.body['job'] as Record<string, unknown>;
-      assert.deepEqual(Object.keys(job).sort(), ['createdAt', 'id', 'kind', 'state']);
+      assert.deepEqual(Object.keys(job).sort(), ['createdAt', 'id', 'kind', 'networks', 'state']);
+      assert.deepEqual(job['networks'], ['linkedin'], 'which channels the batch is being written for');
       assert.deepEqual([job['kind'], job['state']], ['write', 'queued']);
 
       const sent = engine.seen.find((s) => s.method === 'POST' && s.url === '/review/jobs');
@@ -265,6 +266,23 @@ test('a customer who gives one page to read gets that page read: the page addres
       engine.jobs.length = 0;
       expectError(await start('shop-1', { site: 'https://different.example.net/page', page: true }), 400, 'SITE_MISMATCH', 'another website');
       expectError(await start('shop-1', { site: 'http://127.0.0.1/page', page: true }), 400, 'INVALID_SITE', 'a local address');
+    } finally {
+      await engine.close();
+    }
+  });
+});
+
+test('a job says which channels it is for: a write job and a draw job list them, unknown names and empty lists are left out', async () => {
+  await withProducts(async () => {
+    const engine = await fakeEngine();
+    try {
+      const brand = await workspace('shop-1', true);
+      const make = (n: number, kind: FakeJob['kind'], networks: string[]): FakeJob => ({ id: `job-n${n.toString(36).padStart(5, '0')}-0123abcd`, key: `${kind}:${n}`, kind, brand, site: 'https://acme.example', by: 'x', networks, state: 'succeeded', createdAt: new Date(Date.now() - n * 1000).toISOString() });
+      engine.jobs.push(make(1, 'copy', ['instagram']), make(2, 'draw', ['facebook', 'tiktok']), make(3, 'copy', []), make(4, 'topic', ['linkedin']));
+      const listed = await call(jobsGet, '/api/v1/site-jobs?externalId=shop-1');
+      const jobs = listed.body['jobs'] as Array<{ kind: string; networks?: string[] }>;
+      assert.deepEqual(jobs.map((j) => [j.kind, j.networks ?? null]), [['write', ['instagram']], ['draw', ['facebook']], ['write', null], ['topic', null]], 'only write, draw and network jobs say it; nothing invented');
+      assert.ok(brand);
     } finally {
       await engine.close();
     }

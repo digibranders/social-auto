@@ -150,6 +150,8 @@ export interface JobView {
   week?: string;
   /** True for a draw the system started by itself (the weekly draw); it is not one of the customer's own asks. */
   auto?: boolean;
+  /** The channels a `write`, `draw` or `network` job is for (for example ["instagram"]); left out when the engine does not say. */
+  networks?: string[];
   state: 'queued' | 'running' | 'done' | 'failed';
   step?: number;
   /** For a failed job: a fixed code (for example NOTHING_WRITTEN), never the engine's own words. */
@@ -162,6 +164,7 @@ export interface JobView {
 
 const JOB_KIND: Record<string, JobView['kind']> = { copy: 'write', draw: 'draw', redraw: 'draw', newnet: 'draw', network: 'network', carousel: 'carousel', topic: 'topic', replace: 'replace' };
 const CODE = /^[A-Z][A-Z_]{1,40}$/;
+const NETWORK_NAMES: readonly string[] = ['instagram', 'facebook', 'linkedin', 'google'];
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 /** A time of day, HH:MM (24 hour). */
 const CLOCK = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -183,6 +186,12 @@ function jobView(raw: unknown): { view: JobView; brand: string } | null {
   if (JOB_KIND[kind] === 'draw' && typeof raw['week'] === 'string' && DAY.test(raw['week'])) view.week = raw['week'];
   if (JOB_KIND[kind] === 'replace' && typeof raw['postId'] === 'string' && PART.test(raw['postId'])) view.postId = raw['postId'];
   if (raw['auto'] === true) view.auto = true;
+  if (view.kind === 'write' || view.kind === 'draw' || view.kind === 'network') {
+    const listed = Array.isArray(raw['networks']) ? raw['networks'].filter((n): n is string => typeof n === 'string' && NETWORK_NAMES.includes(n)) : [];
+    const one = typeof raw['network'] === 'string' && NETWORK_NAMES.includes(raw['network']) ? [raw['network']] : [];
+    const networks = listed.length > 0 ? [...new Set(listed)].sort() : one;
+    if (networks.length > 0) view.networks = networks;
+  }
   const error = raw['error'];
   if (view.state === 'failed' && isObject(error) && typeof error['code'] === 'string' && CODE.test(error['code'])) view.failure = error['code'];
   const result = raw['result'];
