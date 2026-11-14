@@ -112,6 +112,22 @@ function postingDaysOf(value: unknown): PostingDaysData {
   return days;
 }
 
+/** What a customer chose for automatic posting: the channels, the safety window in hours, and who agreed and when (read only here: only the customer can change it). */
+export interface AutoPostingData {
+  channels: Platform[];
+  safetyHours: number;
+  consentBy: string;
+  consentAt: string;
+}
+
+function autoPostingOf(value: unknown): AutoPostingData | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const a = value as Record<string, unknown>;
+  const channels = PLATFORMS.filter((p) => Array.isArray(a['channels']) && a['channels'].includes(p));
+  if (channels.length === 0 || typeof a['safetyHours'] !== 'number' || typeof a['consentBy'] !== 'string' || typeof a['consentAt'] !== 'string') return undefined;
+  return { channels, safetyHours: a['safetyHours'], consentBy: a['consentBy'].slice(0, 80), consentAt: a['consentAt'].slice(0, 40) };
+}
+
 /** The plans of a client, skipping any entry that is not a plan. */
 function plansOf(value: unknown): ClientPlanData[] {
   return Array.isArray(value) ? value.flatMap((v) => planData(v) ?? []) : [];
@@ -138,7 +154,7 @@ export interface StatusResponse {
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
-  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[]; weeklyLimit?: number; requireAuthenticLogo?: true; approvalMode?: 'manual' | 'auto'; spendCapUsd?: number; postingDays?: PostingDaysData }>;
+  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[]; weeklyLimit?: number; requireAuthenticLogo?: true; approvalMode?: 'manual' | 'auto'; spendCapUsd?: number; postingDays?: PostingDaysData; autoPosting?: AutoPostingData }>;
   costs: CostEntry[];
   /** Missing when the publisher could not read it; the rest of the status still loads. */
   brands?: BrandsStatus;
@@ -289,7 +305,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(plansOf(entry['plans']).length > 0 ? { plans: plansOf(entry['plans']) } : {}), ...(entry['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true as const } : {}), ...(entry['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : entry['approvalMode'] === 'manual' ? { approvalMode: 'manual' as const } : {}), ...(typeof entry['spendCapUsd'] === 'number' && Number.isFinite(entry['spendCapUsd']) && entry['spendCapUsd'] > 0 ? { spendCapUsd: entry['spendCapUsd'] } : {}), ...(typeof entry['weeklyLimit'] === 'number' && Number.isInteger(entry['weeklyLimit']) && entry['weeklyLimit'] >= 1 && entry['weeklyLimit'] <= 7 ? { weeklyLimit: entry['weeklyLimit'] } : {}), ...(Object.keys(postingDaysOf(entry['postingDays'])).length > 0 ? { postingDays: postingDaysOf(entry['postingDays']) } : {}) };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(plansOf(entry['plans']).length > 0 ? { plans: plansOf(entry['plans']) } : {}), ...(entry['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true as const } : {}), ...(entry['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : entry['approvalMode'] === 'manual' ? { approvalMode: 'manual' as const } : {}), ...(typeof entry['spendCapUsd'] === 'number' && Number.isFinite(entry['spendCapUsd']) && entry['spendCapUsd'] > 0 ? { spendCapUsd: entry['spendCapUsd'] } : {}), ...(typeof entry['weeklyLimit'] === 'number' && Number.isInteger(entry['weeklyLimit']) && entry['weeklyLimit'] >= 1 && entry['weeklyLimit'] <= 7 ? { weeklyLimit: entry['weeklyLimit'] } : {}), ...(Object.keys(postingDaysOf(entry['postingDays'])).length > 0 ? { postingDays: postingDaysOf(entry['postingDays']) } : {}), ...(autoPostingOf(entry['autoPosting']) ? { autoPosting: autoPostingOf(entry['autoPosting']) as AutoPostingData } : {}) };
   });
 
   const pauseRoot = root['pauses'] === undefined ? {} : record(root['pauses'], 'status.pauses');

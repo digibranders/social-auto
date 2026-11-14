@@ -14,6 +14,10 @@ import { ensureWorkspace, findWorkspace, groupOf, isExternalId, setWorkspaceName
 import { apiError, errorResponse } from '../../lib/api-error.js';
 import { json } from '../../lib/http.js';
 import { disconnectedNotices, noticesFor } from '../../lib/workspace-notices.js';
+import { actorOf, engineActor } from '../../lib/actor.js';
+import { autoPostingView, parseAutoPostingRequest, setAutoPosting } from '../../lib/auto-posting.js';
+import { engineFor } from '../../lib/product-workspace.js';
+import { syncConnected } from '../../lib/connected-sync.js';
 import { releasedSchedule } from '../../lib/customer-skip.js';
 import { toScheduled } from '../../lib/manual.js';
 import { applyOverrides } from '../../lib/overrides.js';
@@ -54,8 +58,10 @@ function workspaceView(client: AddedClient, channels: Channel[], pauses: PauseFi
     ...(group ? { group } : {}),
     archived: client.archived === true,
     paused,
-    // Read only: a customer approves their own posters, so this is always "manual" and nothing in the API changes it.
-    approvalMode: 'manual',
+    // "manual": the customer approves every poster. "auto": she chose automatic posting for at least one channel (see autoPosting, set with PATCH).
+    approvalMode: client.autoPosting !== undefined && client.autoPosting.channels.length > 0 ? 'auto' : 'manual',
+    // The channels automatic posting is on for, the safety window, when she agreed, and the connected channels that still need her choice; null when it is off.
+    autoPosting: autoPostingView(client, channels.map((c) => c.platform)),
     // Things the customer should know (a connection ending, posting paused), in plain words.
     notices: [...noticesFor(channels, paused, Date.now()), ...disconnectedNotices(posts, channels, Date.now())],
     channels: channels.map((channel) => channelView(channel, pauses)),
@@ -100,7 +106,27 @@ export async function PATCH(request: Request): Promise<Response> {
     const { file, etag } = await loadClients();
     const client = findWorkspace(file, product.id, body['externalId']);
     if (!client) return apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
-    const renamed = setWorkspaceName(file, client.brand, body['name']);
+    // The name and/or the automatic posting choice; with neither, the name is what was missing.
+    let renamed = body['name'] !== undefined || body['autoPosting'] === undefined ? setWorkspaceName(file, client.brand, body['name']) : file;
+    if (body['autoPosting'] !== undefined) {
+      const wanted = parseAutoPostingRequest(body['autoPosting']);
+      const { file: channelFile } = await loadChannels();
+      const connected = [...new Set(channelsFor(channelFile, client.brand).map((c) => c.platform))];
+      // Switching it on is her consent, given in this call by a named person; switching it off needs no consent. Only a connected channel can be chosen.
+      if (wanted.channels.length > 0) {
+        if (!wanted.consent) return apiError(400, 'CONSENT_REQUIRED', 'automatic posting needs her agreement: send consent: true once she has accepted');
+        const missing = wanted.channels.find((c) => !connected.includes(c));
+        if (missing !== undefined) return apiError(400, 'CHANNEL_NOT_CONNECTED', `${missing} is not connected for this customer`);
+      }
+      // The person who agreed is recorded with it; switching it off may come from the product itself.
+      const person = wanted.channels.length > 0 || request.headers.has('x-social-actor') ? actorOf(request) : null;
+      const by = engineActor(product.id, person);
+      const engine = engineFor(product.id, client.brand);
+      if (engine instanceof Response) return engine;
+      await syncConnected(engine, client.brand, by);
+      const saved = await engine.setAutoPosting({ channels: wanted.channels, safetyHours: wanted.safetyHours }, by);
+      renamed = setAutoPosting(renamed, client.brand, { ...wanted, consentBy: saved.consentBy, consentAt: saved.consentAt });
+    }
     if (renamed !== file) await saveClients(renamed, etag);
     const updated = findWorkspace(renamed, product.id, body['externalId']) as AddedClient;
     const [{ file: channels }, { file: pauses }, { file: manual }, { overrides }, { settings }] = await Promise.all([loadChannels(), loadPauses(), loadManual(), loadOverrides(), loadBrandSettings()]);
