@@ -175,3 +175,19 @@ test('one topic a week is enforced per customer, and another customer\'s request
     assert.notEqual(list[0]?.id, first.id);
   });
 });
+
+test('saved posting days never move a topic: it goes out on tomorrow with no weekdays sent to the engine', async () => {
+  await withEngine(async (engine) => {
+    forgetConnected();
+    const brand = await workspace('shop-1');
+    const { file, etag } = await loadClients();
+    const { setPostingDays } = await import('./posting-days.ts');
+    await saveClients(setPostingDays(file, brand, { linkedin: ['sat'] }), etag);
+    const made = await ask({});
+    assert.equal(made.status, 202, JSON.stringify(made.body));
+    assert.equal((made.body['request'] as Record<string, unknown>)['goesOutOn'], istDay(1), 'tomorrow, whatever her days are');
+    const sent = engine.seen.find((r) => r.method === 'POST' && r.url === '/review/jobs');
+    assert.equal(sent?.body?.['weekdays'], undefined);
+    assert.equal(sent?.body?.['startDate'], istDay(1));
+  });
+});

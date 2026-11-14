@@ -20,7 +20,7 @@ const nameOf = (platform: string): string => NAMES[platform] ?? platform;
  * The scheduled posts still ahead that are aimed at an account or platform that is not connected, said once per platform in plain words: they wait, and go out
  * once it is connected again (if their time has not passed by then).
  */
-export function disconnectedNotices(posts: readonly Pick<ScheduledPost, 'date' | 'channels' | 'fromPlan' | 'skipped'>[], channels: readonly Channel[], now: number): Notice[] {
+export function disconnectedNotices(posts: readonly Pick<ScheduledPost, 'id' | 'date' | 'channels' | 'fromPlan' | 'skipped'>[], channels: readonly Channel[], now: number): Notice[] {
   const ids = new Set(channels.map((c) => c.id));
   const platforms = new Set<string>(channels.map((c) => c.platform));
   const counts = new Map<string, number>();

@@ -37,6 +37,8 @@ import { decideFact, FactsError, factsView } from './facts-view.ts';
 import { checkCopyWords, checkNewWords } from './copy-edit.ts';
 import { JobError, JobStore, keyOf, type Job, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
+import { requestRelease } from './release-request.ts';
+import { AutoPostingError, isAutomatic, readAutoPosting, runAutoPosting, writeAutoPosting } from './auto-posting.ts';
 import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
@@ -44,6 +46,7 @@ import { readConnected, writeConnected } from './connected-networks.ts';
 import { customerTextProblem, readStatements, saveStatement } from './customer-facts.ts';
 import { topicRequests } from './topic-requests.ts';
 import { carouselRoom } from './carousel-limit.ts';
+import { productLimitsOff } from './limits-switch.ts';
 import { readHistory as readCarouselHistory } from './carousel-run.ts';
 import { tomorrowAt } from './posting-plan.ts';
 import { neededPictures, runCatchUpDraws, runWeeklyDraws } from './weekly-draw.ts';
@@ -256,12 +259,12 @@ export function createReviewServer(options: ReviewServerOptions): Server {
       throw new CopyStageError('REJECTED', 'this brand has no website saved, so its pictures cannot be drawn');
     }
   };
-  /** What a poster's sign-off says unless the owner changes it: the brand's name and the website's address. Null when the brand has neither saved. */
+  /** What a poster's sign-off says unless the owner changes it: nothing (no name, no web address). `site` is the website a typed address must be on. Null when the brand has no website saved. */
   const signoffDefaultsOf = (brand: string): SignoffDefaults | null => {
     try {
       const saved = JSON.parse(readFileSync(join(root, brand, 'brand.json'), 'utf8')) as { website?: unknown };
-      // Every poster's sign-off is the web address; a name is drawn only when one is typed for that post.
-      return { brandName: '', domain: displayDomain(cleanSite(saved.website)) };
+      // A poster carries no name and no web address; either is drawn only when typed for that post.
+      return { brandName: '', domain: '', site: displayDomain(cleanSite(saved.website)) };
     } catch {
       return null;
     }
@@ -272,7 +275,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   /** Today in India time (YYYY-MM-DD), by the clock this service was given. */
   const todayIst = (): string => new Date((options.now ?? (() => new Date()))().getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
 
-  const redrawCap = options.redrawCap ?? 1;
+  // PRODUCT_LIMITS=off lifts the one redraw a picture is given (testing only).
+  const redrawCap = options.redrawCap ?? (productLimitsOff() ? 50 : 1);
   /** A redraw that bought nothing (no picture passed the checks) does not use up the poster's allowance. */
   const countsAgainstCap = (j: Job): boolean => !(j.state === 'failed' && j.error?.code === 'NOTHING_DRAWN');
   const REDRAWABLE: readonly ReviewStatus[] = ['pending', 'rejected', 'blocked', 'held'];
@@ -392,7 +396,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               const onDay = `${carouselDay ?? tomorrowAt('+05:30')}T${carouselTime ?? '10:00'}:00+05:30`;
               const carouselStore = storeFor(carouselBrand);
               const room = carouselRoom(readCarouselHistory(join(root, carouselBrand)).map((h) => ({ id: h.id, date: h.date ?? h.createdAt, rejected: ((): boolean => { try { return carouselStore.carouselStatus(h.id) === 'rejected'; } catch { return false; } })() })), onDay);
-              if (!room.ok) return send(res, 429, { error: room.message, code: 'CAROUSEL_LIMIT_REACHED', restart: room.restart });
+              if (!room.ok && !productLimitsOff()) return send(res, 429, { error: room.message, code: 'CAROUSEL_LIMIT_REACHED', restart: room.restart });
             }
             const { job, created } = jobs.enqueue({ kind: 'carousel', brand: carouselBrand, site: carouselSite, by: scope.by(body['by']), networks: carouselFor, ...(carouselDay ? { startDate: carouselDay } : {}), ...(carouselTime ? { time: carouselTime } : {}) });
             return send(res, created ? 202 : 200, { job, created });
@@ -438,7 +442,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
               const kept = readStatements(topicDir);
               const repeat = sameWords === null ? undefined : thisWeek.find((j) => kept.some((st) => st.id === j.topicId && plainly(st.text) === sameWords));
               if (repeat) return send(res, 200, { job: repeat, created: false });
-              if (thisWeek.length > 0) {
+              if (thisWeek.length > 0 && !productLimitsOff()) {
                 const restart = new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
                 return send(res, 429, { error: `You have already added a topic for the week of ${week}. You can add another from ${restart}.`, code: 'TOPIC_LIMIT_REACHED', restart });
               }
@@ -491,7 +495,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             spread = { days };
           } else {
             try {
-              const rhythm = weeklyRhythm({ weeks: body['weeks'], postsPerWeek: body['postsPerWeek'], ...(startDate ? { startDate } : {}) });
+              const rhythm = weeklyRhythm({ weeks: body['weeks'], postsPerWeek: body['postsPerWeek'], ...(body['weekdays'] !== undefined ? { weekdays: body['weekdays'] } : {}), ...(startDate ? { startDate } : {}) });
               spread = { days: rhythm.days, weekdays: [...rhythm.weekdays] };
             } catch (error) {
               if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
@@ -536,7 +540,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             }) };
           };
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, MAX_REPLACEMENTS_PER_WEEK - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, ...(plannedWhen(b.brand, b.planFile, p.postId) ? { time: (plannedWhen(b.brand, b.planFile, p.postId) as { time: string }).time } : {}), headline: p.headline.replaceAll('|', ''), drawn: (p.drawnAt !== undefined || (weekOfPost(p) !== undefined && b.weekDrawn?.[weekOfPost(p) as string] !== undefined && p.state === 'kept')) && b.notDrawn?.[p.postId] === undefined, locked: postLocked(b, p), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
+          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, (productLimitsOff() ? 99 : MAX_REPLACEMENTS_PER_WEEK) - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, ...(plannedWhen(b.brand, b.planFile, p.postId) ? { time: (plannedWhen(b.brand, b.planFile, p.postId) as { time: string }).time } : {}), headline: p.headline.replaceAll('|', ''), drawn: (p.drawnAt !== undefined || (weekOfPost(p) !== undefined && b.weekDrawn?.[weekOfPost(p) as string] !== undefined && p.state === 'kept')) && b.notDrawn?.[p.postId] === undefined, locked: postLocked(b, p), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
@@ -598,7 +602,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const standing = jobs.list({ brand }).find((j) => j.kind === 'replace' && j.planFile === planFile && j.postId === postId && (j.state === 'queued' || j.state === 'running'));
           if (standing) return send(res, 200, { job: standing, created: false });
           const today = tomorrowAt('+05:30', new Date(Date.now() - 86_400_000));
-          const problem = replaceProblem(batch, postId, today);
+          const maxNew = productLimitsOff() ? Number.POSITIVE_INFINITY : MAX_REPLACEMENTS_PER_WEEK;
+          const problem = replaceProblem(batch, postId, today, maxNew);
           const post = batch.posts.find((p) => p.postId === postId);
           const week = post ? weekOfPost(post) : undefined;
           const restart = week === undefined ? undefined : new Date(Date.parse(`${week}T00:00:00Z`) + 7 * 86_400_000).toISOString().slice(0, 10);
@@ -607,7 +612,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (problem) throw new CopyStageError(problem.code, problem.message);
           // Tries that are waiting or running count too, so two quick asks cannot go past the limit.
           const writing = jobs.list({ brand }).filter((j) => j.kind === 'replace' && j.planFile === planFile && (j.state === 'queued' || j.state === 'running') && week !== undefined && weekOfPost(batch.posts.find((p) => p.postId === j.postId) ?? {}) === week).length;
-          if (week !== undefined && (batch.replacements?.[week] ?? 0) + writing >= MAX_REPLACEMENTS_PER_WEEK) return limited();
+          if (week !== undefined && (batch.replacements?.[week] ?? 0) + writing >= maxNew) return limited();
           // The words are written for the networks the dropped post was written for; for a product's customer only those she has connected.
           let replaceFor = Object.keys(post?.captions ?? {}).filter(isNetwork);
           if (caller.role === 'product') {
@@ -750,6 +755,25 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         }
         return send(res, 200, writeConnected(join(root, caller.brand), body['networks'] as unknown[], (options.now ?? (() => new Date()))()));
       }
+      // Automatic posting, the customer's own choice, told by the product with her consent (see auto-posting.ts). PUT {"channels": ["instagram", ...], "safetyHours"?, "by"} sets the
+      // channels it is on for (an empty list switches it off); GET reads it.
+      if (parts[0] === 'review' && parts[1] === 'auto-posting' && parts.length === 2) {
+        if (caller.role !== 'product') return send(res, 404, { error: 'Not found' });
+        if (req.method === 'GET') return send(res, 200, { autoPosting: readAutoPosting(join(root, caller.brand)) });
+        if (req.method !== 'PUT') return send(res, 405, { error: 'Method not allowed' });
+        const body = await readJson(req);
+        if (!Array.isArray(body['channels'])) throw new ReviewError('INVALID', 'channels must be a list');
+        // She may choose before her first batch exists: the brand is claimed for the product the way its first job would.
+        if (owners.claim(caller.brand, caller.productId, () => existsSync(join(root, caller.brand)) || jobs.list({ brand: caller.brand }).length > 0) === 'taken') throw new ReviewError('CONFLICT', 'that brand name is not available');
+        mkdirSync(join(root, caller.brand), { recursive: true });
+        try {
+          const saved = writeAutoPosting(join(root, caller.brand), { channels: body['channels'] as unknown[], ...(body['safetyHours'] !== undefined ? { safetyHours: body['safetyHours'] as number } : {}), by: scope.by(body['by']) }, (options.now ?? (() => new Date()))());
+          return send(res, 200, { autoPosting: saved });
+        } catch (error) {
+          if (error instanceof AutoPostingError) throw new ReviewError('INVALID', error.message);
+          throw error;
+        }
+      }
       // What a product's customer has drawn this week for each channel and what is left (read only). Staff may read a product brand's with ?brand=.
       if (parts[0] === 'review' && parts[1] === 'limits' && parts.length === 2) {
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
@@ -793,6 +817,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           return send(res, 200, { decisions: already.map((i) => ({ versionId: i.version.versionId, network: i.version.network ?? null, status: i.status })), already: true });
         }
         const decisions = waiting.map((i) => { topicStore.approve(i.version.versionId, by); return { versionId: i.version.versionId, network: i.version.network ?? null, status: topicStore.get(i.version.versionId).status }; });
+        requestRelease(root);
         return send(res, 200, { decisions });
       }
       // Whether the weekly carousel is switched on for the customer: made by the system on the Thursday before each week, for her to approve.
@@ -859,6 +884,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             }
           }
           if (parts[4] === 'reject') carouselStore.rejectCarousel(carouselId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
+          requestRelease(root);
           return send(res, 200, { status: carouselStore.carouselStatus(carouselId) });
         }
         if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' });
@@ -961,6 +987,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         const by = scope.by(body['by']);
         if (action === 'reject' && text(body['reason'], 40) === 'expired') throw new ReviewError('INVALID', 'that reason is only recorded by the system');
         const decision = action === 'approve' ? store.approve(versionId, by) : store.reject(versionId, by, text(body['reason'], 40) as never, text(body['comment'], 500) || undefined);
+        // What is approved changed: the calendar follows now, not at the next timer.
+        requestRelease(root);
         return send(res, 200, { decision, status: store.get(versionId).status });
       }
       return send(res, 404, { error: 'Not found' });
@@ -987,8 +1015,16 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   if (weeklyEvery > 0 && process.env['AUTO_WEEK_DRAW'] !== 'false') {
     const weekly = (): void => {
       try {
+        // Customers who chose automatic posting: their topics are kept and the pictures that passed the checks are approved inside the safety window.
+        runAutoPosting({
+          brandsRoot: root, owners, now: (options.now ?? (() => new Date()))(),
+          isTopicPlan: (brand, planFile) => jobs.list({ brand }).some((j) => j.kind === 'topic' && j.planFileMade === planFile),
+          approved: () => { requestRelease(root); },
+          log: (m) => console.error(m),
+        });
         runWeeklyDraws({
           brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(), made: madeFor,
+          automatic: (brand) => isAutomatic(readAutoPosting(join(root, brand))),
           room: (brand, needed) => {
             try {
               assertPictureRoom(brand, needed);

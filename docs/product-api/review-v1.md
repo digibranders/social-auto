@@ -52,7 +52,7 @@ A product sees only its `X-Brand`. Any other brand answers `404`. Staff keep rea
 
 ## Sign-off on the picture
 
-For every brand a poster carries the headline and the web address only: the brand's name is not drawn by default (the brand's real logo, when it has one, is a separate step and is unaffected). `signoffDefault` in the copy list says so for every brand: `{"brandName":"","domain":"<site address>"}`, so a screen shows an empty name box and the real address. A name typed for one post (`brandName` in the edit call, before drawing) is drawn on that post; an empty name is the default again, and clearing the address leaves that line off.
+For every brand a poster carries the headline only: neither the brand's name nor the web address is drawn by default (the brand's real logo, when it has one, is a separate step and is unaffected). `signoffDefault` in the copy list says so for every brand: `{"brandName":"","domain":""}`, so a screen shows two empty boxes. A name or an address typed for one post (`brandName` and `domain` in the edit call, before drawing) is drawn on that post; an address must be on the client's own website. Emptying a box is the default again (nothing drawn). A poster already drawn is not changed.
 
 ## Release
 

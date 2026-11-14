@@ -2,6 +2,7 @@
  * Noticing what the AI side has finished for a product's customers, and telling the product:
  *   job.finished  a batch of written posts or a draw ended (done or failed)
  *   poster.ready  a picture is waiting for the customer's decision
+ *   poster.auto_approved  the system approved a picture for a customer who chose automatic posting for its channel
  *   poster.expiring / poster.expired  a waiting picture or written batch will be put away in 2 days / was put away because nobody decided in 14 days
  * The engine does not call us, so the cron asks it (as the product's own service actor). What was already announced is kept in the event log, so each
  * thing is announced once, and a failed look at one customer never stops the others.
@@ -56,7 +57,7 @@ export function expiringSoon(posters: readonly PosterView[], batches: readonly B
 /** What there is to announce for one customer, given what was announced before. Pure: the engine calls are made by the caller. */
 export function eventsForProgress(
   owner: { product: string; externalId: string },
-  progress: { jobs: ReadonlyArray<{ id: string; kind: string; state: string; batchId?: string; week?: string }>; posters: ReadonlyArray<{ id: string; batchId: string; postId: string; network: string }>; expiring?: readonly Expiring[]; expired?: readonly ExpiredView[] },
+  progress: { jobs: ReadonlyArray<{ id: string; kind: string; state: string; batchId?: string; week?: string }>; posters: ReadonlyArray<{ id: string; batchId: string; postId: string; network: string }>; autoApproved?: ReadonlyArray<{ id: string; batchId: string; postId: string; network: string; date?: string; time?: string }>; expiring?: readonly Expiring[]; expired?: readonly ExpiredView[] },
   outbox: Pick<Outbox, 'announced'>,
   now: number,
 ): { items: Addressed[]; announced: string[] } {
@@ -80,6 +81,13 @@ export function eventsForProgress(
     if (isAnnounced(outbox, key)) continue;
     announced.push(key);
     items.push({ product: owner.product, event: newEvent('poster.ready', { externalId: owner.externalId, posterId: poster.id, batchId: poster.batchId, postId: poster.postId, network: poster.network }, now) });
+  }
+  // The system approved a picture for her: told once, so she can look at it and take it back before it goes out.
+  for (const poster of progress.autoApproved ?? []) {
+    const key = `auto-approved:${poster.id}`;
+    if (isAnnounced(outbox, key) || announced.includes(key)) continue;
+    announced.push(key);
+    items.push({ product: owner.product, event: newEvent('poster.auto_approved', { externalId: owner.externalId, posterId: poster.id, batchId: poster.batchId, postId: poster.postId, network: poster.network, ...(poster.date ? { date: poster.date } : {}), ...(poster.time ? { time: poster.time } : {}) }, now) });
   }
   for (const e of progress.expiring ?? []) {
     const key = `expiring:${e.kind}:${e.posterId ?? e.batchId}`;
@@ -143,14 +151,15 @@ export async function announceEngineProgress(products: readonly Product[], now: 
       try {
         const engine = new WorkspaceEngine(config, owner.product, owner.brand);
         const by = engineActor(owner.product, null);
-        const [jobs, posters, batches, expired] = await Promise.all([
+        const [jobs, posters, batches, expired, approved] = await Promise.all([
           engine.listJobs(by),
           engine.listPosters('pending', by),
           engine.listBatches(by),
           engine.listExpired(new Date(now - (EXPIRY_DAYS + 1) * DAY_MS).toISOString(), by),
+          engine.listPosters('approved', by),
         ]);
         await reconcileCustomerSkips(owner.brand, engine, by, now);
-        const found = eventsForProgress(owner, { jobs, posters, expiring: expiringSoon(posters, batches.batches, now), expired }, { announced: [...outbox.announced, ...announced] }, now);
+        const found = eventsForProgress(owner, { jobs, posters, autoApproved: approved.filter((p) => p.autoApproved === true), expiring: expiringSoon(posters, batches.batches, now), expired }, { announced: [...outbox.announced, ...announced] }, now);
         items.push(...found.items);
         announced.push(...found.announced);
       } catch (error) {
@@ -185,7 +194,7 @@ export function problemEvents(
     const brand = post.brand ?? 'default';
     if (!owned(brand) || post.skipped === true || at > now || now - at >= dueWindowFor(post) || brandIsPaused(pauses, brand)) return [];
     const ours = channelsFor(channels, brand);
-    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)))
+    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)), log)
       .filter((id) => !isAnnounced(outbox, `held:${post.id}|${id}`))
       .map((channelId) => ({ brand, postId: post.id, channelId, platform: channelId.includes(':') ? channelId.slice(0, channelId.indexOf(':')) : channelId, date: post.date }));
   });
@@ -195,7 +204,7 @@ export function problemEvents(
     const brand = post.brand ?? 'default';
     if (!owned(brand) || post.skipped === true || now - at < dueWindowFor(post) || now - at >= MISSED_REPORT_HOURS * 3_600_000 || brandIsPaused(pauses, brand)) return [];
     const ours = channelsFor(channels, brand);
-    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)))
+    return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)), log)
       .filter((id) => !isAnnounced(outbox, `missed:${post.id}|${id}`))
       .map((channelId) => ({ key: `${post.id}|${channelId}`, brand, postId: post.id, channelId, account: channelId, date: post.date }));
   });

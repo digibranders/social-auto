@@ -635,6 +635,10 @@ dialog::backdrop { background: rgb(0 0 0 / 60%); }
 .approval-warning { margin: .25rem 0 .75rem; padding: .6rem .8rem; border: 1px solid var(--due, #e0a84a); background: var(--due-bg, transparent); color: var(--due, inherit); border-radius: var(--radius); font-size: .85rem; line-height: 1.4; }
 .approval-warning[hidden] { display: none; }
 .cap-input { width: 7rem; }
+.day-row { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; margin: .6rem 0; }
+.day-channel { min-width: 6rem; }
+.day-pick { display: inline-flex; align-items: center; gap: .3rem; padding: .3rem .6rem; border: 1px solid var(--line, #d0d0d0); border-radius: .5rem; cursor: pointer; }
+.day-pick:has(input:checked) { border-color: currentColor; font-weight: 600; }
 .from-website { border: 1px solid var(--cell-border); border-radius: var(--radius); padding: .75rem 1rem; margin: .5rem 0; display: grid; gap: .5rem; }
 .from-website[hidden] { display: none; }
 .rv-branding { border: 1px solid var(--cell-border); border-radius: var(--radius); padding: .75rem 1rem; margin: .75rem 0; display: grid; gap: .4rem; }

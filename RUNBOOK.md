@@ -6,7 +6,7 @@ Everyday chores and what to do when an alert arrives. Written so anyone can foll
 
 | Piece | Where | Does what |
 |---|---|---|
-| **Content engine** | `scheduler/engine`, on the server: the review service and job runner (`social-review`, `social-jobs`) and the campaign runner (`social-campaigns`, every 5 minutes) | Reads a client's website, writes posts, draws posters for the owner or the customer to approve. The old Monday job `social-auto-weekly` (write for every client, commit and push to `main` from the server) is retired: its timer was switched off on the server on 2026-11-13, because the production checkout always holds runtime files so its safety check refused to run, and forcing it would have pushed to `main` from the live server. |
+| **Content engine** | `scheduler/engine`, on the server: the review service and job runner (`social-review`, `social-jobs`) and the campaign runner (`social-campaigns`, every 5 minutes) and its release-only pass (`social-release`, started by a path unit when a customer approves or takes back a poster, so the calendar follows within seconds) | Reads a client's website, writes posts, draws posters for the owner or the customer to approve. The old Monday job `social-auto-weekly` (write for every client, commit and push to `main` from the server) is retired: its timer was switched off on the server on 2026-11-13, because the production checkout always holds runtime files so its safety check refused to run, and forcing it would have pushed to `main` from the live server. |
 | **Publisher** | `publisher/`, service `social-publisher` | Posts every day, renews tokens, sends alerts, serves the private status feed and the product API. |
 | **Dashboard** | `dashboard/`, service `social-dashboard`, at `https://social.digibranders.com` | Calendar behind a login: what is scheduled, published, missed. Posts that have not gone out yet can be edited (caption, hashtags, picture) or reverted. |
 | **Old Vercel projects** | `social-publisher`, `social-dashboard` on Vercel | Being retired. Never let their cron and the server's timers post at the same time. |
@@ -194,3 +194,10 @@ Known limits: a table is trusted as plan and attribute only when the plan name a
 - Vercel's free plan runs the daily job somewhere in the 10:00-10:59 hour, allows two cron jobs (both used), and is meant for non-commercial use.
 - The Instagram token lasts about 60 days and is renewed weekly. As of 29 Oct 2026 the first real renewal had not run yet: if Instagram turns out to hand back a different token, the alert above fires and the token must be replaced by hand.
 - The Mac only has to be on for the Monday job. Posts are booked about six weeks ahead, so a few missed Mondays cause no gap.
+
+
+## Lifting the customer limits while testing (`PRODUCT_LIMITS=off`)
+
+One setting lifts what a product's customers are held to: the batches a customer may start (3 a day, 10 a month), the asks for pictures, the weekly pictures of a channel (shown as 1000 left), the redraws of a picture, the one topic and the one carousel a week, and the new topics of a dropped post. It does **not** lift the monthly picture ceiling of a brand (200) or the spending limits of the paid-call ledger, which protect the owner's money.
+
+To switch it on, add `PRODUCT_LIMITS=off` to `/etc/social-auto/publisher.env`, `/etc/social-auto/review.env` and `/etc/social-auto/engine.env` (the same value in all three), then `systemctl restart social-publisher social-review social-jobs`. To put every limit back, delete the line from the three files and restart the same three services. Only exactly `off` counts; anything else, or no setting, leaves every limit in force.

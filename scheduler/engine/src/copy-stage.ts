@@ -91,7 +91,7 @@ export const postLocked = (batch: CopyBatch, post: CopyPost): boolean => {
 export const MAX_REPLACEMENTS_PER_WEEK = 3;
 
 /** Why a dropped post cannot be given a new topic now (and the code to answer with), or null when it can. `today` is the day in India time (YYYY-MM-DD). */
-export function replaceProblem(batch: CopyBatch, postId: string, today: string): { code: CopyStageError['code']; message: string } | null {
+export function replaceProblem(batch: CopyBatch, postId: string, today: string, maxPerWeek: number = MAX_REPLACEMENTS_PER_WEEK): { code: CopyStageError['code']; message: string } | null {
   if (batch.closedAt) return { code: 'CLOSED', message: 'this batch was put away, so it cannot be changed' };
   const post = batch.posts.find((p) => p.postId === postId);
   if (!post) return { code: 'NOT_FOUND', message: 'no such post in this batch' };
@@ -101,7 +101,7 @@ export function replaceProblem(batch: CopyBatch, postId: string, today: string):
   if (post.date === undefined) return { code: 'INVALID', message: 'this post has no day, so a new topic cannot be written for it' };
   if (post.date <= today) return { code: 'DAY_PASSED', message: 'the day of this post is today or has passed' };
   const week = weekOfPost(post) as string;
-  if ((batch.replacements?.[week] ?? 0) >= MAX_REPLACEMENTS_PER_WEEK) return { code: 'LIMIT', message: `a week may have ${MAX_REPLACEMENTS_PER_WEEK} new topics written` };
+  if ((batch.replacements?.[week] ?? 0) >= maxPerWeek) return { code: 'LIMIT', message: `a week may have ${MAX_REPLACEMENTS_PER_WEEK} new topics written` };
   return null;
 }
 
@@ -292,10 +292,10 @@ export class CopyStage {
    * Adds the new topic written for a dropped post: same day, undecided, with its words for each network. Checked again under the lock (a draw or a second replacement may have
    * come in while it was being written); the replacement is counted only here, so a try that wrote nothing never uses one of the week's.
    */
-  addReplacement(planFile: string, droppedId: string, post: { postId: string; date: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }, today: string): CopyBatch {
+  addReplacement(planFile: string, droppedId: string, post: { postId: string; date: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }, today: string, maxPerWeek: number = MAX_REPLACEMENTS_PER_WEEK): CopyBatch {
     return this.change(planFile, (batch) => {
       if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
-      const problem = replaceProblem(batch, droppedId, today);
+      const problem = replaceProblem(batch, droppedId, today, maxPerWeek);
       if (problem) throw new CopyStageError(problem.code, problem.message);
       if (batch.posts.some((p) => p.postId === post.postId)) throw new CopyStageError('CONFLICT', 'a post with that id already exists');
       const gone = batch.posts.find((p) => p.postId === droppedId) as CopyPost;

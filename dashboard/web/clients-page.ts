@@ -1,5 +1,5 @@
 /** The Clients screens: a folder per client, and inside each its channels and what is coming up. */
-import type { BrandsStatus, ChannelHealth, Platform, StatusPost } from '../shared/status.ts';
+import { PLATFORMS, WEEKDAYS, type BrandsStatus, type ChannelHealth, type Platform, type PostingDaysData, type StatusPost, type Weekday } from '../shared/status.ts';
 import { connectedPlatforms, planPayload, planSentence } from '../shared/posting-plan.ts';
 import { planFields } from './add-client.ts';
 import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
@@ -38,6 +38,8 @@ export interface ClientsContext extends AnalyticsContext {
   setApprovalMode(client: ClientSummary, mode: 'manual' | 'auto'): Promise<string | null>;
   /** Sets what the AI may cost for the client in a calendar month, in dollars; null goes back to the default limit. */
   setSpendCap(client: ClientSummary, cap: number | null): Promise<string | null>;
+  /** Saves the days of the week each channel posts on (an empty object clears them); resolves to an explanation when it could not be saved. */
+  setPostingDays(client: ClientSummary, days: PostingDaysData): Promise<string | null>;
   /** How many brands each customer of a product app may have (the default, each customer and the latest changes), or null when the status could not say. */
   brands(): BrandsStatus | null;
   /** Sets how many brands a customer of a product app may have unless set otherwise (1 to the ceiling). */
@@ -423,6 +425,83 @@ function plansCard(client: ClientSummary, ctx: ClientsContext): HTMLElement | nu
   );
 }
 
+const PLATFORM_NAMES: Record<Platform, string> = { instagram: 'Instagram', facebook: 'Facebook', linkedin: 'LinkedIn', google: 'Google' };
+const DAY_NAMES: Record<Weekday, string> = { mon: 'Mon', tue: 'Tue', wed: 'Wed', thu: 'Thu', fri: 'Fri', sat: 'Sat', sun: 'Sun' };
+
+/**
+ * The days of the week each channel posts on: a row of seven day boxes for every connected channel (and any channel that already has days). Used when a
+ * batch of posts is written, so posts already written keep their days. A channel with no day ticked keeps the usual spread.
+ */
+export function daysCard(client: ClientSummary, ctx: ClientsContext): HTMLElement {
+  const message = h('p', { class: 'form-message', role: 'status' });
+  const say = (text: string, error: boolean): void => {
+    message.textContent = text;
+    message.classList.toggle('is-error', error);
+  };
+  const connected = new Set<Platform>(client.channels.map((c) => c.platform));
+  const shown = PLATFORMS.filter((p) => connected.has(p) || client.postingDays[p] !== undefined);
+  const boxes = new Map<Platform, Map<Weekday, HTMLInputElement>>();
+  const rows = shown.map((platform) => {
+    const row = new Map<Weekday, HTMLInputElement>();
+    boxes.set(platform, row);
+    const picks = WEEKDAYS.map((day) => {
+      const box = h('input', { type: 'checkbox', id: `day-${client.brand}-${platform}-${day}`, value: day, ...(client.postingDays[platform]?.includes(day) ? { checked: 'checked' } : {}) }) as HTMLInputElement;
+      row.set(day, box);
+      return h('label', { class: 'day-pick', for: box.id }, box, h('span', {}, DAY_NAMES[day]));
+    });
+    return h('div', { class: 'day-row', role: 'group', 'aria-label': `${PLATFORM_NAMES[platform]} posts on` }, h('span', { class: 'label day-channel' }, PLATFORM_NAMES[platform]), ...picks);
+  });
+  const read = (): PostingDaysData => {
+    const days: PostingDaysData = {};
+    for (const [platform, row] of boxes) {
+      const chosen = WEEKDAYS.filter((d) => row.get(d)?.checked === true);
+      if (chosen.length > 0) days[platform] = chosen;
+    }
+    return days;
+  };
+  const submit = (days: PostingDaysData): void => {
+    save.disabled = true;
+    clear.disabled = true;
+    say('Saving…', false);
+    void ctx.setPostingDays(client, days).then((problem) => {
+      save.disabled = false;
+      clear.disabled = false;
+      if (problem) say(problem, true);
+    });
+  };
+  const save = button('Save days', 'btn btn-primary', () => submit(read()));
+  const clear = button('Use the usual spread', 'btn btn-quiet', () => submit({}));
+  return h(
+    'div',
+    { class: 'panel-card days-card' },
+    h('div', { class: 'card-head' }, h('h2', {}, 'Days to post')),
+    h('p', { class: 'muted' }, 'Tick the days of the week each channel posts on, for example Instagram on Mon, Tue and Sat and Facebook on Wed and Fri. One post goes out on each ticked day. This is used when a new batch of posts is written: posts already written or drawn keep their days. A channel with no day ticked keeps the usual spread.'),
+    ...(rows.length === 0 ? [h('p', { class: 'muted' }, 'No channel is connected yet. Connect one to choose its days.')] : rows),
+    h('div', { class: 'actions' }, save, clear),
+    message,
+  );
+}
+
+/**
+ * What the customer chose about automatic posting, for the team to read. Only the customer can change it (the product asks her and records her consent), so there
+ * is nothing to press here: it says what the system does for her and who agreed.
+ */
+export function autoPostingCard(client: ClientSummary): HTMLElement {
+  const auto = client.autoPosting;
+  const connected = new Set<Platform>(client.channels.map((c) => c.platform));
+  const names = (list: readonly Platform[]): string => list.map((p) => PLATFORM_NAMES[p]).join(', ');
+  const body: HTMLElement[] = [];
+  if (auto === null) {
+    body.push(h('p', { class: 'muted' }, 'Off. Every poster waits for the customer to approve it.'));
+  } else {
+    const manual = PLATFORMS.filter((p) => connected.has(p) && !auto.channels.includes(p));
+    body.push(h('p', {}, `On for ${names(auto.channels)}. The system approves a picture that passed every check ${auto.safetyHours === 0 ? 'as soon as it is ready' : `${auto.safetyHours} hour${auto.safetyHours === 1 ? '' : 's'} before it posts`}; the customer can still change or take it back until it goes out.`));
+    body.push(h('p', { class: 'muted' }, `Agreed by ${auto.consentBy} on ${auto.consentAt.slice(0, 10)}.${manual.length > 0 ? ` Still approved by the customer: ${names(manual)} (connected after, or not chosen).` : ''}`));
+    body.push(h('p', { class: 'muted' }, 'Carousels, her own topic requests, topics the checks warned about and any picture the checks blocked always wait for her.'));
+  }
+  return h('div', { class: 'panel-card auto-card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Automatic posting')), ...body, h('p', { class: 'muted' }, 'Only the customer can change this, from the app.'));
+}
+
 export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ctx: ClientsContext): HTMLElement {
   if (!client) return h('p', { class: 'empty' }, 'That client was not found.', ' ', button('Back to clients', 'btn', () => ctx.go({ page: 'clients' })));
   const connected = new Set<Platform>(client.channels.map((c) => c.platform));
@@ -464,6 +543,9 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), ctx.allPaused() ? null : button(client.paused ? 'Resume client' : 'Pause client', client.paused ? 'btn' : 'btn btn-quiet', () => ctx.setPause('brand', client.brand, !client.paused)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
     client.added ? websiteCard(client, ctx) : null,
     client.added ? plansCard(client, ctx) : null,
+    // Only a product's customer: a client the team added has plans of its own, which choose their own days.
+    client.product !== null ? daysCard(client, ctx) : null,
+    client.product !== null ? autoPostingCard(client) : null,
     client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
     tab === 'channels' ? channels : tab === 'posts' ? posts : tab === 'analytics' ? analyticsPage(client, ctx) : costPage(client, ctx),
