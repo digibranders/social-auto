@@ -37,6 +37,9 @@ const MAX_POSTS_PER_WEEK = 5;
 const MAX_JOBS_PER_DAY = 3;
 const MAX_JOBS_PER_MONTH = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** How many days after its first a plan may reach: four weeks counting the start day. */
+const MAX_PLAN_SPAN_DAYS = 27;
+const isRealDay = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
 /** A website without its scheme and a leading www., so "www.acme.com" and "acme.com" are the same one. */
 const hostOf = (site: string): string => site.replace(/^https?:\/\//, '').replace(/^www\./, '');
@@ -98,6 +101,17 @@ export async function POST(request: Request): Promise<Response> {
     if (startAsked !== undefined && (typeof startAsked !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(startAsked))) return apiError(400, 'INVALID_REQUEST', 'startDate must be a day like 2026-12-07');
     // The first post goes out on a Monday unless the product says otherwise: the next Monday (India time) after today.
     const startDate = typeof startAsked === 'string' ? startAsked : nextMonday(Date.now());
+    // The last day a post may fall on (a plan that stops on the day before a renewal): from the start day, at most four weeks later. The posts are then the chosen days from the start to
+    // this day, a short last week, and `weeks` is not used.
+    const endAsked = body['endDate'];
+    let endDate: string | undefined;
+    if (endAsked !== undefined) {
+      if (typeof endAsked !== 'string' || !isRealDay(endAsked)) return apiError(400, 'INVALID_DAY', 'endDate must be a real day like 2026-12-15');
+      const span = (Date.parse(`${endAsked}T00:00:00Z`) - Date.parse(`${startDate}T00:00:00Z`)) / DAY_MS;
+      if (span < 0) return apiError(400, 'INVALID_DAY', 'endDate must not be before startDate');
+      if (span > MAX_PLAN_SPAN_DAYS) return apiError(400, 'INVALID_DAY', 'endDate must be at most four weeks (28 days) from startDate');
+      endDate = endAsked;
+    }
 
     // One page of the website: the poster service reads that page only, so it is given the page's address (the customer's saved website stays the host alone).
     let readFrom = site;
@@ -137,7 +151,7 @@ export async function POST(request: Request): Promise<Response> {
       bound = true;
     }
     try {
-      const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks, postsPerWeek, ...(weekdays ? { weekdays } : {}), startDate, actor: by });
+      const made = await engine.startSiteJob({ site: readFrom, networks, page: body['page'] === true, weeks, postsPerWeek, ...(weekdays ? { weekdays } : {}), startDate, ...(endDate ? { endDate } : {}), actor: by });
       // The brand is the product's from its first job on: the poster service is told which networks are connected now, before anything is drawn.
       await syncConnected(engine, workspace.brand, by);
       return json(made.created ? 202 : 200, { job: made.job, created: made.created });

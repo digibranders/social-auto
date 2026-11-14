@@ -1085,6 +1085,24 @@ test('a carousel made in two steps: the topic shows words only, is kept, dropped
   }
 });
 
+test('a copy job with an end day writes a post on each chosen day from the start to the end, and a bad end day is a 400', async () => {
+  const s = await start('2026-11-12T06:30:00Z');
+  try {
+    const ask = (extra: Record<string, unknown>): Promise<Response> => s.call('/review/jobs', { kind: 'copy', site: 'acme.example', brand: 'bb-acme', networks: ['instagram'], postsPerWeek: 5, startDate: '2026-11-18', ...extra });
+    const made = await ask({ endDate: '2026-12-15' });
+    assert.equal(made.status, 202, JSON.stringify(await made.clone().json()));
+    const { job } = (await made.json()) as { job: { days: number; weekdays: string[]; startDate: string } };
+    assert.deepEqual([job.days, job.weekdays, job.startDate], [20, ['mon', 'tue', 'wed', 'thu', 'fri'], '2026-11-18'], 'Wed to Fri, three full weeks, Mon and Tue');
+    s.jobs.list({ brand: 'bb-acme' }).forEach((j) => s.jobs.update(j.id, { state: 'succeeded' }));
+    for (const bad of [{ endDate: '2026-11-17' }, { endDate: '2026-12-16' }, { endDate: 'soon' }, { endDate: 5 }, { endDate: '2026-12-15', startDate: undefined }]) {
+      const refused = await ask(bad);
+      assert.equal(refused.status, 400, JSON.stringify(bad));
+    }
+  } finally {
+    await s.done();
+  }
+});
+
 // ---- PRODUCT_LIMITS=off lifts the limits for a stretch of testing, and only when it is exactly "off"
 
 import { productLimitsOff, UNLIMITED } from './limits-switch.ts';
