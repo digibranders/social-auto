@@ -30,6 +30,8 @@ export interface AddedClient {
   requireAuthenticLogo?: boolean;
   /** Who approves the posters made from the website: `manual` (the default, not stored) means a person approves each one in Review; `auto` means a poster that passes every automatic check is approved by the system and released. */
   approvalMode?: 'manual' | 'auto';
+  /** The days of the week the customer wants posts on, for each channel (see posting-days.ts). A channel with no entry keeps the usual spread. */
+  postingDays?: Partial<Record<'instagram' | 'facebook' | 'linkedin' | 'google', Array<'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'>>>;
   /** What the AI may cost for this client in a calendar month, in dollars. Missing means the engine's default limit (about $8); the engine refuses to buy anything past it. */
   spendCapUsd?: number;
 }
@@ -431,9 +433,10 @@ export function setSpendCap(file: ClientsFile, brand: string, cap: unknown): Cli
 }
 
 /** What the status feed says of a client the dashboard added: name, product, website, plans, the effective weekly limit, the real-logo setting, the approval mode and the monthly spend limit when one was set. */
-export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true; approvalMode: 'manual' | 'auto'; spendCapUsd?: number } {
+export function clientFeedDetails(c: AddedClient): { name?: string; product?: string; website?: string; plans?: ClientPlan[]; weeklyLimit: number; requireAuthenticLogo?: true; approvalMode: 'manual' | 'auto'; spendCapUsd?: number; postingDays?: NonNullable<AddedClient['postingDays']> } {
   return {
     ...(c.spendCapUsd !== undefined ? { spendCapUsd: c.spendCapUsd } : {}),
+    ...(c.postingDays && Object.keys(c.postingDays).length > 0 ? { postingDays: c.postingDays } : {}),
     ...(c.name ? { name: c.name } : {}), ...(c.product ? { product: c.product } : {}), ...(c.website ? { website: c.website } : {}),
     ...(c.plans && c.plans.length > 0 ? { plans: c.plans } : {}), weeklyLimit: c.weeklyLimit ?? DEFAULT_WEEKLY_LIMIT, ...(c.requireAuthenticLogo ? { requireAuthenticLogo: true as const } : {}), approvalMode: c.product !== undefined ? 'manual' : (c.approvalMode ?? 'manual'),
   };

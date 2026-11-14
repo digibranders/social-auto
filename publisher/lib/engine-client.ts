@@ -566,7 +566,7 @@ export class WorkspaceEngine {
   }
 
   /** Starts reading a website and writing posts for it, under this workspace's brand. Asking twice for the same brand is one job (`created: false`). */
-  async startSiteJob(input: { site: string; networks: readonly string[]; page: boolean; weeks?: number; postsPerWeek?: number; startDate?: string; actor: string }): Promise<{ job: JobView; created: boolean }> {
+  async startSiteJob(input: { site: string; networks: readonly string[]; page: boolean; weeks?: number; postsPerWeek?: number; weekdays?: readonly string[]; startDate?: string; actor: string }): Promise<{ job: JobView; created: boolean }> {
     const answer = await this.call('POST', '/review/jobs', input.actor, {
       kind: 'copy',
       site: input.site,
@@ -575,6 +575,7 @@ export class WorkspaceEngine {
       ...(input.page ? { page: true } : {}),
       ...(input.weeks !== undefined ? { weeks: input.weeks } : {}),
       ...(input.postsPerWeek !== undefined ? { postsPerWeek: input.postsPerWeek } : {}),
+      ...(input.weekdays !== undefined ? { weekdays: input.weekdays } : {}),
       ...(input.startDate !== undefined ? { startDate: input.startDate } : {}),
     });
     const made = this.own(isObject(answer) ? answer['job'] : undefined);

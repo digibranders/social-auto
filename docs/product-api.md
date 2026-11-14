@@ -29,7 +29,8 @@ Authorization: Bearer <product key>
 - Each post also has `targets[]`: every account it is meant for (`id, platform, account, state, permalink`, and `code`), including accounts that were **disconnected**. A target for a disconnected account has `account: null`, `code: "ACCOUNT_DISCONNECTED"` and the state `held` while the post's time window is open (the post waits: connecting the same account again lets it go out), then `missed`. A post aimed at a whole platform (written and approved posts name the platform, for example `facebook`) gets the same kind of target when no account of that platform is connected any more: `id` is the platform name, `account: null`, `code: "ACCOUNT_DISCONNECTED"`. A post for every connected account (no accounts named) never has such a target. The `post.held` and `post.missed` events say the same (`channel` is the account id or the platform name).
 - `POST /api/v1/send` `{externalId, postId}`: sends a post the product made right now (409 while it is skipped or paused), to its chosen channels, and dates it now. Answers `{post, failed, problems?}`; `failed: true` means a channel did not take it, and the post stays due for 20 hours so the next daily run tries again. `problems` lists each channel that failed as `{account, code, error}` (codes `CHANNEL_UNREACHABLE`, `RECONNECT_NEEDED`, `CHANNEL_REFUSED`; the channel's own error text is never passed on). Only the channels that failed are tried again. 409 when it has already gone out. Anyone's post that is not the product's own, and planned posts, answer 404/400.
 - `DELETE /api/v1/posts?externalId=&postId=`: removes a post that has not gone out.
-- `POST /api/v1/site-jobs` `{externalId, site, networks?, page?, weeks?, postsPerWeek?, startDate?}` and `GET /api/v1/site-jobs?externalId=[&jobId=]`: read a customer's website and write posts for it, see [Writing posts from a website](#writing-posts-from-a-website-site-jobs).
+- `POST /api/v1/site-jobs` `{externalId, site, networks?, page?, weeks?, postsPerWeek?, weekdays?, startDate?}` and `GET /api/v1/site-jobs?externalId=[&jobId=]`: read a customer's website and write posts for it, see [Writing posts from a website](#writing-posts-from-a-website-site-jobs).
+- `GET` / `PUT /api/v1/schedule` the days of the week each channel posts on (see below)
 
 - `GET|POST /api/v1/posters`: the drawn pictures the customer approves or rejects, see [Pictures to approve](#pictures-to-approve).
 - `GET|POST /api/v1/facts` and `GET|POST /api/v1/batches`: the facts found on the website and the written posts, which the customer decides on before anything is drawn, see [Facts and written posts](#facts-and-written-posts).
@@ -42,6 +43,7 @@ A product only ever reaches workspaces it created. Another product's customers a
 
 - `site` is the customer's website, like `acme.com` (with or without `https://`). **A customer keeps the first website they give**: a different one answers `SITE_MISMATCH`. `www.acme.com` and `acme.com` are the same website. With `page: true` only the page you give is read (for a customer's first website).
 - `networks` is a list of `instagram`, `facebook`, `linkedin`, `google`. Left out, the networks the customer has connected are used; with none connected and none given the answer is `CHANNEL_NOT_CONNECTED`.
+- `weekdays` is a list of days like `["mon", "wed", "fri"]`: the posts go out on exactly these days each week (so the posts a week are the days chosen, and `postsPerWeek` is ignored), the first on the first of them on or after `startDate`. Left out, the days the customer saved for her channels with `PUT /api/v1/schedule` are used; with none saved, the usual spread of `postsPerWeek`. Channels that were saved with different days cannot share one batch: start one batch per channel (`networks: ["instagram"]`), or the answer is `400 CHANNEL_DAYS_DIFFER`. A bad day is `400 INVALID_DAYS`.
 - **The monthly plan:** a plan that came out short is topped up before the customer sees it: empty days are filled first from the drafts that passed review but were not chosen, then by writing the day once more, and a day nobody could write stays empty (told by `weeks[].missingDays` and the `empty` state). A batch is 4 weeks of 5 posts (Monday to Friday, 10:00 India time) by default, 20 topics, starting on the next Monday. `weeks` (1 to 4), `postsPerWeek` (1 to 5) and `startDate` (YYYY-MM-DD, tomorrow or later, within 180 days) may ask for less or another start; the ceilings are fixed by social-auto and anything above them answers `400 INVALID_REQUEST`. The pictures are drawn one week at a time (see `draw`). **Next month:** `GET /api/v1/batches` carries `plan: {startsOn, endsOn, canStartNext, nextStartDate}`: `endsOn` is the last post day of her plan (batches not put away, drawn ones included), `canStartNext` is true when she has no plan or the last post is within 10 days, and nothing is being written; `nextStartDate` is the Monday after the plan ends (or the next Monday). Start it with the same call and `startDate: nextStartDate`.
 - **One page:** with `page: true`, `site` may be the address of one page (for example `https://acme.com/services`): only that page is read, and the saved website stays the host alone. The query and the anchor are dropped. A page can be read only for a website whose facts were not built yet; if they were, the job fails with `failure: "PAGE_MODE_UNAVAILABLE"` (use the whole website address). A first try that did not finish does not count: a page may be read again.
 - Answers `202 {job, created: true}`. If a batch is already waiting or running for the customer, that job comes back instead (`200`, `created: false`), so pressing twice never starts two.
@@ -54,6 +56,14 @@ A product only ever reaches workspaces it created. Another product's customers a
 - `state` is `queued`, `running`, `done` or `failed`; `step` is 1 to 4 while it runs (reading the website, writing, drawing, putting the results in review).
 
 If the poster service is not available, the answer is `503 ENGINE_UNAVAILABLE`; try again shortly.
+
+## The days a customer posts on (`/api/v1/schedule`)
+
+`GET /api/v1/schedule?externalId=...` answers `{schedule: {channels: {instagram: {days: ["mon", "tue", "sat"], nextWeek: ["2026-11-16", "2026-11-17", "2026-11-21"]}}}}`: only the channels that have days of their own, each with its days in week order and the dates a batch starting on the next Monday would give for its first week (India time).
+
+`PUT /api/v1/schedule {externalId, channels: {instagram: ["mon", "tue", "sat"], facebook: ["wed", "fri"]}}` **replaces the whole setting** and answers like `GET`: a channel that is not listed goes back to the usual spread, and `channels: {}` clears it. Days are `mon` to `sun` in any letter case (`Monday` works), each once. Errors: `400 INVALID_DAYS` (an empty list or a day that is not a day), `400 INVALID_NETWORKS` (a channel that is not `instagram`, `facebook`, `linkedin`, `google`), `400 INVALID_REQUEST` (`channels` is not an object), `404 WORKSPACE_NOT_FOUND`.
+
+The days are used when a batch is written (`POST /api/v1/site-jobs`, see `weekdays`): **a week already written or drawn never moves**, and changing them changes only batches started afterwards. A topic request still goes out on the day the customer picks, whatever her days are.
 
 ## Facts and written posts
 
@@ -188,6 +198,8 @@ Every error answers `{"error": "<a plain sentence>", "code": "<CODE>"}`. The sen
 | `INVALID_SITE` | 400 | `site` is missing or not a public website address |
 | `SITE_MISMATCH` | 400 | the customer already uses a different website |
 | `INVALID_NETWORKS` | 400 | `networks` is not a list of `instagram`, `facebook`, `linkedin`, `google` |
+| `INVALID_DAYS` | 400 | `weekdays` or a channel's days is not a non-empty list of `mon` to `sun` |
+| `CHANNEL_DAYS_DIFFER` | 400 | the networks of the batch were saved with different days: start one batch for each channel |
 | `JOB_NOT_FOUND` | 404 | no such job for this customer |
 | `JOB_LIMIT_REACHED` | 429 | the customer has started as many batches as they may for now |
 | `FACT_HELD` | 409 | a held fact cannot be confirmed |

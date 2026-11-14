@@ -119,6 +119,15 @@ test('a monthly spend limit is read when it is a positive number, and anything e
   assert.deepEqual(parsed.runway.map((r) => r.spendCapUsd), [3.5, undefined, undefined, undefined]);
 });
 
+test('posting days are read per channel, in week order, and anything that is not a channel or a day is left out', () => {
+  const parsed = parseStatus({ ...valid, runway: [
+    { brand: 'a', postsLeft: 0, postingDays: { instagram: ['sat', 'mon', 'tue', 'mon'], facebook: ['wed', 'fri'], tiktok: ['mon'], linkedin: ['someday'], google: 'mon' } },
+    { brand: 'b', postsLeft: 0, postingDays: ['mon'] },
+    { brand: 'c', postsLeft: 0 },
+  ] });
+  assert.deepEqual(parsed.runway.map((r) => r.postingDays), [{ instagram: ['mon', 'tue', 'sat'], facebook: ['wed', 'fri'] }, undefined, undefined]);
+});
+
 test('a plan keeps its weekly carousel through the feed, and a carousel flag that is not true is dropped', () => {
   const plan = (carousel: unknown) => ({ platforms: ['instagram'], startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, time: '10:00', utcOffset: '+05:30', carousel });
   const parsed = parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://acme.com', plans: [plan(true), plan('yes'), plan(undefined)] }] });

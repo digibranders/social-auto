@@ -486,7 +486,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             spread = { days };
           } else {
             try {
-              const rhythm = weeklyRhythm({ weeks: body['weeks'], postsPerWeek: body['postsPerWeek'], ...(startDate ? { startDate } : {}) });
+              const rhythm = weeklyRhythm({ weeks: body['weeks'], postsPerWeek: body['postsPerWeek'], ...(body['weekdays'] !== undefined ? { weekdays: body['weekdays'] } : {}), ...(startDate ? { startDate } : {}) });
               spread = { days: rhythm.days, weekdays: [...rhythm.weekdays] };
             } catch (error) {
               if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);

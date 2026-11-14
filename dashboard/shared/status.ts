@@ -94,6 +94,24 @@ export interface ClientPlanData {
   carousel?: true;
 }
 
+/** The days of the week a client's channels post on (mon to sun, in week order), as the publisher saves them. */
+export const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'] as const;
+export type Weekday = (typeof WEEKDAYS)[number];
+export type PostingDaysData = Partial<Record<Platform, Weekday[]>>;
+
+/** The posting days of a client, skipping any channel or day that is not one. */
+function postingDaysOf(value: unknown): PostingDaysData {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  const days: PostingDaysData = {};
+  for (const platform of PLATFORMS) {
+    const list = (value as Record<string, unknown>)[platform];
+    if (!Array.isArray(list)) continue;
+    const chosen = WEEKDAYS.filter((d) => list.includes(d));
+    if (chosen.length > 0) days[platform] = chosen;
+  }
+  return days;
+}
+
 /** The plans of a client, skipping any entry that is not a plan. */
 function plansOf(value: unknown): ClientPlanData[] {
   return Array.isArray(value) ? value.flatMap((v) => planData(v) ?? []) : [];
@@ -120,7 +138,7 @@ export interface StatusResponse {
   channels: ChannelHealth[];
   posts: StatusPost[];
   /** `added`: a client added in the dashboard, with no planned posts yet; it can be removed. */
-  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[]; weeklyLimit?: number; requireAuthenticLogo?: true; approvalMode?: 'manual' | 'auto'; spendCapUsd?: number }>;
+  runway: Array<{ brand: string; postsLeft: number; added?: true; name?: string; product?: string; website?: string; plans?: ClientPlanData[]; weeklyLimit?: number; requireAuthenticLogo?: true; approvalMode?: 'manual' | 'auto'; spendCapUsd?: number; postingDays?: PostingDaysData }>;
   costs: CostEntry[];
   /** Missing when the publisher could not read it; the rest of the status still loads. */
   brands?: BrandsStatus;
@@ -271,7 +289,7 @@ export function parseStatus(raw: unknown): StatusResponse {
     if (typeof postsLeft !== 'number' || !Number.isInteger(postsLeft) || postsLeft < 0) {
       throw new StatusParseError(`${where}.postsLeft must be a whole number`);
     }
-    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(plansOf(entry['plans']).length > 0 ? { plans: plansOf(entry['plans']) } : {}), ...(entry['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true as const } : {}), ...(entry['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : entry['approvalMode'] === 'manual' ? { approvalMode: 'manual' as const } : {}), ...(typeof entry['spendCapUsd'] === 'number' && Number.isFinite(entry['spendCapUsd']) && entry['spendCapUsd'] > 0 ? { spendCapUsd: entry['spendCapUsd'] } : {}), ...(typeof entry['weeklyLimit'] === 'number' && Number.isInteger(entry['weeklyLimit']) && entry['weeklyLimit'] >= 1 && entry['weeklyLimit'] <= 7 ? { weeklyLimit: entry['weeklyLimit'] } : {}) };
+    return { brand: text(entry, 'brand', where), postsLeft, ...(entry['added'] === true ? { added: true as const } : {}), ...(typeof entry['name'] === 'string' ? { name: entry['name'] } : {}), ...(typeof entry['product'] === 'string' ? { product: entry['product'] } : {}), ...(typeof entry['website'] === 'string' ? { website: entry['website'] } : {}), ...(plansOf(entry['plans']).length > 0 ? { plans: plansOf(entry['plans']) } : {}), ...(entry['requireAuthenticLogo'] === true ? { requireAuthenticLogo: true as const } : {}), ...(entry['approvalMode'] === 'auto' ? { approvalMode: 'auto' as const } : entry['approvalMode'] === 'manual' ? { approvalMode: 'manual' as const } : {}), ...(typeof entry['spendCapUsd'] === 'number' && Number.isFinite(entry['spendCapUsd']) && entry['spendCapUsd'] > 0 ? { spendCapUsd: entry['spendCapUsd'] } : {}), ...(typeof entry['weeklyLimit'] === 'number' && Number.isInteger(entry['weeklyLimit']) && entry['weeklyLimit'] >= 1 && entry['weeklyLimit'] <= 7 ? { weeklyLimit: entry['weeklyLimit'] } : {}), ...(Object.keys(postingDaysOf(entry['postingDays'])).length > 0 ? { postingDays: postingDaysOf(entry['postingDays']) } : {}) };
   });
 
   const pauseRoot = root['pauses'] === undefined ? {} : record(root['pauses'], 'status.pauses');
