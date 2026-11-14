@@ -955,6 +955,53 @@ test('keeping a post whose day is today or has passed is refused with DAY_PASSED
   }
 });
 
+test('a kept or dropped post can be put back to undecided until its day or its drawing, and not after', async () => {
+  const s = await start('2026-11-16T06:30:00Z');
+  try {
+    const stateOf = async (res: Response, id: string): Promise<string | undefined> => ((await res.json()) as { batch: { posts: Array<{ postId: string; state: string }> } }).batch.posts.find((p) => p.postId === id)?.state;
+    assert.equal((await s.call('/review/copy/bb-acme/week-01.json/w1-d2/keep', {})).status, 200);
+    assert.equal(s.copy.get('week-01.json').posts.find((p) => p.postId === 'w1-d2')?.decidedBy !== undefined, true);
+    const back = await s.call('/review/copy/bb-acme/week-01.json/w1-d2/reset', {});
+    assert.equal(back.status, 200);
+    assert.equal(await stateOf(back, 'w1-d2'), 'pending', 'a kept post is undecided again');
+    const post = s.copy.get('week-01.json').posts.find((p) => p.postId === 'w1-d2');
+    assert.deepEqual([post?.decidedBy, post?.decidedAt], [undefined, undefined], 'nobody is recorded as having decided it');
+    assert.equal((await s.call('/review/copy/bb-acme/week-01.json/w1-d2/drop', {})).status, 200);
+    assert.equal(await stateOf(await s.call('/review/copy/bb-acme/week-01.json/w1-d2/reset', {}), 'w1-d2'), 'pending', 'and so is a dropped one');
+    assert.equal(await stateOf(await s.call('/review/copy/bb-acme/week-01.json/w1-d2/reset', {}), 'w1-d2'), 'pending', 'asking again changes nothing');
+
+    // Today or a day that passed: refused, like keeping it.
+    const past = await s.call('/review/copy/bb-acme/week-01.json/w1-d1/reset', {});
+    assert.equal(past.status, 400);
+    assert.equal(((await past.json()) as { code: string }).code, 'DAY_PASSED');
+
+    // Once it was sent to be drawn its choice is final.
+    assert.equal((await s.call('/review/copy/bb-acme/week-01.json/w1-d2/keep', {})).status, 200);
+    s.copy.markPostsDrawn('week-01.json', ['w1-d2']);
+    const locked = await s.call('/review/copy/bb-acme/week-01.json/w1-d2/reset', {});
+    assert.equal(locked.status, 409);
+    assert.equal(s.copy.get('week-01.json').posts.find((p) => p.postId === 'w1-d2')?.state, 'kept', 'unchanged');
+  } finally {
+    await s.done();
+  }
+});
+
+test('a dropped post that was given a new topic cannot be put back to undecided', () => {
+  const root = mkdtempSync(join(tmpdir(), 'reset-replaced-'));
+  try {
+    const dir = join(root, 'bb-acme');
+    mkdirSync(dir, { recursive: true });
+    const stage = new CopyStage(dir, 'bb-acme');
+    stage.open('week-01.json', [{ postId: 'p1', date: '2026-11-24', headline: 'H', caption: 'C' }]);
+    stage.decide('week-01.json', 'p1', 'dropped', 'u');
+    stage.addReplacement('week-01.json', 'p1', { postId: 'p1r', date: '2026-11-24', headline: 'H2', caption: 'C2' }, '2026-11-16', 3);
+    assert.throws(() => stage.decide('week-01.json', 'p1', 'pending', 'u'), /new topic was already written/);
+    assert.equal(stage.get('week-01.json').posts.find((p) => p.postId === 'p1')?.state, 'dropped');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 // ---- PRODUCT_LIMITS=off lifts the limits for a stretch of testing, and only when it is exactly "off"
 
 import { productLimitsOff, UNLIMITED } from './limits-switch.ts';

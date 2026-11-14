@@ -721,8 +721,8 @@ export class WorkspaceEngine {
     return { batch, warnings };
   }
 
-  /** Keeps or drops one written post. */
-  async decideWrittenPost(batchId: string, postId: string, verb: 'keep' | 'drop', actor: string): Promise<BatchView> {
+  /** Keeps or drops one written post, or (`reset`) puts it back to undecided. */
+  async decideWrittenPost(batchId: string, postId: string, verb: 'keep' | 'drop' | 'reset', actor: string): Promise<BatchView> {
     return this.oneBatch(await this.call('POST', `${this.copyPath(batchId, postId)}/${verb}`, actor, {}));
   }
 
