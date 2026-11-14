@@ -14,6 +14,8 @@
  * GET  /api/v1/carousels?externalId=...&id=...&slide=N&image=1   the slide itself (JPEG)
  * POST /api/v1/carousels   {"externalId", "action": "approve" | "reject", "id", "reason"?, "comment"?}   answers {"carousel": {"id", "status"}}; `X-Social-Actor` is required to decide.
  *
+ * POST /api/v1/carousels   {"externalId", "action": "keep" | "drop" | "reset", "id"}   her choice about a carousel TOPIC (words only, no picture yet): keep it, drop it, or put it back to undecided; answers
+ *                          {"carousel": {"id", "status"}}. `POST ... {"action": "draw", "id"}` draws the slides of a KEPT carousel (about 9 cents): 202 {"job", "created"}, the same ask again is the same job.
  * POST /api/v1/carousels   {"externalId", "action": "move", "id", "day": "2026-11-19"}   moves a carousel that is waiting or approved to another day of its own Monday-to-Sunday week (tomorrow or
  *                          later; the time stays; an approved one stays approved and its release follows); answers {"carousel": {"id", "date"}}. `X-Social-Actor` is required.
  *                          The day it already has is a 200 that changes nothing. `400 INVALID_DAY` (not a real day, or another week), `400 DAY_PASSED`, `409 CONFLICT` (not waiting or approved).
@@ -32,7 +34,7 @@ import { loadChannels } from '../../lib/store.js';
 const MAX_BODY_BYTES = 4 * 1024;
 const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 type Network = (typeof NETWORKS)[number];
-const ACTIONS = ['make', 'approve', 'reject', 'weekly', 'move'] as const;
+const ACTIONS = ['make', 'approve', 'reject', 'weekly', 'move', 'keep', 'drop', 'reset', 'draw'] as const;
 const isRealDay = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 type Action = (typeof ACTIONS)[number];
 const isNetwork = (value: unknown): value is Network => typeof value === 'string' && (NETWORKS as readonly string[]).includes(value);
@@ -94,6 +96,11 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'weekly') {
       if (typeof body['enabled'] !== 'boolean') return apiError(400, 'INVALID_REQUEST', 'enabled must be true or false');
       return json(200, { weekly: await engine.setCarouselWeekly(body['enabled'], by) });
+    }
+    if (action === 'keep' || action === 'drop' || action === 'reset') return json(200, { carousel: await engine.decideCarousel(id as string, action, by) });
+    if (action === 'draw') {
+      const drawn = await engine.drawCarousel(id as string, by);
+      return json(drawn.created ? 202 : 200, { job: { ...drawn.job }, created: drawn.created });
     }
     if (action === 'move') {
       const day = body['day'];

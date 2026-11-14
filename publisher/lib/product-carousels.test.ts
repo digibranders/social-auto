@@ -213,3 +213,61 @@ test('a carousel move is refused with the API\'s own codes: another week, a bad 
     assert.equal(engine.carousels.find((c) => c.id === 'car-9')?.date, `${friday}T10:00:00+05:30`, 'nothing moved by the refusals');
   });
 });
+
+test('a carousel is a topic first: words only in the list and the detail, no picture, kept, dropped or put back by the named person, then drawn on her ask as a job of its own', async () => {
+  const DAY_MS = 86_400_000;
+  const istDay = (ahead: number): string => new Date(Date.now() + 5.5 * 3_600_000 + ahead * DAY_MS).toISOString().slice(0, 10);
+  await withEngine(async (engine) => {
+    const brand = await workspace('shop-1');
+    engine.carousels.push({ brand, id: 'car-t', topic: 'Why it works', date: `${istDay(5)}T10:00:00+05:30`, status: 'topic', headlines: ['First idea', 'Second idea', 'Last idea'], slides: [], captions: [{ network: 'linkedin', caption: 'For LinkedIn.' }] });
+    const post = (action: string, headers: Record<string, string> = act, key?: string, id = 'car-t') => call(carouselsPost, '/api/v1/carousels', { headers, ...(key ? { key } : {}), json: { externalId: 'shop-1', action, id } });
+
+    const list = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1');
+    assert.deepEqual((list.body['carousels'] as Array<Record<string, unknown>>).map((c) => [c['status'], c['count'], c['headlines']]), [['topic', 3, ['First idea', 'Second idea', 'Last idea']]]);
+    const one = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1&id=car-t');
+    const detail = one.body['carousel'] as { status: string; slides: Array<Record<string, unknown>>; captions: Array<Record<string, unknown>> };
+    assert.deepEqual([detail.status, detail.slides.map((s) => [s['position'], s['status'], s['headline']])], ['topic', [[1, 'topic', 'First idea'], [2, 'topic', 'Second idea'], [3, 'topic', 'Last idea']]]);
+    assert.deepEqual(detail.captions.map((c) => [c['network'], c['caption']]), [['linkedin', 'For LinkedIn.']]);
+    assert.equal((await call(carouselsGet, '/api/v1/carousels?externalId=shop-1&id=car-t&slide=1&image=1')).status, 404, 'there is no picture yet');
+
+    assert.equal((await post('draw')).status, 409, 'a topic that is not kept is not drawn');
+    const kept = await post('keep');
+    assert.deepEqual([kept.status, kept.body['carousel']], [200, { id: 'car-t', status: 'kept' }]);
+    assert.deepEqual([engine.seen.at(-1)?.url, engine.seen.at(-1)?.actor], [`/review/carousels/${brand}/car-t/keep`, 'brandbasket:user_42']);
+    assert.deepEqual((await post('reset')).body['carousel'], { id: 'car-t', status: 'topic' }, 'put back to undecided');
+    assert.deepEqual((await post('drop')).body['carousel'], { id: 'car-t', status: 'dropped' });
+    assert.deepEqual((await post('keep')).body['carousel'], { id: 'car-t', status: 'kept' }, 'a dropped topic can still be kept');
+
+    const drawn = await post('draw');
+    assert.equal(drawn.status, 202, JSON.stringify(drawn.body));
+    assert.deepEqual([(drawn.body['job'] as Record<string, unknown>)['kind'], (drawn.body['job'] as Record<string, unknown>)['carouselId'], drawn.body['created']], ['carousel', 'car-t', true]);
+    assert.deepEqual(Object.keys(drawn.body['job'] as object).sort(), ['carouselId', 'createdAt', 'id', 'kind', 'state']);
+    const again = await post('draw');
+    assert.deepEqual([again.status, again.body['created']], [200, false], 'the same ask is the same job');
+    assert.equal(((await call(carouselsGet, '/api/v1/carousels?externalId=shop-1')).body['carousels'] as Array<{ status: string }>)[0]?.status, 'drawing');
+    const jobs = await call(siteJobsGet, '/api/v1/site-jobs?externalId=shop-1');
+    assert.equal(((jobs.body['jobs'] as Array<{ kind: string; carouselId?: string }>).find((j) => j.kind === 'carousel'))?.carouselId, 'car-t', 'the job says which carousel it is for');
+  });
+});
+
+test('the choices about a carousel topic are refused with the API\'s own codes: a day that passed, a carousel being drawn or drawn, no person, no such carousel, another product', async () => {
+  const DAY_MS = 86_400_000;
+  const istDay = (ahead: number): string => new Date(Date.now() + 5.5 * 3_600_000 + ahead * DAY_MS).toISOString().slice(0, 10);
+  await withEngine(async (engine) => {
+    const brand = await workspace('shop-1');
+    engine.carousels.push({ brand, id: 'car-old', topic: 't', date: '2026-11-01T10:00:00+05:30', status: 'topic', headlines: ['A', 'B', 'C'], slides: [], captions: [] });
+    engine.carousels.push({ brand, id: 'car-busy', topic: 't', date: `${istDay(5)}T10:00:00+05:30`, status: 'drawing', headlines: ['A', 'B', 'C'], slides: [], captions: [] });
+    addCarousel(engine, brand);
+    const post = (action: string, id: string, headers: Record<string, string> = act, key?: string) => call(carouselsPost, '/api/v1/carousels', { headers, ...(key ? { key } : {}), json: { externalId: 'shop-1', action, id } });
+    const code = async (promise: ReturnType<typeof post>): Promise<[number, unknown]> => { const a = await promise; return [a.status, a.body['code']]; };
+    assert.deepEqual(await code(post('keep', 'car-old')), [400, 'DAY_PASSED'], 'its day has passed');
+    assert.deepEqual(await code(post('reset', 'car-old')), [400, 'DAY_PASSED']);
+    assert.equal((await post('drop', 'car-old')).status, 200, 'dropping is always allowed');
+    assert.deepEqual(await code(post('drop', 'car-busy')), [409, 'BATCH_LOCKED'], 'while its slides are being drawn');
+    assert.deepEqual(await code(post('keep', 'car-1')), [409, 'BATCH_LOCKED'], 'already drawn (waiting for her)');
+    assert.deepEqual(await code(post('draw', 'car-1')), [409, 'BATCH_LOCKED'], 'already drawn');
+    assert.deepEqual(await code(post('keep', 'car-busy', {})), [400, 'ACTOR_REQUIRED'], 'no person named');
+    assert.deepEqual(await code(post('keep', 'nope')), [404, 'NOT_FOUND']);
+    assert.deepEqual(await code(post('keep', 'car-busy', act, OTHER_KEY)), [404, 'WORKSPACE_NOT_FOUND'], 'another product');
+  });
+});

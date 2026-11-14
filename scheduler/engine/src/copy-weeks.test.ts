@@ -1030,6 +1030,61 @@ test('moving a carousel over HTTP: a carousel that is not waiting or approved is
   }
 });
 
+test('a carousel made in two steps: the topic shows words only, is kept, dropped or put back, is drawn only when kept (a job of its own), and a dropped topic does not use the week\'s allowance', async () => {
+  const s = await start('2026-11-16T06:30:00Z');
+  try {
+    const dir = join(s.root, 'brands', 'bb-acme');
+    const slide = (headline: string) => ({ role: 'content', headline, scene: 'a scene', factIds: ['f1'] });
+    const entry = (id: string, date: string) => ({ id, topic: `Topic ${id}`, createdAt: '2026-11-15T00:00:00Z', date, stage: 'topic', plan: { draft: { topic: `Topic ${id}`, style: 's', typography: 't', slides: [slide('First |idea|'), slide('Second idea'), slide('Last idea')] }, captions: { instagram: 'For Instagram.', facebook: 'For Facebook.' }, fallback: [], networks: ['instagram', 'facebook'] } });
+    writeFileSync(join(dir, 'carousels.json'), JSON.stringify({ carousels: [entry('car-a', '2026-11-20T10:00:00+05:30'), entry('car-today', '2026-11-16T10:00:00+05:30')] }));
+    const list = async (): Promise<Array<{ id: string; status: string; count: number; headlines: string[] }>> => ((await (await s.call('/review/carousels')).json()) as { carousels: Array<{ id: string; status: string; count: number; headlines: string[] }> }).carousels;
+    const statusOf = async (id: string): Promise<string | undefined> => (await list()).find((c) => c.id === id)?.status;
+    const body = async (res: Response): Promise<Record<string, unknown>> => (await res.json()) as Record<string, unknown>;
+
+    const first = (await list()).find((c) => c.id === 'car-a');
+    assert.deepEqual([first?.status, first?.count, first?.headlines], ['topic', 3, ['First idea', 'Second idea', 'Last idea']], 'words only, without the emphasis marks');
+    const detail = (await (await s.call('/review/carousels/bb-acme/car-a')).json()) as { status: string; slides: Array<Record<string, unknown>>; captions: Array<Record<string, unknown>> };
+    assert.deepEqual(detail.slides.map((x) => [x['position'], x['versionId'], x['status'], x['headline']]), [[1, null, 'topic', 'First idea'], [2, null, 'topic', 'Second idea'], [3, null, 'topic', 'Last idea']]);
+    assert.deepEqual(detail.captions.map((c) => [c['network'], c['caption']]).sort(), [['facebook', 'For Facebook.'], ['instagram', 'For Instagram.']]);
+    assert.equal((await s.call('/review/carousels/bb-acme/car-a/approve', {})).status, 409, 'a topic is not approved: it has no pictures');
+
+    // Her choice.
+    assert.equal((await body(await s.call('/review/carousels/bb-acme/car-a/keep', {})))['status'], 'kept');
+    assert.equal(await statusOf('car-a'), 'kept');
+    assert.equal((await body(await s.call('/review/carousels/bb-acme/car-a/reset', {})))['status'], 'topic');
+    assert.equal((await body(await s.call('/review/carousels/bb-acme/car-a/drop', {})))['status'], 'dropped');
+    const notKept = await s.call('/review/carousels/bb-acme/car-a/draw', {});
+    assert.equal(notKept.status, 409, 'a dropped topic is not drawn');
+    const today = await s.call('/review/carousels/bb-acme/car-today/keep', {});
+    assert.equal(today.status, 400);
+    assert.equal((await body(today))['code'], 'DAY_PASSED');
+    assert.equal((await s.call('/review/carousels/bb-acme/car-today/drop', {})).status, 200, 'dropping is always allowed');
+
+    // A dropped topic does not use the week\'s allowance; a kept one does.
+    const make = (): Promise<Response> => s.call('/review/jobs', { kind: 'carousel', site: 'acme.example', brand: 'bb-acme', networks: ['instagram'], startDate: '2026-11-20' });
+    const another = await make();
+    assert.equal(another.status, 202, 'the only carousel of the week was dropped, so another may be made');
+    assert.equal(((await body(another))['job'] as { topicOnly?: boolean }).topicOnly, true, 'a customer\'s carousel is written topic first');
+    s.jobs.list({ brand: 'bb-acme' }).forEach((j) => s.jobs.update(j.id, { state: 'succeeded' }));
+    assert.equal((await s.call('/review/carousels/bb-acme/car-a/keep', {})).status, 200);
+    assert.equal((await make()).status, 429, 'a kept carousel counts: one a week');
+
+    // Drawing: a job of its own, once; then the choice is final.
+    const draw = await s.call('/review/carousels/bb-acme/car-a/draw', {});
+    assert.equal(draw.status, 202, JSON.stringify(await draw.clone().json()));
+    const job = (await body(draw))['job'] as { kind: string; carouselId: string };
+    assert.deepEqual([job.kind, job.carouselId], ['carouseldraw', 'car-a']);
+    const same = await s.call('/review/carousels/bb-acme/car-a/draw', {});
+    assert.deepEqual([same.status, (await body(same))['created']], [200, false], 'asking again is the same job');
+    assert.equal(await statusOf('car-a'), 'drawing');
+    for (const verb of ['keep', 'drop', 'reset']) assert.equal((await s.call(`/review/carousels/bb-acme/car-a/${verb}`, {})).status, 409, `${verb} while it is being drawn`);
+    // Moving a topic works before it is drawn: its day is in its history entry.
+    assert.equal((await s.call('/review/carousels/bb-acme/car-today/move', { day: '2026-11-18' })).status, 409, 'a dropped topic is not moved');
+  } finally {
+    await s.done();
+  }
+});
+
 // ---- PRODUCT_LIMITS=off lifts the limits for a stretch of testing, and only when it is exactly "off"
 
 import { productLimitsOff, UNLIMITED } from './limits-switch.ts';

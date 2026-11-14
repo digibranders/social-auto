@@ -3,7 +3,8 @@
  * puts the finished carousel up for review, and writes the plan file the export reads. Nothing is scheduled or published here, and nothing is bought when the
  * client has fewer than three verified facts or no channel to write for. A carousel whose slides were not all accepted is not registered and writes nothing.
  */
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { withFileLock } from './file-lock.ts';
 import { join } from 'node:path';
 import type { AiConfig } from './ai.ts';
 import { displayDomain } from './ai-creative.ts';
@@ -23,7 +24,38 @@ const HISTORY_FILE = 'carousels.json';
 const AVOID_TOPICS = 8;
 const WEEK_FILE = /^week-(\d+)\.json$/;
 
-export interface HistoryEntry { id: string; topic: string; createdAt: string; planFile: string; /** The day it is for, ISO 8601 with the offset (older entries have none). */ date?: string }
+/**
+ * Where a carousel is: `topic` (its topic, slide headlines and channel words are written, nothing is drawn, the customer has not decided), `kept` (she chose it, still to be drawn), `dropped`
+ * (she did not want it: it costs nothing and does not use the week's allowance), `drawn` (the slides exist and are in review). An entry without a stage was made in one go (older ones).
+ */
+export type CarouselStage = 'topic' | 'kept' | 'dropped' | 'drawn';
+
+/** What the topic stage writes down so the drawing can be done later, from exactly these words. */
+export interface StoredPlan { draft: CarouselDraft; captions: Record<string, string>; fallback: CarouselCaptions['fallback']; networks: Network[] }
+
+export interface HistoryEntry {
+  id: string;
+  topic: string;
+  createdAt: string;
+  /** The plan file the export reads; made when the slides are drawn, so a carousel not drawn yet has none. */
+  planFile?: string;
+  /** The day it is for, ISO 8601 with the offset (older entries have none). */
+  date?: string;
+  stage?: CarouselStage;
+  /** The words and slide plan, kept until the slides are drawn. */
+  plan?: StoredPlan;
+}
+
+/** Changes the carousels' history under a lock, so a decision, a move and a drawing finishing never write over each other. */
+export function changeHistory(brandDir: string, change: (entries: HistoryEntry[]) => HistoryEntry[]): void {
+  mkdirSync(brandDir, { recursive: true });
+  withFileLock(join(brandDir, `${HISTORY_FILE}.lock`), () => {
+    const next = change(readHistory(brandDir));
+    const temp = join(brandDir, `${HISTORY_FILE}.${process.pid}.tmp`);
+    writeFileSync(temp, `${JSON.stringify({ carousels: next }, null, 2)}\n`);
+    renameSync(temp, join(brandDir, HISTORY_FILE));
+  }, { timeoutMs: 5000 });
+}
 
 export interface CarouselRunInput {
   ai: AiConfig;
@@ -53,7 +85,8 @@ export interface CarouselRunInput {
 }
 
 export interface CarouselRunResult {
-  status: 'queued' | 'not_ready' | 'skipped';
+  /** `topic`: only the topic and words were written (nothing drawn); `queued`: the slides are drawn and in review. */
+  status: 'topic' | 'queued' | 'not_ready' | 'skipped';
   carouselId: string;
   planFile?: string;
   topic?: string;
@@ -73,7 +106,8 @@ export function readHistory(brandDir: string): HistoryEntry[] {
 
 const offsetOf = (date: string): string => /(Z|[+-]\d{2}:\d{2})$/.exec(date)?.[1] ?? '+05:30';
 
-export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunResult> {
+/** The first stage: the topic, the words of every slide and the caption for each channel, with no picture drawn (about a cent). Saved so the drawing can follow. */
+export async function planCarouselTopic(input: CarouselRunInput): Promise<CarouselRunResult> {
   const log = input.log ?? ((): void => undefined);
   const now = input.deps?.now ?? ((): Date => new Date());
   const history = readHistory(input.brandDir);
@@ -87,6 +121,7 @@ export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunR
   if (input.networks.length === 0) return skip('a carousel needs at least one channel to write for');
 
   log(`1/4 Planning a carousel from ${carouselFacts.length} verified facts…`);
+  // A topic she dropped is a topic she did not want: it is not avoided less, so the next one is not the same idea.
   const avoidTopics = history.slice(-AVOID_TOPICS).map((c) => c.topic);
   const draft = await (input.deps?.plan ?? ((request) => planCarousel({ ai: input.ai, brandName: input.brand.name, about: brandCharacter(input.brand), ...request })))({ facts: carouselFacts, avoidTopics });
   log(`    Topic: ${draft.topic} (${draft.slides.length} slides)`);
@@ -95,34 +130,63 @@ export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunR
   log(`2/4 Writing a caption for each of ${input.networks.join(', ')}…`);
   const closingLine = input.brand.cta?.text ?? `Visit ${displayDomain(input.brand.website)} (link in bio)`;
   const captions = await (input.deps?.captions ?? ((d, texts) => writeCarouselCaptions({ ai: input.ai, topic: d.topic, headlines: d.slides.map((s) => s.headline), facts: texts, closingLine, networks: input.networks })))(draft, factTexts);
+  const entry: HistoryEntry = { id: carouselId, topic: draft.topic, createdAt: now().toISOString(), date: input.date, stage: 'topic', plan: { draft, captions: captions.captions, fallback: captions.fallback, networks: [...input.networks] } };
+  changeHistory(input.brandDir, (entries) => [...entries, entry]);
+  log('3/4 The carousel topic is written; no picture was drawn. It waits for the customer to keep it.');
+  log('4/4 Done.');
+  return { status: 'topic', carouselId, topic: draft.topic, ...(captions.fallback.length > 0 ? { fallback: captions.fallback } : {}) };
+}
 
+/** The second stage: draws the slides of a carousel the customer kept, from the words saved in the first, and puts the finished carousel up for review. */
+export async function drawCarousel(input: Omit<CarouselRunInput, 'networks' | 'date'>, carouselId: string, options: { /** For the one-go run: draw a carousel that has not been kept. */ any?: boolean } = {}): Promise<CarouselRunResult> {
+  const log = input.log ?? ((): void => undefined);
+  const entry = readHistory(input.brandDir).find((h) => h.id === carouselId);
+  if (!entry || !entry.plan || entry.date === undefined) return { status: 'skipped', carouselId, reason: 'there is no saved topic for that carousel' };
+  if (entry.stage !== 'kept' && !(options.any === true && entry.stage === 'topic')) return { status: 'skipped', carouselId, reason: 'only a carousel the customer kept is drawn' };
+  const { draft, captions, fallback } = entry.plan;
+  const date = entry.date;
+  const carouselFacts: CarouselFact[] = input.facts.map((f) => ({ id: f.id, text: displayFact(f) }));
   const outDir = join(input.outRoot, input.brandSlug, carouselId);
   mkdirSync(outDir, { recursive: true });
   log('3/4 Drawing the slides with the picture model…');
   const slides = await makeCarouselSlides({
-    ai: input.ai, brand: input.brand, brandSlug: input.brandSlug, facts: carouselFacts, draft, idPrefix: carouselId, date: input.date, outDir,
+    ai: input.ai, brand: input.brand, brandSlug: input.brandSlug, facts: carouselFacts, draft, idPrefix: carouselId, date, outDir,
     ...(input.logo ? { logo: input.logo } : {}), log: (m) => log(`    ${m}`), ...(input.deps?.slides ? { deps: input.deps.slides } : {}),
   });
   const reportFile = join(outDir, 'carousel-report.json');
-  await writeFileAtomic(reportFile, `${JSON.stringify({ carouselId, topic: draft.topic, ready: slides.ready, reason: slides.reason, slides: slides.slides, fallbackCaptions: captions.fallback }, null, 2)}\n`);
+  await writeFileAtomic(reportFile, `${JSON.stringify({ carouselId, topic: draft.topic, ready: slides.ready, reason: slides.reason, slides: slides.slides, fallbackCaptions: fallback }, null, 2)}\n`);
   if (!slides.ready) return { status: 'not_ready', carouselId, topic: draft.topic, reason: slides.reason ?? 'a slide was not accepted' };
 
   const weekNumber = Math.max(0, ...readdirSync(input.brandDir).map((f) => Number(WEEK_FILE.exec(f)?.[1] ?? 0))) + 1;
   const planFile = `week-${String(weekNumber).padStart(2, '0')}.json`;
   registerCarousel({
-    brandDir: input.brandDir, brandSlug: input.brandSlug, planFile, carouselId, draft, slides, facts: input.facts, captions: captions.captions,
+    brandDir: input.brandDir, brandSlug: input.brandSlug, planFile, carouselId, draft, slides, facts: input.facts, captions,
     ctaUrl: input.brand.cta?.evidence?.url ?? input.brand.website, reportFile,
   });
   // The plan file is what the export reads: one post, the carousel, which can only go out as the exact slides and captions the owner approves in review.
-  const main = captions.captions['instagram'] ?? Object.values(captions.captions)[0] ?? draft.topic;
+  const main = captions['instagram'] ?? Object.values(captions)[0] ?? draft.topic;
   const plan: WeekPlan = {
-    brand: input.brandSlug, timezone: offsetOf(input.date), renderMode: 'ai_v1',
-    posts: [{ id: carouselId, date: input.date, painPoint: draft.topic, mode: 'ai', headline: draft.topic, subline: '', caption: main, hashtags: [], imagePrompt: draft.topic, pillar: 'carousel', factIds: [...new Set(draft.slides.flatMap((s) => s.factIds))],
+    brand: input.brandSlug, timezone: offsetOf(date), renderMode: 'ai_v1',
+    posts: [{ id: carouselId, date, painPoint: draft.topic, mode: 'ai', headline: draft.topic, subline: '', caption: main, hashtags: [], imagePrompt: draft.topic, pillar: 'carousel', factIds: [...new Set(draft.slides.flatMap((s) => s.factIds))],
       // The channels it may go to: a release record made from this plan (manual-release.ts) reads them from here, so a carousel is never limited to Instagram by default.
-      variants: Object.fromEntries(Object.entries(captions.captions).map(([network, caption]) => [network, { caption, hashtags: [] }])) }],
+      variants: Object.fromEntries(Object.entries(captions).map(([network, caption]) => [network, { caption, hashtags: [] }])) }],
   };
   await writeFileAtomic(join(input.brandDir, planFile), `${JSON.stringify(plan, null, 2)}\n`);
-  await writeFileAtomic(join(input.brandDir, HISTORY_FILE), `${JSON.stringify({ carousels: [...history, { id: carouselId, topic: draft.topic, createdAt: now().toISOString(), planFile, date: input.date }] }, null, 2)}\n`);
+  changeHistory(input.brandDir, (entries) => entries.map((h) => {
+    if (h.id !== carouselId) return h;
+    const { plan: _saved, ...rest } = h;
+    return { ...rest, planFile, stage: 'drawn' as const };
+  }));
   log(`4/4 The carousel is in the owner's review queue (${planFile}); nothing was scheduled or published.`);
-  return { status: 'queued', carouselId, planFile, topic: draft.topic, ...(captions.fallback.length > 0 ? { fallback: captions.fallback } : {}) };
+  return { status: 'queued', carouselId, planFile, topic: draft.topic, ...(fallback.length > 0 ? { fallback } : {}) };
+}
+
+/** Both stages in one go (the way a carousel was always made for the owner's own clients): the topic, then the drawing, without waiting for a decision. */
+export async function runCarousel(input: CarouselRunInput): Promise<CarouselRunResult> {
+  const topic = await planCarouselTopic(input);
+  if (topic.status !== 'topic') return topic;
+  const drawn = await drawCarousel(input, topic.carouselId, { any: true });
+  // Made in one go, a carousel whose slides were not all accepted leaves nothing behind (not even its topic): there is no customer to keep it for a later try.
+  if (drawn.status !== 'queued') changeHistory(input.brandDir, (entries) => entries.filter((h) => h.id !== topic.carouselId));
+  return drawn;
 }

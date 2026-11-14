@@ -5,7 +5,7 @@
  */
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readHistory } from './carousel-run.ts';
+import { changeHistory, readHistory } from './carousel-run.ts';
 import { mondayOf } from './picture-limit.ts';
 
 export class CarouselMoveError extends Error {
@@ -35,23 +35,25 @@ function writeJson(file: string, value: unknown): void {
 export function moveCarousel(input: { brandDir: string; id: string; day: string; today: string; status: string }): { date: string; moved: boolean } {
   const entry = readHistory(input.brandDir).find((h) => h.id === input.id);
   if (!entry) throw new CarouselMoveError('NOT_FOUND', 'no such carousel');
-  const planPath = join(input.brandDir, entry.planFile);
-  const plan = JSON.parse(readFileSync(planPath, 'utf8')) as { posts?: Array<{ id?: string; date?: string }> };
-  const post = plan.posts?.find((p) => p.id === input.id);
-  if (!post || typeof post.date !== 'string') throw new CarouselMoveError('NOT_FOUND', 'the plan file has no such carousel');
-  const current = post.date.slice(0, 10);
+  // A carousel whose slides are not drawn yet has its day only in its history entry; a drawn one also in its plan file, which is what is posted.
+  const planPath = entry.planFile !== undefined ? join(input.brandDir, entry.planFile) : undefined;
+  const plan = planPath ? (JSON.parse(readFileSync(planPath, 'utf8')) as { posts?: Array<{ id?: string; date?: string }> }) : undefined;
+  const post = plan?.posts?.find((p) => p.id === input.id);
+  const currentDate = post?.date ?? entry.date;
+  if (plan && !post) throw new CarouselMoveError('NOT_FOUND', 'the plan file has no such carousel');
+  if (typeof currentDate !== 'string') throw new CarouselMoveError('NOT_FOUND', 'this carousel has no day');
+  const current = currentDate.slice(0, 10);
   if (!isRealDay(input.day)) throw new CarouselMoveError('OUTSIDE_WEEK', 'day must be a real day like 2026-11-25');
-  if (input.status !== 'pending' && input.status !== 'approved') throw new CarouselMoveError('CONFLICT', 'only a carousel that is waiting or approved can be moved');
-  if (input.day === current) return { date: post.date, moved: false };
+  if (!['topic', 'kept', 'pending', 'approved'].includes(input.status)) throw new CarouselMoveError('CONFLICT', 'only a carousel that is waiting, kept or approved can be moved');
+  if (input.day === current) return { date: currentDate, moved: false };
   if (current <= input.today) throw new CarouselMoveError('DAY_PASSED', 'the day of this carousel is today or has passed, so it cannot be moved');
   if (mondayOf(input.day) !== mondayOf(current)) throw new CarouselMoveError('OUTSIDE_WEEK', 'a carousel can only move to another day of its own week');
   if (input.day <= input.today) throw new CarouselMoveError('DAY_PASSED', 'that day is today or has passed');
-  const date = `${input.day}${post.date.slice(10)}`;
-  post.date = date;
-  writeJson(planPath, plan);
-  const historyPath = join(input.brandDir, 'carousels.json');
-  const history = JSON.parse(readFileSync(historyPath, 'utf8')) as { carousels?: Array<{ id?: string; date?: string }> };
-  for (const h of history.carousels ?? []) if (h.id === input.id) h.date = date;
-  writeJson(historyPath, history);
+  const date = `${input.day}${currentDate.slice(10)}`;
+  if (post && planPath && plan) {
+    post.date = date;
+    writeJson(planPath, plan);
+  }
+  changeHistory(input.brandDir, (entries) => entries.map((h) => (h.id === input.id ? { ...h, date } : h)));
   return { date, moved: true };
 }

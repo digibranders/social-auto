@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { aiConfigFromEnv } from './ai.ts';
 import type { CreativeReview } from './ai-creative.ts';
-import { runCarousel, type CarouselRunInput } from './carousel-run.ts';
+import { drawCarousel, planCarouselTopic, readHistory, runCarousel, type CarouselRunInput } from './carousel-run.ts';
+import { decideCarousel, drawProblem } from './carousel-stage.ts';
 import { parseCarouselDraft, type CarouselDraft } from './carousel.ts';
 import { parseWeekPlan, type Brand } from './content.ts';
 import type { EvidenceFact } from './evidence.ts';
@@ -99,9 +100,70 @@ test('nothing is bought without three verified facts or a channel, and a carouse
     const broken = await runCarousel({ ...base, deps: { ...base.deps, slides: { ...base.deps?.slides, maxAttempts: 1, review: async () => reading(['Something else entirely']) } } });
     assert.equal(broken.status, 'not_ready');
     assert.match(broken.reason ?? '', /slide 1/);
-    assert.equal(existsSync(join(s.brandDir, 'carousels.json')), false);
+    assert.deepEqual(readHistory(s.brandDir), [], 'nothing is left in the history, not even the topic');
     assert.equal(readdirSync(s.brandDir).filter((f) => /^week-/.test(f)).length, 0);
     assert.equal(new ReviewStore(s.brandDir, 'currycook').list().length, 0);
+  } finally {
+    s.done();
+  }
+});
+
+test('the topic stage writes the words and nothing is drawn or put up for review; the drawing follows only for a kept carousel, from the very same words', async () => {
+  const s = setup();
+  try {
+    const topic = await planCarouselTopic(s.input());
+    assert.equal(topic.status, 'topic', topic.reason);
+    assert.equal(existsSync(join(s.dir, 'out')), false, 'no picture was drawn');
+    assert.equal(readdirSync(s.brandDir).filter((f) => /^week-\d+\.json$/.test(f)).length, 0, 'and no plan file the export could read');
+    assert.equal(new ReviewStore(s.brandDir, 'currycook').list().length, 0, 'nothing is in review yet');
+    const saved = readHistory(s.brandDir);
+    assert.deepEqual(saved.map((h) => [h.id, h.stage, h.planFile, h.plan?.draft.slides.length, Object.keys(h.plan?.captions ?? {}).sort()]), [[topic.carouselId, 'topic', undefined, 3, ['instagram', 'linkedin']]]);
+
+    // Not kept yet: it is not drawn.
+    const early = await drawCarousel(s.input(), topic.carouselId);
+    assert.equal(early.status, 'skipped');
+    assert.match(early.reason ?? '', /kept/);
+    assert.equal(drawProblem(readHistory(s.brandDir)[0], '2026-11-17')?.code, 'CONFLICT');
+
+    decideCarousel({ brandDir: s.brandDir, id: topic.carouselId, choice: 'kept', today: '2026-11-17', drawActive: false });
+    assert.equal(drawProblem(readHistory(s.brandDir)[0], '2026-11-17'), null);
+    const drawn = await drawCarousel(s.input(), topic.carouselId);
+    assert.equal(drawn.status, 'queued', drawn.reason);
+    const store = new ReviewStore(s.brandDir, 'currycook');
+    assert.equal(store.carouselStatus(topic.carouselId), 'pending');
+    assert.deepEqual(store.carouselSlides(topic.carouselId).slides.map((i) => i?.version.headline), draft.slides.map((sl) => sl.headline.replaceAll('|', '')), 'the slides carry the words written in the first stage');
+    assert.deepEqual(store.carouselSlides(topic.carouselId).captions.map((c) => c.version.network).sort(), ['instagram', 'linkedin']);
+    const after = readHistory(s.brandDir)[0];
+    assert.deepEqual([after?.stage, after?.planFile !== undefined, after?.plan], ['drawn', true, undefined], 'drawn: it has its plan file and the saved words are no longer needed');
+    assert.equal(drawProblem(after, '2026-11-17')?.code, 'ALREADY_DRAWN');
+    assert.throws(() => decideCarousel({ brandDir: s.brandDir, id: topic.carouselId, choice: 'dropped', today: '2026-11-17', drawActive: false }), /already drawn/, 'a drawn carousel\'s choice is final');
+  } finally {
+    s.done();
+  }
+});
+
+test('a topic is kept, dropped or put back to undecided until its day or its drawing; a drawing that fails leaves it kept to try again', async () => {
+  const s = setup();
+  try {
+    const topic = await planCarouselTopic(s.input());
+    const choose = (choice: 'kept' | 'dropped' | 'topic', today = '2026-11-17', drawActive = false) => decideCarousel({ brandDir: s.brandDir, id: topic.carouselId, choice, today, drawActive }).stage;
+    assert.equal(choose('kept'), 'kept');
+    assert.equal(choose('topic'), 'topic', 'put back to undecided');
+    assert.equal(choose('dropped'), 'dropped');
+    assert.equal(choose('kept'), 'kept', 'a dropped topic can still be kept');
+    assert.throws(() => choose('kept', '2026-11-18'), (e: Error) => (e as { code?: string }).code === 'DAY_PASSED', 'its day is today');
+    assert.equal(choose('dropped', '2026-11-18'), 'dropped', 'dropping is always allowed');
+    assert.equal(choose('kept'), 'kept');
+    assert.throws(() => choose('dropped', '2026-11-17', true), (e: Error) => (e as { code?: string }).code === 'ALREADY_DRAWN', 'while it is being drawn the choice is final');
+    assert.throws(() => decideCarousel({ brandDir: s.brandDir, id: 'nope', choice: 'kept', today: '2026-11-17', drawActive: false }), (e: Error) => (e as { code?: string }).code === 'NOT_FOUND');
+
+    // The drawing fails: nothing is bought again by itself, the topic stays kept, and nothing is left in review.
+    const base = s.input();
+    const broken = await drawCarousel({ ...base, deps: { ...base.deps, slides: { ...base.deps?.slides, maxAttempts: 1, review: async () => reading(['Something else entirely']) } } }, topic.carouselId);
+    assert.equal(broken.status, 'not_ready');
+    assert.equal(readHistory(s.brandDir)[0]?.stage, 'kept');
+    assert.equal(new ReviewStore(s.brandDir, 'currycook').list().length, 0);
+    assert.equal((await drawCarousel(s.input(), topic.carouselId)).status, 'queued', 'asked again, it is drawn');
   } finally {
     s.done();
   }
