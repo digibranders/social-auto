@@ -324,3 +324,38 @@ test('with the weekly carousel on a week is 3 single posts (Monday, Tuesday, Thu
     }
   });
 });
+
+test('a plan can stop on an end day: endDate goes to the poster service with the start day, and a bad end day is refused with INVALID_DAY before anything starts', async () => {
+  await withProducts(async () => {
+    const engine = await fakeEngine();
+    try {
+      await workspace('shop-1', true);
+      const sent = (): Record<string, unknown> => engine.seen.filter((s) => s.method === 'POST' && s.url === '/review/jobs').at(-1)?.body as Record<string, unknown>;
+      const DAY_MS = 86_400_000;
+      const startDate = new Date(Date.now() + 5.5 * 3_600_000 + 3 * DAY_MS).toISOString().slice(0, 10);
+      const plus = (n: number): string => new Date(Date.parse(`${startDate}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+      assert.equal((await start('shop-1', { startDate, endDate: plus(27) })).status, 202, 'four weeks counting the start day');
+      assert.deepEqual([sent()['startDate'], sent()['endDate']], [startDate, plus(27)]);
+      engine.jobs.length = 0;
+      assert.equal((await start('shop-1', { startDate, endDate: startDate })).status, 202, 'a one-day plan');
+      engine.jobs.length = 0;
+      assert.equal((await start('shop-1', { startDate })).status, 202);
+      assert.equal(sent()['endDate'], undefined, 'without an end day nothing changes');
+
+      const refuse = async (json: Record<string, unknown>, label: string): Promise<void> => {
+        const before = engine.seen.length;
+        const answer = await start('shop-1', json);
+        assert.deepEqual([answer.status, answer.body['code']], [400, 'INVALID_DAY'], `${label}: ${JSON.stringify(answer.body)}`);
+        assert.equal(engine.seen.length, before, `${label}: nothing reached the poster service`);
+      };
+      await refuse({ startDate, endDate: plus(28) }, 'more than four weeks');
+      await refuse({ startDate, endDate: plus(-1) }, 'before the start');
+      await refuse({ startDate, endDate: '2026-13-40' }, 'not a day');
+      await refuse({ startDate, endDate: 'tomorrow' }, 'not a day (text)');
+      await refuse({ startDate, endDate: 20261215 }, 'not text');
+    } finally {
+      await engine.close();
+    }
+  });
+});
