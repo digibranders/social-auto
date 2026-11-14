@@ -523,7 +523,8 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     h('div', { class: 'client-head' }, h('div', { class: 'client-title' }, h('h2', {}, client.label)), h('div', { class: 'actions' }, button([icon('plus'), 'New post'], 'btn btn-primary', () => ctx.newPost(client.brand, null)), button('Open calendar', 'btn', () => ctx.openCalendar(client.brand)), ctx.allPaused() ? null : button(client.paused ? 'Resume client' : 'Pause client', client.paused ? 'btn' : 'btn btn-quiet', () => ctx.setPause('brand', client.brand, !client.paused)), client.added ? button('Remove client', 'btn btn-quiet btn-danger', () => ctx.removeClient(client)) : null)),
     client.added ? websiteCard(client, ctx) : null,
     client.added ? plansCard(client, ctx) : null,
-    client.added ? daysCard(client, ctx) : null,
+    // Only a product's customer: a client the team added has plans of its own, which choose their own days.
+    client.product !== null ? daysCard(client, ctx) : null,
     client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
     tab === 'channels' ? channels : tab === 'posts' ? posts : tab === 'analytics' ? analyticsPage(client, ctx) : costPage(client, ctx),
