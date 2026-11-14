@@ -437,13 +437,15 @@ export interface CarouselSummary {
   /** How many slides it has. */
   count: number;
   status: CarouselStatus;
+  /** What is printed on each slide, in order (empty for a slide with no picture yet). */
+  headlines: string[];
 }
 
 export interface CarouselDetail {
   id: string;
   count: number;
   status: CarouselStatus;
-  slides: Array<{ position: number; status: string; /** Only for the engine client's own use: which picture the slide is. */ versionId?: string }>;
+  slides: Array<{ position: number; status: string; /** What is printed on the slide. */ headline: string; /** Only for the engine client's own use: which picture the slide is. */ versionId?: string }>;
   captions: Array<{ network: string; caption: string; status: string }>;
 }
 
@@ -852,7 +854,7 @@ export class WorkspaceEngine {
     const raw = isObject(answer) && Array.isArray(answer['carousels']) ? answer['carousels'] : [];
     return raw.flatMap((c): CarouselSummary[] => {
       if (!isObject(c) || typeof c['id'] !== 'string' || !CAROUSEL_ID.test(c['id'])) return [];
-      return [{ id: c['id'], topic: str(c['topic'], 200) ?? '', date: str(c['date'], 40) ?? '', count: Math.max(0, Math.floor(num(c['count']))), status: carouselStatus(c['status']) }];
+      return [{ id: c['id'], topic: str(c['topic'], 200) ?? '', date: str(c['date'], 40) ?? '', count: Math.max(0, Math.floor(num(c['count']))), status: carouselStatus(c['status']), headlines: (Array.isArray(c['headlines']) ? c['headlines'] : []).slice(0, 10).map((h) => (str(h, 300) ?? '').replaceAll('|', '')) }];
     });
   }
 
@@ -866,10 +868,19 @@ export class WorkspaceEngine {
       const position = Math.floor(num(s['position']));
       if (position < 1 || position > 10) return [];
       const versionId = typeof s['versionId'] === 'string' && VERSION_ID.test(s['versionId']) && s['versionId'].startsWith(`${this.brand}.`) ? s['versionId'] : null;
-      return [{ position, status: versionId ? (str(s['status'], 20) ?? 'pending') : 'missing', ...(versionId ? { versionId } : {}) }];
+      return [{ position, status: versionId ? (str(s['status'], 20) ?? 'pending') : 'missing', headline: (str(s['headline'], 300) ?? '').replaceAll('|', ''), ...(versionId ? { versionId } : {}) }];
     });
     const captions = (Array.isArray(answer['captions']) ? answer['captions'] : []).flatMap((c): CarouselDetail['captions'] => (isObject(c) && typeof c['network'] === 'string' && NETWORK_ORDER.includes(c['network']) ? [{ network: c['network'], caption: str(c['caption'], 3000) ?? '', status: str(c['status'], 20) ?? 'pending' }] : []));
     return { id, count: Math.max(0, Math.floor(num(answer['count']))), status: carouselStatus(answer['status']), slides, captions };
+  }
+
+  /** Moves a waiting or approved carousel to another day of its own week; the answer is its id and its day now. */
+  async moveCarousel(id: string, day: string, actor: string): Promise<{ id: string; date: string }> {
+    if (!CAROUSEL_ID.test(id)) throw new EngineError(404, 'not found');
+    const answer = await this.call('POST', `/review/carousels/${this.brand}/${id}/move`, actor, { day });
+    const date = isObject(answer) ? str(answer['date'], 40) : undefined;
+    if (date === undefined || date === '') throw unavailable();
+    return { id, date };
   }
 
   /** Approves the whole carousel: every slide and every channel's words, exactly as they are now. */

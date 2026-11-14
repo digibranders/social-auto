@@ -10,9 +10,13 @@
  *                          one carousel each week, from the Thursday before it at 10:00 India time, for the Friday, for her to approve (it needs her website read, a connected channel and a
  *                          written batch). It follows the same one-a-week limit, and one that was made is never made again for the same week.
  * GET  /api/v1/carousels?externalId=...                {"carousels": [{"id", "topic", "date", "count", "status"}], "weekly": true | false}   newest first
- * GET  /api/v1/carousels?externalId=...&id=...         {"carousel": {"id", "count", "status", "slides": [{"position", "status"}], "captions": [{"network", "caption", "status"}]}, "reasons": [...]}
+ * GET  /api/v1/carousels?externalId=...&id=...         {"carousel": {"id", "count", "status", "slides": [{"position", "status", "headline"}], "captions": [{"network", "caption", "status"}]}, "reasons": [...]}
  * GET  /api/v1/carousels?externalId=...&id=...&slide=N&image=1   the slide itself (JPEG)
  * POST /api/v1/carousels   {"externalId", "action": "approve" | "reject", "id", "reason"?, "comment"?}   answers {"carousel": {"id", "status"}}; `X-Social-Actor` is required to decide.
+ *
+ * POST /api/v1/carousels   {"externalId", "action": "move", "id", "day": "2026-11-19"}   moves a carousel that is waiting or approved to another day of its own Monday-to-Sunday week (tomorrow or
+ *                          later; the time stays; an approved one stays approved and its release follows); answers {"carousel": {"id", "date"}}. `X-Social-Actor` is required.
+ *                          The day it already has is a 200 that changes nothing. `400 INVALID_DAY` (not a real day, or another week), `400 DAY_PASSED`, `409 CONFLICT` (not waiting or approved).
  *
  * `status` is `incomplete` (not every slide is ready), `pending` (waiting for the customer), `approved`, `rejected` or `blocked` (a slide did not pass the checks).
  */
@@ -28,7 +32,8 @@ import { loadChannels } from '../../lib/store.js';
 const MAX_BODY_BYTES = 4 * 1024;
 const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
 type Network = (typeof NETWORKS)[number];
-const ACTIONS = ['make', 'approve', 'reject', 'weekly'] as const;
+const ACTIONS = ['make', 'approve', 'reject', 'weekly', 'move'] as const;
+const isRealDay = (value: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 type Action = (typeof ACTIONS)[number];
 const isNetwork = (value: unknown): value is Network => typeof value === 'string' && (NETWORKS as readonly string[]).includes(value);
 const isAction = (value: unknown): value is Action => typeof value === 'string' && (ACTIONS as readonly string[]).includes(value);
@@ -54,7 +59,7 @@ export async function GET(request: Request): Promise<Response> {
       const bytes = await engine.getPosterImage(slide.versionId, by);
       return new Response(new Uint8Array(bytes), { status: 200, headers: { 'Content-Type': 'image/jpeg', 'Content-Length': String(bytes.length), 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
     }
-    return json(200, { carousel: { id: detail.id, count: detail.count, status: detail.status, slides: detail.slides.map((s) => ({ position: s.position, status: s.status })), captions: detail.captions }, reasons: [...REJECTION_REASONS] });
+    return json(200, { carousel: { id: detail.id, count: detail.count, status: detail.status, slides: detail.slides.map((s) => ({ position: s.position, status: s.status, headline: s.headline })), captions: detail.captions }, reasons: [...REJECTION_REASONS] });
   } catch (error) {
     return errorResponse(error, 'read the carousels');
   }
@@ -89,6 +94,11 @@ export async function POST(request: Request): Promise<Response> {
     if (action === 'weekly') {
       if (typeof body['enabled'] !== 'boolean') return apiError(400, 'INVALID_REQUEST', 'enabled must be true or false');
       return json(200, { weekly: await engine.setCarouselWeekly(body['enabled'], by) });
+    }
+    if (action === 'move') {
+      const day = body['day'];
+      if (typeof day !== 'string' || !isRealDay(day)) return apiError(400, 'INVALID_DAY', 'day must be a real day like 2026-11-25');
+      return json(200, { carousel: await engine.moveCarousel(id as string, day, by) });
     }
     if (action === 'approve') return json(200, { carousel: { id: id as string, status: await engine.approveCarousel(id as string, by) } });
     if (action === 'reject') return json(200, { carousel: { id: id as string, status: await engine.rejectCarousel(id as string, body['reason'] as RejectionReason, comment, by) } });

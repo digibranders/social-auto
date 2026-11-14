@@ -102,12 +102,12 @@ test('the carousel is listed and shown whole with its slides and the words for e
     const brand = await workspace('shop-1');
     addCarousel(engine, brand);
     const list = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1');
-    assert.deepEqual(list.body, { carousels: [{ id: 'car-1', topic: 'Why it works', date: '2026-11-17T10:00:00+05:30', count: 3, status: 'pending' }], weekly: false });
+    assert.deepEqual(list.body, { carousels: [{ id: 'car-1', topic: 'Why it works', date: '2026-11-17T10:00:00+05:30', count: 3, status: 'pending', headlines: ['Slide 1 words', 'Slide 2 words', 'Slide 3 words'] }], weekly: false });
     const one = await call(carouselsGet, '/api/v1/carousels?externalId=shop-1&id=car-1');
     assert.equal(one.status, 200, JSON.stringify(one.body));
     const carousel = one.body['carousel'] as { id: string; count: number; status: string; slides: Array<Record<string, unknown>>; captions: Array<{ network: string; caption: string }> };
     assert.deepEqual([carousel.id, carousel.count, carousel.status], ['car-1', 3, 'pending']);
-    assert.deepEqual(carousel.slides, [{ position: 1, status: 'pending' }, { position: 2, status: 'pending' }, { position: 3, status: 'pending' }]);
+    assert.deepEqual(carousel.slides, [{ position: 1, status: 'pending', headline: 'Slide 1 words' }, { position: 2, status: 'pending', headline: 'Slide 2 words' }, { position: 3, status: 'pending', headline: 'Slide 3 words' }], 'each slide says what is printed on it, without the emphasis marks');
     assert.deepEqual(carousel.captions.map((c) => [c.network, c.caption]), [['linkedin', 'For LinkedIn.']]);
     assert.doesNotMatch(JSON.stringify(one.body), /versionId|bb-|\.0000/, 'no engine ids or brand names are passed on');
     const posters = await call(postersGet, '/api/v1/posters?externalId=shop-1&status=all');
@@ -166,5 +166,50 @@ test('the weekly carousel is switched on or off by the customer and the list say
     assert.equal((await call(carouselsPost, '/api/v1/carousels', { json: { externalId: 'shop-1', action: 'weekly', enabled: false } })).status, 400, 'a person is named');
     assert.deepEqual((await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'shop-1', action: 'weekly', enabled: false } })).body, { weekly: false });
     assert.equal((await call(carouselsPost, '/api/v1/carousels', { headers: act, json: { externalId: 'nobody', action: 'weekly', enabled: true } })).status, 404);
+  });
+});
+
+test('a carousel moves to another day of its own week, as the named person, keeping its time and its status; the day it has is a plain 200', async () => {
+  const DAY_MS = 86_400_000;
+  const istMonday = (ahead: number): string => { const d = new Date(Date.now() + 5.5 * 3_600_000 + ahead * DAY_MS); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - ((d.getUTCDay() + 6) % 7))).toISOString().slice(0, 10); };
+  const dayOf = (monday: string, n: number): string => new Date(Date.parse(`${monday}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+  await withEngine(async (engine) => {
+    const brand = await workspace('shop-1');
+    const monday = istMonday(14);
+    engine.carousels.push({ brand, id: 'car-9', topic: 'Why it works', date: `${dayOf(monday, 4)}T10:00:00+05:30`, status: 'approved', slides: [], captions: [] });
+    const move = (day: unknown, headers: Record<string, string> = act, key?: string, id = 'car-9') => call(carouselsPost, '/api/v1/carousels', { headers, ...(key ? { key } : {}), json: { externalId: 'shop-1', action: 'move', id, day } });
+
+    const done = await move(dayOf(monday, 2));
+    assert.equal(done.status, 200, JSON.stringify(done.body));
+    assert.deepEqual(done.body['carousel'], { id: 'car-9', date: `${dayOf(monday, 2)}T10:00:00+05:30` }, 'only the day changed, the time stayed');
+    assert.deepEqual([engine.seen.at(-1)?.method, engine.seen.at(-1)?.url, engine.seen.at(-1)?.body, engine.seen.at(-1)?.actor], ['POST', `/review/carousels/${brand}/car-9/move`, { day: dayOf(monday, 2) }, 'brandbasket:user_42']);
+    assert.equal(engine.carousels[0]?.status, 'approved', 'an approved carousel stays approved');
+    assert.equal((await move(dayOf(monday, 2))).status, 200, 'the day it already has changes nothing');
+  });
+});
+
+test('a carousel move is refused with the API\'s own codes: another week, a bad day, a day that passed, a carousel not waiting or approved, no person, another product', async () => {
+  const DAY_MS = 86_400_000;
+  const istDay = (ahead: number): string => new Date(Date.now() + 5.5 * 3_600_000 + ahead * DAY_MS).toISOString().slice(0, 10);
+  await withEngine(async (engine) => {
+    const brand = await workspace('shop-1');
+    const monday = ((): string => { const d = new Date(Date.parse(`${istDay(14)}T00:00:00Z`)); return new Date(d.getTime() - ((d.getUTCDay() + 6) % 7) * DAY_MS).toISOString().slice(0, 10); })();
+    const friday = new Date(Date.parse(`${monday}T00:00:00Z`) + 4 * DAY_MS).toISOString().slice(0, 10);
+    engine.carousels.push({ brand, id: 'car-9', topic: 't', date: `${friday}T10:00:00+05:30`, status: 'pending', slides: [], captions: [] });
+    engine.carousels.push({ brand, id: 'car-old', topic: 't', date: '2026-11-01T10:00:00+05:30', status: 'pending', slides: [], captions: [] });
+    engine.carousels.push({ brand, id: 'car-no', topic: 't', date: `${friday}T10:00:00+05:30`, status: 'rejected', slides: [], captions: [] });
+    const move = (day: unknown, id = 'car-9', headers: Record<string, string> = act, key?: string) => call(carouselsPost, '/api/v1/carousels', { headers, ...(key ? { key } : {}), json: { externalId: 'shop-1', action: 'move', id, day } });
+    const code = async (promise: ReturnType<typeof move>): Promise<[number, unknown]> => { const a = await promise; return [a.status, a.body['code']]; };
+    const nextWeek = new Date(Date.parse(`${monday}T00:00:00Z`) + 8 * DAY_MS).toISOString().slice(0, 10);
+
+    assert.deepEqual(await code(move(nextWeek)), [400, 'INVALID_DAY'], 'another week');
+    assert.deepEqual(await code(move('2026-13-40')), [400, 'INVALID_DAY'], 'not a day');
+    assert.deepEqual(await code(move(undefined)), [400, 'INVALID_DAY'], 'no day');
+    assert.deepEqual(await code(move('2026-11-02', 'car-old')), [400, 'DAY_PASSED'], 'its own day has passed');
+    assert.deepEqual(await code(move(monday, 'car-no')), [409, 'CONFLICT'], 'a rejected carousel');
+    assert.deepEqual(await code(move(monday, 'car-9', {})), [400, 'ACTOR_REQUIRED'], 'no person named');
+    assert.deepEqual(await code(move(monday, 'nope')), [404, 'NOT_FOUND'], 'no such carousel');
+    assert.deepEqual(await code(move(monday, 'car-9', act, OTHER_KEY)), [404, 'WORKSPACE_NOT_FOUND'], 'another product');
+    assert.equal(engine.carousels.find((c) => c.id === 'car-9')?.date, `${friday}T10:00:00+05:30`, 'nothing moved by the refusals');
   });
 });
