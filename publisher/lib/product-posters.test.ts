@@ -69,13 +69,13 @@ test('draw: refusals, and the per-customer limits', async () => {
     expectError(await draw({ retry: 'yes' }), 400, 'INVALID_REQUEST', 'retry must be true or false');
     expectError(await draw({ batchId: 'nope.json' }), 404, 'NOT_FOUND', 'no such batch');
     const old = (hours: number, n: number): FakeJob => ({ id: `job-e${n.toString(36).padStart(5, '0')}-0123abcd`, key: 'draw', kind: 'draw', brand, site: 'https://acme.example', by: 'x', networks: [], planFile: `old-${n}.json`, state: 'succeeded', createdAt: new Date(Date.now() - hours * 3600_000).toISOString() });
-    engine.jobs.push(old(1, 1), old(2, 2), old(3, 3));
+    engine.jobs.push(...Array.from({ length: 10 }, (_, i) => old(i / 10 + 0.5, i + 1)));
     const before = engine.seen.length;
-    expectError(await draw({ batchId: 'week-02.json' }), 429, 'DRAW_LIMIT_REACHED', 'three in a day');
+    expectError(await draw({ batchId: 'week-02.json' }), 429, 'DRAW_LIMIT_REACHED', 'ten in a day');
     assert.equal(engine.seen.slice(before).filter((s) => s.method === 'POST').length, 0, 'nothing was bought');
     engine.jobs.length = 0;
-    for (let n = 1; n <= 10; n += 1) engine.jobs.push(old(24 * (n + 1), n));
-    expectError(await draw({ batchId: 'week-02.json' }), 429, 'DRAW_LIMIT_REACHED', 'ten in a month');
+    for (let n = 1; n <= 40; n += 1) engine.jobs.push(old(24 * (n + 1) / 4, n));
+    expectError(await draw({ batchId: 'week-02.json' }), 429, 'DRAW_LIMIT_REACHED', 'forty in a month');
   });
 });
 
@@ -86,7 +86,7 @@ test('PRODUCT_LIMITS=off lifts the limits on asking for pictures', async () => {
       const brand = await workspace('shop-1');
       engine.batches.push(batch(brand, true, { planFile: 'week-02.json' }));
       const old = (hours: number, n: number): FakeJob => ({ id: `job-e${n.toString(36).padStart(5, '0')}-0123abcd`, key: 'draw', kind: 'draw', brand, site: 'https://acme.example', by: 'x', networks: [], planFile: `old-${n}.json`, state: 'succeeded', createdAt: new Date(Date.now() - hours * 3_600_000).toISOString() });
-      engine.jobs.push(...Array.from({ length: 3 }, (_, i) => old(i + 1, i + 1)));
+      engine.jobs.push(...Array.from({ length: 10 }, (_, i) => old(i + 1, i + 1)));
       delete process.env['PRODUCT_LIMITS'];
       expectError(await draw({ batchId: 'week-02.json' }), 429, 'DRAW_LIMIT_REACHED', 'limits on');
       process.env['PRODUCT_LIMITS'] = 'off';

@@ -29,7 +29,7 @@ import { join, resolve } from 'node:path';
 import { acquireLock, LockError } from './file-lock.ts';
 import { listCampaigns } from './campaign-runner.ts';
 import { REJECTION_REASONS, ReviewError, ReviewStore, type ReviewItem, type ReviewStatus } from './review-store.ts';
-import { CopyStage, CopyStageError, MAX_REPLACEMENTS_PER_WEEK, replaceProblem, weekOfPost, weeksOf } from './copy-stage.ts';
+import { CopyStage, CopyStageError, drawCandidates, type CopyBatch, MAX_REPLACEMENTS_PER_WEEK, openPosts, postLocked, replaceProblem, weekOfPost, weeksOf } from './copy-stage.ts';
 import { editCopy, type SignoffDefaults } from './copy-edit.ts';
 import { displayDomain } from './ai-creative.ts';
 import { loadFacts } from './evidence-pipeline.ts';
@@ -239,12 +239,17 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   /** Once drawing has been asked for, the batch's choices and words are final: the runner may start at any moment, and a change in between would be lost or fail the draw. */
   const refuseIfDrawAsked = (brand: string, planFile: string, postId?: string): void => {
     const asked = jobs.list({ brand }).filter((j) => j.kind === 'draw' && j.planFile === planFile);
-    // A draw of one week of a batch locks only that week's posts; a draw with no week (a batch of one piece), or a call about the whole batch, locks everything.
+    // A draw of a set of posts locks only those posts, and only while it is waiting or running (afterwards each is locked by its own record); a draw of a whole week or batch (older ones, and a
+    // batch of one piece) locks that week's posts, or everything when the call is about the whole batch.
     const batch = postId === undefined ? undefined : new CopyStage(join(root, brand), brand).get(planFile);
     const week = batch === undefined ? undefined : weekOfPost(batch.posts.find((p) => p.postId === postId) ?? {});
+    const whole = asked.filter((j) => j.postIds === undefined);
+    const ofPosts = asked.filter((j) => j.postIds !== undefined);
     // A kept topic that got no picture stays open for her to change (headline included) or drop, as long as no draw of its week is waiting or running.
-    if (postId !== undefined && batch?.notDrawn?.[postId] !== undefined && !asked.some((j) => (j.state === 'queued' || j.state === 'running') && (j.week === undefined || week === undefined || j.week === week))) return;
-    if (asked.some((j) => j.week === undefined || week === undefined || j.week === week)) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch\'s choices and words are final');
+    if (postId !== undefined && batch?.notDrawn?.[postId] !== undefined && !asked.some((j) => (j.state === 'queued' || j.state === 'running') && (j.postIds === undefined ? (j.week === undefined || week === undefined || j.week === week) : j.postIds.includes(postId)))) return;
+    if (whole.some((j) => j.week === undefined || week === undefined || j.week === week)) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch\'s choices and words are final');
+    if (postId === undefined && ofPosts.length > 0) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this batch cannot be put away');
+    if (postId !== undefined && ofPosts.some((j) => (j.state === 'queued' || j.state === 'running') && (j.postIds as string[]).includes(postId))) throw new CopyStageError('ALREADY_DRAWN', 'drawing was already asked for, so this post\'s choice and words are final');
   };
   const siteOf = (brand: string): string => {
     try {
@@ -266,6 +271,9 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   };
   const storeOf = (versionId: string): ReviewStore => storeFor(versionId.split('.')[0] ?? '');
   const brands = (): string[] => readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory() && BRAND.test(d.name)).map((d) => d.name);
+
+  /** Today in India time (YYYY-MM-DD), by the clock this service was given. */
+  const todayIst = (): string => new Date((options.now ?? (() => new Date()))().getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
 
   // PRODUCT_LIMITS=off lifts the one redraw a picture is given (testing only).
   const redrawCap = options.redrawCap ?? (productLimitsOff() ? 50 : 1);
@@ -505,19 +513,34 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const stopped = (brand: string, planFile: string): boolean => jobs.list({ brand }).find((j) => j.kind === 'draw' && j.planFile === planFile)?.state === 'failed';
           const batches = scope.visible(brands()).flatMap((brand) => new CopyStage(join(root, brand), brand).list().map((b) => ({ brand, b }))).filter(({ brand, b }) => !b.closedAt && (!b.drawnAt || stopped(brand, b.planFile))).map(({ b }) => b);
           // The weeks of a batch written for several weeks: when each starts and ends, its posts, and whether its pictures are waiting, being drawn, drawn or given up.
-          const weeksView = (b: { brand: string; planFile: string; posts: Array<{ postId: string; date?: string; state?: string }>; weekDrawn?: Record<string, string>; weekLapsed?: Record<string, string>; notDrawn?: Record<string, NotDrawn>; requestedDays?: string[] }): { weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'drawn' | 'not_drawn' | 'lapsed' | 'empty'; postIds: string[]; missingDays?: string[]; notDrawn?: Array<{ postId: string; code: string; reason: string }> }> } => {
+          const weeksView = (b: CopyBatch): { weeks?: Array<{ from: string; to: string; state: 'waiting' | 'drawing' | 'partly_drawn' | 'drawn' | 'not_drawn' | 'lapsed' | 'empty'; postIds: string[]; openPostIds?: string[]; missingDays?: string[]; notDrawn?: Array<{ postId: string; code: string; reason: string }> }> } => {
             // The weeks of the posts, and the weeks the plan was asked for: a week that was asked for and has no post is listed as empty, so it can be told.
             const mondays = [...new Set([...weeksOf(b), ...(b.requestedDays ?? []).map(mondayOf)])].sort();
             if (mondays.length === 0) return {};
+            const today = todayIst();
             const missingIn = (from: string): string[] => (b.requestedDays ?? []).filter((d) => mondayOf(d) === from && !b.posts.some((p) => p.date === d));
             // A week whose draw ran but left every kept topic without a picture is not "drawn": nothing was made for it.
-            const allUndrawn = (from: string): boolean => { const kept = b.posts.filter((p) => weekOfPost(p) === from && (p as { state?: string }).state === 'kept'); return kept.length > 0 && kept.every((p) => b.notDrawn?.[p.postId] !== undefined); };
+            const allUndrawn = (from: string): boolean => { const kept = b.posts.filter((p) => weekOfPost(p) === from && p.state === 'kept'); return kept.length > 0 && kept.every((p) => b.notDrawn?.[p.postId] !== undefined); };
             const undrawn = (from: string): Array<{ postId: string; code: string; reason: string }> => b.posts.filter((p) => weekOfPost(p) === from && b.notDrawn?.[p.postId] !== undefined).map((p) => ({ postId: p.postId, ...(b.notDrawn as Record<string, NotDrawn>)[p.postId] as NotDrawn }));
             const running = jobs.list({ brand: b.brand }).filter((j) => j.kind === 'draw' && j.planFile === b.planFile && (j.state === 'queued' || j.state === 'running'));
-            return { weeks: mondays.map((from) => ({ from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state: !b.posts.some((p) => weekOfPost(p) === from) ? 'empty' as const : b.weekLapsed?.[from] !== undefined ? 'lapsed' as const : b.weekDrawn?.[from] !== undefined ? (allUndrawn(from) ? 'not_drawn' as const : 'drawn' as const) : running.some((j) => j.week === from) ? 'drawing' as const : 'waiting' as const, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId), ...(missingIn(from).length > 0 ? { missingDays: missingIn(from) } : {}), ...(undrawn(from).length > 0 ? { notDrawn: undrawn(from) } : {}) })) };
+            const anyDrawn = (from: string): boolean => b.posts.some((p) => weekOfPost(p) === from && p.drawnAt !== undefined);
+            // `partly_drawn`: some posts of the week were drawn and others are still open (their day is tomorrow or later), so more can be kept and drawn.
+            const stateOf = (from: string): 'waiting' | 'drawing' | 'partly_drawn' | 'drawn' | 'not_drawn' | 'lapsed' | 'empty' => {
+              if (!b.posts.some((p) => weekOfPost(p) === from)) return 'empty';
+              if (b.weekLapsed?.[from] !== undefined) return anyDrawn(from) ? 'drawn' : 'lapsed';
+              if (b.weekDrawn?.[from] !== undefined) return allUndrawn(from) ? 'not_drawn' : 'drawn';
+              if (running.some((j) => j.week === from)) return 'drawing';
+              if (anyDrawn(from)) return openPosts(b, from, today).length > 0 ? 'partly_drawn' : allUndrawn(from) ? 'not_drawn' : 'drawn';
+              return 'waiting';
+            };
+            return { weeks: mondays.map((from) => {
+              const state = stateOf(from);
+              const open = state === 'lapsed' || state === 'empty' || state === 'drawn' ? [] : openPosts(b, from, today);
+              return { from, to: new Date(Date.parse(`${from}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10), state, postIds: b.posts.filter((p) => weekOfPost(p) === from).map((p) => p.postId), ...(open.length > 0 ? { openPostIds: open } : {}), ...(missingIn(from).length > 0 ? { missingDays: missingIn(from) } : {}), ...(undrawn(from).length > 0 ? { notDrawn: undrawn(from) } : {}) };
+            }) };
           };
           // The writer marks the words to emphasise with | on the poster; the owner reads plain words.
-          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, (productLimitsOff() ? 99 : MAX_REPLACEMENTS_PER_WEEK) - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, ...(plannedWhen(b.brand, b.planFile, p.postId) ? { time: (plannedWhen(b.brand, b.planFile, p.postId) as { time: string }).time } : {}), headline: p.headline.replaceAll('|', ''), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
+          const plain = batches.map((b) => ({ ...b, replacementsLeft: Object.fromEntries(weeksOf(b).map((w) => [w, Math.max(0, (productLimitsOff() ? 99 : MAX_REPLACEMENTS_PER_WEEK) - (b.replacements?.[w] ?? 0))])), networks: [...new Set(b.posts.flatMap((p) => Object.keys(p.captions ?? {})))].sort(), ...(signoffDefaultsOf(b.brand) ? { signoffDefault: signoffDefaultsOf(b.brand) } : {}), posts: b.posts.map((p) => ({ ...p, ...(plannedWhen(b.brand, b.planFile, p.postId) ? { time: (plannedWhen(b.brand, b.planFile, p.postId) as { time: string }).time } : {}), headline: p.headline.replaceAll('|', ''), drawn: (p.drawnAt !== undefined || (weekOfPost(p) !== undefined && b.weekDrawn?.[weekOfPost(p) as string] !== undefined && p.state === 'kept')) && b.notDrawn?.[p.postId] === undefined, locked: postLocked(b, p), ...(b.notDrawn?.[p.postId] ? { notDrawn: b.notDrawn[p.postId] } : {}) })), ...weeksView(b) }));
           return send(res, 200, { batches: plain.sort((a, b) => b.createdAt.localeCompare(a.createdAt)), networkRules: captionRulesView() });
         }
         const [, , brand = '', planFile = '', postId = '', verb = ''] = parts.map(decodeURIComponent);
@@ -526,6 +549,11 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           if (!brands().includes(brand)) throw new ReviewError('NOT_FOUND', 'no such brand');
           const by = scope.by((await readJson(req))['by']);
           refuseIfDrawAsked(brand, planFile, postId);
+          // A post whose day is today or has passed cannot be kept: it would never be drawn in time.
+          if (verb === 'keep') {
+            const day = new CopyStage(join(root, brand), brand).get(planFile).posts.find((p) => p.postId === postId)?.date;
+            if (day !== undefined && day <= todayIst()) return send(res, 400, { error: 'the day of this post is today or has passed, so it cannot be kept', code: 'DAY_PASSED' });
+          }
           const batch = new CopyStage(join(root, brand), brand).decide(planFile, postId, verb === 'keep' ? 'kept' : 'dropped', by);
           return send(res, 200, { batch });
         }
@@ -636,7 +664,31 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           const weeks = weeksOf(batch);
           const askedWeek = drawBody['week'];
           if (askedWeek !== undefined && (typeof askedWeek !== 'string' || !weeks.includes(askedWeek))) throw new ReviewError('INVALID', 'week must be the Monday of one of this batch\'s weeks');
-          const week: string | undefined = weeks.length === 0 ? undefined : (askedWeek as string | undefined) ?? weeks.find((w) => batch.weekDrawn?.[w] === undefined && batch.weekLapsed?.[w] === undefined) ?? weeks[0];
+          const drawSite = siteOf(drawBrand);
+          // A batch with days is drawn by the post: each draw covers the kept posts that have no picture yet, whose day is tomorrow or later, and makes only those final; the rest of the week
+          // stays open, so more can be kept and drawn later (until the weekly picture limit, or their day, is reached). A week that an older draw already closed keeps its whole-week rule below.
+          const today = todayIst();
+          const brandJobs = jobs.list({ brand: drawBrand });
+          const active = brandJobs.filter((j) => j.kind === 'draw' && j.planFile === drawPlan && (j.state === 'queued' || j.state === 'running'));
+          const inFlight = new Set(active.flatMap((j) => j.postIds ?? []));
+          const madeNow = madeFor(drawBrand, drawPlan);
+          const week: string | undefined = weeks.length === 0 ? undefined : (askedWeek as string | undefined) ?? weeks.find((w) => drawCandidates(batch, w, madeNow, today, inFlight).length > 0) ?? weeks.find((w) => batch.weekDrawn?.[w] === undefined && batch.weekLapsed?.[w] === undefined) ?? weeks[0];
+          const legacyJob = week !== undefined && brandJobs.some((j) => j.kind === 'draw' && j.planFile === drawPlan && j.week === week && j.postIds === undefined);
+          const wholeWeek = week === undefined || batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined || legacyJob;
+          if (!wholeWeek) {
+            const ids = drawCandidates(batch, week, madeNow, today, inFlight);
+            if (ids.length === 0) {
+              // The same ask again while its draw runs is the same job (nothing is bought twice).
+              const running = active.find((j) => j.week === week);
+              if (running) return send(res, 200, { job: running, created: false });
+              throw new CopyStageError('REJECTED', 'keep at least one post whose day has not passed before drawing');
+            }
+            const needed = neededPictures({ posts: batch.posts.filter((p) => ids.includes(p.postId)) }, week, madeNow, readConnected(join(root, drawBrand)));
+            assertPictureRoom(drawBrand, needed);
+            registerManualRelease({ brandDir: join(root, drawBrand), siteBrand: drawBrand, client, site: drawSite, planFile: drawPlan });
+            const { job, created } = jobs.enqueue({ kind: 'draw', brand: drawBrand, site: drawSite, by, planFile: drawPlan, week, postIds: ids });
+            return send(res, created ? 202 : 200, { job, created });
+          }
           const inWeek = (post: { date?: string }): boolean => week === undefined || weekOfPost(post) === week;
           // A batch (or a week of it) already asked for or drawn answers with its job; a draw buys pictures, so it is only ever started once. After a draw has failed,
           // "retry" asks for one more that draws only the kept posts that still have no picture.
@@ -649,7 +701,6 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           // A product's customer may draw only so many pictures a channel a week: one for every kept post for every network it is written for, less what a failed draw already made.
           const needed = neededPictures(batch, week, madeFor(drawBrand, drawPlan), readConnected(join(root, drawBrand)));
           assertPictureRoom(drawBrand, needed);
-          const drawSite = siteOf(drawBrand);
           // Approved posters of this batch reach the calendar through the campaign runner's release pass, for this client and only the networks written for.
           // The record is made first: a draw that is queued without it would buy pictures that could never be released.
           registerManualRelease({ brandDir: join(root, drawBrand), siteBrand: drawBrand, client, site: drawSite, planFile: drawPlan });

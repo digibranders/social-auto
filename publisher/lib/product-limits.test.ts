@@ -135,7 +135,7 @@ test('what the system draws by itself each week is not one of the customer\'s as
     assert.equal((await ask()).status, 202, 'three automatic draws do not count');
     engine.jobs.length = 0;
     engine.batches[0]!.drawnAt = undefined;
-    engine.jobs.push(...[1, 2, 3].map((n) => drawJob(one, n)));
+    engine.jobs.push(...Array.from({ length: 10 }, (_, i) => drawJob(one, i + 1)));
     const stopped = await ask();
     assert.equal(stopped.status, 429);
     assert.equal(stopped.body['code'], 'DRAW_LIMIT_REACHED');

@@ -43,9 +43,12 @@ import { nextMonday } from '../../lib/plan-days.js';
 const MAX_BODY_BYTES = 16 * 1024;
 const ACTIONS = ['keep', 'drop', 'edit', 'close', 'draw', 'add-network', 'replace', 'move'] as const;
 const NETWORKS = ['instagram', 'facebook', 'linkedin', 'google'] as const;
-/** How many times a customer may ask for pictures (each one costs money): a draw already waiting or finished for a batch is always just returned. */
-const MAX_DRAWS_PER_DAY = 3;
-const MAX_DRAWS_PER_MONTH = 10;
+/**
+ * How many times a customer may ask for pictures (each one costs money): a draw already waiting or running for the same posts is always just returned. A week is drawn by the post, so a customer
+ * who keeps a few topics at a time asks more than once a week; what she may spend is still bounded by the weekly pictures of each channel.
+ */
+const MAX_DRAWS_PER_DAY = 10;
+const MAX_DRAWS_PER_MONTH = 40;
 const DAY_MS = 24 * 60 * 60 * 1000;
 type Action = (typeof ACTIONS)[number];
 /** The day the next plan should start: the Monday after the last post of the current one, or the next Monday when she has none (or it already ended). */
@@ -158,13 +161,14 @@ export async function POST(request: Request): Promise<Response> {
       // A batch written for several weeks is drawn one week at a time: the week asked for, else the first one not settled (waiting or being drawn), so asking again never starts the next week by accident.
       await syncConnected(engine, found.workspace.brand, by);
       const written = (await engine.listBatches(by)).batches.find((b) => b.id === batchId);
-      const week: string | undefined = typeof body['week'] === 'string' ? body['week'] : written?.weeks?.find((w) => w.state === 'waiting' || w.state === 'drawing')?.from;
+      const week: string | undefined = typeof body['week'] === 'string' ? body['week'] : written?.weeks?.find((w) => w.state === 'waiting' || w.state === 'drawing' || w.state === 'partly_drawn')?.from;
       const allDraws: JobView[] = (await engine.listJobs(by)).filter((j) => j.kind === 'draw');
       const latest = allDraws.find((j) => j.batchId === batchId && j.week === week);
       // What the system drew by itself (the weekly draw) is not one of the customer's own asks.
       const draws = allDraws.filter((j) => j.auto !== true);
+      // Every new round of a week is one more ask (only a double tap on a draw that is still waiting or running is not).
       // PRODUCT_LIMITS=off lifts the limits on asking for pictures (testing only).
-      if (!productLimitsOff() && (!latest || retry)) {
+      if (!productLimitsOff() && (!latest || retry || (latest.state !== 'queued' && latest.state !== 'running'))) {
         const since = (ms: number): number => draws.filter((j) => Date.now() - Date.parse(j.createdAt) < ms).length;
         if (since(DAY_MS) >= MAX_DRAWS_PER_DAY) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_DAY} times a day; try again tomorrow`);
         if (since(30 * DAY_MS) >= MAX_DRAWS_PER_MONTH) return apiError(429, 'DRAW_LIMIT_REACHED', `a customer can ask for pictures ${MAX_DRAWS_PER_MONTH} times a month; try again later`);
