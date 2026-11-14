@@ -9,7 +9,7 @@ import { guardFor, refusal } from '../../lib/connect-guard.js';
 import { describeError } from '../../lib/http.js';
 import { statesMatch } from '../../lib/facebook-flow.js';
 import { finishConnect, type Outcome } from '../../lib/connect-result.js';
-import { callbackUrl, clearedConnectCookie, GOOGLE_COOKIE, parseConnectCookie, pickCookie } from '../../lib/google-flow.js';
+import { callbackUrl, clearedConnectCookie, clearedDoneCookie, GOOGLE_COOKIE, parseConnectCookie, pickCookie } from '../../lib/google-flow.js';
 import { isSignedIn, readCookie } from '../../lib/security.js';
 
 const TIMEOUT_MS = 25_000;
@@ -23,6 +23,7 @@ function choose(request: Request, brand: string, sealed: string, returnUrl: stri
   const to = signedIn ? new URL(`/?google=choose#/client/${brand}/channels`, request.url) : new URL('/api/google/choose', request.url);
   const headers = new Headers({ Location: to.toString(), 'Cache-Control': 'no-store' });
   headers.append('Set-Cookie', clearedConnectCookie());
+  headers.append('Set-Cookie', clearedDoneCookie());
   headers.append('Set-Cookie', pickCookie(brand, sealed, returnUrl));
   return new Response(null, { status: 302, headers });
 }

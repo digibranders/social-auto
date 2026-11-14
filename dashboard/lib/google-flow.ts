@@ -8,8 +8,11 @@ import { siteOrigin } from './linkedin-flow.js';
  */
 export const GOOGLE_COOKIE = 'g_connect';
 export const PICK_COOKIE = 'g_pick';
+export const DONE_COOKIE = 'g_done';
 const COOKIE_TTL_SECONDS = 30 * 60;
 const PICK_TTL_SECONDS = 15 * 60;
+/** How long what a finished choice did is remembered, so a second press or the Back button says the same thing again. */
+const DONE_TTL_SECONDS = 5 * 60;
 const AUTHORIZE = process.env['GOOGLE_AUTHORIZE_URL'] ?? 'https://accounts.google.com/o/oauth2/v2/auth';
 const SCOPE = 'https://www.googleapis.com/auth/business.manage';
 
@@ -81,4 +84,29 @@ export function authorizeLink(options: { clientId: string; redirectUri: string; 
     prompt: 'consent',
   });
   return `${AUTHORIZE}?${params}`;
+}
+
+export type DoneOutcome = 'connected' | 'denied' | 'failed' | 'expired' | 'nolocation' | 'inuse';
+const DONE_OUTCOMES: readonly string[] = ['connected', 'denied', 'failed', 'expired', 'nolocation', 'inuse'];
+
+/**
+ * What the choice just did, kept for a few minutes: "<outcome>[.<return>]". The choice clears the waiting connection, so a second press of a
+ * listing (a double click) or the Back button finds nothing waiting. This tells that person what the first press did, and sends a person
+ * sent by a product back to it, instead of an error page on this site.
+ */
+export function doneCookie(outcome: DoneOutcome, returnUrl: string | null = null, secure = !insecure()): string {
+  if (returnUrl !== null && !isSafeReturnUrl(returnUrl)) throw new Error('not a valid return address');
+  const tail = returnUrl ? `.${encodeReturn(returnUrl)}` : '';
+  return `${DONE_COOKIE}=${outcome}${tail}; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=${DONE_TTL_SECONDS}`;
+}
+
+export function clearedDoneCookie(secure = !insecure()): string {
+  return `${DONE_COOKIE}=; HttpOnly; ${secureFlag(secure)}SameSite=Lax; Path=/api; Max-Age=0`;
+}
+
+export function parseDoneCookie(value: string | undefined): { outcome: DoneOutcome; returnUrl: string | null } | null {
+  const match = new RegExp(`^([a-z]+)(?:\\.(${RETURN_TAIL}))?$`).exec(value ?? '');
+  if (!match || !DONE_OUTCOMES.includes(match[1] as string)) return null;
+  const returnUrl = decodeReturn(match[2]);
+  return returnUrl === undefined ? null : { outcome: match[1] as DoneOutcome, returnUrl };
 }
