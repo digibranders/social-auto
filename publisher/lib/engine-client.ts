@@ -229,6 +229,9 @@ export interface WrittenPostView {
   edited?: boolean;
   signoff?: { brandName?: string; domain?: string };
   advice?: string;
+  /** Whether the post was sent to be drawn (its pictures are made or being made), and whether its choice, words and day are final. */
+  drawn?: boolean;
+  locked?: boolean;
   /** On a post written to take a dropped one's place: that post's id; on a dropped post that was given a new topic: the new post's id. */
   replaces?: string;
   replacedBy?: string;
@@ -238,8 +241,10 @@ export interface WrittenPostView {
 export interface BatchWeekView {
   from: string;
   to: string;
-  state: 'waiting' | 'drawing' | 'drawn' | 'not_drawn' | 'lapsed' | 'empty';
+  state: 'waiting' | 'drawing' | 'partly_drawn' | 'drawn' | 'not_drawn' | 'lapsed' | 'empty';
   postIds: string[];
+  /** The posts of the week that are still open: not sent to be drawn, and their day is tomorrow or later. They can still be kept, dropped, edited, moved or replaced. */
+  openPostIds?: string[];
   /** Days of this week the plan was asked to write a post for and has none (a week with none at all is `empty`). */
   missingDays?: string[];
   /** Kept topics of the week that got no picture: why, in a fixed code and plain words (`message`). They stay open to change or drop; a retry of the week draws only them. */
@@ -324,7 +329,7 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
     const date = typeof p['date'] === 'string' && DAY.test(p['date']) ? p['date'] : undefined;
     const nd = isObject(p['notDrawn']) && typeof p['notDrawn']['code'] === 'string' && NOT_DRAWN_CODES.includes(p['notDrawn']['code']) ? (p['notDrawn']['code'] as NotDrawnCode) : undefined;
     const time = typeof p['time'] === 'string' && CLOCK.test(p['time']) ? p['time'] : undefined;
-    return [{ id: p['postId'], ...(date ? { date } : {}), ...(time ? { time } : {}), ...(nd ? { notDrawn: { code: nd, message: NOT_DRAWN_REASON[nd] } } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}), ...(typeof p['replaces'] === 'string' && PART.test(p['replaces']) ? { replaces: p['replaces'] } : {}), ...(typeof replacedBy[p['postId']] === 'string' && PART.test(replacedBy[p['postId']] as string) ? { replacedBy: replacedBy[p['postId']] as string } : {}) }];
+    return [{ id: p['postId'], ...(date ? { date } : {}), ...(time ? { time } : {}), ...(nd ? { notDrawn: { code: nd, message: NOT_DRAWN_REASON[nd] } } : {}), headline: str(p['headline'], 300) ?? '', caption: str(p['caption'], 3000) ?? '', captions, state: str(p['state'], 20) ?? 'pending', ...(p['edited'] === true ? { edited: true } : {}), ...(signoff ? { signoff } : {}), ...(advice ? { advice } : {}), ...(typeof p['drawn'] === 'boolean' ? { drawn: p['drawn'] } : {}), ...(typeof p['locked'] === 'boolean' ? { locked: p['locked'] } : {}), ...(typeof p['replaces'] === 'string' && PART.test(p['replaces']) ? { replaces: p['replaces'] } : {}), ...(typeof replacedBy[p['postId']] === 'string' && PART.test(replacedBy[p['postId']] as string) ? { replacedBy: replacedBy[p['postId']] as string } : {}) }];
   });
   // The list names the networks; an answer to a decision does not, so they are read from the captions then.
   const named = Array.isArray(raw['networks']) ? raw['networks'].filter((n): n is string => typeof n === 'string').slice(0, 10) : [];
@@ -334,10 +339,11 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
   const weeks = Array.isArray(raw['weeks']) ? raw['weeks'].flatMap((w): BatchWeekView[] => {
     if (!isObject(w) || typeof w['from'] !== 'string' || !DAY.test(w['from']) || typeof w['to'] !== 'string' || !DAY.test(w['to']) || !Array.isArray(w['postIds'])) return [];
     const state = w['state'];
-    if (state !== 'waiting' && state !== 'drawing' && state !== 'drawn' && state !== 'not_drawn' && state !== 'lapsed' && state !== 'empty') return [];
+    if (state !== 'waiting' && state !== 'drawing' && state !== 'partly_drawn' && state !== 'drawn' && state !== 'not_drawn' && state !== 'lapsed' && state !== 'empty') return [];
+    const openPostIds = Array.isArray(w['openPostIds']) ? w['openPostIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40) : [];
     const missingDays = Array.isArray(w['missingDays']) ? w['missingDays'].filter((d): d is string => typeof d === 'string' && DAY.test(d)).slice(0, 7) : [];
     const notDrawn = Array.isArray(w['notDrawn']) ? w['notDrawn'].flatMap((n): Array<{ postId: string; code: NotDrawnCode; message: string }> => (isObject(n) && typeof n['postId'] === 'string' && PART.test(n['postId']) && typeof n['code'] === 'string' && NOT_DRAWN_CODES.includes(n['code']) ? [{ postId: n['postId'], code: n['code'] as NotDrawnCode, message: NOT_DRAWN_REASON[n['code'] as NotDrawnCode] }] : [])).slice(0, 40) : [];
-    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(missingDays.length > 0 ? { missingDays } : {}), ...(notDrawn.length > 0 ? { notDrawn } : {}), ...(typeof left[w['from']] === 'number' ? { replacementsLeft: Math.max(0, Math.min(10, Math.trunc(left[w['from']] as number))) } : {}) }];
+    return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(openPostIds.length > 0 ? { openPostIds } : {}), ...(missingDays.length > 0 ? { missingDays } : {}), ...(notDrawn.length > 0 ? { notDrawn } : {}), ...(typeof left[w['from']] === 'number' ? { replacementsLeft: Math.max(0, Math.min(10, Math.trunc(left[w['from']] as number))) } : {}) }];
   }).slice(0, 8) : [];
   return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(weeks.length > 0 ? { weeks } : {}), ...(signoffDefault ? { signoffDefault } : {}), posts };
 }

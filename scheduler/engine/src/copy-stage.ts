@@ -42,6 +42,8 @@ export interface CopyPost {
   state: CopyState;
   /** Set on a post written to take the place of a dropped one: that post's id. */
   replaces?: string;
+  /** When this post was sent to be drawn. From then on its choice, words and day are final, while the rest of its week stays open. Batches drawn before this existed lock the whole week instead (`weekDrawn`). */
+  drawnAt?: string;
   decidedBy?: string;
   decidedAt?: string;
 }
@@ -75,11 +77,13 @@ export const weeksOf = (batch: { posts: ReadonlyArray<Pick<CopyPost, 'date'>> })
 /** The week (Monday) of a post, or undefined when the post has no day. */
 export const weekOfPost = (post: Pick<CopyPost, 'date'>): string | undefined => (post.date ? mondayOf(post.date) : undefined);
 
-/** Whether a post's choices and words are final: its week was drawn or lapsed, or the whole batch was drawn. */
+/** Whether a post's choices and words are final: it was sent to be drawn, or its week was drawn (an older batch) or lapsed, or the whole batch was drawn. */
 export const postLocked = (batch: CopyBatch, post: CopyPost): boolean => {
   const week = weekOfPost(post);
   // A topic that got no picture in its week's draw is open again (unless its week was given up): there is nothing drawn to keep final.
   if (batch.notDrawn?.[post.postId] !== undefined && (week === undefined || batch.weekLapsed?.[week] === undefined)) return false;
+  // A post that was sent to be drawn is final on its own; the other posts of its week are not locked by it.
+  if (post.drawnAt !== undefined) return true;
   return batch.drawnAt !== undefined || (week !== undefined && (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined));
 };
 
@@ -100,6 +104,20 @@ export function replaceProblem(batch: CopyBatch, postId: string, today: string, 
   if ((batch.replacements?.[week] ?? 0) >= maxPerWeek) return { code: 'LIMIT', message: `a week may have ${MAX_REPLACEMENTS_PER_WEEK} new topics written` };
   return null;
 }
+
+/**
+ * The kept posts of a week that a draw asked for now would draw: kept, with no picture yet (a kept post that was drawn and got none is drawn again), not locked by an earlier draw,
+ * whose day is tomorrow or later (`today` is the day in India time, YYYY-MM-DD), and not part of a draw that is still running (`inFlight`). A batch with no weeks is drawn as one piece and is not asked here.
+ */
+export function drawCandidates(batch: CopyBatch, week: string, made: ReadonlySet<string>, today: string, inFlight: ReadonlySet<string> = new Set()): string[] {
+  return batch.posts
+    .filter((p) => p.state === 'kept' && weekOfPost(p) === week && p.date !== undefined && p.date > today && !postLocked(batch, p) && !inFlight.has(p.postId) && ![...made].some((key) => key.startsWith(`${p.postId}|`)))
+    .map((p) => p.postId);
+}
+
+/** The posts of a week that are still open: not sent to be drawn, and their day is tomorrow or later. They can be kept, dropped, edited, moved or replaced. */
+export const openPosts = (batch: CopyBatch, week: string, today: string): string[] =>
+  batch.posts.filter((p) => weekOfPost(p) === week && p.date !== undefined && p.date > today && !postLocked(batch, p)).map((p) => p.postId);
 
 export const PLAN_FILE = /^week-\d{2,4}\.json$/;
 const POST_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,80}$/;
@@ -223,6 +241,26 @@ export class CopyStage {
       if (batch.drawnAt) throw new CopyStageError('ALREADY_DRAWN', 'this batch was already drawn once; a second run would buy the pictures again');
       if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
       return { batch: { ...batch, drawnAt: this.now().toISOString() }, result: undefined };
+    });
+  }
+
+  /**
+   * Makes the choices of the given posts final, each on its own, once they are about to be drawn: the rest of their week stays open. Every post must be kept and not locked (a kept
+   * post that was drawn and got no picture is open again, so it may be drawn again). Nothing is changed when any of them is refused.
+   */
+  markPostsDrawn(planFile: string, postIds: readonly string[]): void {
+    this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so it cannot be drawn');
+      const at = this.now().toISOString();
+      for (const id of postIds) {
+        const post = batch.posts.find((p) => p.postId === id);
+        if (!post) throw new CopyStageError('NOT_FOUND', 'no such post in this batch');
+        if (post.state !== 'kept') throw new CopyStageError('REJECTED', 'only a kept post is drawn');
+        if (postLocked(batch, post)) throw new CopyStageError('ALREADY_DRAWN', 'this post was already sent to be drawn once; a second run would buy the pictures again');
+      }
+      const posts = batch.posts.map((p) => (postIds.includes(p.postId) ? { ...p, drawnAt: at } : p));
+      return { batch: { ...batch, posts }, result: undefined };
     });
   }
 

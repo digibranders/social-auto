@@ -1,10 +1,11 @@
 /**
  * The weekly draw of a product's customer. A written batch of several weeks is drawn one week at a time: the first week when the customer asks, every later
  * week by the system on the Thursday before it begins, at 10:00 India time, for the topics the customer kept in it, and only when the week still has room for
- * its pictures (the weekly limit). A week whose time passed without a draw is given up (lapsed). Nothing is ever approved here: the pictures wait for the customer.
+ * its pictures (the weekly limit): only the kept posts that have no picture yet and whose day is ahead, each made final on its own, so the rest of the week stays open and what she
+ * keeps later is drawn when she asks. A week whose time passed is given up (lapsed) unless a draw of it is still running. Nothing is ever approved here: the pictures wait for the customer.
  */
 import { join } from 'node:path';
-import { CopyStage, weekOfPost, weeksOf, type CopyBatch } from './copy-stage.ts';
+import { CopyStage, drawCandidates, weekOfPost, weeksOf, type CopyBatch } from './copy-stage.ts';
 import { readConnected } from './connected-networks.ts';
 import type { JobStore } from './job-store.ts';
 import { isNetwork, type Network } from './networks.ts';
@@ -81,20 +82,26 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
       weeksOf(batch).forEach((week, index) => {
         if (batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined) return;
         try {
-          const asked = deps.jobs.list({ brand }).some((j) => j.kind === 'draw' && j.planFile === batch.planFile && j.week === week);
-          // A week that ended without a draw is given up for good (one whose draw was asked for is the draw's to settle).
-          if (now >= weekEndMs(week) && !asked) {
+          const draws = deps.jobs.list({ brand }).filter((j) => j.kind === 'draw' && j.planFile === batch.planFile && j.week === week);
+          const asked = draws.length > 0;
+          const active = draws.filter((j) => j.state === 'queued' || j.state === 'running');
+          // A week that ended is given up for good, unless a draw of it is still waiting or running (the draw settles that). Posts drawn before it ended stay as they are.
+          if (now >= weekEndMs(week) && active.length === 0) {
             stage.markWeekLapsed(batch.planFile, week);
             actions.push({ brand, planFile: batch.planFile, week, action: 'lapsed' });
-            deps.onLapse?.(brand, batch.planFile, week);
+            // The customer is told only about a week nothing of which was drawn.
+            if (!batch.posts.some((p) => weekOfPost(p) === week && p.drawnAt !== undefined)) deps.onLapse?.(brand, batch.planFile, week);
             return;
           }
-          // The first week is the customer's to ask for; the later ones are drawn on the Thursday before they begin.
-          // The first week is the customer's to ask for (the system asks for it only when she chose automatic posting); later weeks wait for their Thursday.
+          // The first week is the customer's to ask for (the system asks for it only when she chose automatic posting); the later ones are drawn on the Thursday before they begin, once: what she keeps after that is drawn only when she asks.
           if (index === 0 ? deps.automatic?.(brand) !== true : now < drawDueMs(week)) return;
           if (asked) return;
-          if (!batch.posts.some((p) => p.state === 'kept' && weekOfPost(p) === week)) return;
-          const reason = deps.room(brand, neededPictures(batch, week, deps.made(brand, batch.planFile), connected));
+          // The kept posts that have no picture yet and whose day is tomorrow or later; the rest of the week stays open.
+          // The system's own draw is lenient about the day: a post for today is still drawn (it was kept in time; only the customer's asks need tomorrow or later).
+          const yesterday = new Date(now + IST_OFFSET_MS - DAY_MS).toISOString().slice(0, 10);
+          const ids = drawCandidates(batch, week, deps.made(brand, batch.planFile), yesterday);
+          if (ids.length === 0) return;
+          const reason = deps.room(brand, neededPictures({ posts: batch.posts.filter((p) => ids.includes(p.postId)) }, week, deps.made(brand, batch.planFile), connected));
           if (reason !== null) {
             actions.push({ brand, planFile: batch.planFile, week, action: 'no_room', reason });
             return;
@@ -102,7 +109,7 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
           const site = deps.siteOf(brand);
           if (site === null) return;
           deps.register(brand, batch.planFile, site);
-          deps.jobs.enqueue({ kind: 'draw', brand, site, by: WEEKLY_DRAW_BY, planFile: batch.planFile, week, auto: true });
+          deps.jobs.enqueue({ kind: 'draw', brand, site, by: WEEKLY_DRAW_BY, planFile: batch.planFile, week, postIds: ids, auto: true });
           actions.push({ brand, planFile: batch.planFile, week, action: 'drawing' });
         } catch (error) {
           console.error(`weekly draw of ${brand} ${batch.planFile} ${week} failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -157,7 +164,7 @@ export function runCatchUpDraws(deps: CatchUpDeps): CatchUpAction[] {
       const made = deps.made(brand, batch.planFile);
       for (const post of batch.posts) {
         const week = weekOfPost(post);
-        if (post.state !== 'kept' || !post.date || post.date < today || week === undefined || batch.weekDrawn?.[week] === undefined) continue;
+        if (post.state !== 'kept' || !post.date || post.date < today || week === undefined || (batch.weekDrawn?.[week] === undefined && post.drawnAt === undefined)) continue;
         if (batch.notDrawn?.[post.postId] !== undefined) continue;
         if (![...made].some((k) => k.startsWith(`${post.postId}|`))) continue;
         for (const net of Object.keys(post.captions ?? {})) {
