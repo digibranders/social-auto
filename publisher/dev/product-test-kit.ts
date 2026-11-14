@@ -117,6 +117,8 @@ export interface FakePoster {
   imageSha256?: string;
   /** The reason it was rejected, when it was. */
   rejectedFor?: string;
+  /** Who decided it, as the engine records it (`system:auto-posting` for the system's own approval). */
+  decidedBy?: string;
   /** A slide or a caption of a carousel: shown with the carousel, never as a picture of its own. */
   carousel?: { id: string; position: number; count: number };
   /** The day and time (India time) the post is planned for, as the engine reads them from the plan file. */

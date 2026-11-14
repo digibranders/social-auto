@@ -482,6 +482,26 @@ export function daysCard(client: ClientSummary, ctx: ClientsContext): HTMLElemen
   );
 }
 
+/**
+ * What the customer chose about automatic posting, for the team to read. Only the customer can change it (the product asks her and records her consent), so there
+ * is nothing to press here: it says what the system does for her and who agreed.
+ */
+export function autoPostingCard(client: ClientSummary): HTMLElement {
+  const auto = client.autoPosting;
+  const connected = new Set<Platform>(client.channels.map((c) => c.platform));
+  const names = (list: readonly Platform[]): string => list.map((p) => PLATFORM_NAMES[p]).join(', ');
+  const body: HTMLElement[] = [];
+  if (auto === null) {
+    body.push(h('p', { class: 'muted' }, 'Off. Every poster waits for the customer to approve it.'));
+  } else {
+    const manual = PLATFORMS.filter((p) => connected.has(p) && !auto.channels.includes(p));
+    body.push(h('p', {}, `On for ${names(auto.channels)}. The system approves a picture that passed every check ${auto.safetyHours === 0 ? 'as soon as it is ready' : `${auto.safetyHours} hour${auto.safetyHours === 1 ? '' : 's'} before it posts`}; the customer can still change or take it back until it goes out.`));
+    body.push(h('p', { class: 'muted' }, `Agreed by ${auto.consentBy} on ${auto.consentAt.slice(0, 10)}.${manual.length > 0 ? ` Still approved by the customer: ${names(manual)} (connected after, or not chosen).` : ''}`));
+    body.push(h('p', { class: 'muted' }, 'Carousels, her own topic requests, topics the checks warned about and any picture the checks blocked always wait for her.'));
+  }
+  return h('div', { class: 'panel-card auto-card' }, h('div', { class: 'card-head' }, h('h2', {}, 'Automatic posting')), ...body, h('p', { class: 'muted' }, 'Only the customer can change this, from the app.'));
+}
+
 export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ctx: ClientsContext): HTMLElement {
   if (!client) return h('p', { class: 'empty' }, 'That client was not found.', ' ', button('Back to clients', 'btn', () => ctx.go({ page: 'clients' })));
   const connected = new Set<Platform>(client.channels.map((c) => c.platform));
@@ -525,6 +545,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     client.added ? plansCard(client, ctx) : null,
     // Only a product's customer: a client the team added has plans of its own, which choose their own days.
     client.product !== null ? daysCard(client, ctx) : null,
+    client.product !== null ? autoPostingCard(client) : null,
     client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
     tab === 'channels' ? channels : tab === 'posts' ? posts : tab === 'analytics' ? analyticsPage(client, ctx) : costPage(client, ctx),

@@ -228,3 +228,32 @@ test('expiry: the scan reads what the engine put away, and a picture put away th
     assert.equal((detail.body['poster'] as Record<string, unknown>)['status'], 'expired');
   });
 });
+
+test('progress: a picture the system approved is announced once, with where and when it goes out', () => {
+  const owner = { product: 'brandbasket', externalId: 'shop-1' };
+  const progress = { jobs: [], posters: [], autoApproved: [{ id: 'p1', batchId: 'week-01.json', postId: 'w01-d1', network: 'instagram', date: '2026-11-16', time: '10:00' }, { id: 'p2', batchId: 'week-01.json', postId: 'w01-d2', network: 'instagram' }] };
+  const first = eventsForProgress(owner, progress, { announced: [] }, NOW);
+  assert.deepEqual(first.items.map((i) => i.event.type), ['poster.auto_approved', 'poster.auto_approved']);
+  assert.deepEqual(first.items[0]?.event.data, { externalId: 'shop-1', posterId: 'p1', batchId: 'week-01.json', postId: 'w01-d1', network: 'instagram', date: '2026-11-16', time: '10:00' });
+  assert.deepEqual(first.announced, ['auto-approved:p1', 'auto-approved:p2']);
+  assert.deepEqual(eventsForProgress(owner, progress, { announced: first.announced }, NOW).items, [], 'once');
+});
+
+test('the cron scan announces only the pictures the system approved, and the poster list marks them; one a person approved is not announced', async () => {
+  const { GET: postersGet } = await import('../api/_v1/posters.ts');
+  await withWatchedEngine(async (engine, brand, pretend) => {
+    const base = { brand, postId: 'w01-d1', planFile: 'week-01.json', versionNumber: 1, network: 'instagram', status: 'approved' as const, headline: 'h', caption: 'c', width: 1, height: 1, shape: 'square', createdAt: new Date(NOW).toISOString(), costUsd: 0 };
+    engine.posters.push({ ...base, versionId: `${brand}.${'a'.repeat(16)}`, decidedBy: 'system:auto-posting', date: '2026-11-16', time: '10:00' });
+    engine.posters.push({ ...base, versionId: `${brand}.${'b'.repeat(16)}`, postId: 'w01-d2', decidedBy: 'brandbasket:u1' });
+    await announceEngineProgress([product], NOW, engineFromEnv(), pretend.send);
+    const bodies = pretend.got.map((g) => JSON.parse(g.body) as { type: string; data: Record<string, unknown> });
+    assert.deepEqual(bodies.map((b) => b.type), ['poster.auto_approved']);
+    assert.deepEqual([bodies[0]?.data['posterId'], bodies[0]?.data['date'], bodies[0]?.data['time']], [`${brand}.${'a'.repeat(16)}`, '2026-11-16', '10:00']);
+    await announceEngineProgress([product], NOW + 120_000, engineFromEnv(), pretend.send);
+    assert.equal(pretend.got.length, 1, 'told once');
+    const listed = await call(postersGet, '/api/v1/posters?externalId=shop-1&status=approved');
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    const posters = listed.body['posters'] as Array<{ postId: string; autoApproved?: boolean }>;
+    assert.deepEqual(posters.map((p) => [p.postId, p.autoApproved ?? false]).sort(), [['w01-d1', true], ['w01-d2', false]]);
+  });
+});

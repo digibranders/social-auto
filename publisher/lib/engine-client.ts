@@ -378,6 +378,8 @@ export interface PosterView {
   /** The day (YYYY-MM-DD) and time (HH:MM), India time, the post is planned for. Left out when the plan does not say. */
   date?: string;
   time?: string;
+  /** True when the system approved this picture (the customer chose automatic posting for its channel), not a person. */
+  autoApproved?: true;
   /** The OTHER networks whose current picture of this post is the very same drawing (for example Facebook and Google share Instagram's square). Left out when none. */
   sharedWith?: string[];
 }
@@ -515,6 +517,7 @@ function posterOf(raw: unknown, brand: string): PosterView | null {
     createdAt: str(raw['createdAt'], 40) ?? '',
     ...(typeof raw['date'] === 'string' && DAY.test(raw['date']) ? { date: raw['date'] } : {}),
     ...(typeof raw['time'] === 'string' && CLOCK.test(raw['time']) ? { time: raw['time'] } : {}),
+    ...(status === 'approved' && raw['decidedBy'] === 'system:auto-posting' ? { autoApproved: true as const } : {}),
   };
   if (typeof raw['imageSha256'] === 'string' && /^[a-f0-9]{64}$/.test(raw['imageSha256'])) IMAGE_HASH.set(view, raw['imageSha256']);
   return view;

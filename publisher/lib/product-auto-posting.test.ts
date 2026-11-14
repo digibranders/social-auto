@@ -77,10 +77,15 @@ test('a customer is manual until she chooses; choosing auto covers the channels 
     const narrower = await patch({ externalId: 'shop-1', autoPosting: { channels: ['instagram'], consent: true } });
     assert.deepEqual([auto(view(narrower))?.channels, auto(view(narrower))?.needsChoice], [['instagram'], ['facebook', 'linkedin']]);
 
+    const { clientFeedDetails } = await import('./clients.ts');
+    const { loadClients } = await import('./store.ts');
+    const feed = clientFeedDetails((await loadClients()).file.clients.find((c) => c.brand === brand) as never);
+    assert.deepEqual([feed.autoPosting?.channels, feed.autoPosting?.consentBy], [['instagram'], 'brandbasket:u2'], 'the staff feed shows what she chose and who agreed last');
     const off = await patch({ externalId: 'shop-1', autoPosting: { channels: [] } });
     assert.equal(off.status, 200, JSON.stringify(off.body));
     assert.deepEqual([view(off)['approvalMode'], view(off)['autoPosting']], ['manual', null]);
     assert.deepEqual(engine.autoPosting[brand]?.channels, [], 'the poster service stopped approving');
+    assert.equal(clientFeedDetails((await loadClients()).file.clients.find((c) => c.brand === brand) as never).autoPosting, undefined, 'nothing in the feed once it is off');
   });
 });
 

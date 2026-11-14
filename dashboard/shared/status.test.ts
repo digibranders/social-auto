@@ -128,6 +128,12 @@ test('posting days are read per channel, in week order, and anything that is not
   assert.deepEqual(parsed.runway.map((r) => r.postingDays), [{ instagram: ['mon', 'tue', 'sat'], facebook: ['wed', 'fri'] }, undefined, undefined]);
 });
 
+test('automatic posting is read when it has channels, a window and who agreed, and anything else is left out', () => {
+  const ok = { channels: ['facebook', 'instagram', 'tiktok'], safetyHours: 24, consentBy: 'brandbasket:u1', consentAt: '2026-11-14T04:00:00.000Z' };
+  const parsed = parseStatus({ ...valid, runway: [{ brand: 'a', postsLeft: 0, autoPosting: ok }, { brand: 'b', postsLeft: 0, autoPosting: { ...ok, channels: [] } }, { brand: 'c', postsLeft: 0, autoPosting: { ...ok, safetyHours: '24' } }, { brand: 'd', postsLeft: 0, autoPosting: 'on' }, { brand: 'e', postsLeft: 0 }] });
+  assert.deepEqual(parsed.runway.map((r) => r.autoPosting), [{ channels: ['instagram', 'facebook'], safetyHours: 24, consentBy: 'brandbasket:u1', consentAt: '2026-11-14T04:00:00.000Z' }, undefined, undefined, undefined, undefined]);
+});
+
 test('a plan keeps its weekly carousel through the feed, and a carousel flag that is not true is dropped', () => {
   const plan = (carousel: unknown) => ({ platforms: ['instagram'], startDate: '2026-11-09', durationDays: 14, postsPerWeek: 3, time: '10:00', utcOffset: '+05:30', carousel });
   const parsed = parseStatus({ ...valid, runway: [{ brand: 'acme', postsLeft: 0, added: true, website: 'https://acme.com', plans: [plan(true), plan('yes'), plan(undefined)] }] });
