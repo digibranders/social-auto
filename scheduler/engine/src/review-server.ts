@@ -38,7 +38,7 @@ import { checkCopyWords, checkNewWords } from './copy-edit.ts';
 import { JobError, JobStore, keyOf, type Job, type JobState } from './job-store.ts';
 import { CLIENT_NAME, registerManualRelease } from './manual-release.ts';
 import { requestRelease } from './release-request.ts';
-import { AutoPostingError, isAutomatic, readAutoPosting, runAutoPosting, writeAutoPosting } from './auto-posting.ts';
+import { AutoPostingError, isAutomaticBatch, readAutoPosting, runAutoPosting, writeAutoPosting } from './auto-posting.ts';
 import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
@@ -1024,7 +1024,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         });
         runWeeklyDraws({
           brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(), made: madeFor,
-          automatic: (brand) => isAutomatic(readAutoPosting(join(root, brand))),
+          automatic: (brand, batch) => isAutomaticBatch(readAutoPosting(join(root, brand)), batch),
           room: (brand, needed) => {
             try {
               assertPictureRoom(brand, needed);

@@ -54,8 +54,8 @@ export interface WeeklyDeps {
   register: (brand: string, planFile: string, site: string) => void;
   /** Called when a week is given up, so the product can tell the customer (written to the expiry log). */
   onLapse?: (brand: string, planFile: string, week: string) => void;
-  /** Brands whose customer chose automatic posting: their first week is drawn at once, without waiting to be asked. */
-  automatic?: (brand: string) => boolean;
+  /** Batches the customer chose automatic posting for (every channel of the batch): their first week is drawn at once, without waiting to be asked. */
+  automatic?: (brand: string, batch: CopyBatch) => boolean;
 }
 
 export const WEEKLY_DRAW_BY = 'system:weekly-draw';
@@ -94,7 +94,7 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
             return;
           }
           // The first week is the customer's to ask for (the system asks for it only when she chose automatic posting); the later ones are drawn on the Thursday before they begin, once: what she keeps after that is drawn only when she asks.
-          if (index === 0 ? deps.automatic?.(brand) !== true : now < drawDueMs(week)) return;
+          if (index === 0 ? deps.automatic?.(brand, batch) !== true : now < drawDueMs(week)) return;
           if (asked) return;
           // The kept posts that have no picture yet and whose day is tomorrow or later; the rest of the week stays open.
           // The system's own draw is lenient about the day: a post for today is still drawn (it was kept in time; only the customer's asks need tomorrow or later).
