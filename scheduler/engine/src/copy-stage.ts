@@ -66,6 +66,8 @@ export interface CopyBatch {
   replacedBy?: Record<string, string>;
   /** The weeks (their Mondays) that were left undrawn because their time passed or nothing was kept in them. Nothing of them is drawn any more. */
   weekLapsed?: Record<string, string>;
+  /** Present while the writer is still adding weeks to this batch (week by week): how many weeks are saved and how many there will be. The batch counts as drawn only once this is gone. */
+  writing?: { weeksDone: number; weeksTotal: number };
   /** Set when the owner put the whole batch away without drawing it: it is no longer listed and its posts cannot be drawn. */
   closedAt?: string;
   closedBy?: string;
@@ -172,7 +174,7 @@ export class CopyStage {
   }
 
   /** Records a freshly written batch. Opening the same batch again changes nothing (decisions already made stay). */
-  open(planFile: string, posts: ReadonlyArray<{ postId: string; date?: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>, requestedDays?: readonly string[]): CopyBatch {
+  open(planFile: string, posts: ReadonlyArray<{ postId: string; date?: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>, requestedDays?: readonly string[], writing?: { weeksDone: number; weeksTotal: number }): CopyBatch {
     return this.change(planFile, (existing) => {
       if (existing) return { batch: existing, result: existing };
       const batch: CopyBatch = {
@@ -181,8 +183,37 @@ export class CopyStage {
         createdAt: this.now().toISOString(),
         posts: posts.map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
         ...(requestedDays && requestedDays.length > 0 ? { requestedDays: [...new Set(requestedDays)].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort() } : {}),
+        ...(writing ? { writing } : {}),
       };
       return { batch, result: batch };
+    });
+  }
+
+  /**
+   * Adds the next week the writer finished to a batch that is still growing: the posts (undecided, with their words and advice) and the days they were asked for. `updatePlan`
+   * runs under the same lock, so the plan file the pictures are drawn from gets the same posts without undoing a move or a replacement made meanwhile; a failure there leaves the
+   * batch as it was. Refused when the owner put the batch away meanwhile (the writer then stops) or when a post id already exists.
+   */
+  appendWeek(planFile: string, posts: ReadonlyArray<{ postId: string; date?: string; headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }>; advice?: string }>, requestedDays: readonly string[], writing: { weeksDone: number; weeksTotal: number }, updatePlan: () => void): CopyBatch {
+    return this.change(planFile, (batch) => {
+      if (!batch) throw new CopyStageError('NOT_FOUND', 'no copy batch for that plan');
+      if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so no more weeks are added');
+      if (posts.some((p) => batch.posts.some((q) => q.postId === p.postId))) throw new CopyStageError('CONFLICT', 'a post with that id already exists');
+      updatePlan();
+      const added: CopyPost[] = posts.map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' as const }));
+      const days = [...new Set([...(batch.requestedDays ?? []), ...requestedDays])].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+      const next: CopyBatch = { ...batch, posts: [...batch.posts, ...added], ...(days.length > 0 ? { requestedDays: days } : {}), writing };
+      return { batch: next, result: next };
+    });
+  }
+
+  /** The writer is done with this batch (every week saved, or it stopped): it stops being "growing", and a batch whose weeks are all drawn or lapsed now counts as drawn. */
+  finishWriting(planFile: string): void {
+    this.change(planFile, (batch) => {
+      if (!batch || batch.writing === undefined) return { batch: batch as CopyBatch, result: undefined };
+      const { writing: _gone, ...rest } = batch;
+      void _gone;
+      return { batch: this.settled(rest), result: undefined };
     });
   }
 
@@ -392,6 +423,7 @@ export class CopyStage {
 
   /** The batch with `drawnAt` set once every one of its weeks is drawn or lapsed. */
   private settled(batch: CopyBatch): CopyBatch {
+    if (batch.writing !== undefined) return batch;
     const done = weeksOf(batch).every((w) => batch.weekDrawn?.[w] !== undefined || batch.weekLapsed?.[w] !== undefined);
     return done && batch.drawnAt === undefined ? { ...batch, drawnAt: this.now().toISOString() } : batch;
   }

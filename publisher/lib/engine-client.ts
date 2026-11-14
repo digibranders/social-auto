@@ -142,7 +142,7 @@ export interface JobView {
   id: string;
   /** `write`: a batch of written posts; `draw`: pictures (a first draw, a redraw, or the picture of a newly added network); `network`: the words for a network added later. */
   kind: 'write' | 'draw' | 'network' | 'carousel' | 'topic' | 'replace';
-  /** The written batch a draw or an added network is for. */
+  /** The written batch a draw or an added network is for; for a `write` job, the batch it is writing, as soon as its first week is saved. */
   batchId?: string;
   /** For a `replace` job: the dropped post a new topic is being written for. */
   postId?: string;
@@ -156,6 +156,11 @@ export interface JobView {
   networks?: string[];
   state: 'queued' | 'running' | 'done' | 'failed';
   step?: number;
+  /** For a `write` job: how many weeks of the batch are saved so far and how many there will be. A batch is written week by week and each week shows as soon as it is saved. */
+  weeksDone?: number;
+  weeksTotal?: number;
+  /** True when a `write` job failed after at least one week was saved: those weeks stay in the batch (`batchId`), `weeksDone` says how far it got, `failure` says why. */
+  partial?: true;
   /** For a failed job: a fixed code (for example NOTHING_WRITTEN), never the engine's own words. */
   failure?: string;
   /** For a finished `network` job: what happened to each topic. */
@@ -185,6 +190,17 @@ function jobView(raw: unknown): { view: JobView; brand: string } | null {
   if (typeof step === 'number' && Number.isInteger(step) && step >= 1 && step <= 4) view.step = step;
   if (typeof finishedAt === 'string') view.finishedAt = finishedAt;
   if ((JOB_KIND[kind] === 'draw' || JOB_KIND[kind] === 'network' || JOB_KIND[kind] === 'replace') && typeof raw['planFile'] === 'string' && PART.test(raw['planFile'])) view.batchId = raw['planFile'];
+  if (JOB_KIND[kind] === 'write') {
+    const done = raw['weeksDone'];
+    const total = raw['weeksTotal'];
+    if (typeof done === 'number' && Number.isInteger(done) && done >= 0 && done <= 60 && typeof total === 'number' && Number.isInteger(total) && total >= 1 && total <= 60) {
+      view.weeksDone = done;
+      view.weeksTotal = total;
+      if (view.state === 'failed' && done >= 1) view.partial = true;
+    }
+    // The batch exists from the moment the first week is saved (and stays, whatever happens to the later weeks); an older job that did not count weeks has it once it is done.
+    if ((view.state === 'done' || (view.weeksDone ?? 0) >= 1) && typeof raw['planFileMade'] === 'string' && PART.test(raw['planFileMade'])) view.batchId = raw['planFileMade'];
+  }
   if (JOB_KIND[kind] === 'draw' && typeof raw['week'] === 'string' && DAY.test(raw['week'])) view.week = raw['week'];
   if (JOB_KIND[kind] === 'replace' && typeof raw['postId'] === 'string' && PART.test(raw['postId'])) view.postId = raw['postId'];
   if (kind === 'carouseldraw' && typeof raw['carouselId'] === 'string' && CAROUSEL_ID.test(raw['carouselId'])) view.carouselId = raw['carouselId'];
@@ -281,6 +297,8 @@ export interface BatchView {
   networks: string[];
   /** Present for a batch written for several weeks; each week is drawn on its own. */
   weeks?: BatchWeekView[];
+  /** Present only while the batch is still being written week by week: the weeks saved so far and the weeks it will have. New weeks and their posts are added to this same batch. */
+  writing?: { weeksDone: number; weeksTotal: number };
   signoffDefault?: { brandName?: string; domain?: string };
   posts: WrittenPostView[];
 }
@@ -357,7 +375,8 @@ function batchViewOf(raw: unknown, brand: string): BatchView | null {
     const notDrawn = Array.isArray(w['notDrawn']) ? w['notDrawn'].flatMap((n): Array<{ postId: string; code: NotDrawnCode; message: string }> => (isObject(n) && typeof n['postId'] === 'string' && PART.test(n['postId']) && typeof n['code'] === 'string' && NOT_DRAWN_CODES.includes(n['code']) ? [{ postId: n['postId'], code: n['code'] as NotDrawnCode, message: NOT_DRAWN_REASON[n['code'] as NotDrawnCode] }] : [])).slice(0, 40) : [];
     return [{ from: w['from'], to: w['to'], state, postIds: w['postIds'].filter((id): id is string => typeof id === 'string' && PART.test(id)).slice(0, 40), ...(openPostIds.length > 0 ? { openPostIds } : {}), ...(missingDays.length > 0 ? { missingDays } : {}), ...(notDrawn.length > 0 ? { notDrawn } : {}), ...(typeof left[w['from']] === 'number' ? { replacementsLeft: Math.max(0, Math.min(10, Math.trunc(left[w['from']] as number))) } : {}) }];
   }).slice(0, 8) : [];
-  return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(weeks.length > 0 ? { weeks } : {}), ...(signoffDefault ? { signoffDefault } : {}), posts };
+  const growing = isObject(raw['writing']) && typeof raw['writing']['weeksDone'] === 'number' && typeof raw['writing']['weeksTotal'] === 'number' ? { weeksDone: raw['writing']['weeksDone'], weeksTotal: raw['writing']['weeksTotal'] } : undefined;
+  return { id: raw['planFile'], createdAt: str(raw['createdAt'], 40) ?? '', networks, ...(weeks.length > 0 ? { weeks } : {}), ...(growing ? { writing: growing } : {}), ...(signoffDefault ? { signoffDefault } : {}), posts };
 }
 
 function rulesOf(raw: unknown): BatchesView['networkRules'] {
