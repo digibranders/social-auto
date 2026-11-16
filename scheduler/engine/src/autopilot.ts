@@ -74,6 +74,7 @@ import { normalizeHeadline } from './hooks.ts';
 import type { ConceptRecord } from './concepts.ts';
 import { CAPTION_RULES, conceptRecordOf, InsufficientConceptsError, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
 import { topUpPlan } from './plan-topup.ts';
+import { cleanPost } from './no-dashes.ts';
 import { weekChunks } from './week-chunks.ts';
 import { createArtRenderContext, renderPlan, type PostRenderRecord } from './render.ts';
 import { DEFAULT_SCHEDULER_URL, schedulePlan } from './schedule.ts';
@@ -633,6 +634,8 @@ async function main(): Promise<void> {
       }
       // A later week continues the numbering of the weeks already saved, so every post of the batch has an id of its own.
       if (idBase > 0) plan = { ...plan, posts: plan.posts.map((p, i) => ({ ...p, id: `w${String(weekNumber).padStart(2, '0')}-d${idBase + i + 1}` })) };
+      // Drafts taken from the reserve or written once more are cleaned too: no dash used as punctuation reaches a plan.
+      plan = { ...plan, posts: plan.posts.map(cleanPost) };
       // A fully AI plan is marked so that nothing can publish from it except an approved version in the review queue.
       let finalPlan: WeekPlan = route === 'ai' ? { ...plan, renderMode: 'ai_v1' } : plan;
       if (artSettings && !values['plan-only']) {

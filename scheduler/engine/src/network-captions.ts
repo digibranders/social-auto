@@ -4,6 +4,7 @@
  * network's length and hashtag limits). The closing call to action line is added by code, never by the model, so a network never gets an invented link line.
  * A version that fails is asked for once more with the reasons; one that still fails is replaced by the main caption adapted to the network and marked `fallback`.
  */
+import { NO_DASH_RULE, withoutDashes } from './no-dashes.ts';
 import type { AiConfig } from './ai.ts';
 import { checkCopy } from './copy-gate.ts';
 import { checkCopyQuality } from './copy-quality.ts';
@@ -30,6 +31,7 @@ export interface CaptionReport {
 
 const SYSTEM = `You write social media captions for a business from facts. For each post and each network listed you get the post's headline, the main caption and the exact facts it rests on. Write one caption per post and network.
 Rules: use only what the facts state; do not add numbers, prices, guarantees, awards, statistics or comparisons the facts do not state; say the same thing the headline says, in the voice of the network; do not repeat the headline word for word; do not repeat yourself inside the caption; do not write a call to action, a web address or hashtags in the caption text (they are added separately); write plain sentences. For each caption also give hashtags (a list of #tags, each one word) within the network's limit, an empty list when the limit is 0.
+${NO_DASH_RULE}
 Return JSON only: {"captions":[{"postId":"...","network":"...","caption":"...","hashtags":["#..."]}]}`;
 
 /** The closing line of a caption: the last paragraph that is not hashtags. For Instagram it ends "(link in bio)"; other networks can carry the address itself. */
@@ -101,7 +103,7 @@ export async function writeNetworkCaptions(input: { ai: AiConfig; posts: readonl
       const draft = drafts.find((d) => d.postId === w.postId && d.network === w.network);
       const problem = draft ? problemWith(draft, post) : 'no caption was written';
       if (draft && !problem) {
-        (variants[w.postId] ??= {})[w.network] = { caption: withCta(w.network, draft.caption, ctaOf(post)), hashtags: draft.hashtags };
+        (variants[w.postId] ??= {})[w.network] = { caption: withoutDashes(withCta(w.network, draft.caption, ctaOf(post))), hashtags: draft.hashtags };
         report.written += 1;
         failed.delete(`${w.postId}|${w.network}`);
       } else {
@@ -116,7 +118,7 @@ export async function writeNetworkCaptions(input: { ai: AiConfig; posts: readonl
   for (const w of wanted) {
     const post = posts.find((p) => p.id === w.postId) as CaptionPost;
     const rules = NETWORK_RULES[w.network];
-    const variant: PostVariant = { caption: withCta(w.network, bodyOf(post.caption), ctaOf(post)), hashtags: post.hashtags.slice(0, rules.maxHashtags), fallback: true };
+    const variant: PostVariant = { caption: withoutDashes(withCta(w.network, bodyOf(post.caption), ctaOf(post))), hashtags: post.hashtags.slice(0, rules.maxHashtags), fallback: true };
     (variants[w.postId] ??= {})[w.network] = variant;
     report.fallback.push({ postId: w.postId, network: w.network, reason: failed.get(`${w.postId}|${w.network}`) ?? 'no caption was written' });
   }

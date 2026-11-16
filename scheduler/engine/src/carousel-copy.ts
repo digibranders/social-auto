@@ -3,6 +3,7 @@
  * the way every caption is (the claim gate against the facts, the writing check, the channel's length and hashtag limits); the other channels' captions are then written
  * from it by the existing per-channel writer (network-captions.ts). The closing line is the brand's own and is added by code, never by the model.
  */
+import { NO_DASH_RULE, withoutDashes } from './no-dashes.ts';
 import type { AiConfig } from './ai.ts';
 import { plainHeadline } from './ai-creative.ts';
 import { tidyPunctuation } from './caption-text.ts';
@@ -38,6 +39,7 @@ const POST_ID = 'carousel';
 
 const MAIN_SYSTEM = `You write the Instagram caption of one carousel post (several slides swiped through) for a small business, from its verified facts only.
 Rules: use only what the facts state; add no numbers, prices, times, guarantees, awards, statistics or comparisons the facts do not state; say what the carousel is about in plain words and invite the reader to swipe; two or three short sentences; no closing line or link (it is added afterwards); at most the hashtags allowed.
+${NO_DASH_RULE}
 Return JSON only: {"caption": string, "hashtags": ["#..."]}`;
 
 interface Main { caption: string; hashtags: string[] }
@@ -81,7 +83,7 @@ export async function writeCarouselCaptions(input: CarouselCaptionInput): Promis
     main = { caption: input.headlines.map(plainHeadline).join(' '), hashtags: [] };
     fallback.push({ network: 'instagram', reason: error instanceof Error ? error.message : String(error) });
   }
-  const full = `${tidyPunctuation(main.caption)}\n\n${input.closingLine}`;
+  const full = `${tidyPunctuation(withoutDashes(main.caption))}\n\n${input.closingLine}`;
   const written = await writeNetworkCaptions({ ai: input.ai, networks: input.networks, posts: [{ id: POST_ID, headline: subjectOf(input), caption: full, hashtags: main.hashtags, facts: [...input.facts] }], ...(input.fetchFn ? { fetchFn: input.fetchFn } : {}) });
   for (const f of written.report.fallback) fallback.push({ network: f.network, reason: f.reason });
   const variants = written.variants[POST_ID] ?? {};
