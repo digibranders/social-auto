@@ -5,6 +5,7 @@
  * One small file per batch, brands/<brand>/copy-first/<week-NN.json>, changed only under a lock. A decision belongs to the exact words it was made
  * about (a hash of headline and caption): if the plan file is edited afterwards, that post is no longer kept and must be decided again.
  */
+import { cleanCaptions, withoutDashes } from './no-dashes.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -130,6 +131,8 @@ export const copyHash = (headline: string, caption: string, captions?: Record<st
   return createHash('sha256').update(JSON.stringify({ headline, caption, ...(keys.length > 0 ? { captions: keys.map((k) => [k, (captions as Record<string, string>)[k]]) } : {}) })).digest('hex');
 };
 
+/** What the writer wrote, with no dash used as punctuation: the last line of defence before a topic is stored and shown. */
+const cleaned = <T extends { headline: string; caption: string; captions?: Record<string, { text: string; fallback?: boolean }> }>(p: T): T => ({ ...p, headline: withoutDashes(p.headline), caption: withoutDashes(p.caption), ...(p.captions ? { captions: cleanCaptions(p.captions) } : {}) });
 const textsOf = (captions?: Record<string, { text: string }>): Record<string, string> | undefined => (captions ? Object.fromEntries(Object.entries(captions).map(([k, v]) => [k, v.text])) : undefined);
 
 export class CopyStage {
@@ -181,7 +184,7 @@ export class CopyStage {
         brand: this.brand,
         planFile,
         createdAt: this.now().toISOString(),
-        posts: posts.map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
+        posts: posts.map(cleaned).map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' })),
         ...(requestedDays && requestedDays.length > 0 ? { requestedDays: [...new Set(requestedDays)].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort() } : {}),
         ...(writing ? { writing } : {}),
       };
@@ -200,7 +203,7 @@ export class CopyStage {
       if (batch.closedAt) throw new CopyStageError('CLOSED', 'this batch was put away, so no more weeks are added');
       if (posts.some((p) => batch.posts.some((q) => q.postId === p.postId))) throw new CopyStageError('CONFLICT', 'a post with that id already exists');
       updatePlan();
-      const added: CopyPost[] = posts.map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' as const }));
+      const added: CopyPost[] = posts.map(cleaned).map((p) => ({ postId: p.postId, ...(p.date && /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? { date: p.date } : {}), headline: p.headline, caption: p.caption, contentHash: copyHash(p.headline, p.caption, textsOf(p.captions)), ...(p.captions && Object.keys(p.captions).length > 0 ? { captions: p.captions } : {}), ...(p.advice ? { advice: p.advice.slice(0, 300) } : {}), state: 'pending' as const }));
       const days = [...new Set([...(batch.requestedDays ?? []), ...requestedDays])].filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
       const next: CopyBatch = { ...batch, posts: [...batch.posts, ...added], ...(days.length > 0 ? { requestedDays: days } : {}), writing };
       return { batch: next, result: next };
@@ -373,7 +376,8 @@ export class CopyStage {
       if (batch.posts.some((p) => p.postId === post.postId)) throw new CopyStageError('CONFLICT', 'a post with that id already exists');
       const gone = batch.posts.find((p) => p.postId === droppedId) as CopyPost;
       const week = weekOfPost(gone) as string;
-      const added: CopyPost = { postId: post.postId, date: gone.date as string, headline: post.headline, caption: post.caption, contentHash: copyHash(post.headline, post.caption, textsOf(post.captions)), ...(post.captions && Object.keys(post.captions).length > 0 ? { captions: post.captions } : {}), ...(post.advice ? { advice: post.advice.slice(0, 300) } : {}), state: 'pending', replaces: droppedId };
+      const words = cleaned(post);
+      const added: CopyPost = { postId: post.postId, date: gone.date as string, headline: words.headline, caption: words.caption, contentHash: copyHash(words.headline, words.caption, textsOf(words.captions)), ...(words.captions && Object.keys(words.captions).length > 0 ? { captions: words.captions } : {}), ...(post.advice ? { advice: post.advice.slice(0, 300) } : {}), state: 'pending', replaces: droppedId };
       const next: CopyBatch = { ...batch, posts: [...batch.posts, added], replacements: { ...(batch.replacements ?? {}), [week]: (batch.replacements?.[week] ?? 0) + 1 }, replacedBy: { ...(batch.replacedBy ?? {}), [droppedId]: post.postId } };
       return { batch: next, result: next };
     });
@@ -466,7 +470,7 @@ export class CopyStage {
       if (batch.posts.some((p) => p.captions?.[network] !== undefined)) throw new CopyStageError('CONFLICT', 'the batch already has that network');
       applyToPlan();
       for (const post of batch.posts) {
-        const added = captionsByPost[post.postId];
+        const added = captionsByPost[post.postId] ? cleanCaptions(captionsByPost[post.postId] as Readonly<Record<string, { text: string; fallback?: boolean }>>) : undefined;
         if (!added) continue;
         post.captions = { ...(post.captions ?? {}), ...Object.fromEntries(Object.entries(added).map(([n, c]) => [n, { text: c.text, ...(c.fallback ? { fallback: true } : {}) }])) };
         post.contentHash = copyHash(post.headline, post.caption, textsOf(post.captions));
