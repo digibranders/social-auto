@@ -1,4 +1,5 @@
 /** Writes a week of pain-point posts for a brand with the text model. */
+import { cleanPost, NO_DASH_RULE } from './no-dashes.ts';
 import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
 import { assertCopySupported } from './copy-gate.ts';
@@ -67,6 +68,7 @@ Hard rules:
 - Only use facts, prices and offers from the brand profile. Never invent statistics, customer counts, reviews or guarantees.
 - No promises of rankings, leads, sales or medical/financial outcomes.
 - Plain, warm, confident language. No hype words like "revolutionary" or "game-changer". No emojis in headlines.
+- ${NO_DASH_RULE}
 Return a single JSON object and nothing else.`;
 
 /** How long a caption should be for the facts a post has: a soft target that follows the evidence, never a floor to pad up to. */
@@ -578,7 +580,7 @@ export async function planWeek(options: {
     posts.splice(0, posts.length, ...kept);
   }
   if (posts.length === 0) throw new InsufficientConceptsError(allDates.length, dropped);
-  const plan = parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts }, `week-${week}`);
+  const plan = parseWeekPlan({ brand: options.brandSlug, timezone: schedule.utcOffset, posts: posts.map(cleanPost) }, `week-${week}`);
   const coverage: EvidenceCoverage = evidenceMode ? 'facts' : 'legacy';
   if (dates.length < allDates.length) dropped.unshift(`only ${dates.length} fact${dates.length === 1 ? ' is' : 's are'} worth a post of its own (poster-worthiness ${MIN_WORTH} or more), so ${allDates.length - dates.length} fewer post${allDates.length - dates.length === 1 ? ' was' : 's were'} written`);
   const extra = { ...(reserveDrafts ? { reserveDrafts } : {}), ...(candidateReport ? { candidateReport } : {}) };

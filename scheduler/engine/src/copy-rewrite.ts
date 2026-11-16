@@ -5,6 +5,7 @@
  * rewritten copy then goes through every check again, like any other copy. Only an eligible fact is ever rewritten: a held fact never reaches here,
  * and there is one rewrite per candidate, never a loop.
  */
+import { NO_DASH_RULE, withoutDashes } from './no-dashes.ts';
 import type { AiConfig } from './ai.ts';
 import { defaultClaimConfig, extractFacts, normalizeForQuote } from './claims.ts';
 import { checkCopy } from './copy-gate.ts';
@@ -96,7 +97,7 @@ export function validateRewrite(request: RewriteRequest, rewrite: Rewrite, fact:
   return [...new Set(problems)];
 }
 
-const REWRITE_SYSTEM = `You rewrite a social media post whose copy said more than its source says. You are given the source quote, the draft, and the exact words that are not supported with the reason. Rewrite the headline, the subline and the caption so that they say only what the source quote says, in plain words: narrow the claim, never invent a new one. You MUST keep every qualifier, negation and plan name listed in the request, keep the same fact, and add no figure, price, period, guarantee, superlative or benefit that the source does not state. The headline is at most 45 characters, a short plain statement (never longer: a longer one is thrown away). The subline is at most 70 characters and may be an empty string. The caption has short paragraphs separated by blank lines and no hashtags and no call to action. Return JSON only: {"factId":"...","headline":"...","subline":"...","caption":"..."}`;
+const REWRITE_SYSTEM = `You rewrite a social media post whose copy said more than its source says. You are given the source quote, the draft, and the exact words that are not supported with the reason. Rewrite the headline, the subline and the caption so that they say only what the source quote says, in plain words: narrow the claim, never invent a new one. You MUST keep every qualifier, negation and plan name listed in the request, keep the same fact, and add no figure, price, period, guarantee, superlative or benefit that the source does not state. The headline is at most 45 characters, a short plain statement (never longer: a longer one is thrown away). The subline is at most 70 characters and may be an empty string. The caption has short paragraphs separated by blank lines and no hashtags and no call to action. ${NO_DASH_RULE} Return JSON only: {"factId":"...","headline":"...","subline":"...","caption":"..."}`;
 
 /** Asks the writer once for the rewrite. The answer is only a candidate: validateRewrite and the ordinary checks decide. */
 export async function rewriteCandidate(ai: AiConfig, request: RewriteRequest, fetchFn?: typeof fetch): Promise<Rewrite> {
@@ -108,7 +109,7 @@ export async function rewriteCandidate(ai: AiConfig, request: RewriteRequest, fe
     parse: (v) => {
       const r = v as Partial<Rewrite>;
       if (typeof r.factId !== 'string' || typeof r.headline !== 'string' || typeof r.caption !== 'string') throw new Error('the rewrite needs factId, headline and caption as text');
-      return { factId: r.factId, headline: r.headline.trim(), subline: typeof r.subline === 'string' ? r.subline.trim() : '', caption: r.caption.trim() };
+      return { factId: r.factId, headline: withoutDashes(r.headline.trim()), subline: typeof r.subline === 'string' ? withoutDashes(r.subline.trim()) : '', caption: withoutDashes(r.caption.trim()) };
     },
   });
 }
