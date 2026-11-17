@@ -19,7 +19,7 @@ export type JobKind = 'copy' | 'draw' | 'carousel' | 'carouseldraw' | 'redraw' |
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed';
 
 export class JobError extends Error {
-  readonly code: 'NOT_FOUND' | 'INVALID' | 'LOCKED';
+  readonly code: 'NOT_FOUND' | 'INVALID' | 'LOCKED' | 'PLAN_ENDED';
   constructor(code: JobError['code'], message: string) {
     super(message);
     this.name = 'JobError';
@@ -111,6 +111,8 @@ export const keyOf = (spec: Pick<JobSpec, 'kind' | 'brand' | 'planFile' | 'postI
   spec.kind === 'carouseldraw' ? `carouseldraw:${spec.brand}:${spec.carouselId ?? ''}` : spec.kind === 'draw' ? `draw:${spec.brand}:${spec.planFile ?? ''}${spec.week ? `:${spec.week}` : ''}${spec.postIds && spec.postIds.length > 0 ? `:${createHash('sha1').update([...spec.postIds].sort().join(',')).digest('hex').slice(0, 10)}` : ''}` : spec.kind === 'network' ? `network:${spec.brand}:${spec.planFile ?? ''}:${spec.network ?? ''}` : spec.kind === 'newnet' ? `newnet:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : spec.kind === 'carousel' ? `carousel:${spec.brand}` : spec.kind === 'topic' ? `topic:${spec.brand}` : spec.kind === 'replace' ? `replace:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}` : spec.kind === 'redraw' ? `redraw:${spec.brand}:${spec.planFile ?? ''}:${spec.postId ?? ''}:${spec.network ?? ''}` : `copy:${spec.brand}`;
 
 export class JobStore {
+  /** Says whether nothing new may be made for a brand (its customer's paid period has ended); set by whoever owns the brands folder. */
+  spendGuard?: (brand: string) => boolean;
   private readonly dir: string;
   private readonly now: () => Date;
   constructor(dir: string, now: () => Date = () => new Date()) {
@@ -152,6 +154,7 @@ export class JobStore {
   /** Adds a job, or returns the one that already stands for the same request. */
   enqueue(spec: JobSpec): { job: Job; created: boolean } {
     if (spec.by.trim() === '') throw new JobError('INVALID', 'who is asking must be given');
+    if (this.spendGuard?.(spec.brand)) throw new JobError('PLAN_ENDED', 'the plan has ended, so nothing new is written or drawn for this customer');
     return this.locked(() => {
       const key = keyOf(spec);
       const existing = this.readAll().filter((j) => j.key === key);

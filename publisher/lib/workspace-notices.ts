@@ -4,7 +4,7 @@ import { goneAims } from './post-view.js';
 import type { ScheduledPost } from './schedule.js';
 
 export interface Notice {
-  code: 'CONNECTION_EXPIRED' | 'CONNECTION_EXPIRING' | 'PAUSED' | 'ACCOUNT_DISCONNECTED';
+  code: 'CONNECTION_EXPIRED' | 'CONNECTION_EXPIRING' | 'PAUSED' | 'ACCOUNT_DISCONNECTED' | 'PLAN_ENDING' | 'PLAN_ENDED';
   /** The account it is about; absent for a notice about the whole workspace. */
   channelId?: string;
   platform?: string;

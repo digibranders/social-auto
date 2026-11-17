@@ -22,6 +22,7 @@ import * as send from '../_v1/send.js';
 import * as siteJobs from '../_v1/site-jobs.js';
 import * as topics from '../_v1/topics.js';
 import * as workspaceArchive from '../_v1/workspace-archive.js';
+import * as workspaceBilling from '../_v1/workspace-billing.js';
 import * as workspaces from '../_v1/workspaces.js';
 
 const stepOf = (request: Request): string => new URL(request.url).pathname.replace(/\/+$/, '').split('/').pop() ?? '';
@@ -67,6 +68,8 @@ export function POST(request: Request): Response | Promise<Response> {
       return send.POST(request);
     case 'archive':
       return workspaceArchive.POST(request);
+    case 'billing':
+      return workspaceBilling.POST(request);
     case 'site-jobs':
       return siteJobs.POST(request);
     case 'facts':

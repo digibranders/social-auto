@@ -116,8 +116,9 @@ function withCrossposts(post: StatusPost, channels: ChannelFile, posted: PostedL
  */
 function withPauses(post: StatusPost, pauses: PauseFile): StatusPost {
   if (post.state !== 'scheduled' && post.state !== 'due') return post;
-  const targets = [...(isWantedOn({ channels: post.channels ?? undefined }, 'instagram') ? [isPaused(pauses, post.brand, 'instagram')] : []), ...post.crossposts.map((c) => c.state === 'paused')];
-  const held = brandIsPaused(pauses, post.brand) || (targets.length > 0 && targets.every(Boolean));
+  const time = { nowMs: Date.now(), postMs: Date.parse(post.date) };
+  const targets = [...(isWantedOn({ channels: post.channels ?? undefined }, 'instagram') ? [isPaused(pauses, post.brand, 'instagram', time)] : []), ...post.crossposts.map((c) => c.state === 'paused')];
+  const held = brandIsPaused(pauses, post.brand, time) || (targets.length > 0 && targets.every(Boolean));
   return held ? { ...post, state: 'paused', editable: Date.parse(post.date) > Date.now() } : post;
 }
 

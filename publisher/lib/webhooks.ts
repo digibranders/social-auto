@@ -7,7 +7,7 @@ import type { Product } from './products.js';
 /** A message to a product about something that happened to one of its customers. */
 export interface WebhookEvent {
   id: string;
-  type: 'post.published' | 'post.failed' | 'connection.expiring' | 'job.finished' | 'poster.ready' | 'poster.expiring' | 'poster.expired' | 'week.drawing' | 'week.drawn' | 'week.lapsed' | 'poster.auto_approved' | 'post.held' | 'post.missed';
+  type: 'post.published' | 'post.failed' | 'connection.expiring' | 'job.finished' | 'poster.ready' | 'poster.expiring' | 'poster.expired' | 'week.drawing' | 'week.drawn' | 'week.lapsed' | 'poster.auto_approved' | 'post.held' | 'post.missed' | 'workspace.plan_ended';
   /** The place of the event in the product's log (see lib/outbox.ts); present once it was written down. */
   seq?: number;
   createdAt: string;
@@ -63,6 +63,12 @@ export function eventsForResults(brand: string, postId: string, results: readonl
       event: r.status === 'posted' ? newEvent('post.published', { ...base, permalink: r.permalink ?? null }, now) : newEvent('post.failed', { ...base, error: r.error ?? 'unknown error' }, now),
     }];
   });
+}
+
+/** What to tell a product when a customer's paid period has ended and posting stopped (once for each billing date). */
+export function eventForPlanEnd(brand: string, endDate: string, lastPostingDay: string, clients: ClientsFile, now: number): Addressed | null {
+  const owner = ownerOf(clients, brand);
+  return owner ? { product: owner.product, event: newEvent('workspace.plan_ended', { externalId: owner.externalId, endDate, lastPostingDay }, now) } : null;
 }
 
 /** What to tell a product when one of its customers' connections (LinkedIn or Instagram) is about to end. */
