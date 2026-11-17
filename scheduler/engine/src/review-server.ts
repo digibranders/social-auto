@@ -43,6 +43,7 @@ import { slugFromSite } from './analyze.ts';
 import { captionRulesView, composeVariant, isNetwork, NETWORKS, type Network } from './networks.ts';
 import { foldLedgerFile } from './paid-ledger.ts';
 import { readConnected, writeConnected } from './connected-networks.ts';
+import { isRealDay, planEnded, readPlanEnd, writePlanEnd } from './plan-end.ts';
 import { customerTextProblem, readStatements, saveStatement } from './customer-facts.ts';
 import { topicRequests } from './topic-requests.ts';
 import { carouselRoom } from './carousel-limit.ts';
@@ -118,7 +119,7 @@ function send(res: ServerResponse, status: number, body: unknown, headers: Recor
   res.end(text);
 }
 
-const JOB_STATUS: Record<JobError['code'], number> = { NOT_FOUND: 404, INVALID: 400, LOCKED: 503 };
+const JOB_STATUS: Record<JobError['code'], number> = { NOT_FOUND: 404, INVALID: 400, LOCKED: 503, PLAN_ENDED: 409 };
 const HTTP_STATUS: Record<ReviewError['code'], number> = { NOT_FOUND: 404, INVALID: 400, BLOCKED: 409, STALE: 409, ALREADY_DECIDED: 409, NOT_APPROVED: 409, TAMPERED: 500, LOCKED: 503, FORBIDDEN: 403, CONFLICT: 409, LIMIT: 409 };
 
 function fail(res: ServerResponse, error: unknown): void {
@@ -197,6 +198,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     return new ReviewStore(dir, brand, undefined, options.lockTimeoutMs);
   };
   const jobs = new JobStore(resolve(options.jobsRoot ?? join(root, '..', 'jobs')));
+  jobs.spendGuard = (brand) => planEnded(join(root, brand), (options.now ?? (() => new Date()))().getTime());
   const owners = new ProductBrands(root);
   // The weekly picture limit of a product's customer. The engine enforces it when it draws; the service checks it first so a request that cannot be drawn is refused
   // at once, before a job is queued, with the channel and the day the week starts again.
@@ -757,6 +759,20 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           mkdirSync(join(root, caller.brand), { recursive: true });
         }
         return send(res, 200, writeConnected(join(root, caller.brand), body['networks'] as unknown[], (options.now ?? (() => new Date()))()));
+      }
+      // The end of the customer's paid period, told by the product API (see plan-end.ts): PUT {"endDate": "YYYY-MM-DD" | null} sets or clears it, GET reads it. From that day on no job is accepted for her.
+      if (parts[0] === 'review' && parts[1] === 'billing-end' && parts.length === 2) {
+        if (caller.role !== 'product') return send(res, 404, { error: 'Not found' });
+        if (req.method === 'GET') return send(res, 200, { endDate: readPlanEnd(join(root, caller.brand)) });
+        if (req.method !== 'PUT') return send(res, 405, { error: 'Method not allowed' });
+        const body = await readJson(req);
+        const endDate = body['endDate'];
+        if (endDate !== null && !isRealDay(endDate)) throw new ReviewError('INVALID', 'endDate must be a real day as YYYY-MM-DD, or null');
+        // Like automatic posting, this may be told before her first batch exists: the brand is claimed for the product the way its first job would, so the end is known
+        // when that first job (and every weekly timer after it) runs.
+        if (owners.claim(caller.brand, caller.productId, () => existsSync(join(root, caller.brand)) || jobs.list({ brand: caller.brand }).length > 0) === 'taken') throw new ReviewError('CONFLICT', 'that brand name is not available');
+        mkdirSync(join(root, caller.brand), { recursive: true });
+        return send(res, 200, { ...writePlanEnd(join(root, caller.brand), endDate as string | null, (options.now ?? (() => new Date()))()), endDate });
       }
       // Automatic posting, the customer's own choice, told by the product with her consent (see auto-posting.ts). PUT {"channels": ["instagram", ...], "safetyHours"?, "by"} sets the
       // channels it is on for (an empty list switches it off); GET reads it.

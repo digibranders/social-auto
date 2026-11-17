@@ -336,7 +336,7 @@ export function crosspostStatusFor(
     .filter((channel) => at >= Date.parse(channel.connectedAt))
     .map((channel): CrosspostStatus => {
       const done = log[postedKey(post.id, channel.id)];
-      const held = !done && isPaused(pauses, post.brand ?? 'default', channel.id);
+      const held = !done && isPaused(pauses, post.brand ?? 'default', channel.id, { nowMs: now, postMs: at });
       let state: CrosspostStatus['state'];
       if (done?.skipped) state = 'skipped';
       else if (done) state = 'published';

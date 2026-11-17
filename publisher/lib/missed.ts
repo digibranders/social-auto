@@ -51,9 +51,9 @@ export function findMissed(posts: readonly ScheduledPost[], channels: ChannelFil
     const at = Date.parse(post.date);
     if (post.skipped === true || at > now || now - at >= MISSED_REPORT_HOURS * HOUR_MS) continue;
     const brand = post.brand ?? 'default';
-    if (brandIsPaused(pauses, brand)) continue;
+    if (brandIsPaused(pauses, brand, { nowMs: now, postMs: at })) continue;
     for (const status of crosspostStatusFor(post, channels, log, now, pauses)) {
-      if (status.state !== 'missed' || isPaused(pauses, brand, status.id)) continue;
+      if (status.state !== 'missed' || isPaused(pauses, brand, status.id, { nowMs: now, postMs: at })) continue;
       out.push({ key: `${post.id}|${status.id}`, postId: post.id, brand, date: post.date, channelId: status.id, account: status.account });
     }
   }

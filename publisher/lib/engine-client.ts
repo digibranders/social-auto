@@ -688,6 +688,20 @@ export class WorkspaceEngine {
     }
   }
 
+  /**
+   * Tells the poster service the day the customer's paid period ends (null: it does not end), so nothing new is written or drawn for her from then on, even by its own
+   * weekly timers. Answers whether it was told; never throws (the product API itself refuses calls that spend money after the date).
+   */
+  async setBillingEnd(endDate: string | null, actor: string): Promise<boolean> {
+    try {
+      await this.call('PUT', '/review/billing-end', actor, { endDate });
+      return true;
+    } catch (error) {
+      console.error(`could not tell the poster service when the plan ends: ${error instanceof EngineError ? `${error.status} ${error.message}` : 'it was not reachable'}`);
+      return false;
+    }
+  }
+
   /** What the customer has drawn this week for each channel and what is left. */
   async limits(actor: string): Promise<LimitsView> {
     const answer = await this.call('GET', '/review/limits', actor);

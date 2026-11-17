@@ -23,6 +23,7 @@ import { toScheduled } from '../../lib/manual.js';
 import { applyOverrides } from '../../lib/overrides.js';
 import type { ScheduledPost } from '../../lib/schedule.js';
 import { productOf } from '../../lib/product-request.js';
+import { billingView, planNotices } from '../../lib/billing.js';
 import { brandIsPaused, isPaused, type PauseFile } from '../../lib/pauses.js';
 import { loadBrandSettings, loadChannels, loadClients, loadManual, loadOverrides, loadPauses, saveClients, storeConfigured } from '../../lib/store.js';
 
@@ -48,6 +49,10 @@ function groupFacts(file: ClientsFile, settings: BrandSettings, client: AddedCli
 }
 
 function workspaceView(client: AddedClient, channels: Channel[], pauses: PauseFile, posts: readonly ScheduledPost[] = [], group?: { id: string; brandsAllowed: number; brandsUsed: number }): Record<string, unknown> {
+  const now = Date.now();
+  const billing = billingView(pauses, client.brand, now);
+  // The team's own pause is told as PAUSED; the end of the paid period has its own notice.
+  const teamPaused = pauses.all || pauses.brands.includes(client.brand);
   const paused = brandIsPaused(pauses, client.brand);
   return {
     id: client.brand,
@@ -58,12 +63,14 @@ function workspaceView(client: AddedClient, channels: Channel[], pauses: PauseFi
     ...(group ? { group } : {}),
     archived: client.archived === true,
     paused,
+    // The end of the paid period: posting stops on `endDate` (the billing date), the last posting day is the day before.
+    billing,
     // "manual": the customer approves every poster. "auto": she chose automatic posting for at least one channel (see autoPosting, set with PATCH).
     approvalMode: client.autoPosting !== undefined && client.autoPosting.channels.length > 0 ? 'auto' : 'manual',
     // The channels automatic posting is on for, the safety window, when she agreed, and the connected channels that still need her choice; null when it is off.
     autoPosting: autoPostingView(client, channels.map((c) => c.platform)),
     // Things the customer should know (a connection ending, posting paused), in plain words.
-    notices: [...noticesFor(channels, paused, Date.now()), ...disconnectedNotices(posts, channels, Date.now())],
+    notices: [...noticesFor(channels, teamPaused, now), ...planNotices(billing), ...disconnectedNotices(posts, channels, now)],
     channels: channels.map((channel) => channelView(channel, pauses)),
   };
 }

@@ -17,11 +17,11 @@ import { publishEvents } from './events.js';
 import { findMissed, MISSED_REPORT_HOURS } from './missed.js';
 import { goneAims } from './post-view.js';
 import { isAnnounced, type Outbox } from './outbox.js';
-import { brandIsPaused, type PauseFile } from './pauses.js';
+import { billingEndMs, brandIsPaused, lastPostingDay, type PauseFile } from './pauses.js';
 import { dueWindowFor, type ScheduledPost } from './schedule.js';
 import type { Product } from './products.js';
 import { loadChannels, loadClients, loadOutbox, loadOverrides, loadPauses, loadPosted, storeConfigured } from './store.js';
-import { eventsForHeld, eventsForMissed, newEvent, type Addressed } from './webhooks.js';
+import { eventForPlanEnd, eventsForHeld, eventsForMissed, newEvent, type Addressed } from './webhooks.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** How long before a waiting picture or batch is put away the customer is warned. */
@@ -192,7 +192,7 @@ export function problemEvents(
   const held = posts.flatMap((post) => {
     const at = Date.parse(post.date);
     const brand = post.brand ?? 'default';
-    if (!owned(brand) || post.skipped === true || at > now || now - at >= dueWindowFor(post) || brandIsPaused(pauses, brand)) return [];
+    if (!owned(brand) || post.skipped === true || at > now || now - at >= dueWindowFor(post) || brandIsPaused(pauses, brand, { nowMs: now, postMs: at })) return [];
     const ours = channelsFor(channels, brand);
     return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)), log)
       .filter((id) => !isAnnounced(outbox, `held:${post.id}|${id}`))
@@ -202,15 +202,18 @@ export function problemEvents(
   const heldTooLong = posts.flatMap((post) => {
     const at = Date.parse(post.date);
     const brand = post.brand ?? 'default';
-    if (!owned(brand) || post.skipped === true || now - at < dueWindowFor(post) || now - at >= MISSED_REPORT_HOURS * 3_600_000 || brandIsPaused(pauses, brand)) return [];
+    if (!owned(brand) || post.skipped === true || now - at < dueWindowFor(post) || now - at >= MISSED_REPORT_HOURS * 3_600_000 || brandIsPaused(pauses, brand, { nowMs: now, postMs: at })) return [];
     const ours = channelsFor(channels, brand);
     return goneAims(post, new Set(ours.map((c) => c.id)), new Set<string>(ours.map((c) => c.platform)), log)
       .filter((id) => !isAnnounced(outbox, `missed:${post.id}|${id}`))
       .map((channelId) => ({ key: `${post.id}|${channelId}`, brand, postId: post.id, channelId, account: channelId, date: post.date }));
   });
+  // A customer whose paid period has ended is told once for each billing date; a new date after a renewal is told again when it comes.
+  const ended = Object.entries(pauses.billing ?? {}).filter(([brand, end]) => owned(brand) && now >= billingEndMs(end.endDate) && !isAnnounced(outbox, `plan-ended:${brand}:${end.endDate}`));
+  const planEnded = ended.flatMap(([brand, end]) => eventForPlanEnd(brand, end.endDate, lastPostingDay(end.endDate), clients, now) ?? []);
   return {
-    items: [...eventsForMissed([...missed, ...heldTooLong], clients, now), ...eventsForHeld(held, clients, now)],
-    announced: [...missed.map((m) => `missed:${m.key}`), ...heldTooLong.map((m) => `missed:${m.key}`), ...held.map((h) => `held:${h.postId}|${h.channelId}`)],
+    items: [...eventsForMissed([...missed, ...heldTooLong], clients, now), ...eventsForHeld(held, clients, now), ...planEnded],
+    announced: [...missed.map((m) => `missed:${m.key}`), ...heldTooLong.map((m) => `missed:${m.key}`), ...held.map((h) => `held:${h.postId}|${h.channelId}`), ...ended.map(([brand, end]) => `plan-ended:${brand}:${end.endDate}`)],
   };
 }
 

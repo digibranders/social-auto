@@ -7,6 +7,7 @@
 import { join } from 'node:path';
 import { CopyStage, drawCandidates, weekOfPost, weeksOf, type CopyBatch } from './copy-stage.ts';
 import { readConnected } from './connected-networks.ts';
+import { planEnded } from './plan-end.ts';
 import type { JobStore } from './job-store.ts';
 import { isNetwork, type Network } from './networks.ts';
 import type { ProductBrands } from './product-brands.ts';
@@ -66,6 +67,8 @@ export function runWeeklyDraws(deps: WeeklyDeps): WeeklyAction[] {
   const now = deps.now.getTime();
   for (const brand of deps.owners.all()) {
     const brandDir = join(deps.brandsRoot, brand);
+    // The paid period has ended: nothing is drawn for her, and a week is not given up either (it is still hers if she keeps or renews the plan).
+    if (planEnded(brandDir, now)) continue;
     let stage: CopyStage;
     let batches: CopyBatch[];
     try {
@@ -149,6 +152,7 @@ export function runCatchUpDraws(deps: CatchUpDeps): CatchUpAction[] {
   const today = new Date(deps.now.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
   for (const brand of deps.owners.all()) {
     const brandDir = join(deps.brandsRoot, brand);
+    if (planEnded(brandDir, deps.now.getTime())) continue;
     let batches: CopyBatch[];
     try {
       batches = new CopyStage(brandDir, brand).list();
