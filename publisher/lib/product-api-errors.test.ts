@@ -8,6 +8,7 @@ import { POST as connectLink } from '../api/_v1/connect-link.ts';
 import { POST as picturesPost } from '../api/_v1/pictures.ts';
 import { DELETE as postsDelete, GET as postsGet, PATCH as postsPatch, POST as postsPost } from '../api/_v1/posts.ts';
 import { POST as sendNow } from '../api/_v1/send.ts';
+import { setBilling } from './pauses.ts';
 import { GET as workspacesGet, POST as workspacesPost } from '../api/_v1/workspaces.ts';
 import { apiError, channelProblem, codeForStatus, ERROR_CODES, errorResponse, type ErrorCode } from './api-error.ts';
 import { addLinkedInMember, postedKey } from './channels.ts';
@@ -225,6 +226,13 @@ test('editing, deleting and sending a post that is not there, is on its way or h
     await savePauses({ all: false, brands: [brand], channels: [] }, null);
     expectError(await send(postId), 409, 'PAUSED', 'send while paused');
     await savePauses({ all: false, brands: [], channels: [] }, (await import('./store.ts').then((m) => m.loadPauses())).etag);
+    // The end of the paid period is its own refusal, not "paused": the customer must keep or renew the plan, not wait for a resume.
+    const { loadPauses: readPauses } = await import('./store.ts');
+    const open = await readPauses();
+    await savePauses(setBilling(open.file, brand, istDay(0), 'test', new Date().toISOString()), open.etag);
+    expectError(await send(postId), 409, 'PLAN_ENDED', 'send after the plan ended');
+    const ended = await readPauses();
+    await savePauses(setBilling(ended.file, brand, null, 'test', new Date().toISOString()), ended.etag);
     const posted = await loadPosted();
     await savePosted({ ...posted.log, [postedKey(postId, channelId)]: { remoteId: 'held', permalink: null, postedAt: new Date().toISOString(), skipped: true } }, posted.etag);
     expectError(await send(postId), 409, 'POST_SKIPPED', 'send a skipped post');

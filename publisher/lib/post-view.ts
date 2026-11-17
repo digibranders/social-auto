@@ -1,4 +1,4 @@
-import { NO_PAUSES, type PauseFile } from './pauses.js';
+import { billingEnded, NO_PAUSES, type PauseFile } from './pauses.js';
 import { crosspostStatusFor, type CrosspostStatus } from './crosspost.js';
 import { channelsFor, postedKey, type ChannelFile, type PostedLog } from './channels.js';
 import { toScheduled, type ManualPost } from './manual.js';
@@ -41,7 +41,7 @@ export interface Target {
   state: CrosspostStatus['state'] | 'held';
   permalink: string | null;
   /** Why a target is held or missed when the account is not connected (`ACCOUNT_DISCONNECTED`). */
-  code?: 'ACCOUNT_DISCONNECTED';
+  code?: 'ACCOUNT_DISCONNECTED' | 'PLAN_ENDED';
 }
 
 /**
@@ -81,6 +81,10 @@ export function scheduledView(post: ScheduledPost, channels: ChannelFile, posted
   const connected = channelsFor(channels, post.brand ?? 'default');
   const connectedIds = new Set(connected.map((c) => c.id));
   const connectedPlatforms = new Set<string>(connected.map((c) => c.platform));
+  const targets = targetsOf(post, states, connectedIds, now, connectedPlatforms, posted);
+  const state = overallState(targets, Date.parse(post.date), now);
+  // The paid period ended: the post is held for that reason, whatever else holds it too.
+  const planEnded = state === 'paused' && billingEnded(pauses, post.brand ?? 'default', { nowMs: now, postMs: Date.parse(post.date) });
   return {
     id: post.id,
     date: post.date,
@@ -90,9 +94,10 @@ export function scheduledView(post: ScheduledPost, channels: ChannelFile, posted
     manual: post.manual === true,
     // Only the platforms that have a version of their own are listed; the others use the main caption and picture.
     ...(post.variants ? { variants: Object.fromEntries(PLATFORMS.flatMap((p) => { const v = post.variants?.[p]; return v ? [[p, { ...(v.caption !== undefined ? { caption: v.caption } : {}), ...(v.image && origin ? { imageUrl: `${origin}${v.image}` } : {}) }]] : []; })) } : {}),
-    state: overallState(targetsOf(post, states, connectedIds, now, connectedPlatforms, posted), Date.parse(post.date), now),
+    state,
+    ...(planEnded ? { reason: 'PLAN_ENDED' } : {}),
     channels: states.map((s) => ({ id: s.id, platform: s.platform, account: s.account, state: s.state, permalink: s.permalink })),
-    targets: targetsOf(post, states, connectedIds, now, connectedPlatforms, posted),
+    targets: planEnded ? targets.map((t) => (t.state === 'paused' ? { ...t, code: 'PLAN_ENDED' as const } : t)) : targets,
   };
 }
 

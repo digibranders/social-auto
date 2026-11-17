@@ -12,6 +12,7 @@ import { channelsFor } from '../../lib/channels.js';
 import { findWorkspace, groupOf, isExternalId, setArchived, workspacesInGroup } from '../../lib/clients.js';
 import { apiError, errorResponse } from '../../lib/api-error.js';
 import { json } from '../../lib/http.js';
+import { billingView, planNotices } from '../../lib/billing.js';
 import { brandIsPaused, setPause } from '../../lib/pauses.js';
 import { productOf } from '../../lib/product-request.js';
 import { loadBrandSettings, loadChannels, loadClients, loadPauses, savePauses, saveClients, storeConfigured } from '../../lib/store.js';
@@ -50,7 +51,7 @@ export async function POST(request: Request): Promise<Response> {
     const updated = findWorkspace(after, product.id, body['externalId']);
     if (!updated) return apiError(404, 'WORKSPACE_NOT_FOUND', 'no such workspace');
     const mine = channelsFor(channels, updated.brand);
-    return json(200, { workspace: { id: updated.brand, externalId: updated.externalId ?? null, name: updated.name ?? null, website: updated.website ?? null, archived: updated.archived === true, paused: brandIsPaused(nowPaused, updated.brand), notices: noticesFor(mine, brandIsPaused(nowPaused, updated.brand), Date.now()) } });
+    return json(200, { workspace: { id: updated.brand, externalId: updated.externalId ?? null, name: updated.name ?? null, website: updated.website ?? null, archived: updated.archived === true, paused: brandIsPaused(nowPaused, updated.brand), billing: billingView(nowPaused, updated.brand, Date.now()), notices: [...noticesFor(mine, nowPaused.all || nowPaused.brands.includes(updated.brand), Date.now()), ...planNotices(billingView(nowPaused, updated.brand, Date.now()))] } });
   } catch (error) {
     return errorResponse(error, 'change the brand');
   }

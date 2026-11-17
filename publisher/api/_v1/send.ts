@@ -11,6 +11,7 @@ import { json } from '../../lib/http.js';
 import { dateNewPostNow } from '../../lib/manual-service.js';
 import { isManualId, toScheduled } from '../../lib/manual.js';
 import { applyOverrides } from '../../lib/overrides.js';
+import { billingEnded } from '../../lib/pauses.js';
 import { postView, scheduledView } from '../../lib/post-view.js';
 import { productOf } from '../../lib/product-request.js';
 import type { ScheduledPost } from '../../lib/schedule.js';
@@ -44,6 +45,7 @@ export async function POST(request: Request): Promise<Response> {
     const before = scheduledView(asEdited as ScheduledPost, channels, log, Date.now(), undefined, pauses);
     if (before['state'] === 'published') return apiError(409, 'POST_ALREADY_SENT', 'this post has already gone out');
     if (before['state'] === 'skipped') return apiError(409, 'POST_SKIPPED', 'this post was skipped, so it is not being sent');
+    if (billingEnded(pauses, workspace.brand)) return apiError(409, 'PLAN_ENDED', 'the plan has ended, so nothing is being sent. Keep or renew the plan first');
     if (before['state'] === 'paused') return apiError(409, 'PAUSED', 'this post is paused, so it is not being sent. Resume it first');
 
     const post = await dateNewPostNow(postId, Date.now(), workspace.brand);

@@ -23,6 +23,7 @@ export const routes: Record<string, { method: string; load: () => Promise<Handle
   '/api/v1/analytics': { method: 'GET', load: () => import('../api/_v1/analytics.js').then((m) => m.GET) },
   '/api/v1/limits': { method: 'GET', load: () => import('../api/_v1/limits.js').then((m) => m.GET) },
   '/api/v1/topics': { method: 'GET', load: () => import('../api/_v1/topics.js').then((m) => m.GET) },
+  '/api/v1/workspaces/billing': { method: 'POST', load: () => import('../api/_v1/workspace-billing.js').then((m) => m.POST) },
   '/api/v1/workspaces/archive': { method: 'POST', load: () => import('../api/_v1/workspace-archive.js').then((m) => m.POST) },
   '/api/v1/send': { method: 'POST', load: () => import('../api/_v1/send.js').then((m) => m.POST) },
   '/api/v1/connect-link': { method: 'POST', load: () => import('../api/_v1/connect-link.js').then((m) => m.POST) },

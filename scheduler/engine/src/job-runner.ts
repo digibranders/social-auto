@@ -12,6 +12,7 @@ import { createInterface } from 'node:readline';
 import { CopyStage } from './copy-stage.ts';
 import { JobStore, scrub, type Job, type NetworkResult } from './job-store.ts';
 import { pictureRoomFor } from './picture-room.ts';
+import { planEnded } from './plan-end.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
 import { ProductBrands } from './product-brands.ts';
 
@@ -191,6 +192,8 @@ if (import.meta.main) {
   const active = new Set<Promise<unknown>>();
   const brandsRoot = resolve(process.env['BRANDS_ROOT'] ?? 'brands');
   const owners = new ProductBrands(brandsRoot);
+  // The paid period of a customer has ended: nothing new is started for her, and a job that was waiting is closed unstarted (nothing is bought).
+  store.spendGuard = (brand) => planEnded(join(brandsRoot, brand), Date.now());
   const roomHook = (brand: string, network: string): number | null => (owners.has(brand) ? pictureRoomFor({ ledgerFile: resolve(process.env['PAID_LEDGER_FILE'] || join(brandsRoot, '..', 'ledger', 'paid-calls.jsonl')), brand, network, limit: weeklyLimitFromEnv(process.env), now: new Date() }) : null);
   let stopping = false;
   for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => (stopping = true));
@@ -207,6 +210,10 @@ if (import.meta.main) {
   }
   while (!stopping) {
     for (let job = store.claim(max, process.pid); job; job = store.claim(max, process.pid)) {
+      if (store.spendGuard?.(job.brand)) {
+        store.update(job.id, { state: 'failed', error: { code: 'PLAN_ENDED', message: 'the plan has ended, so this was not started' } });
+        continue;
+      }
       const work = runJob(store, job, exec, { room: roomHook, finished: closeBatch }).finally(() => active.delete(work));
       active.add(work);
     }

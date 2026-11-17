@@ -171,6 +171,8 @@ export interface FakeEngine {
   carouselWeekly: boolean;
   /** The networks the product API told the engine the customer has connected (null: never told). */
   connected: string[] | null;
+  /** The day the engine was told the customer's paid period ends (null: not told, or cleared). */
+  billingEnd: string | null;
   /** How many of the next PUT /review/connected calls are refused (404), as before the brand's first job exists. */
   connectedRefusals: number;
   /** What the engine was told about automatic posting, per brand (the channels, the window, who agreed and when). */
@@ -187,7 +189,7 @@ const mondayOfDay = (day: string): string => new Date(Date.parse(`${day}T00:00:0
 
 /** A pretend review service: it keeps jobs, runs none, and answers a second ask for a brand with a job already waiting by returning that job (as the real one does). */
 export async function fakeEngine(): Promise<FakeEngine> {
-  const engine: FakeEngine = { seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], topics: [], topicRefusal: null, carouselRefusal: null, carouselWeekly: false, connected: null, connectedRefusals: 0, autoPosting: {}, autoPostingDown: false, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
+  const engine: FakeEngine = { billingEnd: null, seen: [], jobs: [], facts: {}, batches: [], posters: [], expired: [], weekly: { limit: 5, used: { instagram: 0, facebook: 0, linkedin: 0, google: 0 }, week: { from: '2026-11-09', to: '2026-11-15', restart: '2026-11-16' } }, refusePictures: null, carousels: [], topics: [], topicRefusal: null, carouselRefusal: null, carouselWeekly: false, connected: null, connectedRefusals: 0, autoPosting: {}, autoPostingDown: false, plan: { startsOn: null, endsOn: null }, close: async () => undefined };
   let counter = 0;
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -225,6 +227,10 @@ export async function fakeEngine(): Promise<FakeEngine> {
       if (req.method === 'PUT' && url.pathname === '/review/connected' && body) {
         engine.connected = Array.isArray(body['networks']) ? body['networks'].map(String) : [];
         return send(200, { changed: true });
+      }
+      if (req.method === 'PUT' && url.pathname === '/review/billing-end' && body) {
+        engine.billingEnd = typeof body['endDate'] === 'string' ? body['endDate'] : null;
+        return send(200, { changed: true, endDate: engine.billingEnd });
       }
       if (req.method === 'GET' && url.pathname === '/review/limits') {
         return send(200, { brand: caller, week: engine.weekly.week, limit: engine.weekly.limit, channels: Object.entries(engine.weekly.used).map(([network, used]) => ({ network, limit: engine.weekly.limit, used, left: Math.max(0, engine.weekly.limit - used) })) });

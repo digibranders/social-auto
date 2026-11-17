@@ -8,6 +8,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { carouselRoom, type CarouselMade } from './carousel-limit.ts';
 import { readConnected } from './connected-networks.ts';
+import { planEnded } from './plan-end.ts';
 import { CopyStage } from './copy-stage.ts';
 import type { JobStore } from './job-store.ts';
 import type { ProductBrands } from './product-brands.ts';
@@ -71,7 +72,7 @@ export function runWeeklyCarousels(deps: WeeklyCarouselDeps): WeeklyCarouselActi
   for (const brand of deps.owners.all()) {
     const brandDir = join(deps.brandsRoot, brand);
     try {
-      if (!readCarouselWeekly(brandDir)) continue;
+      if (!readCarouselWeekly(brandDir) || planEnded(brandDir, now)) continue;
       const connected = readConnected(brandDir);
       if (connected === null || connected.size === 0) continue;
       if (!existsSync(join(brandDir, 'brand.json')) || new CopyStage(brandDir, brand).list().length === 0) continue;

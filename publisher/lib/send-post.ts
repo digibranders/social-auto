@@ -19,7 +19,7 @@ import { isWantedOn, sameCaption, usesTeamInstagram, type ScheduledPost } from '
 import { forPlatform } from './variants.js';
 import { fingerprintOf } from './duplicates.js';
 import { duplicateText, guardChannels } from './send-guards.js';
-import { loadChannels, loadClients, loadPosted, savePosted } from './store.js';
+import { loadChannels, loadClients, loadPauses, loadPosted, savePosted } from './store.js';
 
 const facebookApi: FacebookApi = { postPhotoFromUrl, postPhotos, postLink, pageHealth };
 const linkedInApi: LinkedInApi = { fetchImage, uploadImage, postImage, uploadImageUrn, postMultiImage, memberHealth };
@@ -88,7 +88,7 @@ async function sendToChannels(platform: Platform, mainPost: ScheduledPost, origi
     const brand = post.brand ?? 'default';
     // A channel that is paused, or was held when the post first came due, is left out; the post still goes to the others.
     const held = file.channels.filter(
-      (c) => c.platform === platform && c.brand === brand && isWantedOn(post, c.id) && (isPaused(pauses, brand, c.id) || log[postedKey(post.id, c.id)]?.skipped === true),
+      (c) => c.platform === platform && c.brand === brand && isWantedOn(post, c.id) && (isPaused(pauses, brand, c.id, { nowMs: now, postMs: Date.parse(post.date) }) || log[postedKey(post.id, c.id)]?.skipped === true),
     );
     const heldIds = new Set(held.map((c) => c.id));
     if (!dryRun) await recordHeld(post.id, held.filter((c) => Date.parse(post.date) >= Date.parse(c.connectedAt)).map((c) => c.id), now);
@@ -158,12 +158,14 @@ export interface SendOutcome {
 }
 
 /** Sends the post everywhere it is wanted. Without `dryRun` it also tells the product and alerts the team about failures. */
-export async function sendPost(post: ScheduledPost, origin: string, dryRun: boolean, pauses: PauseFile = NO_PAUSES): Promise<SendOutcome> {
+export async function sendPost(post: ScheduledPost, origin: string, dryRun: boolean, given?: PauseFile): Promise<SendOutcome> {
+  // The safety net: a caller that does not hand over the pauses still gets them from the store, so a post can never skip a pause or the end of a paid period by being sent another way.
+  const pauses = given ?? (await loadPauses()).file;
   const brand = post.brand ?? 'default';
   const wantsInstagram = usesTeamInstagram(post);
   // The team's own Instagram account is the channel "instagram"; like the others it is held when paused, and stays held for this post.
   const heldBefore = wantsInstagram && !dryRun ? (await loadPosted().catch(() => ({ log: {} as Record<string, PostedEntry> }))).log[postedKey(post.id, 'instagram')]?.skipped === true : false;
-  const instagramHeld = wantsInstagram && (isPaused(pauses, brand, 'instagram') || heldBefore);
+  const instagramHeld = wantsInstagram && (isPaused(pauses, brand, 'instagram', { nowMs: Date.now(), postMs: Date.parse(post.date) }) || heldBefore);
   if (instagramHeld && !dryRun) await recordHeld(post.id, ['instagram'], Date.now()).catch((error: unknown) => console.error(describeError(error)));
   const instagram: Record<string, unknown> = instagramHeld
     ? { status: 'held', post: post.id }
