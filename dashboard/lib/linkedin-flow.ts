@@ -13,6 +13,11 @@ const COOKIE_TTL_SECONDS = 30 * 60;
 export const INVITE_TTL_SECONDS = 7 * 24 * 60 * 60;
 const AUTHORIZE = process.env['LINKEDIN_AUTHORIZE_URL'] ?? 'https://www.linkedin.com/oauth/v2/authorization';
 const SCOPE = 'openid profile w_member_social';
+/** Company pages (a second LinkedIn app with the Community Management API): read the pages the person administers, and post as one. */
+const PAGES_SCOPE = 'r_organization_admin w_organization_social';
+
+/** Whether the connect link asks for company pages instead of the person's own profile. Off unless LINKEDIN_PAGES=on. */
+export const pagesOn = (env: Readonly<Record<string, string | undefined>> = process.env): boolean => env['LINKEDIN_PAGES'] === 'on';
 
 /** Signed with a purpose prefix, so a session token can never pass as an invite or the reverse. */
 function sign(payload: string, secret: string): string {
@@ -80,13 +85,13 @@ export function siteOrigin(request: Request): string {
 /** Where LinkedIn sends the person back to. It must match, exactly, an address saved in the LinkedIn app. */
 export const callbackUrl = (request: Request): string => `${siteOrigin(request)}/api/linkedin-callback`;
 
-export function authorizeLink(options: { clientId: string; redirectUri: string; state: string }): string {
+export function authorizeLink(options: { clientId: string; redirectUri: string; state: string; pages?: boolean }): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: options.clientId,
     redirect_uri: options.redirectUri,
     state: options.state,
-    scope: SCOPE,
+    scope: options.pages === true ? PAGES_SCOPE : SCOPE,
   });
   return `${AUTHORIZE}?${params}`;
 }

@@ -5,14 +5,16 @@
  */
 import { attachInvite } from '../../lib/connect-guard.js';
 import { isBrand, newState } from '../../lib/facebook-flow.js';
-import { authorizeLink, callbackUrl, connectCookie, verifyInvite } from '../../lib/linkedin-flow.js';
+import { authorizeLink, callbackUrl, connectCookie, pagesOn, verifyInvite } from '../../lib/linkedin-flow.js';
 import { isSignedIn } from '../../lib/security.js';
 
 const page = (status: number, message: string): Response =>
   new Response(message, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 
 export function GET(request: Request): Response {
-  const clientId = process.env['LINKEDIN_CLIENT_ID'];
+  // With company pages switched on, the person approves the second LinkedIn app (the Community Management API) and the pages they administer are connected.
+  const pages = pagesOn();
+  const clientId = pages ? process.env['LINKEDIN_PAGES_CLIENT_ID'] : process.env['LINKEDIN_CLIENT_ID'];
   if (!clientId) return page(503, 'LinkedIn is not configured');
 
   const params = new URL(request.url).searchParams;
@@ -32,7 +34,7 @@ export function GET(request: Request): Response {
   return attachInvite(new Response(null, {
     status: 302,
     headers: {
-      Location: authorizeLink({ clientId, redirectUri: callbackUrl(request), state }),
+      Location: authorizeLink({ clientId, redirectUri: callbackUrl(request), state, ...(pages ? { pages: true } : {}) }),
       'Set-Cookie': connectCookie(state, brand, invited?.returnUrl ?? null),
       'Cache-Control': 'no-store',
     },
