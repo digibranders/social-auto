@@ -203,7 +203,7 @@ test('a brand name or address that is not allowed is refused and nothing changes
 test('a caption longer than the network takes is refused when the owner makes it, but one that was already there can still be left as it is', () => {
   const { dir, done } = workspace();
   try {
-    // More than 800 characters is over Instagram's most: refused when typed.
+    // More than 1100 characters is over Instagram's most: refused when typed.
     const long = [
       'Setup takes under 10 minutes with one script tag.',
       'The assistant answers from your own pages and guides.',
@@ -217,9 +217,9 @@ test('a caption longer than the network takes is refused when the owner makes it
       'Your support inbox stays quiet on the simple questions.',
       'People who want a human can still reach one quickly.',
       'The assistant speaks the way your brand does.',
-    ].join(' ').repeat(2);
-    assert.ok(long.length > 800);
-    assert.match(refusal(() => edit(dir, { caption: long, network: 'instagram' })), /REJECTED.*at most 800|REJECTED.*800/);
+    ].join(' ').repeat(3);
+    assert.ok(long.length > 1100);
+    assert.match(refusal(() => edit(dir, { caption: long, network: 'instagram' })), /REJECTED.*at most 1100|REJECTED.*1100/);
     // A caption already in the plan that is over today's most is not refused when only the sign-off is changed (the page sends the caption back as it is).
     const planPath = join(dir, 'week-01.json');
     const plan = JSON.parse(readFileSync(planPath, 'utf8')) as { posts: Array<{ id: string; caption: string }> };

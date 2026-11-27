@@ -23,7 +23,7 @@ test('the web-address and hashtag lines are not counted as the post\'s own sente
   assert.equal(checkCopyQuality({ headline: 'Build a site that sells', caption: `We build fast sites.\n\nExplore our services at digibranders.com (link in bio)\nExplore our services at digibranders.com (link in bio)\n#Web` }), undefined);
 });
 
-import { ownWordsLength } from './copy-quality.ts';
+import { ownWordCount, ownWordsLength } from './copy-quality.ts';
 import { validateDraft } from './planner.ts';
 
 test('a caption\'s own words leave out the hashtags and the closing address line', () => {
@@ -31,11 +31,18 @@ test('a caption\'s own words leave out the hashtags and the closing address line
   assert.equal(ownWordsLength(caption), 'Reports only help when you can read them. We help you track them.'.length);
 });
 
-test('a caption shorter than the minimum is sent back, a long enough one is accepted, and without a minimum nothing changes', () => {
+test('a caption\'s own words are counted in words, without the hashtags or the closing line', () => {
+  assert.equal(ownWordCount('Reports only help when you can read them. We help you track them.\n\nVisit acme.example (link in bio)\n\n#Reports #Tracking'), 13);
+});
+
+test('a caption outside the word range is sent back, one inside is accepted, and without a range nothing changes', () => {
   const base = { visual: 'a desk', visualLink: 'shows the topic', subline: 'Acme', headline: 'Reports you can read', hashtags: ['#a'] };
   const short = { ...base, caption: 'Track your reports.' };
-  const long = { ...base, caption: 'Reports only help when you can read them. Acme lets you track and analyze your business reports, so you can see what is happening and decide what to do next. Less digging through numbers, more clarity on where you stand.' };
-  assert.throws(() => validateDraft(short as never, 1, 'Acme', [], undefined, { optionalSubline: true, minCaption: 200 }), /caption is too short/);
-  assert.doesNotThrow(() => validateDraft(long as never, 1, 'Acme', [], undefined, { optionalSubline: true, minCaption: 200 }));
+  const inside = { ...base, caption: 'Reports only help when you can read them. Acme lets you track and analyze your business reports, so you can see what is happening and decide what to do next. Less digging through numbers, more clarity on where you stand.' };
+  const long = { ...base, caption: `${inside.caption} ${'More words that say something different each time about where the business stands today. '.repeat(1)}Nothing else changes here, but this one is simply longer than the range allows.` };
+  const range = { min: 30, max: 45 };
+  assert.throws(() => validateDraft(short as never, 1, 'Acme', [], undefined, { optionalSubline: true, captionWords: range }), /caption is too short: 3 words; it must be between 30 and 45 words/);
+  assert.doesNotThrow(() => validateDraft(inside as never, 1, 'Acme', [], undefined, { optionalSubline: true, captionWords: range }));
+  assert.throws(() => validateDraft(long as never, 1, 'Acme', [], undefined, { optionalSubline: true, captionWords: range }), /caption is too long/);
   assert.doesNotThrow(() => validateDraft(short as never, 1, 'Acme', [], undefined, { optionalSubline: true }));
 });

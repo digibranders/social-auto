@@ -41,6 +41,9 @@ function captionSentences(caption: string): string[] {
 /** How many characters of its own words a caption has: the sentences, without hashtags or the closing web-address line. */
 export const ownWordsLength = (caption: string): number => captionSentences(caption).join(' ').length;
 
+/** How many words a caption's own sentences have: the same sentences as ownWordsLength, counted in words. */
+export const ownWordCount = (caption: string): number => captionSentences(caption).join(' ').split(/\s+/).filter((w) => w !== '').length;
+
 export function checkCopyQuality(copy: Pick<PostCopy, 'headline' | 'caption'>): string | undefined {
   const headline = plain(copy.headline);
   // A name or credit set between dashes ("- HENRY FORD -", "— Jane Doe") is a signature, not a message.

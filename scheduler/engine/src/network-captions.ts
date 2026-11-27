@@ -10,7 +10,7 @@ import { checkCopy } from './copy-gate.ts';
 import { checkCopyQuality } from './copy-quality.ts';
 import { tidyPunctuation } from './caption-text.ts';
 import { chatJson } from './llm.ts';
-import { NETWORK_RULES, recommendedLengthText, type Network, type PostVariant, type PostVariants } from './networks.ts';
+import { countWords, NETWORK_RULES, recommendedLengthText, type Network, type PostVariant, type PostVariants } from './networks.ts';
 
 export interface CaptionPost {
   id: string;
@@ -65,17 +65,26 @@ function parseDrafts(value: unknown, posts: readonly CaptionPost[], networks: re
 }
 
 /** Why a draft cannot be used, or undefined when it can. */
-/** The fewest characters of its own words a network's caption should have: most of the way to the low end of its aim (LinkedIn 900 to 1200 gives 540). */
+/** The fewest characters a caption should have for a network with no word range (Google): most of the way to the low end of its aim. */
 export const minCaptionFor = (network: Network): number => Math.round(NETWORK_RULES[network].recommended.min * 0.6);
 
-/** `minimum` is asked for only while another try is left; the last try takes what it gets, so a business with few facts still gets a caption. */
+/** `minimum` is asked for only while another try is left; the last try takes what it gets, so a business with few facts still gets a caption. A caption over its network's word range is always sent back. */
 function problemWith(draft: Draft, post: CaptionPost, minimum = false): string | undefined {
   const rules = NETWORK_RULES[draft.network];
   if (draft.caption === '') return 'the caption is empty';
+  const words = rules.words;
+  // A network with a word range is held to it first, in words, which is what the writer counts; the character limit below is the safety net.
+  if (words) {
+    const count = countWords(draft.caption);
+    if (count > words.max) return `the caption is too long for ${draft.network}: ${count} words; it must be between ${words.min} and ${words.max} words, so cut it to at most ${words.max}`;
+    if (minimum && count < words.min) return `the caption is too short for ${draft.network}: ${count} words; it must be between ${words.min} and ${words.max} words, so say more about what the facts state and use nothing the facts do not state`;
+  }
   if (draft.caption.length > rules.maxCaption - 140) return `the caption is too long for ${draft.network}; keep it under ${rules.maxCaption - 140} characters`;
   const quality = checkCopyQuality({ headline: post.headline, caption: draft.caption });
   if (quality) return quality;
-  if (minimum && draft.caption.length < minCaptionFor(draft.network)) return `the caption is too short for ${draft.network}: ${draft.caption.length} characters; write at least ${minCaptionFor(draft.network)} (aim for ${recommendedLengthText(draft.network)}), saying more about what the facts state and using nothing the facts do not state`;
+  if (!words && minimum && draft.caption.length < minCaptionFor(draft.network)) {
+    return `the caption is too short for ${draft.network}: ${draft.caption.length} characters; write at least ${minCaptionFor(draft.network)} (aim for ${recommendedLengthText(draft.network)}), saying more about what the facts state and using nothing the facts do not state`;
+  }
   const violations = checkCopy({ headline: post.headline, subline: '', caption: draft.caption }, post.facts);
   if (violations.length > 0) return `it says something the facts do not support: ${violations.map((v) => `"${v.sentence.slice(0, 80)}" ${v.reason}`).join('; ')}`;
   return undefined;

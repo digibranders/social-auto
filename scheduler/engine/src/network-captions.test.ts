@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { aiConfigFromEnv } from './ai.ts';
-import { minCaptionFor, writeNetworkCaptions, type CaptionPost } from './network-captions.ts';
-import { composeVariant } from './networks.ts';
+import { writeNetworkCaptions, type CaptionPost } from './network-captions.ts';
+import { composeVariant, countWords } from './networks.ts';
 
 const ai = aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234', AI_PROVIDER: 'openai' });
 const CTA = 'Explore our services at acme.example (link in bio)';
@@ -93,28 +93,49 @@ test('the writer is told how long each network\'s caption should be and that the
   ] }]);
   await writeNetworkCaptions({ ai, posts, networks: ['linkedin', 'google'], fetchFn });
   const asked = requests[0] ?? '';
-  assert.match(asked, /linkedin: .*Aim for about 900 to 1200 characters/);
+  assert.match(asked, /linkedin: .*Aim for 150 to 300 words/);
   assert.match(asked, /google: .*Aim for about 150 to 300 characters/);
   assert.match(asked, /the hook comes first/);
 });
 
-test('a caption that is too short for its network is asked for again, longer; the last try takes what it gets, and without the option nothing is asked', async () => {
-  const short = 'We help you track and analyze your business reports.';
-  const long = 'Reports only help when you can read them. Acme tracks and analyzes business reports, so you can see what is happening in your business. Instead of digging through spreadsheets, you get a clear view of where things stand. That makes it easier to decide what to do next, and to explain those decisions to your team. Good decisions start with information you can trust, and trust starts with reports that are easy to follow. It is a small change that leaves more time for the work that needs your attention. Take a look at how Acme can fit into the way your team already works.';
-  const answer = (text: string) => Response.json({ choices: [{ message: { content: JSON.stringify({ captions: [{ postId: 'p1', network: 'linkedin', caption: text, hashtags: ['#Reports'] }] }) } }] });
+/** `count` distinct made-up words in sentences of ten, so no sentence repeats another (the writing check turns repetition back). */
+const wordsOf = (count: number, seed = 0): string => {
+  const syl = ['ka', 'lo', 'mi', 'ra', 'su', 'te', 'vo', 'zi', 'ne', 'pa'];
+  const word = (i: number): string => `${syl[(i + seed) % 10]}${syl[Math.floor((i + seed) / 10) % 10]}${syl[Math.floor((i + seed) / 100) % 10]}${syl[(i * 7 + seed) % 10]}`;
+  const out: string[] = [];
+  for (let i = 0; i < count; i += 1) out.push(word(i + 1) + ((i + 1) % 10 === 0 ? '.' : ''));
+  return out.join(' ').replace(/\.$/, '') + '.';
+};
+
+test('a caption outside its network\'s word range is asked for again; too long always, too short on the first tries, and the last try takes a short one', async () => {
   const input = { ai, networks: ['linkedin'] as const, posts: [{ id: 'p1', headline: 'Track your reports', caption: 'Track your reports.\n\nVisit acme.example (link in bio)', hashtags: ['#Reports'], facts: ['Acme tracks and analyzes business reports.'] }] };
+  const answer = (text: string) => Response.json({ choices: [{ message: { content: JSON.stringify({ captions: [{ postId: 'p1', network: 'linkedin', caption: text, hashtags: ['#Reports'] }] }) } }] });
   const bodies: string[] = [];
   const asking = (texts: string[]) => async (_url: string | URL | Request, init?: RequestInit) => { bodies.push(String(init?.body)); return answer(texts[Math.min(bodies.length - 1, texts.length - 1)] as string); };
-  const grown = await writeNetworkCaptions({ ...input, networks: [...input.networks], minCaptions: true, fetchFn: asking([short, long]) as unknown as typeof fetch });
-  assert.equal(bodies.length, 2, 'asked again once');
-  assert.match(bodies[1] ?? '', /too short for linkedin/);
-  assert.ok((grown.variants['p1']?.linkedin?.caption.length ?? 0) > minCaptionFor('linkedin'));
+  const run = (texts: string[], extra: { minCaptions?: boolean } = {}) => writeNetworkCaptions({ ...input, networks: [...input.networks], ...extra, fetchFn: asking(texts) as unknown as typeof fetch });
+  const short = wordsOf(40, 1);
+  const inside = wordsOf(180, 2);
+  const tooLong = wordsOf(340, 3);
+  assert.equal(countWords(short), 40);
+  assert.equal(countWords(inside), 180);
+
+  // Too short on the first try: asked again, with the count and the range; the longer answer is used.
+  const grown = await run([short, inside], { minCaptions: true });
+  assert.equal(bodies.length, 2);
+  assert.match(bodies[1] ?? '', /too short for linkedin: 40 words; it must be between 150 and 300 words/);
+  assert.equal(countWords(grown.variants['p1']?.linkedin?.caption ?? ''), 180 + 2, 'the words plus the closing line');
+  // Too long is sent back on every try, with or without the option.
   bodies.length = 0;
-  const stubborn = await writeNetworkCaptions({ ...input, networks: [...input.networks], minCaptions: true, fetchFn: asking([short]) as unknown as typeof fetch });
-  assert.equal(bodies.length, 3, 'two corrections, then the short answer is accepted');
-  assert.match(stubborn.variants['p1']?.linkedin?.caption ?? '', /track and analyze/);
+  await run([tooLong, inside]);
+  assert.equal(bodies.length, 2);
+  assert.match(bodies[1] ?? '', /too long for linkedin: 340 words; it must be between 150 and 300 words, so cut it to at most 300/);
+  // A short answer every time: two corrections, then the last try takes it.
+  bodies.length = 0;
+  const stubborn = await run([short], { minCaptions: true });
+  assert.equal(bodies.length, 3);
   assert.equal(stubborn.report.fallback.length, 0);
+  // Without the option a short caption is left alone.
   bodies.length = 0;
-  await writeNetworkCaptions({ ...input, networks: [...input.networks], fetchFn: asking([short]) as unknown as typeof fetch });
-  assert.equal(bodies.length, 1, 'no option: no minimum');
+  await run([short]);
+  assert.equal(bodies.length, 1);
 });

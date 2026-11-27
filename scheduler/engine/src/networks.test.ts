@@ -44,18 +44,20 @@ test('each network has a length worth aiming for inside its limit, a cut-off ins
     assert.ok(r.recommended.max <= r.maxCaption, `${network}: aim for less than the most`);
     assert.ok(r.visibleChars > 0 && r.visibleChars < r.recommended.max, `${network}: what is seen first is shorter than the whole`);
   }
-  assert.equal(recommendedLengthText('instagram'), 'about 300 to 600 characters');
-  assert.equal(recommendedLengthText('linkedin'), 'about 900 to 1200 characters');
+  assert.equal(recommendedLengthText('instagram'), '80 to 120 words');
+  assert.equal(recommendedLengthText('facebook'), '150 to 300 words');
+  assert.equal(recommendedLengthText('linkedin'), '150 to 300 words');
+  assert.equal(recommendedLengthText('google'), 'about 150 to 300 characters');
   // The shorter channels are held to a shorter most than LinkedIn.
   assert.ok(NETWORK_RULES.instagram.maxCaption < NETWORK_RULES.linkedin.maxCaption);
   assert.deepEqual(captionRulesView().google, { maxCaption: 1000, recommendedMin: 150, recommendedMax: 300, visibleChars: 100, maxHashtags: 0 });
+  assert.deepEqual(captionRulesView().instagram.wordsMin, 80);
+  assert.deepEqual([captionRulesView().linkedin.wordsMin, captionRulesView().linkedin.wordsMax, captionRulesView().facebook.wordsMin, captionRulesView().facebook.wordsMax], [150, 300, 150, 300]);
   assert.deepEqual(Object.keys(captionRulesView()), [...NETWORKS]);
 });
 
-test('the main caption, which is Instagram\'s, is asked for inside the range worth aiming for on Instagram', () => {
-  const { min, max } = NETWORK_RULES.instagram.recommended;
-  for (const facts of [1, 2, 3]) {
-    const [low, high] = (/(\d+) to (\d+)/.exec(captionTarget(facts)) ?? []).slice(1).map(Number) as [number, number];
-    assert.ok(low >= min && high <= max, `${facts} fact(s): ${captionTarget(facts)} is inside ${min} to ${max}`);
-  }
+test('the main caption, which is Instagram\'s, is asked for inside Instagram\'s word range, whatever the facts', () => {
+  const words = NETWORK_RULES.instagram.words as { min: number; max: number };
+  assert.deepEqual(words, { min: 80, max: 120 });
+  for (const facts of [1, 2, 3]) assert.equal(captionTarget(facts), '80 to 120 words');
 });
