@@ -5,7 +5,7 @@
  */
 import { attachInvite } from '../../lib/connect-guard.js';
 import { isBrand, newState } from '../../lib/facebook-flow.js';
-import { authorizeLink, callbackUrl, connectCookie } from '../../lib/instagram-flow.js';
+import { authorizeLink, callbackUrl, connectCookie, facebookLoginLink, usesFacebookLogin } from '../../lib/instagram-flow.js';
 import { verifyInvite } from '../../lib/linkedin-flow.js';
 import { isSignedIn } from '../../lib/security.js';
 
@@ -13,8 +13,10 @@ const page = (status: number, message: string): Response =>
   new Response(message, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
 
 export function GET(request: Request): Response {
-  const appId = process.env['INSTAGRAM_APP_ID'];
-  if (!appId) return page(503, 'Instagram is not configured');
+  const facebookLogin = usesFacebookLogin();
+  const appId = process.env[facebookLogin ? 'FACEBOOK_APP_ID' : 'INSTAGRAM_APP_ID'];
+  const configId = process.env['INSTAGRAM_CONFIG_ID'];
+  if (!appId || (facebookLogin && !configId)) return page(503, 'Instagram is not configured');
 
   const params = new URL(request.url).searchParams;
   // Links made in the dashboard are signed with the session secret; links a product asks for, with INVITE_SECRET.
@@ -33,7 +35,7 @@ export function GET(request: Request): Response {
   return attachInvite(new Response(null, {
     status: 302,
     headers: {
-      Location: authorizeLink({ appId, redirectUri: callbackUrl(request), state }),
+      Location: facebookLogin && configId ? facebookLoginLink({ appId, configId, redirectUri: callbackUrl(request), state }) : authorizeLink({ appId, redirectUri: callbackUrl(request), state }),
       'Set-Cookie': connectCookie(state, brand, invited?.returnUrl ?? null),
       'Cache-Control': 'no-store',
     },

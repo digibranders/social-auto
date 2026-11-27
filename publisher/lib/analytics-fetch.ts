@@ -2,9 +2,9 @@
  * Reads numbers from the networks (read only). Each reader says what the network gave and what it refused: a refusal for a missing permission or too few
  * followers is a `need`, not an error, so the rest of the numbers are still kept.
  */
+import { instagramGraph } from './instagram.js';
 import type { AccountNumbers, AudienceNumbers, Need, PostNumbers } from './analytics.js';
 
-const INSTAGRAM_GRAPH = `${process.env['INSTAGRAM_GRAPH_URL'] ?? 'https://graph.instagram.com'}/v23.0`;
 const FACEBOOK_GRAPH = process.env['FACEBOOK_GRAPH_URL'] ?? 'https://graph.facebook.com/v23.0';
 const GOOGLE_PERFORMANCE = process.env['GOOGLE_PERFORMANCE_URL'] ?? 'https://businessprofileperformance.googleapis.com/v1';
 
@@ -83,14 +83,14 @@ const put = <T extends object>(target: T, key: keyof T, value: number | undefine
 
 /** One Instagram post: likes and comments need no new permission; reach, views, shares and saves need the insights permission. */
 export async function instagramPost(mediaId: string, token: string, fetcher: Fetch = fetch): Promise<PostReading> {
-  const basic = await graph(fetcher, 'Instagram post', `${INSTAGRAM_GRAPH}/${mediaId}?${new URLSearchParams({ fields: 'caption,permalink,like_count,comments_count', access_token: token })}`);
+  const basic = await graph(fetcher, 'Instagram post', `${instagramGraph()}/${mediaId}?${new URLSearchParams({ fields: 'caption,permalink,like_count,comments_count', access_token: token })}`);
   const numbers: PostNumbers = {};
   // A refusal on the basic numbers (no permission to read them) leaves nothing to read: say so, instead of saving an empty reading.
   if (basic.refusal) return { numbers, needs: basic.refusal.permission ? ['reconnect'] : [] };
   put(numbers, 'likes', count(basic.body['like_count']));
   put(numbers, 'comments', count(basic.body['comments_count']));
   const needs: Need[] = [];
-  const insights = await graph(fetcher, 'Instagram post insights', `${INSTAGRAM_GRAPH}/${mediaId}/insights?${new URLSearchParams({ metric: 'reach,views,shares,saved', access_token: token })}`);
+  const insights = await graph(fetcher, 'Instagram post insights', `${instagramGraph()}/${mediaId}/insights?${new URLSearchParams({ metric: 'reach,views,shares,saved', access_token: token })}`);
   if (insights.refusal) { if (insights.refusal.permission) needs.push('reconnect'); }
   else {
     put(numbers, 'reach', insightValue(insights.body, 'reach'));
@@ -112,12 +112,12 @@ const utcSeconds = (day: string): number => Math.floor(Date.parse(`${day}T00:00:
 export async function instagramAccount(userId: string, token: string, today: string, fetcher: Fetch = fetch): Promise<AccountReading> {
   const needs: Need[] = [];
   const numbers: Record<string, AccountNumbers> = {};
-  const profile = await graph(fetcher, 'Instagram account', `${INSTAGRAM_GRAPH}/${userId}?${new URLSearchParams({ fields: 'followers_count', access_token: token })}`);
+  const profile = await graph(fetcher, 'Instagram account', `${instagramGraph()}/${userId}?${new URLSearchParams({ fields: 'followers_count', access_token: token })}`);
   if (profile.refusal) return { numbers, needs: profile.refusal.permission ? ['reconnect'] : [] };
   const followers = count(profile.body['followers_count']);
   if (followers !== undefined) numbers[today] = { followers };
   const yesterday = new Date(Date.parse(`${today}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
-  const day = await graph(fetcher, 'Instagram account insights', `${INSTAGRAM_GRAPH}/${userId}/insights?${new URLSearchParams({ metric: 'reach,views,profile_views', metric_type: 'total_value', period: 'day', since: String(utcSeconds(yesterday)), until: String(utcSeconds(today)), access_token: token })}`);
+  const day = await graph(fetcher, 'Instagram account insights', `${instagramGraph()}/${userId}/insights?${new URLSearchParams({ metric: 'reach,views,profile_views', metric_type: 'total_value', period: 'day', since: String(utcSeconds(yesterday)), until: String(utcSeconds(today)), access_token: token })}`);
   if (day.refusal) { if (day.refusal.permission) needs.push('reconnect'); }
   else {
     const entry: AccountNumbers = {};
@@ -129,7 +129,7 @@ export async function instagramAccount(userId: string, token: string, today: str
   const audience: AudienceNumbers = {};
   if (!day.refusal) {
     for (const part of ['age', 'gender', 'country', 'city'] as const) {
-      const answer = await graph(fetcher, 'Instagram audience', `${INSTAGRAM_GRAPH}/${userId}/insights?${new URLSearchParams({ metric: 'follower_demographics', period: 'lifetime', metric_type: 'total_value', breakdown: part, access_token: token })}`);
+      const answer = await graph(fetcher, 'Instagram audience', `${instagramGraph()}/${userId}/insights?${new URLSearchParams({ metric: 'follower_demographics', period: 'lifetime', metric_type: 'total_value', breakdown: part, access_token: token })}`);
       if (answer.refusal) {
         if (answer.refusal.followers) needs.push('followers');
         else if (answer.refusal.permission) needs.push('reconnect');
