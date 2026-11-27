@@ -254,9 +254,9 @@ const planWith = (b: Brand, evidence: Parameters<typeof planWeek>[0]['evidence']
 test('a pricing call to action is replaced by the neutral one on a post that is not about price or plan, and the writer is told', async () => {
   const setup = facts().filter((f) => f.text === SETUP);
   const { plan, m } = await planWith(pricingBrand, { facts: setup });
-  assert.match(m.prompts[0] ?? '', /Call to action for this post \(use this one, not the profile's\): \\"Visit acme.example \(link in bio\)\\"/);
+  assert.match(m.prompts[0] ?? '', /Call to action for this post \(use this one, not the profile's\): \\"Visit acme.example\\"/);
   assert.equal(plan.posts[0]?.cta?.label, 'Visit the website');
-  assert.equal(plan.posts[0]?.cta?.text, 'Visit acme.example (link in bio)');
+  assert.equal(plan.posts[0]?.cta?.text, 'Visit acme.example');
   assert.match(plan.posts[0]?.ctaReason ?? '', /cta_relevance_fallback/);
   assert.ok(!(plan.posts[0]?.hookWarnings ?? []).includes('editorial: cta_mismatch'));
 });
