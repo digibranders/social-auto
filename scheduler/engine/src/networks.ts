@@ -12,6 +12,8 @@ export interface NetworkRules {
   maxCaption: number;
   /** The length worth aiming for, in characters: readers of a business post read the start and stop. Advice, never a limit. */
   recommended: { min: number; max: number };
+  /** The words a caption must have (the post's own words, without hashtags or the closing line): asked for and checked by the writers. Google has none, so its length stays in characters. */
+  words?: { min: number; max: number };
   /** About how many characters a reader sees before the platform folds the caption behind "more". An estimate, and the platforms change it. */
   visibleChars: number;
   maxHashtags: number;
@@ -24,9 +26,9 @@ export interface NetworkRules {
 }
 
 export const NETWORK_RULES: Record<Network, NetworkRules> = {
-  instagram: { maxCaption: 800, recommended: { min: 300, max: 600 }, visibleChars: 125, maxHashtags: 5, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'short, warm and visual; two or three short lines; hashtags allowed', linkInBio: false },
-  facebook: { maxCaption: 800, recommended: { min: 300, max: 600 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'friendly and conversational, a little longer than Instagram; the web address can be written out', linkInBio: false },
-  linkedin: { maxCaption: 1500, recommended: { min: 900, max: 1200 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'wide', width: 1536, height: 1024 }, voice: 'professional and plain; lead with what the business does for its customers; no slang; few hashtags', linkInBio: false },
+  instagram: { maxCaption: 1100, recommended: { min: 500, max: 850 }, words: { min: 80, max: 120 }, visibleChars: 125, maxHashtags: 5, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'short, warm and visual; two or three short lines; hashtags allowed', linkInBio: false },
+  facebook: { maxCaption: 2400, recommended: { min: 900, max: 2000 }, words: { min: 150, max: 300 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'friendly and conversational, a little longer than Instagram; the web address can be written out', linkInBio: false },
+  linkedin: { maxCaption: 2400, recommended: { min: 900, max: 2000 }, words: { min: 150, max: 300 }, visibleChars: 125, maxHashtags: 3, picture: { shape: 'wide', width: 1536, height: 1024 }, voice: 'professional and plain; lead with what the business does for its customers; no slang; few hashtags', linkInBio: false },
   google: { maxCaption: 1000, recommended: { min: 150, max: 300 }, visibleChars: 100, maxHashtags: 0, picture: { shape: 'square', width: 1024, height: 1024 }, voice: 'plain text, factual, no hashtags and no emoji, as a local business would post on its listing', linkInBio: false },
 };
 
@@ -85,8 +87,14 @@ export const COMPOSITION_BY_NETWORK: Record<Network, string> = {
 };
 
 /** The length worth aiming for, in words for the writer, e.g. "about 100 to 300 characters". */
-export const recommendedLengthText = (network: Network): string => `about ${NETWORK_RULES[network].recommended.min} to ${NETWORK_RULES[network].recommended.max} characters`;
+export const recommendedLengthText = (network: Network): string => {
+  const { words, recommended } = NETWORK_RULES[network];
+  return words ? `${words.min} to ${words.max} words` : `about ${recommended.min} to ${recommended.max} characters`;
+};
+
+/** How many words a text has: runs of characters between spaces and line breaks. */
+export const countWords = (text: string): number => text.trim().split(/\s+/).filter((w) => w !== '').length;
 
 /** What the owner's page needs to know about every network's captions. */
-export const captionRulesView = (): Record<Network, { maxCaption: number; recommendedMin: number; recommendedMax: number; visibleChars: number; maxHashtags: number }> =>
-  Object.fromEntries(NETWORKS.map((n) => [n, { maxCaption: NETWORK_RULES[n].maxCaption, recommendedMin: NETWORK_RULES[n].recommended.min, recommendedMax: NETWORK_RULES[n].recommended.max, visibleChars: NETWORK_RULES[n].visibleChars, maxHashtags: NETWORK_RULES[n].maxHashtags }])) as Record<Network, { maxCaption: number; recommendedMin: number; recommendedMax: number; visibleChars: number; maxHashtags: number }>;
+export const captionRulesView = (): Record<Network, { maxCaption: number; recommendedMin: number; recommendedMax: number; wordsMin?: number; wordsMax?: number; visibleChars: number; maxHashtags: number }> =>
+  Object.fromEntries(NETWORKS.map((n) => [n, { maxCaption: NETWORK_RULES[n].maxCaption, recommendedMin: NETWORK_RULES[n].recommended.min, recommendedMax: NETWORK_RULES[n].recommended.max, ...(NETWORK_RULES[n].words ? { wordsMin: NETWORK_RULES[n].words.min, wordsMax: NETWORK_RULES[n].words.max } : {}), visibleChars: NETWORK_RULES[n].visibleChars, maxHashtags: NETWORK_RULES[n].maxHashtags }])) as Record<Network, { maxCaption: number; recommendedMin: number; recommendedMax: number; wordsMin?: number; wordsMax?: number; visibleChars: number; maxHashtags: number }>;

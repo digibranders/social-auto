@@ -270,9 +270,9 @@ test('the brand call to action is kept on a post built on a commercial fact, and
   assert.equal(legacy.plan.posts[0]?.cta, undefined);
 });
 
-test('caption length follows the evidence: a short target for one fact, no 450 to 900 floor in fact mode, the old range for legacy', async () => {
+test('caption length is the Instagram word range, whatever the facts; no 450 to 900 floor in fact mode, the old range for legacy', async () => {
   const one = await planWith(brand, { facts: facts().filter((f) => f.text === SETUP) });
-  assert.match(one.m.prompts[0] ?? '', /Caption length for this post: about 300 to 450 characters; say each fact once/);
+  assert.match(one.m.prompts[0] ?? '', /Caption length for this post: 80 to 120 words; say each fact once/);
   assert.ok(!/450-900/.test(one.m.prompts[0] ?? ''));
   const legacy = await planWith(brand, undefined);
   assert.match(legacy.m.prompts[0] ?? '', /450-900 characters/);

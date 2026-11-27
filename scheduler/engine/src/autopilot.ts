@@ -61,7 +61,7 @@ import { redrawAlike } from './look-alike-check.ts';
 import { classifyNotDrawn, NOT_DRAWN_REASON } from './not-drawn.ts';
 import { drawableFactIds, DRAW_FACT_MAX_AGE_DAYS, postsWithOutdatedFacts } from './fact-recheck.ts';
 import { weeklyLimitFromEnv } from './picture-limit.ts';
-import { composeVariant, isNetwork, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
+import { composeVariant, isNetwork, NETWORK_RULES, NETWORKS, pictureGroups, variantTexts, type Network, type PostVariants } from './networks.ts';
 import { writeNetworkCaptions } from './network-captions.ts';
 import { headlineGateFromEnv, judgeHeadlines, scoreHeadlines } from './headline-gate.ts';
 import { acquireTenantLock, artDirectPlan, assertArtAllowed, loadArtSettings, readArtHistory, writeFileAtomic, type ArtHistoryEntry, type ArtTenantSettings } from './art-pipeline.ts';
@@ -72,7 +72,7 @@ import { exportToPublisher } from './export-publisher.ts';
 import { envFilePath, loadEnvIfPresent } from './platform.ts';
 import { normalizeHeadline } from './hooks.ts';
 import type { ConceptRecord } from './concepts.ts';
-import { CAPTION_RULES, conceptRecordOf, InsufficientConceptsError, MIN_CAPTION_CHARS, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
+import { CAPTION_RULES, conceptRecordOf, InsufficientConceptsError, planWeek, scheduleDates, type PlanSchedule } from './planner.ts';
 import { topUpPlan } from './plan-topup.ts';
 import { cleanPost } from './no-dashes.ts';
 import { weekChunks } from './week-chunks.ts';
@@ -573,7 +573,7 @@ async function main(): Promise<void> {
     const writePlan = (schedule: PlanSchedule, over: Partial<Parameters<typeof planWeek>[0]> = {}): ReturnType<typeof planWeek> => planWeek({
       ai,
       compositionHints: process.env['IMAGE_COMPOSITION_HINT'] === '1',
-      minCaptionChars: MIN_CAPTION_CHARS,
+      ...(NETWORK_RULES.instagram.words ? { captionWords: NETWORK_RULES.instagram.words } : {}),
       brand,
       brandSlug: slug,
       weekNumber,
