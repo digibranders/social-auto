@@ -59,3 +59,11 @@ test('an invite can carry the page to return to, and that survives the trip thro
   assert.equal(isSafeReturnUrl('http://localhost:3198/social'), true);
   assert.equal(isSafeReturnUrl('http://app.brandbasket.in/social'), false);
 });
+
+test('company pages are off unless LINKEDIN_PAGES is on, and then the link asks for the page scopes', async () => {
+  const { authorizeLink: link, pagesOn } = await import('./linkedin-flow.ts');
+  assert.equal(pagesOn({}), false);
+  assert.equal(pagesOn({ LINKEDIN_PAGES: 'on' }), true);
+  assert.equal(new URL(link({ clientId: 'c', redirectUri: 'https://x.example/api/linkedin-callback', state: 's' })).searchParams.get('scope'), 'openid profile w_member_social');
+  assert.equal(new URL(link({ clientId: 'c', redirectUri: 'https://x.example/api/linkedin-callback', state: 's', pages: true })).searchParams.get('scope'), 'r_organization_admin w_organization_social');
+});

@@ -20,7 +20,7 @@ export interface LinkedInChannel {
   id: string;
   platform: 'linkedin';
   brand: string;
-  /** "urn:li:person:<id>": the author of every post. */
+  /** "urn:li:person:<id>", or "urn:li:organization:<id>" for a company page: the author of every post. */
   memberUrn: string;
   memberName: string;
   /** Encrypted access token. LinkedIn gives self-serve apps no refresh token, so it ends at expiresAt. */
@@ -174,6 +174,29 @@ export function addLinkedInMember(
     brand,
     memberUrn: member.urn,
     memberName: member.name,
+    token: encrypt(accessToken, key),
+    expiresAt: new Date(now + expiresInSeconds * 1000).toISOString(),
+    connectedAt: new Date(now).toISOString(),
+  };
+  return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
+}
+
+/** Saves a LinkedIn company page for a client, posted to in the page's own name. It is a LinkedIn channel whose author is the page, so posting is the same as for a member. */
+export function addLinkedInPage(
+  file: ChannelFile,
+  brand: string,
+  page: { urn: string; name: string },
+  accessToken: string,
+  expiresInSeconds: number,
+  key: Buffer,
+  now: number,
+): ChannelFile {
+  const channel: LinkedInChannel = {
+    id: `linkedin:org-${page.urn.split(':').pop()}`,
+    platform: 'linkedin',
+    brand,
+    memberUrn: page.urn,
+    memberName: page.name,
     token: encrypt(accessToken, key),
     expiresAt: new Date(now + expiresInSeconds * 1000).toISOString(),
     connectedAt: new Date(now).toISOString(),

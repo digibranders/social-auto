@@ -7,7 +7,7 @@
 import { guardFor, refusal } from '../../lib/connect-guard.js';
 import { describeError } from '../../lib/http.js';
 import { statesMatch } from '../../lib/facebook-flow.js';
-import { callbackUrl, clearedConnectCookie, LINKEDIN_COOKIE, parseConnectCookie } from '../../lib/linkedin-flow.js';
+import { callbackUrl, clearedConnectCookie, LINKEDIN_COOKIE, pagesOn, parseConnectCookie } from '../../lib/linkedin-flow.js';
 import { finishConnect, type Outcome } from '../../lib/connect-result.js';
 import { readCookie } from '../../lib/security.js';
 
@@ -31,7 +31,7 @@ export async function GET(request: Request): Promise<Response> {
     const response = await fetch(new URL('/api/linkedin-connect', target), {
       method: 'POST',
       headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, redirectUri: callbackUrl(request), brand: saved.brand, ...guardFor(request) }),
+      body: JSON.stringify({ code, redirectUri: callbackUrl(request), brand: saved.brand, ...(pagesOn() ? { pages: true } : {}), ...guardFor(request) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
     const refused = await refusal(response);

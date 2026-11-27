@@ -8,6 +8,14 @@ const API = process.env['LINKEDIN_API_URL'] ?? 'https://api.linkedin.com';
 /** Sign-in (OpenID: openid, profile) plus permission to post as the member. */
 export const LINKEDIN_SCOPES = ['openid', 'profile', 'w_member_social'] as const;
 
+/**
+ * Company pages (the Community Management API, a second LinkedIn app): list the pages the person administers and post as one. Off unless LINKEDIN_PAGES=on.
+ * The scopes are the page-admin read (to find the pages) and the post-as-page write.
+ */
+export const LINKEDIN_PAGES_SCOPES = ['r_organization_admin', 'w_organization_social'] as const;
+export const pagesEnabled = (env: Readonly<Record<string, string | undefined>> = process.env): boolean => env['LINKEDIN_PAGES'] === 'on';
+export const isPageUrn = (urn: string): boolean => /^urn:li:organization:\d{1,20}$/.test(urn);
+
 export class LinkedInApiError extends Error {
   constructor(step: string, detail: string) {
     super(`LinkedIn ${step} failed: ${detail.slice(0, 400)}`);
@@ -20,13 +28,13 @@ export interface LinkedInApp {
   clientSecret: string;
 }
 
-export function authorizeUrl(options: { clientId: string; redirectUri: string; state: string }): string {
+export function authorizeUrl(options: { clientId: string; redirectUri: string; state: string; pages?: boolean }): string {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: options.clientId,
     redirect_uri: options.redirectUri,
     state: options.state,
-    scope: LINKEDIN_SCOPES.join(' '),
+    scope: (options.pages === true ? LINKEDIN_PAGES_SCOPES : LINKEDIN_SCOPES).join(' '),
   });
   return `${AUTHORIZE}?${params}`;
 }
@@ -237,6 +245,38 @@ export async function memberHealth(token: string): Promise<{ ok: boolean; error?
   try {
     await memberOf(token);
     return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export interface LinkedInPage {
+  /** "urn:li:organization:<id>", the author of a post made as the page. */
+  urn: string;
+  name: string;
+}
+
+/**
+ * The company pages the token's owner administers (an approved administrator role), with their names. A page whose name cannot be read is still listed, by its number.
+ * Written from LinkedIn's documentation (organizationAcls, organizations): not yet proven against the real service.
+ */
+export async function administeredPages(token: string): Promise<LinkedInPage[]> {
+  const response = await fetch(`${API}/rest/organizationAcls?q=roleAssignee&role=ADMINISTRATOR&state=APPROVED`, { headers: versioned(token), signal: AbortSignal.timeout(30_000) });
+  const body = await readJson(response);
+  if (!response.ok || !Array.isArray(body['elements'])) throw new LinkedInApiError('page list', JSON.stringify(body));
+  const urns = [...new Set((body['elements'] as Array<{ organization?: unknown }>).flatMap((e) => (typeof e.organization === 'string' && isPageUrn(e.organization) ? [e.organization] : [])))];
+  return Promise.all(urns.map(async (urn) => {
+    const named: Record<string, unknown> = await fetch(`${API}/rest/organizations/${urn.split(':').pop()}`, { headers: versioned(token), signal: AbortSignal.timeout(30_000) }).then((r) => (r.ok ? readJson(r) : {})).catch((): Record<string, unknown> => ({}));
+    const name = typeof named['localizedName'] === 'string' && named['localizedName'] !== '' ? named['localizedName'] : `LinkedIn page ${urn.split(':').pop()}`;
+    return { urn, name };
+  }));
+}
+
+/** Whether LinkedIn still accepts the saved token for this page: the page is still one the token's owner administers. */
+export async function pageHealth(token: string, pageUrn: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const pages = await administeredPages(token);
+    return pages.some((p) => p.urn === pageUrn) ? { ok: true } : { ok: false, error: 'the person who connected this page no longer administers it' };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
