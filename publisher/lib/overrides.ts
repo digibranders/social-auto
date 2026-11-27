@@ -1,6 +1,6 @@
 import type { ErrorCode } from './api-error.js';
 import type { ScheduledPost } from './schedule.js';
-import { mergeViews, parseStoredVariants, toVariants, type StoredVariants } from './variants.js';
+import { forPlatform, mergeViews, parseStoredVariants, PLATFORMS, toVariants, type Platform, type StoredVariants } from './variants.js';
 
 /** Instagram's own limits, plus a smaller image cap: Vercel functions accept request bodies up to 4.5 MB. */
 export const MAX_CAPTION_LENGTH = 2200;
@@ -20,6 +20,11 @@ export interface PostOverride {
   variants?: StoredVariants;
   /** A planned post moved to another day or given another time: ISO 8601 with offset. Hand-made posts are moved in their own file instead. */
   date?: string;
+  /**
+   * A network's own time for a planned post that goes to more than one network (ISO 8601 with offset). The post is split in two when it is read: the networks with a time
+   * of their own are sent at it, the rest at the post's own (see applyOverrides). A network whose time equals the post's own has no entry.
+   */
+  networkDates?: Partial<Record<Platform, string>>;
   updatedAt: string;
 }
 
@@ -111,9 +116,12 @@ export function parseOverrides(raw: unknown): OverrideMap {
     if (o['skipped'] !== undefined && typeof o['skipped'] !== 'boolean') throw new Error(`overrides["${id}"].skipped is malformed`);
     if (o['skippedBy'] !== undefined && o['skippedBy'] !== 'customer') throw new Error(`overrides["${id}"].skippedBy is malformed`);
     const variants = parseStoredVariants(o['variants']);
+    const networkDates = parseNetworkDates(o['networkDates']);
     const parsed = { ...(o as unknown as PostOverride) };
     if (variants) parsed.variants = variants;
     else delete parsed.variants;
+    if (networkDates) parsed.networkDates = networkDates;
+    else delete parsed.networkDates;
     result[id] = parsed;
   }
   return result;
@@ -121,25 +129,74 @@ export function parseOverrides(raw: unknown): OverrideMap {
 
 export type EditedPost = ScheduledPost & { edited: boolean };
 
-/** The posts as they will actually be sent: planned posts with the dashboard edits applied on top, and the ones skipped marked. */
+/** The separator in the id of a post split by network time: `<post id>~<network>`. */
+export const SPLIT_MARK = '~';
+
+/** A post id and, when it names one network's part of a split post, that network. */
+export function splitId(id: string): { base: string; network: Platform | null } {
+  const at = id.lastIndexOf(SPLIT_MARK);
+  if (at < 0) return { base: id, network: null };
+  const network = id.slice(at + 1);
+  return (PLATFORMS as readonly string[]).includes(network) ? { base: id.slice(0, at), network: network as Platform } : { base: id, network: null };
+}
+
+/** The network a channel entry of a post is for: "linkedin:123" and "linkedin" are both LinkedIn. */
+export const platformOfChannel = (channel: string): string => (channel.includes(':') ? channel.slice(0, channel.indexOf(':')) : channel);
+
+/** Reads stored network times back from storage; anything malformed is dropped rather than blocking every post. */
+export function parseNetworkDates(raw: unknown): Partial<Record<Platform, string>> | undefined {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return undefined;
+  const result: Partial<Record<Platform, string>> = {};
+  for (const platform of PLATFORMS) {
+    const value = (raw as Record<string, unknown>)[platform];
+    if (typeof value === 'string' && !Number.isNaN(Date.parse(value))) result[platform] = value;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/** One post with its own edits applied (a move, words, a picture, a skip), whole: networks with a time of their own are not split off here. */
+export function overridePost(post: ScheduledPost, o: PostOverride | undefined): EditedPost {
+  if (!o) return { ...post, edited: false };
+  const moved = o.date === undefined ? {} : { date: o.date, ownTime: true };
+  const skipped = o.skipped === true ? { skipped: true } : {};
+  if (o.caption === undefined && o.imageKey === undefined && o.variants === undefined) return { ...post, ...moved, ...skipped, edited: false };
+  const variants = mergeViews(post.variants, toVariants(o.variants));
+  return {
+    ...post,
+    ...moved,
+    ...skipped,
+    caption: o.caption ?? post.caption,
+    image: o.imageKey ? imagePathFor(o.imageKey) : post.image,
+    ...(variants ? { variants } : {}),
+    edited: true,
+  };
+}
+
+/**
+ * A post that goes to several networks and has a time of its own for some of them becomes ordinary posts: the networks on the post's own time stay on it, and each network
+ * with a time of its own is a post of its own (`<id>~<network>`, with that network's words and picture, at its time). Everything that reads posts (sending, status, missed
+ * alerts, the sent log) then needs to know nothing about this. A post with no network time, or going to one network, is returned as it is.
+ */
+function splitByNetwork(post: EditedPost, dates: PostOverride['networkDates']): EditedPost[] {
+  if (!dates || !post.channels || post.channels.length === 0) return [post];
+  let main = post.channels;
+  const apart: EditedPost[] = [];
+  for (const network of PLATFORMS) {
+    const at = dates[network];
+    if (at === undefined || Date.parse(at) === Date.parse(post.date)) continue;
+    const mine = post.channels.filter((channel) => platformOfChannel(channel) === network);
+    if (mine.length === 0) continue;
+    main = main.filter((channel) => platformOfChannel(channel) !== network);
+    const { variants: _own, ...own } = forPlatform(post, network) as EditedPost;
+    apart.push({ ...own, id: `${post.id}${SPLIT_MARK}${network}`, splitOf: post.id, date: at, ownTime: true, channels: mine });
+  }
+  if (apart.length === 0) return [post];
+  return main.length > 0 ? [{ ...post, channels: main }, ...apart] : apart;
+}
+
+/** The posts as they will actually be sent: planned posts with the dashboard edits applied on top, the ones skipped marked, and a network with a time of its own split off. */
 export function applyOverrides(posts: ScheduledPost[], overrides: OverrideMap): EditedPost[] {
-  return posts.map((post) => {
-    const o = overrides[post.id];
-    if (!o) return { ...post, edited: false };
-    const moved = o.date === undefined ? {} : { date: o.date, ownTime: true };
-    const skipped = o.skipped === true ? { skipped: true } : {};
-    if (o.caption === undefined && o.imageKey === undefined && o.variants === undefined) return { ...post, ...moved, ...skipped, edited: false };
-    const variants = mergeViews(post.variants, toVariants(o.variants));
-    return {
-      ...post,
-      ...moved,
-      ...skipped,
-      caption: o.caption ?? post.caption,
-      image: o.imageKey ? imagePathFor(o.imageKey) : post.image,
-      ...(variants ? { variants } : {}),
-      edited: true,
-    };
-  });
+  return posts.flatMap((post) => splitByNetwork(overridePost(post, overrides[post.id]), overrides[post.id]?.networkDates));
 }
 
 /** A post can be changed only while its time is still ahead: after that it is due, published, or missed. */
