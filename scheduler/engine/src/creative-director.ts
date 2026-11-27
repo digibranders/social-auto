@@ -26,6 +26,8 @@ export interface CreativeConcept {
   concept: string;
   /** Whether people are a prominent part of the picture. */
   people: boolean;
+  /** Whether the picture reads as a real photograph (real light, materials and places), not a drawing or a render; left out by a director that did not say. */
+  photo?: boolean;
   /** One sentence: how the picture communicates the approved fact. */
   factToPicture: string;
   /** How the headline is set, in the director's own words: personality, scale against the picture, weight, letterforms, colour, placement, spacing and how the type interacts with the artwork. It grows out of the concept; it is not chosen from a list. */
@@ -60,6 +62,7 @@ Rules:
 - The concepts of the batch must be clearly unlike each other and unlike every concept in HISTORY. The difference must be in the central visual idea (the subject and what happens to it), never only in colours, backgrounds or camera angle. Say, inside each concept, what makes it unlike the other posters of the batch.
 - Avoid the clichés that every business poster uses unless the fact is really about them: people at laptops, people around screens, dashboards or whiteboards, offices, handshakes, light bulbs, rockets, gears, generic charts with an arrow, a robot at a desk.
 - At most PEOPLE_CAP of the posters may show people prominently, unless a post's fact is about people. Set "people" to true only when people are a prominent part of the picture.
+- Real feel: set "photo" to true when the picture looks like a real photograph (real light, real materials and places, a real lens: never a cartoon, a 3D render or flat vector art). At least half of the posters of a batch, rounded down, must be photographs, so the feed feels real; a photograph does not need people (a place, an object, hands, materials, a moment). The others may be anything that is unlike the rest. Never draw cartoon characters, mascots or robots.
 - The picture contains no writing of any kind: no words, numbers, labels, interface text, signs, logos, badges, seals or awards. Do not invent product screenshots, customer quotes, results or statistics. Any interface you imagine must be an obvious abstraction made of shapes, with no text in it.
 - The picture must communicate THIS post's fact. In "factToPicture", say in one sentence how it does; if you cannot, the concept is decoration and must be replaced.
 - The brand's colours and look are an input, not a rule: they may appear as a detail or an accent and need not fill the scene. Do not repeat the same palette treatment on every poster.
@@ -72,7 +75,7 @@ TYPOGRAPHY AND TEXT PLACEMENT. The headline is part of the poster's design, not 
 Describe what the viewer will actually see; "bold and modern" says nothing. Say why the treatment strengthens the message. Do not choose from a list of fonts, styles, layouts or positions.
 The posters of a batch, and the posters in TYPOGRAPHY_HISTORY, must differ in the whole typographic composition: the relationship between text and picture, the hierarchy and the position, not only the colour or one word's size. Do not default to a headline at the top with the brand details at the bottom, or to a small first line over a larger second line in dark sans-serif; use them only when that arrangement is genuinely the best answer to this picture. Make real choices: a different type personality, scale relationship and position for each poster, such as a large single statement that the picture is built around, a headline running down one side, a headline set low on a quiet surface, type that shares the scene's colour, or a headline that is small and calm in a large silence. These are illustrations of the freedom you have, not a menu.
 Keep it within what image models letter correctly: every character complete and fully legible. Avoid script or very decorative lettering, very condensed or overlapping letters, letters built out of objects, text crossing an important object or a face, text on a busy area, long headlines in capitals. Keep the headline's own capitalisation and punctuation exactly: you may not change its case.
-Return JSON only: {"concepts":[{"postId":"...","concept":"...","people":false,"factToPicture":"...","typography":"..."}]} with exactly one concept for every post, using the given postId.`;
+Return JSON only: {"concepts":[{"postId":"...","concept":"...","people":false,"photo":true,"factToPicture":"...","typography":"..."}]} with exactly one concept for every post, using the given postId.`;
 
 function parseConcepts(posts: readonly BatchPost[]): (value: unknown) => CreativeConcept[] {
   return (value) => {
@@ -84,10 +87,11 @@ function parseConcepts(posts: readonly BatchPost[]): (value: unknown) => Creativ
       if (typeof c.postId !== 'string' || !posts.some((p) => p.id === c.postId)) throw new Error(`a concept names a post that is not in the batch: ${String(c.postId)}`);
       if (typeof c.concept !== 'string' || c.concept.trim().length < MIN_CONCEPT_CHARS) throw new Error(`the concept for ${c.postId} must describe the picture in at least ${MIN_CONCEPT_CHARS} characters`);
       if (typeof c.people !== 'boolean') throw new Error(`"people" for ${c.postId} must be true or false`);
+      if (c.photo !== undefined && typeof c.photo !== 'boolean') throw new Error(`"photo" for ${c.postId} must be true or false`);
       if (typeof c.factToPicture !== 'string' || c.factToPicture.trim().length < 20) throw new Error(`"factToPicture" for ${c.postId} must say how the picture communicates the fact`);
       if (typeof c.typography !== 'string' || c.typography.trim().length < MIN_TYPOGRAPHY_CHARS) throw new Error(`"typography" for ${c.postId} must describe how the headline is set in at least ${MIN_TYPOGRAPHY_CHARS} characters`);
       if (out.some((o) => o.postId === c.postId)) throw new Error(`more than one concept for ${c.postId}`);
-      out.push({ postId: c.postId, concept: c.concept.trim(), people: c.people, factToPicture: c.factToPicture.trim(), typography: c.typography.trim() });
+      out.push({ postId: c.postId, concept: c.concept.trim(), people: c.people, ...(c.photo === undefined ? {} : { photo: c.photo }), factToPicture: c.factToPicture.trim(), typography: c.typography.trim() });
     }
     const missing = posts.filter((p) => !out.some((o) => o.postId === p.id)).map((p) => p.id);
     if (missing.length > 0) throw new Error(`no concept for ${missing.join(', ')}`);
@@ -182,6 +186,15 @@ export async function directBatch(input: DirectorInput, deps: DirectorDeps = {})
     return withPeople.length > input.peopleCap ? `${withPeople.length} of ${planned.size} posters show people prominently, and at most ${input.peopleCap} may` : undefined;
   };
 
+  /** Posters that are not real photographs when fewer than half of the batch are (rounded down); undefined when the batch has enough, or the director did not say. */
+  const photoShortfall = (): string | undefined => {
+    const all = [...planned.values()];
+    if (!all.some((c) => c.photo !== undefined)) return undefined;
+    const need = Math.floor(all.length / 2);
+    const have = all.filter((c) => c.photo === true).length;
+    return have < need ? `only ${have} of ${all.length} posters look like real photographs, and at least ${need} must (real light, real materials and places, a real lens; not a cartoon, a 3D render or flat vector art)` : undefined;
+  };
+
   for (let round = 0; round <= maxReplans; round++) {
     const refs: ConceptRef[] = [...planned.values()].map((c) => ({ id: c.postId, concept: c.concept }));
     input.history.slice(0, 30).forEach((concept, i) => refs.push({ id: `past-${i}`, concept, past: true }));
@@ -230,9 +243,10 @@ export async function directBatch(input: DirectorInput, deps: DirectorDeps = {})
       typeConflicts.push({ later, problem: `the typography for ${later} is too much like ${other.startsWith('past-') ? 'how a recent poster of the brand was set' : `the typography for ${other}`} (${pair.reason}); set this headline in a clearly different way, with a different hierarchy and a different relationship to the artwork` });
     }
     const people = peopleProblem();
+    const photos = photoShortfall();
     const stuck = [...new Set([...conflicts.map((c) => c.later), ...typeConflicts.map((c) => c.later)])];
     const stuckPictures = new Set(conflicts.map((c) => c.later));
-    if (stuck.length === 0 && !people) break;
+    if (stuck.length === 0 && !people && !photos) break;
     if (round === maxReplans) {
       // Out of rounds: a post that still repeats another is dropped (the later one of each pair), never published as a repeat.
       for (const postId of stuck) {
@@ -251,9 +265,14 @@ export async function directBatch(input: DirectorInput, deps: DirectorDeps = {})
     }
     const redo = new Set(stuck);
     if (people) for (const c of [...planned.values()].filter((p) => p.people).slice(input.peopleCap)) redo.add(c.postId);
+    // Too few real photographs: posters that are not photographs (the last ones first) are sent back until the batch would have enough, counting the ones already being redone.
+    if (photos) {
+      const need = Math.floor(planned.size / 2) - [...planned.values()].filter((c) => c.photo === true).length;
+      for (const c of [...planned.values()].reverse().filter((p) => p.photo !== true).slice(0, Math.max(0, need))) redo.add(c.postId);
+    }
     const redoPosts = [...redo].map((id) => byId.get(id)).filter((p): p is BatchPost => p !== undefined);
     const keep = [...planned.values()].filter((c) => !redo.has(c.postId));
-    const problems = [...conflicts.filter((c) => redo.has(c.later)).map((c) => c.problem), ...typeConflicts.filter((c) => redo.has(c.later)).map((c) => c.problem), ...(people ? [people] : [])];
+    const problems = [...conflicts.filter((c) => redo.has(c.later)).map((c) => c.problem), ...typeConflicts.filter((c) => redo.has(c.later)).map((c) => c.problem), ...(people ? [people] : []), ...(photos ? [photos] : [])];
     const fresh = await invent(redoPosts, keep, problems);
     for (const c of fresh) planned.set(c.postId, { ...c, replans: (planned.get(c.postId)?.replans ?? 0) + 1 });
   }

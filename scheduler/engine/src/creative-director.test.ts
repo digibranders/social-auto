@@ -314,3 +314,42 @@ test('the director is given the brand\'s recent headline treatments, and brand c
   assert.match(message, /TYPOGRAPHY_HISTORY/);
   assert.match(message, /thin serif headline in the lower right/);
 });
+
+const photo = (postId: string, text: string, isPhoto: boolean): CreativeConcept => ({ ...concept(postId, text), photo: isPhoto });
+
+test('a batch with too few real photographs is sent back for more, the posters that are not photographs first from the end, and the others stay', async () => {
+  const asked: string[][] = [];
+  const problems: string[][] = [];
+  const result = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts, history: [], peopleCap: 1 }, {
+    invent: async (ps, _keep, why) => {
+      asked.push(ps.map((p) => p.id));
+      problems.push([...why]);
+      return asked.length === 1 ? [photo('p1', LINE, false), photo('p2', SHOP, false), photo('p3', CLAY, false)] : ps.map((p) => photo(p.id, DOCS, true));
+    },
+  });
+  // Three posters need at least one photograph; the last non-photograph is sent back, with the reason.
+  assert.deepEqual(asked[1], ['p3']);
+  assert.match(problems[1]?.[0] ?? '', /only 0 of 3 posters look like real photographs, and at least 1 must/);
+  assert.equal(result.concepts.filter((c) => c.photo === true).length, 1);
+  assert.equal(result.concepts.length, 3);
+});
+
+test('a batch that already has half photographs, or a director that does not say, is left alone, and a batch that never gets one is kept, not dropped', async () => {
+  let calls = 0;
+  const enough = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts, history: [], peopleCap: 1 }, { invent: async () => { calls += 1; return [photo('p1', DOCS, true), photo('p2', LINE, false), photo('p3', SHOP, false)]; } });
+  assert.equal(calls, 1);
+  assert.equal(enough.concepts.length, 3);
+  calls = 0;
+  await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts, history: [], peopleCap: 1 }, { invent: async (ps) => { calls += 1; return ps.map((p) => concept(p.id, ({ p1: LINE, p2: SHOP, p3: CLAY } as Record<string, string>)[p.id] as string)); } });
+  assert.equal(calls, 1, 'no "photo" answers: nothing to check');
+  // Stubborn: it never gives a photograph, so after the rounds the batch is kept as it is (a look is advice, never a reason to lose a post).
+  const stubborn = await directBatch({ ai: aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234' }), brandName: 'OyeChats', posts, history: [], peopleCap: 1 }, { invent: async (ps) => ps.map((p) => photo(p.id, ({ p1: LINE, p2: SHOP, p3: CLAY } as Record<string, string>)[p.id] as string, false)) });
+  assert.equal(stubborn.concepts.length, 3);
+  assert.equal(stubborn.dropped.length, 0);
+});
+
+test('the director asks for a photo answer and the real-feel rule, and a non-boolean answer is refused', () => {
+  assert.match(DIRECTOR_SYSTEM, /Real feel: set "photo" to true/);
+  assert.match(DIRECTOR_SYSTEM, /At least half of the posters of a batch, rounded down, must be photographs/);
+  assert.match(DIRECTOR_SYSTEM, /Never draw cartoon characters, mascots or robots/);
+});
