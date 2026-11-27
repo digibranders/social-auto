@@ -290,7 +290,7 @@ export async function makeCreatives(input: CreativeRunInput): Promise<CreativeRe
     try {
       for (let n = 1; n <= maxAttempts; n++) {
         const imageFile = join(outDir, `${post.id}.attempt${n}.jpg`);
-        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(input.network ? { network: input.network } : {}), ...(typeLean ? { typeLean } : {}), ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
+        const prompt = buildCreativePrompt(manifest, { fact, colors: brand.colors, shape, ...(input.network ? { network: input.network } : {}), ...(typeLean ? { typeLean } : {}), ...(concept ? { concept: { concept: concept.concept, factToPicture: concept.factToPicture, typography: concept.typography, ...(concept.photo === undefined ? {} : { photo: concept.photo }) } } : {}), ...(input.logo ? { logo: input.logo.kind } : {}), ...(note ? { retryNote: note } : {}) });
         const attempt: CreativeAttempt = { n, prompt, imageFile, readings: [], accepted: false, defects: [] };
         result.attempts.push(attempt);
         log(`${post.id}: attempt ${n}, drawing the poster…`);
