@@ -4,13 +4,16 @@ import {
   applyOverrides,
   EditError,
   isEditable,
+  overridePost,
+  platformOfChannel,
+  splitId,
   validateCaption,
   validateJpeg,
   type OverrideMap,
   type PostOverride,
 } from './overrides.js';
 import type { ScheduledPost } from './schedule.js';
-import { applyVariantPatch, variantKeys } from './variants.js';
+import { applyVariantPatch, isPlatform, variantKeys, type Platform } from './variants.js';
 
 /** What editing needs from storage; the real one is lib/store.ts, tests use memory. */
 export interface EditStore {
@@ -24,6 +27,8 @@ export type EditAction =
   | { kind: 'caption'; caption: unknown }
   | { kind: 'image'; bytes: Uint8Array }
   | { kind: 'move'; day: unknown; time?: unknown }
+  /** One network's own time for a post that goes to several: that network is sent at it, the others at the post's own. */
+  | { kind: 'moveNetwork'; network: unknown; day: unknown; time?: unknown }
   | { kind: 'variants'; variants: unknown }
   | { kind: 'skip' }
   | { kind: 'unskip' }
@@ -45,11 +50,24 @@ const istParts = (date: string): { day: string; time: string } => {
 function findEditable(posts: ScheduledPost[], overrides: OverrideMap, id: string, now: number): { original: ScheduledPost; current: ScheduledPost } {
   const original = posts.find((p) => p.id === id);
   if (!original) throw new EditError('no such post', 404, 'POST_NOT_FOUND');
-  const current = applyOverrides([original], overrides)[0] as ScheduledPost;
+  const current = overridePost(original, overrides[id]);
   if (!isEditable(current, now)) {
     throw new EditError('this post is already due or published, so it can no longer be changed', 409, 'POST_NOT_EDITABLE');
   }
   return { original, current };
+}
+
+/** The post as it was planned, whether or not it is still editable as a whole (one network's own time may still be ahead when the post's own has passed). */
+function lookUp(posts: ScheduledPost[], overrides: OverrideMap, id: string, now: number): { original: ScheduledPost; current: ScheduledPost } {
+  const original = posts.find((p) => p.id === id);
+  if (!original) throw new EditError('no such post', 404, 'POST_NOT_FOUND');
+  void now;
+  return { original, current: overridePost(original, overrides[id]) };
+}
+
+function networkOf(value: unknown): Platform {
+  if (!isPlatform(value)) throw new EditError('network must be instagram, facebook, linkedin or google', 400, 'INVALID_REQUEST');
+  return value;
 }
 
 /** Applies one dashboard edit to a post that has not gone out yet and saves it. */
@@ -61,7 +79,18 @@ export async function editPost(
   now: number,
 ): Promise<EditResult> {
   const { overrides, etag } = await store.load();
-  const { original: post } = findEditable(posts, overrides, id, now);
+  // A network's part of a split post is named `<id>~<network>`: a move of it is that network's own time, every other change is the post's.
+  const named = splitId(id);
+  id = named.base;
+  if (action.kind === 'move' && named.network !== null) action = { kind: 'moveNetwork', network: named.network, day: action.day, ...(action.time === undefined ? {} : { time: action.time }) };
+  const { original: post } = action.kind === 'moveNetwork' ? lookUp(posts, overrides, id, now) : findEditable(posts, overrides, id, now);
+  // A post that goes to one network has one time: moving "its network" is moving the post.
+  if (action.kind === 'moveNetwork') {
+    const network = networkOf(action.network);
+    const networks = new Set((post.channels ?? []).map(platformOfChannel));
+    if (!networks.has(network)) throw new EditError('this post does not go to that network', 400, 'INVALID_REQUEST');
+    if (networks.size < 2) action = { kind: 'move', day: action.day, ...(action.time === undefined ? {} : { time: action.time }) };
+  }
   const current: PostOverride | undefined = overrides[id];
   const staleImages: string[] = [];
   const updatedAt = new Date(now).toISOString();
@@ -94,6 +123,20 @@ export async function editPost(
       if (taken) throw new EditError('another post is already planned for that day', 409);
       next = { ...current, date, updatedAt };
     }
+  } else if (action.kind === 'moveNetwork') {
+    if (post.manual) throw new EditError('a post made by hand goes to the networks it was made for at one time', 400);
+    const network = networkOf(action.network);
+    const mainAt = (current?.date ?? post.date);
+    const ownAt = current?.networkDates?.[network] ?? mainAt;
+    if (Date.parse(ownAt) <= now) throw new EditError('this post is already due or published on that network, so its time can no longer be changed', 409, 'POST_NOT_EDITABLE');
+    const date = postDateFor(action.day, now, action.time === undefined ? istParts(ownAt).time : action.time);
+    const dates = { ...current?.networkDates };
+    // The same moment as the post's own puts the network back on it.
+    if (Date.parse(date) === Date.parse(mainAt)) delete dates[network];
+    else dates[network] = date;
+    next = { ...current, updatedAt };
+    if (Object.keys(dates).length > 0) next.networkDates = dates;
+    else delete next.networkDates;
   } else if (action.kind === 'variants') {
     // A change to some platforms' own versions; the others stay as they are, and null puts a platform back on the main ones.
     const variants = applyVariantPatch(current?.variants, action.variants);
@@ -114,11 +157,11 @@ export async function editPost(
     // Reverting discards the words and the picture, not the decision to skip the post or the day it was moved to.
     if (current?.imageKey) staleImages.push(current.imageKey);
     staleImages.push(...variantKeys(current?.variants));
-    next = current?.skipped || current?.date ? { ...(current.skipped ? { skipped: true } : {}), ...(current.date ? { date: current.date } : {}), updatedAt } : undefined;
+    next = current?.skipped || current?.date || current?.networkDates ? { ...(current.skipped ? { skipped: true } : {}), ...(current.date ? { date: current.date } : {}), ...(current.networkDates ? { networkDates: current.networkDates } : {}), updatedAt } : undefined;
   }
 
   const updated: OverrideMap = { ...overrides };
-  if (next && (next.caption !== undefined || next.imageKey !== undefined || next.variants !== undefined || next.skipped === true || next.date !== undefined)) updated[id] = next;
+  if (next && (next.caption !== undefined || next.imageKey !== undefined || next.variants !== undefined || next.skipped === true || next.date !== undefined || next.networkDates !== undefined)) updated[id] = next;
   else delete updated[id];
 
   try {

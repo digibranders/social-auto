@@ -27,6 +27,8 @@ export interface ScheduledPost {
   ownTime?: boolean;
   /** Made from a client's posting plan. It goes only to that client's own connected channels, never to the team's one shared Instagram account, so a poster can never land on another client's account. */
   fromPlan?: boolean;
+  /** Set on a post made by splitting another by network time (see overrides.ts): the id of the post it was split from. Never in the schedule file. */
+  splitOf?: string;
 }
 
 export class ScheduleError extends Error {
@@ -77,6 +79,7 @@ export function postsLeftByBrand(posts: ScheduledPost[], now: number): Map<strin
   const left = new Map<string, number>();
   for (const post of posts) {
     if (post.manual) continue; // extra posts do not count towards the planned runway
+    if (post.splitOf !== undefined) continue; // a network's own time for a topic is the same topic, not another day of posts
     const brand = post.brand ?? 'default';
     left.set(brand, (left.get(brand) ?? 0) + (Date.parse(post.date) > now ? 1 : 0));
   }
