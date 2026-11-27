@@ -308,7 +308,7 @@ test('the page title and description count as the last rung of the ladder', asyn
 
 test('the call to action comes from a real link of the site, not from the model, and its evidence is saved', async () => {
   const { brand, saved } = await analyzeIdentity(identityAnswer({ identityCandidates: [] }));
-  assert.equal(brand.callToAction, 'See pricing at acme.com (link in bio)');
+  assert.equal(brand.callToAction, 'See pricing at acme.com');
   assert.equal(brand.cta?.kind, 'site-action');
   assert.equal(brand.cta?.evidence?.url, 'https://acme.com/pricing');
   assert.deepEqual(saved['cta'], JSON.parse(JSON.stringify(brand.cta)));
@@ -316,7 +316,7 @@ test('the call to action comes from a real link of the site, not from the model,
 
 test('a site with no recognisable action gets "Visit" and its real address', async () => {
   const { brand } = await analyzeIdentity(identityAnswer({ identityCandidates: [] }), { links: [{ url: 'https://acme.com/people', text: 'Our people', region: 'nav' }] });
-  assert.equal(brand.callToAction, 'Visit acme.com (link in bio)');
+  assert.equal(brand.callToAction, 'Visit acme.com');
   assert.equal(brand.cta?.kind, 'visit-site');
 });
 
