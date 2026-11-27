@@ -897,3 +897,14 @@ test('the picture prompt tells the model to draw no decorative slashes, sparks o
   const prompt = buildCreativePrompt(manifest, { fact: 'f', colors });
   assert.match(prompt, /draw no decorative strokes, slashes, sparks, motion lines, underlines, brackets, arrows or doodled marks/);
 });
+
+test('a concept marked as a photograph asks the picture model for a real photograph, and every concept forbids cartoon characters', () => {
+  const colors = { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' };
+  const base = { concept: 'A desk lamp lights a stack of paper in a quiet room at dusk, shot from low.', factToPicture: 'Light on the work shows what matters.' };
+  const real = buildCreativePrompt(manifest, { fact: 'f', colors, concept: { ...base, photo: true } });
+  assert.match(real, /This must look like a real photograph/);
+  assert.match(real, /Never draw cartoon characters, mascots or robots/);
+  const other = buildCreativePrompt(manifest, { fact: 'f', colors, concept: { ...base, photo: false } });
+  assert.doesNotMatch(other, /This must look like a real photograph/);
+  assert.match(other, /Never draw cartoon characters, mascots or robots/);
+});

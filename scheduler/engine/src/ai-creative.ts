@@ -44,7 +44,7 @@ export interface CreativeContext {
   fact: string;
   colors: { background: string; ink: string; accent: string };
   /** The picture the creative director chose for this post, in its own words. When there is none the model is only asked for an original idea. */
-  concept?: { concept: string; factToPicture: string; typography?: string };
+  concept?: { concept: string; factToPicture: string; typography?: string; /** The director's word that this picture is to read as a real photograph. */ photo?: boolean };
   /** What the previous attempt got wrong, so the next one is told instead of repeating itself. */
   retryNote?: string;
   /** Set when the brand's real logo will be added afterwards: the model leaves a quiet corner for it. `wordmark` carries the name itself; `symbol` does not. */
@@ -91,6 +91,8 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
     ...(context.concept
       ? [
           `THE PICTURE (follow it; it was chosen for this post alone): ${context.concept.concept}`,
+          ...(context.concept.photo === true ? ['THE LOOK. This must look like a real photograph: real light, real materials and places, the depth of field of a real lens, a little natural imperfection. It is not a cartoon, not an illustration, not a 3D render and not flat vector art.'] : []),
+          'Never draw cartoon characters, mascots or robots.',
           `THE MESSAGE is only this fact: "${context.fact}". The picture communicates it like this: ${context.concept.factToPicture} Do not invent product screenshots, customer quotes, results, endorsements, statistics, prices, offers or any evidence. Any interface must be an obvious concept with no text in it. People appear only as generic illustrated or photographed subjects, never as real customers, employees or endorsers.`,
         ]
       : [
