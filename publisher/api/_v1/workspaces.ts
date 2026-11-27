@@ -37,7 +37,7 @@ function channelView(channel: Channel, pauses: PauseFile): Record<string, unknow
     connectedAt: channel.connectedAt,
     // Held back by a pause on this account, on the whole workspace or on everything: posts are not sent to it until it is resumed.
     paused: isPaused(pauses, channel.brand, channel.id),
-    ...(channel.platform === 'linkedin' || channel.platform === 'instagram' ? { expiresAt: channel.expiresAt } : {}),
+    ...((channel.platform === 'linkedin' || channel.platform === 'instagram') && channel.expiresAt !== undefined ? { expiresAt: channel.expiresAt } : {}),
   };
 }
 

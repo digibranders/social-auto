@@ -40,6 +40,7 @@ export function noticesFor(channels: readonly Channel[], workspacePaused: boolea
   if (workspacePaused) notices.push({ code: 'PAUSED', message: 'Posting is paused for now, so nothing will be sent until it is resumed.' });
   for (const channel of channels) {
     if (channel.platform !== 'linkedin' && channel.platform !== 'instagram') continue;
+    if (channel.expiresAt === undefined) continue;
     const left = Date.parse(channel.expiresAt) - now;
     const who = `${nameOf(channel.platform)} (${channelLabel(channel)})`;
     if (Number.isNaN(left)) continue;

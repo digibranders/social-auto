@@ -54,16 +54,19 @@ export interface InstagramChannel {
   /** The account's id, used in every posting call. */
   userId: string;
   username: string;
-  /** Encrypted token. It lasts about 60 days and is renewed weekly (api/refresh.ts); it ends at expiresAt if renewal stops. */
+  /**
+   * Encrypted token. Through Instagram's own login it lasts about 60 days and is renewed weekly (api/refresh.ts); it ends at expiresAt if renewal stops.
+   * Through Facebook login (INSTAGRAM_LOGIN=facebook) it is a business system-user token that does not expire: expiresAt is then left out.
+   */
   token: string;
-  expiresAt: string;
+  expiresAt?: string;
   connectedAt: string;
 }
 
 export type Channel = FacebookChannel | LinkedInChannel | GoogleChannel | InstagramChannel;
 
 /** A connection with an end date: the person must connect again (or the weekly renewal must work) before it. */
-export type ExpiringChannel = LinkedInChannel | InstagramChannel;
+export type ExpiringChannel = LinkedInChannel | (InstagramChannel & { expiresAt: string });
 
 export interface ChannelFile {
   channels: Channel[];
@@ -117,8 +120,8 @@ export function parseChannels(raw: unknown): ChannelFile {
       requireText(c, ['id', 'brand', 'memberUrn', 'memberName', 'token', 'expiresAt', 'connectedAt'], i);
       if (Number.isNaN(Date.parse(c['expiresAt'] as string))) throw new Error(`channels[${i}].expiresAt is not a date`);
     } else if (c['platform'] === 'instagram') {
-      requireText(c, ['id', 'brand', 'userId', 'username', 'token', 'expiresAt', 'connectedAt'], i);
-      if (Number.isNaN(Date.parse(c['expiresAt'] as string))) throw new Error(`channels[${i}].expiresAt is not a date`);
+      requireText(c, ['id', 'brand', 'userId', 'username', 'token', 'connectedAt'], i);
+      if (c['expiresAt'] !== undefined && (typeof c['expiresAt'] !== 'string' || Number.isNaN(Date.parse(c['expiresAt'])))) throw new Error(`channels[${i}].expiresAt is not a date`);
     } else if (c['platform'] === 'google') {
       requireText(c, ['id', 'brand', 'account', 'location', 'locationTitle', 'token', 'connectedAt'], i);
     } else {
@@ -200,13 +203,13 @@ export function addGoogleLocation(
   return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
 }
 
-/** Saves a customer's Instagram account for a client. Connecting again replaces the old token. */
+/** Saves a customer's Instagram account for a client. Connecting again replaces the old token. A token that never expires is given as null. */
 export function addInstagramAccount(
   file: ChannelFile,
   brand: string,
   account: { userId: string; username: string },
   accessToken: string,
-  expiresInSeconds: number,
+  expiresInSeconds: number | null,
   key: Buffer,
   now: number,
 ): ChannelFile {
@@ -217,7 +220,7 @@ export function addInstagramAccount(
     userId: account.userId,
     username: account.username,
     token: encrypt(accessToken, key),
-    expiresAt: new Date(now + expiresInSeconds * 1000).toISOString(),
+    ...(expiresInSeconds === null ? {} : { expiresAt: new Date(now + expiresInSeconds * 1000).toISOString() }),
     connectedAt: new Date(now).toISOString(),
   };
   return { channels: [...file.channels.filter((c) => c.id !== channel.id), channel] };
@@ -251,6 +254,15 @@ export function channelsFor<P extends Channel['platform']>(
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** When a connection ends, as a time in milliseconds, or null for one that never does (Instagram through Facebook login). */
+export const endsAt = (channel: LinkedInChannel | InstagramChannel): number | null => (channel.expiresAt === undefined ? null : Date.parse(channel.expiresAt));
+
+/** Whether a connection has already ended. One without an end date never has. */
+export const hasEnded = (channel: LinkedInChannel | InstagramChannel, now: number): boolean => {
+  const end = endsAt(channel);
+  return end !== null && end <= now;
+};
+
 /** Whole days until a connection ends (negative once it has). */
 export const daysLeft = (channel: ExpiringChannel, now: number): number => Math.floor((Date.parse(channel.expiresAt) - now) / DAY_MS);
 
@@ -259,7 +271,7 @@ export const EXPIRY_WARN_AT: readonly number[] = [7, 3, 1, 0];
 
 export function expiringSoon(file: ChannelFile, now: number): Array<{ channel: ExpiringChannel; days: number }> {
   return file.channels
-    .filter((c): c is ExpiringChannel => c.platform === 'linkedin' || c.platform === 'instagram')
+    .filter((c): c is ExpiringChannel => (c.platform === 'linkedin' || c.platform === 'instagram') && c.expiresAt !== undefined)
     .map((channel) => ({ channel, days: daysLeft(channel, now) }))
     .filter(({ days }) => EXPIRY_WARN_AT.includes(days));
 }

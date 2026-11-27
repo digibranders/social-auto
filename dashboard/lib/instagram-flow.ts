@@ -28,3 +28,14 @@ export function authorizeLink(options: { appId: string; redirectUri: string; sta
   });
   return `${AUTHORIZE}?${params}`;
 }
+
+/**
+ * Facebook login (INSTAGRAM_LOGIN=facebook): Meta's "Unified Login" for newer apps. The permissions and the account chooser come from a saved
+ * configuration (INSTAGRAM_CONFIG_ID in the Meta app), so no scope is passed. The way back is the same callback.
+ */
+export const usesFacebookLogin = (): boolean => process.env['INSTAGRAM_LOGIN'] === 'facebook';
+
+export function facebookLoginLink(options: { appId: string; configId: string; redirectUri: string; state: string }): string {
+  const params = new URLSearchParams({ client_id: options.appId, config_id: options.configId, redirect_uri: options.redirectUri, response_type: 'code', state: options.state });
+  return `${process.env['FACEBOOK_AUTHORIZE_URL'] ?? 'https://www.facebook.com/dialog/oauth'}?${params}`;
+}

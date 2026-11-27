@@ -7,10 +7,10 @@
  *
  * GET /api/refresh   (called by Vercel Cron with Authorization: Bearer $CRON_SECRET)
  */
-import { channelToken, renewInstagramToken } from '../lib/channels.js';
+import { channelToken, endsAt, renewInstagramToken } from '../lib/channels.js';
 import { parseKey } from '../lib/crypto.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
-import { refreshToken } from '../lib/instagram.js';
+import { refreshToken, unifiedLogin } from '../lib/instagram.js';
 import { notify } from '../lib/notify.js';
 import { loadChannels, saveChannels } from '../lib/store.js';
 
@@ -27,7 +27,8 @@ const MIN_AGE_MS = 24 * 60 * 60 * 1000;
  */
 async function renewCustomerAccounts(now: number): Promise<{ renewed: number; failed: string[] }> {
   const { file, etag } = await loadChannels();
-  const accounts = file.channels.filter((c) => c.platform === 'instagram');
+  // A login through Facebook has no end date and nothing to renew.
+  const accounts = file.channels.filter((c): c is Extract<typeof c, { platform: 'instagram' }> => c.platform === 'instagram' && c.expiresAt !== undefined);
   if (accounts.length === 0) return { renewed: 0, failed: [] };
   const key = parseKey(process.env['CHANNEL_KEY']);
   let next = file;
@@ -35,7 +36,7 @@ async function renewCustomerAccounts(now: number): Promise<{ renewed: number; fa
   const failed: string[] = [];
   for (const account of accounts) {
     try {
-      if (Date.parse(account.expiresAt) <= now) throw new Error('the connection has already ended');
+      if ((endsAt(account) ?? Infinity) <= now) throw new Error('the connection has already ended');
       if (now - Date.parse(account.connectedAt) < MIN_AGE_MS) continue;
       const fresh = await refreshToken(channelToken(account, key));
       next = renewInstagramToken(next, account.id, fresh.token, fresh.expiresInDays * 86_400, key, now);
@@ -50,7 +51,9 @@ async function renewCustomerAccounts(now: number): Promise<{ renewed: number; fa
 }
 
 /** The team's own Instagram token (set in the environment). Never throws: the customers' renewals must still run. */
-async function renewTeamToken(): Promise<{ status: 'renewed' | 'rotated' | 'failed'; expiresInDays?: number; error?: string }> {
+async function renewTeamToken(): Promise<{ status: 'renewed' | 'rotated' | 'failed' | 'not-needed'; expiresInDays?: number; error?: string }> {
+  // Through Facebook login the team token is a system-user token that does not expire, so there is nothing to renew.
+  if (unifiedLogin()) return { status: 'not-needed' };
   try {
     const current = requireEnv('INSTAGRAM_TOKEN');
     const refreshed = await refreshToken(current);
