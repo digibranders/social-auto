@@ -207,7 +207,7 @@ async function replaceDroppedPost(input: {
   if (input.networks.length > 0) {
     console.log(`    Writing a caption for each of ${input.networks.join(', ')}…`);
     const factOf = (id: string): string | undefined => { const fact = input.loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
-    const written = await writeNetworkCaptions({ ai: input.ai, networks: input.networks as Network[], posts: [{ id: post.id, headline: post.headline.replaceAll('|', ''), caption: post.caption, hashtags: post.hashtags, facts: (post.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) }] });
+    const written = await writeNetworkCaptions({ minCaptions: true, ai: input.ai, networks: input.networks as Network[], posts: [{ id: post.id, headline: post.headline.replaceAll('|', ''), caption: post.caption, hashtags: post.hashtags, facts: (post.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) }] });
     if (written.variants[post.id]) post = { ...post, variants: written.variants[post.id] as PostVariants };
   }
   // The plan file first: a post in it that the batch never got is harmless (nothing draws a post the batch does not keep), while a batch post with no plan entry could not be drawn.
@@ -327,7 +327,7 @@ async function main(): Promise<void> {
     if (asked === undefined || !isNetwork(asked)) throw new Error(`--network names ${NETWORKS.join(', ')}`);
     console.log(`3/4 Writing a caption for ${asked} for the topics of ${values['add-network']}…`);
     ai.usage.purpose = 'writing';
-    const result = await addNetworkToBatch({ brandDir, brand: slug, planFile: values['add-network'], network: asked as Network, facts: (await loadFacts(brandDir))?.facts ?? [], write: (posts, networks) => writeNetworkCaptions({ ai, posts, networks }) });
+    const result = await addNetworkToBatch({ brandDir, brand: slug, planFile: values['add-network'], network: asked as Network, facts: (await loadFacts(brandDir))?.facts ?? [], write: (posts, networks) => writeNetworkCaptions({ minCaptions: true, ai, posts, networks }) });
     console.log(ai.usage.format());
     console.log(`ADD_NETWORK_RESULT ${JSON.stringify(result)}`);
     return;
@@ -652,7 +652,7 @@ async function main(): Promise<void> {
         console.log(`    Writing a caption for each of ${networks.join(', ')}…`);
         ai.usage.purpose = 'writing';
         const factOf = (id: string): string | undefined => { const fact = loaded?.facts.find((f) => f.id === id); return fact ? displayFact(fact) : undefined; };
-        const written = await writeNetworkCaptions({ ai, networks: networks as Network[], posts: finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), caption: p.caption, hashtags: p.hashtags, facts: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) })) });
+        const written = await writeNetworkCaptions({ minCaptions: true, ai, networks: networks as Network[], posts: finalPlan.posts.map((p) => ({ id: p.id, headline: p.headline.replaceAll('|', ''), caption: p.caption, hashtags: p.hashtags, facts: (p.factIds ?? []).map(factOf).filter((t): t is string => t !== undefined) })) });
         finalPlan = { ...finalPlan, posts: finalPlan.posts.map((p) => (written.variants[p.id] ? { ...p, variants: written.variants[p.id] as PostVariants } : p)) };
         console.log(`    Captions: ${written.report.written} of ${written.report.requested} written${written.report.retried ? `, ${written.report.retried} asked for again` : ''}${written.report.fallback.length ? `, ${written.report.fallback.length} use the main caption (${written.report.fallback.map((f) => `${f.postId}/${f.network}`).join(', ')})` : ''}.`);
       }

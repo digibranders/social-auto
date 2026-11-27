@@ -65,12 +65,17 @@ function parseDrafts(value: unknown, posts: readonly CaptionPost[], networks: re
 }
 
 /** Why a draft cannot be used, or undefined when it can. */
-function problemWith(draft: Draft, post: CaptionPost): string | undefined {
+/** The fewest characters of its own words a network's caption should have: most of the way to the low end of its aim (LinkedIn 900 to 1200 gives 540). */
+export const minCaptionFor = (network: Network): number => Math.round(NETWORK_RULES[network].recommended.min * 0.6);
+
+/** `minimum` is asked for only while another try is left; the last try takes what it gets, so a business with few facts still gets a caption. */
+function problemWith(draft: Draft, post: CaptionPost, minimum = false): string | undefined {
   const rules = NETWORK_RULES[draft.network];
   if (draft.caption === '') return 'the caption is empty';
   if (draft.caption.length > rules.maxCaption - 140) return `the caption is too long for ${draft.network}; keep it under ${rules.maxCaption - 140} characters`;
   const quality = checkCopyQuality({ headline: post.headline, caption: draft.caption });
   if (quality) return quality;
+  if (minimum && draft.caption.length < minCaptionFor(draft.network)) return `the caption is too short for ${draft.network}: ${draft.caption.length} characters; write at least ${minCaptionFor(draft.network)} (aim for ${recommendedLengthText(draft.network)}), saying more about what the facts state and using nothing the facts do not state`;
   const violations = checkCopy({ headline: post.headline, subline: '', caption: draft.caption }, post.facts);
   if (violations.length > 0) return `it says something the facts do not support: ${violations.map((v) => `"${v.sentence.slice(0, 80)}" ${v.reason}`).join('; ')}`;
   return undefined;
@@ -85,7 +90,7 @@ async function ask(ai: AiConfig, posts: readonly CaptionPost[], wanted: Readonly
   return chatJson({ ai, ...(fetchFn ? { fetchFn } : {}), system: SYSTEM, user, parse: (value) => parseDrafts(value, posts, networks) });
 }
 
-export async function writeNetworkCaptions(input: { ai: AiConfig; posts: readonly CaptionPost[]; networks: readonly Network[]; fetchFn?: typeof fetch }): Promise<{ variants: Record<string, PostVariants>; report: CaptionReport }> {
+export async function writeNetworkCaptions(input: { ai: AiConfig; posts: readonly CaptionPost[]; networks: readonly Network[]; fetchFn?: typeof fetch; /** Ask for the minimum length (minCaptionFor) on the first tries; the real runs do, tests with short stand-in captions do not. */ minCaptions?: boolean }): Promise<{ variants: Record<string, PostVariants>; report: CaptionReport }> {
   const { ai, posts, fetchFn } = input;
   const networks = input.networks.filter((n) => n !== 'instagram');
   const variants: Record<string, PostVariants> = {};
@@ -95,13 +100,13 @@ export async function writeNetworkCaptions(input: { ai: AiConfig; posts: readonl
   if (input.networks.includes('instagram')) for (const post of posts) { (variants[post.id] ??= {}).instagram = { caption: post.caption.trim(), hashtags: post.hashtags.slice(0, NETWORK_RULES.instagram.maxHashtags) }; report.written += 1; }
   let wanted = posts.flatMap((p) => networks.map((network) => ({ postId: p.id, network } as { postId: string; network: Network; note?: string })));
   const failed = new Map<string, string>();
-  for (let attempt = 0; attempt < 2 && wanted.length > 0; attempt += 1) {
+  for (let attempt = 0; attempt < 3 && wanted.length > 0; attempt += 1) {
     const drafts = await ask(ai, posts, wanted, fetchFn);
     const next: typeof wanted = [];
     for (const w of wanted) {
       const post = posts.find((p) => p.id === w.postId) as CaptionPost;
       const draft = drafts.find((d) => d.postId === w.postId && d.network === w.network);
-      const problem = draft ? problemWith(draft, post) : 'no caption was written';
+      const problem = draft ? problemWith(draft, post, input.minCaptions === true && attempt < 2) : 'no caption was written';
       if (draft && !problem) {
         (variants[w.postId] ??= {})[w.network] = { caption: withoutDashes(withCta(w.network, draft.caption, ctaOf(post))), hashtags: draft.hashtags };
         report.written += 1;
