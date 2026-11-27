@@ -86,6 +86,7 @@ export function buildCreativePrompt(manifest: TextManifest, context: CreativeCon
     ...(manifest.domain === '' ? ['No web address is part of the text on this poster. Do not write a web address or a website anywhere.'] : []),
     'Show no other words, letters, numbers or symbols that resemble writing anywhere: no labels, buttons, slogans, interface messages, captions, watermarks, signs, screens with writing, or made-up text.',
     'Never draw or imitate a logo, an app icon, a custom wordmark, a certification badge, a seal, a medal or an award.',
+    'The headline stands on its own: draw no decorative strokes, slashes, sparks, motion lines, underlines, brackets, arrows or doodled marks next to, around or over it or any other text. Only the letters themselves.',
     ...(context.logo ? logoSpaceLines(manifest, context.logo) : []),
     ...(context.concept
       ? [
