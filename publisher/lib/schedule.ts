@@ -79,6 +79,7 @@ export function postsLeftByBrand(posts: ScheduledPost[], now: number): Map<strin
   const left = new Map<string, number>();
   for (const post of posts) {
     if (post.manual) continue; // extra posts do not count towards the planned runway
+    if (post.splitOf !== undefined) continue; // a network's own time for a topic is the same topic, not another day of posts
     const brand = post.brand ?? 'default';
     left.set(brand, (left.get(brand) ?? 0) + (Date.parse(post.date) > now ? 1 : 0));
   }

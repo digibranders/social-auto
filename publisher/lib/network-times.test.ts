@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { editPost, type EditStore } from './editing.ts';
 import { applyOverrides, EditError, parseOverrides, splitId, type OverrideMap } from './overrides.ts';
-import { dueManualPosts, type ScheduledPost } from './schedule.ts';
+import { dueManualPosts, postsLeftByBrand, type ScheduledPost } from './schedule.ts';
 
 const NOW = Date.parse('2026-11-01T00:00:00Z');
 const MAIN = '2026-11-05T10:00:00+05:30';
@@ -114,4 +114,10 @@ test('network times survive a revert, and are read back from storage; a bad one 
   const store = memoryStore(structuredClone(withLinkedInTime));
   await editPost(store, [planned()], 'acme-w01-d1', { kind: 'revert' }, NOW);
   assert.equal(store.overrides['acme-w01-d1']?.networkDates?.['linkedin'], LINKEDIN);
+});
+
+test('a network\'s own time is the same topic, not another post left in the runway', () => {
+  const parts = applyOverrides([planned()], withLinkedInTime);
+  assert.equal(parts.length, 2);
+  assert.equal(postsLeftByBrand(parts, NOW).get('acme'), 1);
 });
