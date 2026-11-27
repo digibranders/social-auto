@@ -11,7 +11,7 @@ test('the call to action is an action the site really offers, with the link as e
   assert.equal(cta.label, 'Book an appointment');
   assert.equal(cta.evidence?.url, `${ORIGIN}/book`);
   assert.equal(cta.evidence?.linkText, 'Book a visit');
-  assert.equal(cta.text, 'Book an appointment at acme.example (link in bio)');
+  assert.equal(cta.text, 'Book an appointment at acme.example');
 });
 
 test('a site with no booking never gets a booking call to action', () => {
@@ -25,7 +25,7 @@ test('without any recognisable action it falls back to visiting the real address
   assert.equal(cta.kind, 'visit-site');
   assert.equal(cta.label, 'Visit the website');
   assert.equal(cta.evidence, null);
-  assert.equal(cta.text, 'Visit acme.example (link in bio)');
+  assert.equal(cta.text, 'Visit acme.example');
 });
 
 test('links to other sites are never the destination', () => {

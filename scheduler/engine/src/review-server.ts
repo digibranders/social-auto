@@ -92,6 +92,8 @@ export interface ReviewServerOptions {
   now?: () => Date;
   /** How often the weekly draw looks for a week that is due (10 minutes by default; 0 turns it off). AUTO_WEEK_DRAW=false turns it off too. */
   weeklyDrawEveryMs?: number;
+  /** How often the automatic-posting pass looks for topics to keep and pictures to approve (one minute by default; 0 turns it off). AUTO_WEEK_DRAW=false turns it off too. */
+  autoPostingEveryMs?: number;
 }
 
 const JOB_STATES: readonly JobState[] = ['queued', 'running', 'succeeded', 'failed'];
@@ -330,6 +332,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
   });
 
   const expiryDays = options.expiryDays ?? EXPIRY_DAYS;
+  /** Set below once the stores it needs exist; a no-op until then. */
+  let autoPass: () => void = () => undefined;
   const server = createServer(async (req, res) => {
     try {
       const caller = identify(req, options.secret, products);
@@ -789,6 +793,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
         mkdirSync(join(root, caller.brand), { recursive: true });
         try {
           const saved = writeAutoPosting(join(root, caller.brand), { channels: body['channels'] as unknown[], ...(body['safetyHours'] !== undefined ? { safetyHours: body['safetyHours'] as number } : {}), by: scope.by(body['by']) }, (options.now ?? (() => new Date()))());
+          autoPass();
           return send(res, 200, { autoPosting: saved });
         } catch (error) {
           if (error instanceof AutoPostingError) throw new ReviewError('INVALID', error.message);
@@ -1096,18 +1101,33 @@ export function createReviewServer(options: ReviewServerOptions): Server {
     server.on('listening', sweep);
     server.on('close', () => clearInterval(timer));
   }
+  // Customers who chose automatic posting: their topics are kept and the pictures that passed the checks are approved inside the safety window. It runs on its own, often,
+  // so "as soon as they pass our checks" is a minute and not up to the ten the weekly draw waits; it also runs the moment she saves her choice.
+  autoPass = (): void => {
+    try {
+      runAutoPosting({
+        brandsRoot: root, owners, now: (options.now ?? (() => new Date()))(),
+        isTopicPlan: (brand, planFile) => jobs.list({ brand }).some((j) => j.kind === 'topic' && j.planFileMade === planFile),
+        approved: () => { requestRelease(root); },
+        log: (m) => console.error(m),
+      });
+    } catch (error) {
+      console.error(`automatic posting failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const autoEvery = options.autoPostingEveryMs ?? 60_000;
+  if (autoEvery > 0 && process.env['AUTO_WEEK_DRAW'] !== 'false') {
+    const autoTimer = setInterval(autoPass, autoEvery);
+    autoTimer.unref();
+    server.on('listening', autoPass);
+    server.on('close', () => clearInterval(autoTimer));
+  }
   // The weekly draw: a later week of a customer's batch is drawn by the system on the Thursday before it begins; a week that passed undrawn is given up.
   const weeklyEvery = options.weeklyDrawEveryMs ?? 600_000;
   if (weeklyEvery > 0 && process.env['AUTO_WEEK_DRAW'] !== 'false') {
     const weekly = (): void => {
       try {
-        // Customers who chose automatic posting: their topics are kept and the pictures that passed the checks are approved inside the safety window.
-        runAutoPosting({
-          brandsRoot: root, owners, now: (options.now ?? (() => new Date()))(),
-          isTopicPlan: (brand, planFile) => jobs.list({ brand }).some((j) => j.kind === 'topic' && j.planFileMade === planFile),
-          approved: () => { requestRelease(root); },
-          log: (m) => console.error(m),
-        });
+        autoPass();
         runWeeklyDraws({
           brandsRoot: root, jobs, owners, now: (options.now ?? (() => new Date()))(), made: madeFor,
           automatic: (brand, batch) => isAutomaticBatch(readAutoPosting(join(root, brand)), batch),

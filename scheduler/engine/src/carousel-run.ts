@@ -128,7 +128,7 @@ export async function planCarouselTopic(input: CarouselRunInput): Promise<Carous
 
   const factTexts = [...new Set(draft.slides.flatMap((s) => s.factIds))].map((id) => carouselFacts.find((f) => f.id === id)?.text ?? '').filter((t) => t !== '');
   log(`2/4 Writing a caption for each of ${input.networks.join(', ')}…`);
-  const closingLine = input.brand.cta?.text ?? `Visit ${displayDomain(input.brand.website)} (link in bio)`;
+  const closingLine = input.brand.cta?.text ?? `Visit ${displayDomain(input.brand.website)}`;
   const captions = await (input.deps?.captions ?? ((d, texts) => writeCarouselCaptions({ ai: input.ai, topic: d.topic, headlines: d.slides.map((s) => s.headline), facts: texts, closingLine, networks: input.networks })))(draft, factTexts);
   const entry: HistoryEntry = { id: carouselId, topic: draft.topic, createdAt: now().toISOString(), date: input.date, stage: 'topic', plan: { draft, captions: captions.captions, fallback: captions.fallback, networks: [...input.networks] } };
   changeHistory(input.brandDir, (entries) => [...entries, entry]);

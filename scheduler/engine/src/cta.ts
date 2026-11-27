@@ -82,7 +82,7 @@ function hasPhrase(words: readonly string[], phrase: string): boolean {
 }
 
 export function chooseCallToAction(links: readonly CtaLink[], origin: string, host: string, rules: readonly CtaRule[] = defaultCtaRules, options: CtaOptions = {}): CallToAction {
-  const fallback: CallToAction = { kind: 'visit-site', label: 'Visit the website', evidence: null, text: `Visit ${host} (link in bio)` };
+  const fallback: CallToAction = { kind: 'visit-site', label: 'Visit the website', evidence: null, text: `Visit ${host}` };
   const language = options.language?.toLowerCase().split('-')[0];
   if (language && language !== (options.rulesLanguage ?? 'en').toLowerCase().split('-')[0]) return fallback;
   const maxWords = options.maxWords ?? 5;
@@ -111,10 +111,10 @@ export function chooseCallToAction(links: readonly CtaLink[], origin: string, ho
     }
   }
   if (!best) return fallback;
-  return { kind: 'site-action', label: best.rule.label, evidence: { linkText: best.link.text, url: best.link.url, region: best.link.region }, text: `${best.rule.label} at ${host} (link in bio)` };
+  return { kind: 'site-action', label: best.rule.label, evidence: { linkText: best.link.text, url: best.link.url, region: best.link.region }, text: `${best.rule.label} at ${host}` };
 }
 
 /** The neutral call to action: visit the site. Used when the chosen one does not fit what a post is about. */
 export function neutralCta(host: string): CallToAction {
-  return { kind: 'visit-site', label: 'Visit the website', evidence: null, text: `Visit ${host} (link in bio)` };
+  return { kind: 'visit-site', label: 'Visit the website', evidence: null, text: `Visit ${host}` };
 }
