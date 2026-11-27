@@ -1,9 +1,17 @@
 /** Minimal Instagram Graph API client (Instagram API with Instagram Login). */
 
-/** Instagram's addresses. The environment can point them at a pretend Instagram for local testing (see dev/fake-instagram.ts). */
-const ROOT = process.env['INSTAGRAM_GRAPH_URL'] ?? 'https://graph.instagram.com';
-const GRAPH = `${ROOT}/v23.0`;
-const TOKEN_URL = process.env['INSTAGRAM_TOKEN_URL'] ?? 'https://api.instagram.com/oauth/access_token';
+/**
+ * Two ways in to the same Instagram API:
+ *  - Instagram's own login (default): graph.instagram.com, a token of about 60 days that is renewed weekly, and /me is the account.
+ *  - Facebook login (INSTAGRAM_LOGIN=facebook, Meta's "Unified Login"): graph.facebook.com, a business system-user token that does not
+ *    expire, and the account is found by its own id, because /me is the system user.
+ * Newer Meta apps can only use the second. The environment can also point the host at a pretend Instagram for local testing (dev/fake-instagram.ts).
+ */
+export const unifiedLogin = (): boolean => process.env['INSTAGRAM_LOGIN'] === 'facebook';
+const instagramRoot = (): string => process.env['INSTAGRAM_GRAPH_URL'] ?? (unifiedLogin() ? 'https://graph.facebook.com' : 'https://graph.instagram.com');
+/** The versioned address every Instagram call goes to. */
+export const instagramGraph = (): string => `${instagramRoot()}/v23.0`;
+const tokenUrl = (): string => process.env['INSTAGRAM_TOKEN_URL'] ?? 'https://api.instagram.com/oauth/access_token';
 const STATUS_POLL_MS = 3_000;
 const STATUS_MAX_POLLS = 15;
 
@@ -15,7 +23,7 @@ export class InstagramApiError extends Error {
 }
 
 async function graph(step: string, path: string, init?: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(`${GRAPH}${path}`, { ...init, signal: AbortSignal.timeout(30_000) });
+  const response = await fetch(`${instagramGraph()}${path}`, { ...init, signal: AbortSignal.timeout(30_000) });
   const body = (await response.json()) as Record<string, unknown>;
   if (!response.ok || body['error']) throw new InstagramApiError(step, JSON.stringify(body['error'] ?? body));
   return body;
@@ -32,7 +40,7 @@ export interface RefreshedToken {
  */
 export async function refreshToken(token: string): Promise<RefreshedToken> {
   const params = new URLSearchParams({ grant_type: 'ig_refresh_token', access_token: token });
-  const response = await fetch(`${ROOT}/refresh_access_token?${params}`, {
+  const response = await fetch(`${instagramRoot()}/refresh_access_token?${params}`, {
     signal: AbortSignal.timeout(30_000),
   });
   const body = (await response.json()) as Record<string, unknown>;
@@ -75,7 +83,7 @@ export async function mediaSince(userId: string, token: string, sinceMs: number)
     limit: String(MEDIA_PAGE_SIZE),
     access_token: token,
   });
-  let url: string | null = `${GRAPH}/${userId}/media?${params}`;
+  let url: string | null = `${instagramGraph()}/${userId}/media?${params}`;
   const out: AccountMedia[] = [];
   for (let page = 0; url !== null && page < MEDIA_MAX_PAGES; page++) {
     const response: Response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
@@ -105,9 +113,10 @@ export interface AccountProfile {
   pictureUrl: string | null;
 }
 
-export async function accountProfile(token: string): Promise<AccountProfile> {
+/** The account's name and picture. Through Facebook login the account's own id is needed, as /me is then the system user. */
+export async function accountProfile(token: string, userId?: string): Promise<AccountProfile> {
   const params = new URLSearchParams({ fields: 'username,profile_picture_url', access_token: token });
-  const body = await graph('read account', `/me?${params}`);
+  const body = await graph('read account', `/${unifiedLogin() && userId ? userId : 'me'}?${params}`);
   return {
     username: typeof body['username'] === 'string' ? body['username'] : null,
     pictureUrl: typeof body['profile_picture_url'] === 'string' ? body['profile_picture_url'] : null,
@@ -199,7 +208,7 @@ export interface InstagramApp {
 
 /** Swaps the one-time code from the redirect for a short-lived token (about an hour). Secrets go in the body, never the address. */
 export async function exchangeCode(app: InstagramApp, redirectUri: string, code: string): Promise<{ accessToken: string }> {
-  const response = await fetch(TOKEN_URL, {
+  const response = await fetch(tokenUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: app.appId, client_secret: app.appSecret, grant_type: 'authorization_code', redirect_uri: redirectUri, code }),
@@ -221,7 +230,7 @@ export interface LongLivedToken {
 /** Trades the short-lived token for one that lasts about 60 days and can be renewed (see refreshToken). */
 export async function longLivedToken(app: InstagramApp, shortToken: string): Promise<LongLivedToken> {
   const params = new URLSearchParams({ grant_type: 'ig_exchange_token', client_secret: app.appSecret, access_token: shortToken });
-  const response = await fetch(`${ROOT}/access_token?${params}`, { signal: AbortSignal.timeout(30_000) });
+  const response = await fetch(`${instagramRoot()}/access_token?${params}`, { signal: AbortSignal.timeout(30_000) });
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok || body['error'] || typeof body['access_token'] !== 'string' || typeof body['expires_in'] !== 'number') {
     throw new InstagramApiError('token upgrade', JSON.stringify(body['error'] ?? { status: response.status }));
@@ -249,9 +258,42 @@ export async function accountOf(token: string): Promise<InstagramAccount> {
 /** Whether a saved token is still accepted. */
 export async function tokenHealth(token: string): Promise<{ ok: boolean; error?: string }> {
   try {
-    await graph('account check', `/me?${new URLSearchParams({ fields: 'user_id', access_token: token })}`);
+    await graph('account check', `/me?${new URLSearchParams({ fields: unifiedLogin() ? 'id' : 'user_id', access_token: token })}`);
     return { ok: true };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+/** The address that sends a person to Meta's login with a saved configuration (which names the permissions and the account chooser). No scope is passed. */
+export function facebookLoginLink(options: { appId: string; configId: string; redirectUri: string; state: string }): string {
+  const params = new URLSearchParams({ client_id: options.appId, config_id: options.configId, redirect_uri: options.redirectUri, response_type: 'code', state: options.state });
+  return `${process.env['FACEBOOK_AUTHORIZE_URL'] ?? 'https://www.facebook.com/dialog/oauth'}?${params}`;
+}
+
+/** Swaps the one-time code from the redirect for the business token. With a configuration it does not expire, so there is no second exchange. Secrets go in the body. */
+export async function exchangeFacebookCode(app: InstagramApp, redirectUri: string, code: string): Promise<string> {
+  const response = await fetch(`${instagramGraph()}/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: app.appId, client_secret: app.appSecret, redirect_uri: redirectUri, code }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok || body['error'] || typeof body['access_token'] !== 'string') {
+    throw new InstagramApiError('code exchange', JSON.stringify(body['error'] ?? { status: response.status }));
+  }
+  return body['access_token'];
+}
+
+/** The Instagram accounts the person handed to the app in the login's chooser. An entry without a username is left out. */
+export async function accountsOf(token: string): Promise<InstagramAccount[]> {
+  const params = new URLSearchParams({ fields: 'id,username', access_token: token });
+  const body = await graph('list accounts', `/me/assigned_instagram_accounts?${params}`);
+  const rows = Array.isArray(body['data']) ? (body['data'] as Array<Record<string, unknown>>) : [];
+  return rows.flatMap((row) => {
+    const id = row['id'];
+    const username = row['username'];
+    return (typeof id === 'string' || typeof id === 'number') && typeof username === 'string' && username ? [{ userId: String(id), username }] : [];
+  });
 }

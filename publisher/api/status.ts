@@ -9,7 +9,7 @@ import { scheduleData } from '../lib/schedule-source.js';
 import { describeError, isAuthorized, json, requireEnv } from '../lib/http.js';
 import { parseKey } from '../lib/crypto.js';
 import { crosspostStatusFor } from '../lib/crosspost.js';
-import { channelLabel, channelToken, type ChannelFile, type PostedLog } from '../lib/channels.js';
+import { channelLabel, channelToken, hasEnded, type ChannelFile, type PostedLog } from '../lib/channels.js';
 import { pageHealth } from '../lib/facebook.js';
 import { locationHealth } from '../lib/google.js';
 import { memberHealth } from '../lib/linkedin.js';
@@ -64,7 +64,7 @@ async function lookUpChannels(channels: ChannelFile, now: number): Promise<Recor
         if (!key) health = { ok: false, error: keyProblem ?? 'no key' };
         else if (channel.platform === 'facebook') health = await pageHealth(channel.pageId, channelToken(channel, key));
         else if (channel.platform === 'google') health = await locationHealth({ clientId: requireEnv('GOOGLE_CLIENT_ID'), clientSecret: requireEnv('GOOGLE_CLIENT_SECRET') }, channelToken(channel, key));
-        else if (Date.parse(channel.expiresAt) <= now) health = { ok: false, error: `The ${channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram'} connection has expired. They need to connect again.` };
+        else if (hasEnded(channel, now)) health = { ok: false, error: `The ${channel.platform === 'linkedin' ? 'LinkedIn' : 'Instagram'} connection has expired. They need to connect again.` };
         else if (channel.platform === 'linkedin') health = await memberHealth(channelToken(channel, key));
         else health = await tokenHealth(channelToken(channel, key));
       } catch (error) {
@@ -84,7 +84,7 @@ async function lookUpInstagram(earliest: number): Promise<InstagramView> {
   try {
     const token = requireEnv('INSTAGRAM_TOKEN');
     const userId = requireEnv('INSTAGRAM_USER_ID');
-    const [media, profile] = await Promise.all([mediaSince(userId, token, earliest - LOOKBACK_MS), accountProfile(token)]);
+    const [media, profile] = await Promise.all([mediaSince(userId, token, earliest - LOOKBACK_MS), accountProfile(token, userId)]);
     return { media, profile, health: { ok: true } };
   } catch (error) {
     return {
@@ -154,7 +154,7 @@ export async function GET(request: Request): Promise<Response> {
           avatar: null,
           brands: [channel.brand],
           paused: isPaused(pauses, channel.brand, channel.id),
-          ...(channel.platform === 'linkedin' || channel.platform === 'instagram' ? { expiresAt: channel.expiresAt } : {}),
+          ...((channel.platform === 'linkedin' || channel.platform === 'instagram') && channel.expiresAt !== undefined ? { expiresAt: channel.expiresAt } : {}),
           ...(channelHealth[channel.id] ?? { ok: false, error: 'not checked' }),
         })),
       ],

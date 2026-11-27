@@ -4,10 +4,10 @@
  *
  * A refusal for a missing permission is a `needs` for the caller to show ("connect the account again"), not a crash.
  */
+import { instagramGraph } from './instagram.js';
 import { graph, type Refusal } from './analytics-fetch.js';
 import type { IncomingComment } from './inbox.js';
 
-const INSTAGRAM_GRAPH = `${process.env['INSTAGRAM_GRAPH_URL'] ?? 'https://graph.instagram.com'}/v23.0`;
 const FACEBOOK_GRAPH = process.env['FACEBOOK_GRAPH_URL'] ?? 'https://graph.facebook.com/v23.0';
 
 type Fetch = typeof fetch;
@@ -35,7 +35,7 @@ const list = (v: unknown): Json[] => (Array.isArray(v) ? (v as Json[]) : []);
 /** The comments on one Instagram post, newest first (one page of 50: a post with more is read again next check, newest first). */
 export async function instagramComments(mediaId: string, token: string, fetcher: Fetch = fetch): Promise<CommentsReading> {
   const params = new URLSearchParams({ fields: 'id,text,username,timestamp', limit: '50', access_token: token });
-  const { body, refusal } = await graph(fetcher, 'Instagram comments', `${INSTAGRAM_GRAPH}/${mediaId}/comments?${params}`);
+  const { body, refusal } = await graph(fetcher, 'Instagram comments', `${instagramGraph()}/${mediaId}/comments?${params}`);
   if (refusal) return { comments: [], needs: refusal.permission ? 'reconnect' : null };
   return { needs: null, comments: list(body['data']).flatMap((c) => (str(c['id']) && str(c['timestamp']) ? [{ remoteId: str(c['id']), author: str(c['username']), text: str(c['text']), at: new Date(str(c['timestamp'])).toISOString() }] : [])) };
 }
@@ -67,7 +67,7 @@ async function post(fetcher: Fetch, url: string, form: Record<string, string>): 
 
 /** Answers an Instagram comment. Returns the id of the reply. */
 export async function instagramReply(commentId: string, token: string, message: string, fetcher: Fetch = fetch): Promise<string | null> {
-  const body = await post(fetcher, `${INSTAGRAM_GRAPH}/${commentId}/replies`, { message, access_token: token });
+  const body = await post(fetcher, `${instagramGraph()}/${commentId}/replies`, { message, access_token: token });
   return str(body['id']) || null;
 }
 

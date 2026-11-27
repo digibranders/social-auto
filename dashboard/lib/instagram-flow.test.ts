@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseConnectCookie } from './facebook-flow.ts';
-import { authorizeLink, callbackUrl, clearedConnectCookie, connectCookie, INSTAGRAM_COOKIE } from './instagram-flow.ts';
+import { authorizeLink, callbackUrl, clearedConnectCookie, connectCookie, facebookLoginLink, INSTAGRAM_COOKIE, usesFacebookLogin } from './instagram-flow.ts';
 
 test('the link asks only to read the profile and publish posts, and names the way back', () => {
   const link = new URL(authorizeLink({ appId: '123', redirectUri: 'https://cal.example/api/instagram-callback', state: 's' }));
@@ -29,4 +29,28 @@ test('the way back follows the address the request came to, also behind a proxy'
     callbackUrl(new Request('http://internal/x', { headers: { 'x-forwarded-host': 'cal.example', 'x-forwarded-proto': 'https' } })),
     'https://cal.example/api/instagram-callback',
   );
+});
+
+test('Facebook login names the saved configuration, passes no scope, and returns to the same callback', () => {
+  const link = new URL(facebookLoginLink({ appId: '111', configId: '222', redirectUri: 'https://cal.example/api/instagram-callback', state: 's' }));
+  assert.equal(link.origin + link.pathname, 'https://www.facebook.com/dialog/oauth');
+  assert.equal(link.searchParams.get('client_id'), '111');
+  assert.equal(link.searchParams.get('config_id'), '222');
+  assert.equal(link.searchParams.get('response_type'), 'code');
+  assert.equal(link.searchParams.get('state'), 's');
+  assert.equal(link.searchParams.get('redirect_uri'), 'https://cal.example/api/instagram-callback');
+  assert.equal(link.searchParams.has('scope'), false);
+});
+
+test('Facebook login is used only when INSTAGRAM_LOGIN says so', () => {
+  const before = process.env['INSTAGRAM_LOGIN'];
+  try {
+    delete process.env['INSTAGRAM_LOGIN'];
+    assert.equal(usesFacebookLogin(), false);
+    process.env['INSTAGRAM_LOGIN'] = 'facebook';
+    assert.equal(usesFacebookLogin(), true);
+  } finally {
+    if (before === undefined) delete process.env['INSTAGRAM_LOGIN'];
+    else process.env['INSTAGRAM_LOGIN'] = before;
+  }
 });

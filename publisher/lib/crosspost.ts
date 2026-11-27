@@ -1,5 +1,5 @@
 import { isPaused, NO_PAUSES, type PauseFile } from './pauses.js';
-import { channelLabel, channelsFor, channelToken, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
+import { channelLabel, channelsFor, channelToken, hasEnded, postedKey, type Channel, type ChannelFile, type PostedLog } from './channels.js';
 import { isWantedOn } from './schedule.js';
 import type { CarouselImage, LinkedInPost, Visibility } from './linkedin.js';
 import { dueWindowFor } from './schedule.js';
@@ -163,7 +163,7 @@ export async function postToLinkedIn(options: {
         continue;
       }
       if (!post.image) throw new Error('the post has no picture to send');
-      if (Date.parse(channel.expiresAt) <= options.now) {
+      if (hasEnded(channel, options.now)) {
         throw new Error(`The LinkedIn connection for ${channel.memberName} has expired. They need to open their connect link again and press Allow.`);
       }
       const token = channelToken(channel, key);
@@ -275,7 +275,7 @@ export async function postToInstagram(options: {
         continue;
       }
       if (!post.image) throw new Error('the post has no picture to send');
-      if (Date.parse(channel.expiresAt) <= options.now) {
+      if (hasEnded(channel, options.now)) {
         throw new Error(`The Instagram connection for ${channel.username} has expired. They need to open their connect link again and press Allow.`);
       }
       const token = channelToken(channel, key);
