@@ -17,6 +17,8 @@ export interface FacebookApi {
 export interface LinkedInApi {
   fetchImage(url: string): Promise<Uint8Array>;
   uploadImage(token: string, ownerUrn: string, image: Uint8Array): Promise<string>;
+  /** Whether the token still works for a company page; left out by an older client, which then counts a page as healthy. */
+  pageHealth?(token: string, pageUrn: string): Promise<{ ok: boolean; error?: string }>;
   postImage(token: string, authorUrn: string, assetUrn: string, caption: string, visibility: Visibility): Promise<LinkedInPost>;
   uploadImageUrn(token: string, ownerUrn: string, image: Uint8Array): Promise<string>;
   postMultiImage(token: string, authorUrn: string, images: readonly CarouselImage[], caption: string, visibility: Visibility): Promise<LinkedInPost>;
@@ -168,7 +170,7 @@ export async function postToLinkedIn(options: {
       }
       const token = channelToken(channel, key);
       if (options.dryRun) {
-        const health = await api.memberHealth(token);
+        const health = channel.memberUrn.startsWith('urn:li:organization:') ? ((await api.pageHealth?.(token, channel.memberUrn)) ?? { ok: true }) : await api.memberHealth(token);
         results.push(health.ok ? { ...base, status: 'dry-run-ready' } : { ...base, status: 'failed', error: health.error ?? 'LinkedIn check failed' });
         continue;
       }
