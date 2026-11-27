@@ -891,3 +891,9 @@ test('a poster\'s sign-off is the web address; the brand\'s name is drawn only w
   assert.equal(manifestOf({ ...post('p', 'Hello there'), signoff: { brandName: '' } }, brand).brandName, '', 'an empty name on the post leaves it off');
   assert.equal(manifestOf(post('p', 'Hello there'), brand, { ...logoInput, kind: 'wordmark' }).brandSignoff, 'logo', 'the logo is not affected');
 });
+
+test('the picture prompt tells the model to draw no decorative slashes, sparks or doodled marks around the lettering', () => {
+  const colors = { background: '#FFFFFF', ink: '#111111', accent: '#6B3FD4' };
+  const prompt = buildCreativePrompt(manifest, { fact: 'f', colors });
+  assert.match(prompt, /draw no decorative strokes, slashes, sparks, motion lines, underlines, brackets, arrows or doodled marks/);
+});
