@@ -278,6 +278,8 @@ export function createReviewServer(options: ReviewServerOptions): Server {
 
   /** Today in India time (YYYY-MM-DD), by the clock this service was given. */
   const todayIst = (): string => new Date((options.now ?? (() => new Date()))().getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10);
+  /** The time now in milliseconds, by the clock this service was given. */
+  const nowMs = (): number => (options.now ?? (() => new Date()))().getTime();
 
   // PRODUCT_LIMITS=off lifts the one redraw a picture is given (testing only).
   const redrawCap = options.redrawCap ?? (productLimitsOff() ? 50 : 1);
@@ -373,7 +375,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             let carouselDay: string | undefined;
             let carouselTime: string | undefined;
             try {
-              if (body['startDate'] !== undefined) carouselDay = checkStartDate(body['startDate'], Date.now());
+              if (body['startDate'] !== undefined) carouselDay = checkStartDate(body['startDate'], nowMs());
               if (body['time'] !== undefined) carouselTime = checkTime(body['time']);
             } catch (error) {
               if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
@@ -414,7 +416,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
             let topicDay: string | undefined;
             let topicTime: string | undefined;
             try {
-              if (body['startDate'] !== undefined) topicDay = checkStartDate(body['startDate'], Date.now());
+              if (body['startDate'] !== undefined) topicDay = checkStartDate(body['startDate'], nowMs());
               if (body['time'] !== undefined) topicTime = checkTime(body['time']);
             } catch (error) {
               if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
@@ -486,7 +488,7 @@ export function createReviewServer(options: ReviewServerOptions): Server {
           let startDate: string | undefined;
           let time: string | undefined;
           try {
-            if (body['startDate'] !== undefined) startDate = checkStartDate(body['startDate'], Date.now());
+            if (body['startDate'] !== undefined) startDate = checkStartDate(body['startDate'], nowMs());
             if (body['time'] !== undefined) time = checkTime(body['time']);
           } catch (error) {
             if (error instanceof RhythmError) throw new ReviewError('INVALID', error.message);
