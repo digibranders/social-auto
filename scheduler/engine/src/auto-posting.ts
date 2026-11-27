@@ -14,7 +14,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { readConnected } from './connected-networks.ts';
-import { CopyStage, weekOfPost, type CopyBatch } from './copy-stage.ts';
+import { CopyStage, postLocked, weekOfPost, type CopyBatch } from './copy-stage.ts';
 import { isNetwork, type Network } from './networks.ts';
 import type { ProductBrands } from './product-brands.ts';
 import { ReviewStore } from './review-store.ts';
@@ -141,7 +141,7 @@ export function runAutoPosting(deps: AutoDeps): AutoAction[] {
       for (const batch of stage.list()) {
         if (batch.closedAt || batch.drawnAt || deps.isTopicPlan?.(brand, batch.planFile) === true || !isAutomaticBatch(setting, batch)) continue;
         for (const post of batch.posts) {
-          if (post.state !== 'pending' || post.advice !== undefined || post.date === undefined || Date.parse(`${post.date}T23:59:59+05:30`) <= now) continue;
+          if (post.state !== 'pending' || post.advice !== undefined || post.date === undefined || Date.parse(`${post.date}T23:59:59+05:30`) <= now || postLocked(batch, post)) continue;
           const week = weekOfPost(post);
           if (week === undefined || batch.weekDrawn?.[week] !== undefined || batch.weekLapsed?.[week] !== undefined) continue;
           try {
