@@ -483,10 +483,10 @@ test('jobs: the day of the first post and the time can be chosen, are checked, a
 test('the written list also tells the page each network\'s caption rules', async () => {
   const s = await start();
   try {
-    const answer = (await (await s.call('/review/copy')).json()) as { batches: unknown[]; networkRules: Record<string, { maxCaption: number; recommendedMin: number; recommendedMax: number; visibleChars: number; maxHashtags: number }> };
+    const answer = (await (await s.call('/review/copy')).json()) as { batches: unknown[]; networkRules: Record<string, { maxCaption: number; recommendedMin: number; recommendedMax: number; wordsMin?: number; wordsMax?: number; visibleChars: number; maxHashtags: number }> };
     assert.deepEqual(answer.batches, []);
     assert.deepEqual(Object.keys(answer.networkRules), ['instagram', 'facebook', 'linkedin', 'google']);
-    assert.deepEqual(answer.networkRules['linkedin'], { maxCaption: 1500, recommendedMin: 900, recommendedMax: 1200, visibleChars: 125, maxHashtags: 3 });
+    assert.deepEqual(answer.networkRules['linkedin'], { maxCaption: 2400, recommendedMin: 900, recommendedMax: 2000, wordsMin: 150, wordsMax: 300, visibleChars: 125, maxHashtags: 3 });
   } finally {
     await s.done();
   }

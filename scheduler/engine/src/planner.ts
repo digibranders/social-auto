@@ -3,7 +3,8 @@ import { cleanPost, NO_DASH_RULE } from './no-dashes.ts';
 import type { AiConfig } from './ai.ts';
 import { parseWeekPlan, type Brand, type LayoutName, type PlannedPost, type WeekPlan } from './content.ts';
 import { assertCopySupported } from './copy-gate.ts';
-import { checkCopyQuality, ownWordsLength } from './copy-quality.ts';
+import { NETWORK_RULES } from './networks.ts';
+import { checkCopyQuality, ownWordCount } from './copy-quality.ts';
 import { brandPrefixProblem, planQualifierProblem } from './headline-rules.ts';
 import { candidateCount, selectBest, type Candidate } from './candidate-selection.ts';
 import { reviewCandidates, type ReviewDeps, type ReviewOutcome } from './copy-review.ts';
@@ -56,9 +57,6 @@ export function scheduleDates({ startDate, time, utcOffset, count, weekdays }: P
   return days.map((day) => `${day}T${time}:00${utcOffset}`);
 }
 
-/** The fewest characters of its own words a main caption should have (without hashtags or the closing line); the Instagram aim is 300 to 600 in all. */
-export const MIN_CAPTION_CHARS = 240;
-
 /** Writing tries per chunk: the first answer and two corrections, each naming every check that failed, before a post is left out. */
 const WRITE_TRIES = 3;
 
@@ -77,7 +75,9 @@ Return a single JSON object and nothing else.`;
 /** How long a caption should be for the facts a post has: a soft target that follows the evidence, never a floor to pad up to. */
 export function captionTarget(factCount: number): string {
   // Instagram's caption is this one, so what is asked for stays inside the range worth aiming for on Instagram (networks.ts).
-  return factCount <= 1 ? 'about 300 to 450 characters' : 'about 400 to 600 characters';
+  // The words Instagram's caption must have (networks.ts); the facts a post has do not change the range, they only decide what the words say.
+  void factCount;
+  return `${NETWORK_RULES.instagram.words?.min ?? 80} to ${NETWORK_RULES.instagram.words?.max ?? 120} words`;
 }
 
 /** The pillar of each post in the order the model must write them, and the proof point a proof post is built on. */
@@ -244,7 +244,7 @@ function withoutListCount<T extends { headline: string; subline: string; caption
  * points, it also turns back copy that states a figure, superlative, guarantee or deadline none of them supports; this runs before
  * any picture is generated.
  */
-export function validateDraft(draft: DraftPost, position: number, brandName?: string, proofPoints?: readonly string[], assignment?: PostPlan, options: { optionalSubline?: boolean; facts?: readonly EvidenceFact[]; minCaption?: number } = {}): void {
+export function validateDraft(draft: DraftPost, position: number, brandName?: string, proofPoints?: readonly string[], assignment?: PostPlan, options: { optionalSubline?: boolean; facts?: readonly EvidenceFact[]; captionWords?: { min: number; max: number } } = {}): void {
   if (typeof draft.visual !== 'string' || !draft.visual.trim()) throw new Error(`post ${position} needs a "visual"`);
   if (typeof draft.visualLink !== 'string' || !draft.visualLink.trim()) throw new Error(`post ${position} needs a "visualLink": how the picture connects to the headline`);
   if (brandName !== undefined) {
@@ -260,10 +260,12 @@ export function validateDraft(draft: DraftPost, position: number, brandName?: st
   }
   const weak = checkCopyQuality({ headline: draft.headline, caption: draft.caption });
   if (weak) throw new Error(`post ${position} failed the writing check: ${weak}`);
-  // Asked for, not forced: only while a correction is still possible (the last try accepts what it gets, so a business with few facts never loses posts to this).
-  if (options.minCaption !== undefined && typeof draft.caption === 'string') {
-    const own = ownWordsLength(draft.caption);
-    if (own < options.minCaption) throw new Error(`post ${position} caption is too short: ${own} characters of its own words; write at least ${options.minCaption} (a hook, then what the post's facts say in plain words, then the call to action), using only what the facts state`);
+  // The word range of the caption (the post's own words, without hashtags or the closing line): asked for while a correction is still possible. The last try accepts what it gets, so a plan never fails over length.
+  if (options.captionWords !== undefined && typeof draft.caption === 'string') {
+    const count = ownWordCount(draft.caption);
+    const { min, max } = options.captionWords;
+    if (count < min) throw new Error(`post ${position} caption is too short: ${count} words; it must be between ${min} and ${max} words (a hook, then what the post's facts say in plain words, then the call to action), using only what the facts state`);
+    if (count > max) throw new Error(`post ${position} caption is too long: ${count} words; it must be between ${min} and ${max} words, so cut it to at most ${max}`);
   }
   // A headline is a message, not a label, and a figure that belongs to a plan keeps its plan (headline-rules.ts); each is asked for again once, then the post is left out.
   const prefix = brandName !== undefined && typeof draft.headline === 'string' ? brandPrefixProblem(draft.headline, brandName) : undefined;
@@ -330,8 +332,8 @@ export async function planWeek(options: {
    * in the same job (so an accidental repeat is never paid for), and a request asked again must therefore say something new (the day, the ideas already in the plan).
    */
   requestNote?: string;
-  /** The fewest characters of its own words a caption should have; asked for on the first tries only (see MIN_CAPTION_CHARS). Off when left out. */
-  minCaptionChars?: number;
+  /** The words a caption must have, asked for on the first tries only (the last accepts what it gets). Off when left out; the real run passes Instagram's range from networks.ts. */
+  captionWords?: { min: number; max: number };
   /** Ask the picture for room where the layout puts its text (off by default; see IMAGE_COMPOSITION_HINT). */
   compositionHints?: boolean;
   /** The pillars of the posts written in earlier weeks, oldest first, so the mix carries on where it stopped. */
@@ -440,7 +442,7 @@ export async function planWeek(options: {
           let draft = d;
           let used = assigned.hook as string;
           try {
-            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode, facts: factsPerPost[offset + i] ?? [], ...(attempt < WRITE_TRIES && options.minCaptionChars !== undefined ? { minCaption: options.minCaptionChars } : {}) });
+            validateDraft(draft, i + 1, brand.name, gateEvidence(offset + i), assigned, { optionalSubline: evidenceMode, facts: factsPerPost[offset + i] ?? [], ...(attempt < WRITE_TRIES && options.captionWords !== undefined ? { captionWords: options.captionWords } : {}) });
           } catch (error) {
             // On the last try a post whose copy the claim gate still turns back, or that does not stay with its fact, is left out (fewer posts, never unsupported copy); the others stay.
             if (attempt >= WRITE_TRIES && !(error instanceof HookError) && error instanceof Error && /claim gate turned back|must be built on this proof point|headline rule:|failed the writing check/.test(error.message)) {

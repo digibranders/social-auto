@@ -90,3 +90,23 @@ test('a planned post with a day or time of its own is sent by the frequent run, 
   assert.deepEqual(dueManualPosts(applyOverrides(posts, { a: { ...overrides['a'], skipped: true } as OverrideMap[string] }), now, 15 * 60 * 1000), []);
   assert.equal(duePlannedPost(all, now)?.id, 'a');
 });
+
+test('several posts with a time of their own can share a day, and each is sent at its own time; a plain planned post still holds its day', async () => {
+  // b already has a time of its own (moved earlier, or approved with its plan's time): a takes the same day, at another time.
+  const withOwn: ScheduledPost[] = [planned('a', '2026-11-05'), { ...planned('b', '2026-11-06'), ownTime: true }];
+  const store = memoryStore();
+  await editPost(store, withOwn, 'a', { kind: 'move', day: '2026-11-06', time: '16:30' }, NOW);
+  assert.equal(store.overrides['a']?.date, '2026-11-06T16:30:00+05:30');
+  const both = applyOverrides(withOwn, store.overrides);
+  // Both are sent by the frequent run, each inside its own window.
+  const at = (time: string): number => Date.parse(`2026-11-06T${time}:00+05:30`);
+  assert.deepEqual(dueManualPosts(both, at('10:05')).map((p) => p.id), ['b']);
+  assert.deepEqual(dueManualPosts(both, at('16:35')).map((p) => p.id), ['a']);
+  // A third post moved to the same day is fine too.
+  const three: ScheduledPost[] = [...withOwn, planned('c', '2026-11-07')];
+  await editPost(store, three, 'c', { kind: 'move', day: '2026-11-06', time: '19:00' }, NOW);
+  assert.equal(store.overrides['c']?.date, '2026-11-06T19:00:00+05:30');
+  // A plain planned post on the day (no time of its own) still refuses another, so the daily run never has to drop one.
+  const plain: ScheduledPost[] = [planned('a', '2026-11-05'), planned('b', '2026-11-06')];
+  await assert.rejects(editPost(memoryStore(), plain, 'a', { kind: 'move', day: '2026-11-06', time: '16:30' }, NOW), /another post is already planned for that day/);
+});
