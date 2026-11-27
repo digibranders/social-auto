@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { aiConfigFromEnv } from './ai.ts';
-import { writeNetworkCaptions, type CaptionPost } from './network-captions.ts';
+import { minCaptionFor, writeNetworkCaptions, type CaptionPost } from './network-captions.ts';
 import { composeVariant } from './networks.ts';
 
 const ai = aiConfigFromEnv({ OPENAI_API_KEY: 'sk-test-key-1234', AI_PROVIDER: 'openai' });
@@ -96,4 +96,25 @@ test('the writer is told how long each network\'s caption should be and that the
   assert.match(asked, /linkedin: .*Aim for about 900 to 1200 characters/);
   assert.match(asked, /google: .*Aim for about 150 to 300 characters/);
   assert.match(asked, /the hook comes first/);
+});
+
+test('a caption that is too short for its network is asked for again, longer; the last try takes what it gets, and without the option nothing is asked', async () => {
+  const short = 'We help you track and analyze your business reports.';
+  const long = 'Reports only help when you can read them. Acme tracks and analyzes business reports, so you can see what is happening in your business. Instead of digging through spreadsheets, you get a clear view of where things stand. That makes it easier to decide what to do next, and to explain those decisions to your team. Good decisions start with information you can trust, and trust starts with reports that are easy to follow. It is a small change that leaves more time for the work that needs your attention. Take a look at how Acme can fit into the way your team already works.';
+  const answer = (text: string) => Response.json({ choices: [{ message: { content: JSON.stringify({ captions: [{ postId: 'p1', network: 'linkedin', caption: text, hashtags: ['#Reports'] }] }) } }] });
+  const input = { ai, networks: ['linkedin'] as const, posts: [{ id: 'p1', headline: 'Track your reports', caption: 'Track your reports.\n\nVisit acme.example (link in bio)', hashtags: ['#Reports'], facts: ['Acme tracks and analyzes business reports.'] }] };
+  const bodies: string[] = [];
+  const asking = (texts: string[]) => async (_url: string | URL | Request, init?: RequestInit) => { bodies.push(String(init?.body)); return answer(texts[Math.min(bodies.length - 1, texts.length - 1)] as string); };
+  const grown = await writeNetworkCaptions({ ...input, networks: [...input.networks], minCaptions: true, fetchFn: asking([short, long]) as unknown as typeof fetch });
+  assert.equal(bodies.length, 2, 'asked again once');
+  assert.match(bodies[1] ?? '', /too short for linkedin/);
+  assert.ok((grown.variants['p1']?.linkedin?.caption.length ?? 0) > minCaptionFor('linkedin'));
+  bodies.length = 0;
+  const stubborn = await writeNetworkCaptions({ ...input, networks: [...input.networks], minCaptions: true, fetchFn: asking([short]) as unknown as typeof fetch });
+  assert.equal(bodies.length, 3, 'two corrections, then the short answer is accepted');
+  assert.match(stubborn.variants['p1']?.linkedin?.caption ?? '', /track and analyze/);
+  assert.equal(stubborn.report.fallback.length, 0);
+  bodies.length = 0;
+  await writeNetworkCaptions({ ...input, networks: [...input.networks], fetchFn: asking([short]) as unknown as typeof fetch });
+  assert.equal(bodies.length, 1, 'no option: no minimum');
 });
