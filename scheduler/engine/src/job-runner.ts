@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { CopyStage } from './copy-stage.ts';
+import { recordInterruptedDraw } from './interrupted-draw.ts';
 import { JobStore, scrub, type Job, type NetworkResult } from './job-store.ts';
 import { pictureRoomFor } from './picture-room.ts';
 import { planEnded } from './plan-end.ts';
@@ -204,8 +205,12 @@ if (import.meta.main) {
   for (const lost of store.recover((p) => p !== process.pid && alive(p))) {
     try {
       if (lost.kind === 'copy') closeBatch(lost);
+      if (lost.kind === 'draw') {
+        const reopened = recordInterruptedDraw(brandsRoot, lost);
+        if (reopened.length > 0) console.error(`the draw of ${lost.brand} stopped early: ${reopened.length} topic(s) have no picture and are open to draw again`);
+      }
     } catch (error) {
-      console.error(`could not close the written batch of job ${lost.id}: ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`could not close the written batch or reopen the topics of job ${lost.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   while (!stopping) {
