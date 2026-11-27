@@ -80,8 +80,9 @@ export async function editPost(
     next = { ...current, imageKey: key, updatedAt };
   } else if (action.kind === 'move') {
     if (post.manual) throw new EditError('a post made by hand is moved in its own file', 400);
-    // A planned post takes a new day, which no other planned post of the client has, and may take a new time: a post with a day or time
-    // of its own is sent by the frequent run at that time. Without a time it keeps its planned one.
+    // A planned post takes a new day and may take a new time: a post with a day or time of its own is sent by the frequent run at that time, so
+    // several of those can share a day. Only a plain planned post (no time of its own: the daily run sends one a day) holds its day, because a
+    // second post on the same day would be dropped by the daily run. Without a time the moved post keeps its planned one.
     const { day: ownDay, time: ownTime } = istParts(post.date);
     const date = postDateFor(action.day, now, action.time === undefined ? ownTime : action.time);
     const { day, time } = istParts(date);
@@ -89,7 +90,7 @@ export async function editPost(
       next = { ...current, updatedAt };
       delete next.date;
     } else {
-      const taken = day !== ownDay && applyOverrides(posts, overrides).some((p) => p.id !== id && p.manual !== true && (p.brand ?? 'default') === (post.brand ?? 'default') && istParts(p.date).day === day);
+      const taken = day !== ownDay && applyOverrides(posts, overrides).some((p) => p.id !== id && p.manual !== true && p.ownTime !== true && (p.brand ?? 'default') === (post.brand ?? 'default') && istParts(p.date).day === day);
       if (taken) throw new EditError('another post is already planned for that day', 409);
       next = { ...current, date, updatedAt };
     }
