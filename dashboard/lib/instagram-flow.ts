@@ -7,8 +7,8 @@ import { siteOrigin } from './linkedin-flow.js';
  */
 export const INSTAGRAM_COOKIE = 'ig_connect';
 const AUTHORIZE = process.env['INSTAGRAM_AUTHORIZE_URL'] ?? 'https://www.instagram.com/oauth/authorize';
-/** Read the profile and publish posts; nothing else. */
-const SCOPE = 'instagram_business_basic,instagram_business_content_publish';
+/** Read the profile, publish posts, and reply to comments via Auto-DM. */
+const SCOPE = 'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments';
 
 export const connectCookie = (state: string, brand: string, returnUrl: string | null = null, secure?: boolean): string =>
   connectCookieFor(INSTAGRAM_COOKIE, state, brand, returnUrl, secure);

@@ -31,6 +31,27 @@ export const routes: Record<string, { method: string; load: () => Promise<Handle
   '/api/pause': { method: 'ANY', load: async () => { const m = await import('../api/pause.js'); return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request)); } },
   '/api/manual': { method: 'POST', load: () => import('../api/manual.js').then((m) => m.POST) },
   '/api/edit': { method: 'POST', load: () => import('../api/edit.js').then((m) => m.POST) },
+  '/api/autodm': {
+    method: 'ANY',
+    load: async () => {
+      const m = await import('../api/autodm.js');
+      return (request) =>
+        request.method === 'POST'
+          ? m.POST(request)
+          : request.method === 'PATCH'
+            ? m.PATCH(request)
+            : request.method === 'DELETE'
+              ? m.DELETE(request)
+              : m.GET(request);
+    },
+  },
+  '/api/webhooks/instagram': {
+    method: 'ANY',
+    load: async () => {
+      const m = await import('../api/webhooks/instagram.js');
+      return (request) => (request.method === 'POST' ? m.POST(request) : m.GET(request));
+    },
+  },
   '/api/edited-image': { method: 'GET', load: () => import('../api/edited-image.js').then((m) => m.GET) },
   '/api/facebook-connect': { method: 'POST', load: () => import('../api/_connect/facebook.js').then((m) => m.POST) },
   '/api/instagram-connect': { method: 'POST', load: () => import('../api/_connect/instagram.js').then((m) => m.POST) },

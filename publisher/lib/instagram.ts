@@ -297,3 +297,66 @@ export async function accountsOf(token: string): Promise<InstagramAccount[]> {
     return (typeof id === 'string' || typeof id === 'number') && typeof username === 'string' && username ? [{ userId: String(id), username }] : [];
   });
 }
+
+/** Sends a one-shot Private Reply DM to the author of an Instagram comment. */
+export async function sendPrivateReply(userId: string, token: string, commentId: string, text: string): Promise<{ messageId: string | null }> {
+  const params = new URLSearchParams({ access_token: token });
+  const body = await graph('send private reply', `/${userId}/messages?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { comment_id: commentId }, message: { text } }),
+  });
+  return { messageId: typeof body['message_id'] === 'string' ? body['message_id'] : null };
+}
+
+/** Sends a direct text DM to an Instagram-scoped user ID (`IGSID`). */
+export async function sendDirectMessage(userId: string, token: string, recipientId: string, text: string): Promise<{ messageId: string | null }> {
+  const params = new URLSearchParams({ access_token: token });
+  const body = await graph('send direct message', `/${userId}/messages?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ recipient: { id: recipientId }, message: { text } }),
+  });
+  return { messageId: typeof body['message_id'] === 'string' ? body['message_id'] : null };
+}
+
+/** Sends a Generic Template card with a postback button (used for 2-step follow-gate prompts). */
+export async function sendFollowGatePrompt(
+  userId: string,
+  token: string,
+  recipient: { comment_id: string } | { id: string },
+  title: string,
+  buttonTitle: string,
+  payload: string,
+): Promise<{ messageId: string | null }> {
+  const params = new URLSearchParams({ access_token: token });
+  const body = await graph('send follow-gate prompt', `/${userId}/messages?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient,
+      message: {
+        attachment: {
+          type: 'template',
+          payload: {
+            template_type: 'generic',
+            elements: [
+              {
+                title,
+                buttons: [{ type: 'postback', title: buttonTitle, payload }],
+              },
+            ],
+          },
+        },
+      },
+    }),
+  });
+  return { messageId: typeof body['message_id'] === 'string' ? body['message_id'] : null };
+}
+
+/** Checks whether the given Instagram-scoped user (`IGSID`) follows the business account (requires active DM consent). */
+export async function isUserFollowing(igsid: string, token: string): Promise<boolean> {
+  const params = new URLSearchParams({ fields: 'is_user_follow_business', access_token: token });
+  const body = await graph('check follower status', `/${igsid}?${params}`);
+  return body['is_user_follow_business'] === true;
+}
