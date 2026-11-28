@@ -7,12 +7,15 @@
  * DELETE /api/autodm?id=<uuid>
  */
 import { addAutoDmRule, deleteAutoDmRule, updateAutoDmRule } from '../lib/autodm.js';
+import type { InstagramChannel } from '../lib/channels.js';
 import { allBrands } from '../lib/clients.js';
+import { decrypt, parseKey } from '../lib/crypto.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
+import { recentMedia, type RecentMedia } from '../lib/instagram.js';
 import { EditError } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
 import { scheduleData } from '../lib/schedule-source.js';
-import { loadAutoDm, loadClients, saveAutoDm, storeConfigured } from '../lib/store.js';
+import { loadAutoDm, loadChannels, loadClients, saveAutoDm, storeConfigured } from '../lib/store.js';
 
 const MAX_BODY_BYTES = 8 * 1024;
 const plannedBrands = (): string[] => parseSchedule(scheduleData).map((p) => p.brand ?? 'default');
@@ -26,10 +29,26 @@ function unauthorizedOrUnconfigured(request: Request): Response | null {
 export async function GET(request: Request): Promise<Response> {
   const denied = unauthorizedOrUnconfigured(request);
   if (denied) return denied;
-  const brand = new URL(request.url).searchParams.get('brand');
+  const params = new URL(request.url).searchParams;
+  const brand = params.get('brand');
+  const includePosts = params.get('posts') === '1';
   const { file } = await loadAutoDm();
   const rules = brand ? file.rules.filter((r) => r.brand === brand) : file.rules;
-  return json(200, { rules });
+  if (!includePosts || !brand) return json(200, { rules });
+
+  let posts: RecentMedia[] = [];
+  let postsError: string | undefined;
+  try {
+    const { file: channelsFile } = await loadChannels();
+    const ig = channelsFile.channels.find((c): c is InstagramChannel => c.platform === 'instagram' && c.brand === brand);
+    if (ig) {
+      const key = parseKey(process.env['CHANNEL_KEY']);
+      posts = await recentMedia(ig.userId, decrypt(ig.token, key), 25);
+    }
+  } catch (error) {
+    postsError = describeError(error);
+  }
+  return json(200, { rules, posts, ...(postsError ? { postsError } : {}) });
 }
 
 export async function POST(request: Request): Promise<Response> {
