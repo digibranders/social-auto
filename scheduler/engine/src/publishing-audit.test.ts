@@ -60,6 +60,7 @@ test('dashboard: the routes that talk to the publisher are exactly the known one
     'dashboard/api/_connect/linkedin-callback.ts',
     'dashboard/api/_google/callback.ts',
     'dashboard/api/analytics-refresh.ts',
+    'dashboard/api/autodm.ts',
     'dashboard/api/clients.ts',
     'dashboard/api/disconnect.ts',
     'dashboard/api/edit.ts',
