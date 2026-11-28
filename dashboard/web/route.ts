@@ -1,8 +1,8 @@
 /** Which screen is showing, kept in the address (#/clients, #/client/brandbasket/posts or /cost, #/calendar, #/help/facebook). */
 export type GuideKey = 'facebook' | 'instagram' | 'google' | 'linkedin';
 export const GUIDE_KEYS: readonly GuideKey[] = ['facebook', 'instagram', 'google', 'linkedin'];
-export type ClientTab = 'channels' | 'posts' | 'cost' | 'analytics';
-const CLIENT_TABS: readonly ClientTab[] = ['channels', 'posts', 'cost', 'analytics'];
+export type ClientTab = 'channels' | 'posts' | 'cost' | 'analytics' | 'autodm';
+const CLIENT_TABS: readonly ClientTab[] = ['channels', 'posts', 'cost', 'analytics', 'autodm'];
 
 export type Route =
   | { page: 'clients' }

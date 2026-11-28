@@ -5,6 +5,7 @@ import { planFields } from './add-client.ts';
 import { MAX_WEEKLY_LIMIT } from '../shared/quota.ts';
 import { AUTO_WARNING, SPEND_CAP_DEFAULT_USD, spentThisMonth, websiteHost, type ClientSummary } from './clients.ts';
 import { analyticsPage, type AnalyticsContext } from './analytics-page.ts';
+import { autoDmPanel } from './autodm-page.ts';
 import { costPage } from './cost-page.ts';
 import { clientOption, dropdown } from './dropdown.ts';
 import { postChannelId } from './new-post.ts';
@@ -61,7 +62,7 @@ export const pauseIdOf = (channel: ChannelHealth): string | null => channel.id ?
 const KINDS: readonly ChannelKind[] = ['facebook', 'instagram', 'google', 'linkedin'];
 const GUIDE_FOR: Record<ChannelKind, GuideKey> = { facebook: 'facebook', instagram: 'instagram', google: 'google', linkedin: 'linkedin' };
 const UPCOMING_SHOWN = 14;
-const TAB_LABELS: Record<ClientTab, string> = { channels: 'Channels', posts: 'Next posts', cost: 'Cost', analytics: 'Analytics' };
+const TAB_LABELS: Record<ClientTab, string> = { channels: 'Channels', posts: 'Next posts', cost: 'Cost', analytics: 'Analytics', autodm: 'Auto-DM' };
 
 export function clientsPage(clients: ClientSummary[], ctx: ClientsContext): HTMLElement {
   const paused = ctx.allPaused();
@@ -508,7 +509,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
   const tabs = h(
     'div',
     { class: 'ctabs', role: 'tablist' },
-    ...(['channels', 'posts', 'cost', 'analytics'] as const).map((key) =>
+    ...(['channels', 'posts', 'cost', 'analytics', 'autodm'] as const).map((key) =>
       button(TAB_LABELS[key], `ctab${key === tab ? ' ctab-on' : ''}`, () => ctx.go({ page: 'client', brand: client.brand, tab: key })),
     ),
   );
@@ -548,7 +549,7 @@ export function clientPage(client: ClientSummary | undefined, tab: ClientTab, ct
     client.product !== null ? autoPostingCard(client) : null,
     client.paused ? h('p', { class: 'banner banner-warn', role: 'status' }, ctx.allPaused() ? 'Everything is paused, so nothing is sent for this client.' : `${client.label} is paused. Nothing is sent for this client until you resume it. Posts whose time comes while it is paused are skipped, not sent late.`) : null,
     tabs,
-    tab === 'channels' ? channels : tab === 'posts' ? posts : tab === 'analytics' ? analyticsPage(client, ctx) : costPage(client, ctx),
+    tab === 'channels' ? channels : tab === 'posts' ? posts : tab === 'analytics' ? analyticsPage(client, ctx) : tab === 'autodm' ? autoDmPanel(client) : costPage(client, ctx),
   );
 }
 

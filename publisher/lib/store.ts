@@ -11,6 +11,7 @@ import { BlobPreconditionFailedError, del, get, put } from '@vercel/blob';
 import { parseChannels, parsePostedLog, type ChannelFile, type PostedLog } from './channels.js';
 import { parseClientsFile, type ClientsFile } from './clients.js';
 import { parseManualFile, type ManualFile } from './manual.js';
+import { parseAutoDmFile, type AutoDmFile } from './autodm.js';
 import { EditError, isImageKey, parseOverrides, type OverrideMap } from './overrides.js';
 
 /**
@@ -255,4 +256,16 @@ export async function loadInbox(): Promise<{ file: InboxFile; etag: string | nul
 
 export function saveInbox(file: InboxFile, etag: string | null): Promise<void> {
   return writeJson(INBOX_PATH, file, etag);
+}
+
+const AUTODM_PATH = 'autodm.json';
+
+export async function loadAutoDm(): Promise<{ file: AutoDmFile; etag: string | null }> {
+  if (!storeConfigured()) return { file: { rules: [] }, etag: null };
+  const { value, etag } = await readJson(AUTODM_PATH);
+  return { file: value === null ? { rules: [] } : parseAutoDmFile(value), etag };
+}
+
+export function saveAutoDm(file: AutoDmFile, etag: string | null): Promise<void> {
+  return writeJson(AUTODM_PATH, file, etag);
 }

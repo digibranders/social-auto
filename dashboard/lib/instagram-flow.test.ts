@@ -3,12 +3,15 @@ import { test } from 'node:test';
 import { parseConnectCookie } from './facebook-flow.ts';
 import { authorizeLink, callbackUrl, clearedConnectCookie, connectCookie, facebookLoginLink, INSTAGRAM_COOKIE, usesFacebookLogin } from './instagram-flow.ts';
 
-test('the link asks only to read the profile and publish posts, and names the way back', () => {
+test('the link asks to read the profile, publish posts, and manage comments/messages, and names the way back', () => {
   const link = new URL(authorizeLink({ appId: '123', redirectUri: 'https://cal.example/api/instagram-callback', state: 's' }));
   assert.equal(link.origin + link.pathname, 'https://www.instagram.com/oauth/authorize');
   assert.equal(link.searchParams.get('client_id'), '123');
   assert.equal(link.searchParams.get('response_type'), 'code');
-  assert.equal(link.searchParams.get('scope'), 'instagram_business_basic,instagram_business_content_publish');
+  assert.equal(
+    link.searchParams.get('scope'),
+    'instagram_business_basic,instagram_business_content_publish,instagram_business_manage_messages,instagram_business_manage_comments',
+  );
   assert.equal(link.searchParams.get('state'), 's');
   assert.equal(link.searchParams.get('redirect_uri'), 'https://cal.example/api/instagram-callback');
 });
