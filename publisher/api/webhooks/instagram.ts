@@ -11,6 +11,7 @@ import {
   matchAutoDmRule,
   parseInstagramCommentEvents,
   parseInstagramPostbackEvents,
+  parseInstagramTextDmEvents,
   ruleIdFromPayload,
   verifyMetaSignature,
 } from '../../lib/autodm.js';
@@ -21,8 +22,8 @@ import { isUserFollowing, sendDirectMessage, sendFollowGatePrompt, sendPrivateRe
 import { loadAutoDm, loadChannels, storeConfigured } from '../../lib/store.js';
 
 const MAX_WEBHOOK_BYTES = 128 * 1024;
-const FOLLOW_PROMPT_TEXT = 'Hey! Tap the button below to get your link 👇';
-const FOLLOW_RETRY_TEXT = 'Looks like you aren’t following yet! Follow our page and tap below to try again.';
+const FOLLOW_PROMPT_TEXT = "Hey! Tap 'Get the Link' below (or reply YES) to get your link 👇";
+const FOLLOW_RETRY_TEXT = "Looks like you aren’t following yet! Follow our page and tap 'I've Followed' (or reply YES) to try again.";
 
 function matchesVerifyToken(provided: string | null, expected: string | undefined): boolean {
   if (!provided || !expected) return false;
@@ -66,7 +67,8 @@ export async function POST(request: Request): Promise<Response> {
 
   const commentEvents = parseInstagramCommentEvents(payload);
   const postbackEvents = parseInstagramPostbackEvents(payload);
-  if ((commentEvents.length === 0 && postbackEvents.length === 0) || !storeConfigured()) {
+  const textDmEvents = parseInstagramTextDmEvents(payload);
+  if ((commentEvents.length === 0 && postbackEvents.length === 0 && textDmEvents.length === 0) || !storeConfigured()) {
     return json(200, { ok: true, processed: 0 });
   }
 
@@ -150,5 +152,39 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
-  return json(200, { ok: true, processed: commentEvents.length + postbackEvents.length, sent });
+  for (const event of textDmEvents) {
+    const channel = igByAccountId.get(event.accountId);
+    if (!channel) continue;
+    // Match either a direct DM keyword rule or, if they replied to a follow-gate prompt, the brand's enabled follow-gated rule.
+    const rule =
+      matchAutoDmRule(autoDmFile.rules, channel.brand, event.text, null) ??
+      autoDmFile.rules.find((r) => r.brand === channel.brand && r.enabled && r.requireFollow);
+    if (!rule) continue;
+    try {
+      const token = decrypt(channel.token, key);
+      if (rule.requireFollow) {
+        const following = await isUserFollowing(event.senderId, token);
+        if (following) {
+          await sendDirectMessage(channel.userId, token, event.senderId, rule.message);
+        } else {
+          await sendFollowGatePrompt(
+            channel.userId,
+            token,
+            { id: event.senderId },
+            FOLLOW_RETRY_TEXT,
+            "I've Followed",
+            `${AUTODM_PAYLOAD_PREFIX}${rule.id}`,
+          );
+        }
+      } else {
+        await sendDirectMessage(channel.userId, token, event.senderId, rule.message);
+      }
+      sent++;
+      console.log(`Auto-DM text-DM reply handled for ${channel.brand} sender=${event.senderId}`);
+    } catch (error) {
+      console.error(`Auto-DM text-DM failed for ${channel.brand} (${event.senderId}): ${describeError(error)}`);
+    }
+  }
+
+  return json(200, { ok: true, processed: commentEvents.length + postbackEvents.length + textDmEvents.length, sent });
 }

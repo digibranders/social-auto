@@ -259,3 +259,39 @@ export function parseInstagramPostbackEvents(payload: unknown): InstagramPostbac
 export function ruleIdFromPayload(payload: string): string | null {
   return payload.startsWith(AUTODM_PAYLOAD_PREFIX) ? payload.slice(AUTODM_PAYLOAD_PREFIX.length) || null : null;
 }
+
+export interface InstagramTextDmEvent {
+  accountId: string;
+  senderId: string;
+  text: string;
+}
+
+/** Extracts incoming plain-text DM events (ignoring echoes and messages already carrying an AUTODM quick-reply). */
+export function parseInstagramTextDmEvents(payload: unknown): InstagramTextDmEvent[] {
+  if (!payload || typeof payload !== 'object') return [];
+  const root = payload as Record<string, unknown>;
+  if (root['object'] !== 'instagram' || !Array.isArray(root['entry'])) return [];
+  const events: InstagramTextDmEvent[] = [];
+  for (const entry of root['entry']) {
+    if (!entry || typeof entry !== 'object') continue;
+    const entryObj = entry as Record<string, unknown>;
+    const accountId = typeof entryObj['id'] === 'string' ? entryObj['id'] : '';
+    const messaging = Array.isArray(entryObj['messaging']) ? entryObj['messaging'] : [];
+    for (const item of messaging) {
+      if (!item || typeof item !== 'object') continue;
+      const msgObj = item as Record<string, unknown>;
+      const sender = msgObj['sender'] && typeof msgObj['sender'] === 'object' ? (msgObj['sender'] as Record<string, unknown>) : null;
+      const senderId = typeof sender?.['id'] === 'string' ? sender['id'] : '';
+      if (!accountId || !senderId || senderId === accountId) continue;
+      const message = msgObj['message'] && typeof msgObj['message'] === 'object' ? (msgObj['message'] as Record<string, unknown>) : null;
+      if (!message || message['is_echo'] === true) continue;
+      const quickReply =
+        message['quick_reply'] && typeof message['quick_reply'] === 'object' ? (message['quick_reply'] as Record<string, unknown>) : null;
+      if (typeof quickReply?.['payload'] === 'string' && quickReply['payload'].startsWith(AUTODM_PAYLOAD_PREFIX)) continue;
+      const text = typeof message['text'] === 'string' ? message['text'].trim() : '';
+      if (!text) continue;
+      events.push({ accountId, senderId, text });
+    }
+  }
+  return events;
+}
