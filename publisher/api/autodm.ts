@@ -11,7 +11,7 @@ import type { InstagramChannel } from '../lib/channels.js';
 import { allBrands } from '../lib/clients.js';
 import { decrypt, parseKey } from '../lib/crypto.js';
 import { describeError, isAuthorized, json } from '../lib/http.js';
-import { recentMedia, type RecentMedia } from '../lib/instagram.js';
+import { recentMedia, subscribeAccountWebhooks, type RecentMedia } from '../lib/instagram.js';
 import { EditError } from '../lib/overrides.js';
 import { parseSchedule } from '../lib/schedule.js';
 import { scheduleData } from '../lib/schedule-source.js';
@@ -24,6 +24,18 @@ function unauthorizedOrUnconfigured(request: Request): Response | null {
   if (!isAuthorized(request, process.env['EDIT_SECRET'])) return json(401, { error: 'unauthorized' });
   if (!storeConfigured()) return json(503, { error: 'storage is not set up' });
   return null;
+}
+
+async function ensureSubscribed(brand: string): Promise<void> {
+  try {
+    const { file: channelsFile } = await loadChannels();
+    const ig = channelsFile.channels.find((c): c is InstagramChannel => c.platform === 'instagram' && c.brand === brand);
+    if (ig) {
+      await subscribeAccountWebhooks(ig.userId, decrypt(ig.token, parseKey(process.env['CHANNEL_KEY'])));
+    }
+  } catch (error) {
+    console.error(`Instagram webhook subscription failed for ${brand}: ${describeError(error)}`);
+  }
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -76,6 +88,7 @@ export async function POST(request: Request): Promise<Response> {
       Date.now(),
     );
     await saveAutoDm(next, etag);
+    await ensureSubscribed(brand);
     return json(200, { rule });
   } catch (error) {
     if (error instanceof EditError) return json(error.status, { error: error.message });
@@ -108,6 +121,7 @@ export async function PATCH(request: Request): Promise<Response> {
       Date.now(),
     );
     await saveAutoDm(next, etag);
+    await ensureSubscribed(rule.brand);
     return json(200, { rule });
   } catch (error) {
     if (error instanceof EditError) return json(error.status, { error: error.message });
