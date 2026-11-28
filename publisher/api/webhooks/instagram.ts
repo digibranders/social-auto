@@ -87,11 +87,20 @@ export async function POST(request: Request): Promise<Response> {
   let sent = 0;
 
   for (const event of commentEvents) {
-    if (event.fromId && event.fromId === event.accountId) continue;
+    if (event.fromId && event.fromId === event.accountId) {
+      console.log(`Auto-DM skip: self-comment on ${event.accountId}`);
+      continue;
+    }
     const channel = igByAccountId.get(event.accountId);
-    if (!channel) continue;
+    if (!channel) {
+      console.log(`Auto-DM skip: no IG channel for accountId=${event.accountId} (known: ${[...igByAccountId.keys()].join(',')})`);
+      continue;
+    }
     const rule = matchAutoDmRule(autoDmFile.rules, channel.brand, event.text, event.mediaId);
-    if (!rule) continue;
+    if (!rule) {
+      console.log(`Auto-DM skip: no rule for brand=${channel.brand} mediaId=${event.mediaId ?? ''} text=${JSON.stringify(event.text.slice(0, 40))}`);
+      continue;
+    }
     try {
       const token = decrypt(channel.token, key);
       if (rule.requireFollow) {
@@ -107,6 +116,7 @@ export async function POST(request: Request): Promise<Response> {
         await sendPrivateReply(channel.userId, token, event.commentId, rule.message);
       }
       sent++;
+      console.log(`Auto-DM sent (${rule.requireFollow ? 'follow-gate' : 'direct'}) for ${channel.brand} comment=${event.commentId}`);
     } catch (error) {
       console.error(`Auto-DM comment reply failed for ${channel.brand} (${event.commentId}): ${describeError(error)}`);
     }
