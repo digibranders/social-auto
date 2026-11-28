@@ -360,3 +360,17 @@ export async function isUserFollowing(igsid: string, token: string): Promise<boo
   const body = await graph('check follower status', `/${igsid}?${params}`);
   return body['is_user_follow_business'] === true;
 }
+
+/**
+ * Subscribes a connected Instagram account to app webhooks (`comments`, `messages`, `messaging_postbacks`)
+ * so Meta actually streams real events for that account to `/api/webhooks/instagram`.
+ */
+export async function subscribeAccountWebhooks(
+  userId: string,
+  token: string,
+  fields: readonly string[] = ['comments', 'messages', 'messaging_postbacks'],
+): Promise<boolean> {
+  const form = new URLSearchParams({ subscribed_fields: fields.join(','), access_token: token });
+  const body = await graph('subscribe webhooks', `/${userId}/subscribed_apps`, { method: 'POST', body: form });
+  return body['success'] === true;
+}

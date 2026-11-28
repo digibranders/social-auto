@@ -10,7 +10,7 @@ import { scheduleData } from '../../lib/schedule-source.js';
 import { addInstagramAccount, type ChannelFile } from '../../lib/channels.js';
 import { parseKey } from '../../lib/crypto.js';
 import { describeError, isAuthorized, json, requireEnv } from '../../lib/http.js';
-import { accountOf, accountsOf, exchangeCode, exchangeFacebookCode, InstagramApiError, longLivedToken, unifiedLogin, type InstagramAccount } from '../../lib/instagram.js';
+import { accountOf, accountsOf, exchangeCode, exchangeFacebookCode, InstagramApiError, longLivedToken, subscribeAccountWebhooks, unifiedLogin, type InstagramAccount } from '../../lib/instagram.js';
 import { allBrands } from '../../lib/clients.js';
 import { parseSchedule } from '../../lib/schedule.js';
 import { loadChannels, loadClients, saveChannels, storeConfigured } from '../../lib/store.js';
@@ -73,6 +73,11 @@ export async function POST(request: Request): Promise<Response> {
     const verdict = checkHolders(file, clients, brand, approved.accounts.map((a) => `instagram:${a.userId}`), holderOptions(body));
     if (!verdict.ok) return accountInUse(verdict);
     await saveChannels(withAccounts(file, brand, approved, key, Date.now()), etag);
+    for (const acc of approved.accounts) {
+      await subscribeAccountWebhooks(acc.userId, approved.token).catch((err) => {
+        console.error(`Instagram webhook subscription failed for ${brand} (${acc.userId}): ${describeError(err)}`);
+      });
+    }
     return json(200, {
       account: { username: approved.accounts[0]?.username },
       accounts: approved.accounts.map((a) => ({ username: a.username })),
