@@ -43,15 +43,17 @@ export async function GET(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
-  const appSecret = process.env['INSTAGRAM_APP_SECRET'];
-  if (!appSecret) return json(503, { error: 'INSTAGRAM_APP_SECRET is not set' });
+  const secrets = [process.env['INSTAGRAM_APP_SECRET'], process.env['FACEBOOK_APP_SECRET']].filter(
+    (s): s is string => typeof s === 'string' && s.trim().length > 0,
+  );
+  if (secrets.length === 0) return json(503, { error: 'INSTAGRAM_APP_SECRET is not set' });
 
   if (Number(request.headers.get('content-length') ?? 0) > MAX_WEBHOOK_BYTES) return json(413, { error: 'payload too large' });
   const rawBody = new Uint8Array(await request.arrayBuffer());
   if (rawBody.length > MAX_WEBHOOK_BYTES) return json(413, { error: 'payload too large' });
 
   const signature = request.headers.get('x-hub-signature-256');
-  if (!verifyMetaSignature(rawBody, signature, appSecret)) {
+  if (!secrets.some((secret) => verifyMetaSignature(rawBody, signature, secret))) {
     return json(401, { error: 'invalid signature' });
   }
 
