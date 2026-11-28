@@ -320,7 +320,7 @@ export async function sendDirectMessage(userId: string, token: string, recipient
   return { messageId: typeof body['message_id'] === 'string' ? body['message_id'] : null };
 }
 
-/** Sends a Generic Template card with a postback button (used for 2-step follow-gate prompts). */
+/** Sends a Quick Reply prompt (works on both Private Replies and direct DMs for 2-step follow-gate prompts). */
 export async function sendFollowGatePrompt(
   userId: string,
   token: string,
@@ -336,18 +336,8 @@ export async function sendFollowGatePrompt(
     body: JSON.stringify({
       recipient,
       message: {
-        attachment: {
-          type: 'template',
-          payload: {
-            template_type: 'generic',
-            elements: [
-              {
-                title,
-                buttons: [{ type: 'postback', title: buttonTitle, payload }],
-              },
-            ],
-          },
-        },
+        text: title,
+        quick_replies: [{ content_type: 'text', title: buttonTitle, payload }],
       },
     }),
   });
